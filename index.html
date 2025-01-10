@@ -24,10 +24,78 @@
             text-shadow: 0 0 2px rgba(0, 0, 0, 0.8),
                          0 0 5px rgba(255, 255, 255, 0.6),
                          0 0 10px rgba(255, 255, 255, 0.4);
+            z-index: 10;
+        }
+
+        .matrix {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #f0f0f0;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        .matrix span {
+            position: absolute;
+            top: 0;
+            width: 5em;
+            height: 5em;
+            font-family: monospace;
+            font-size: 5em;
+            color: rgba(0, 0, 0, 0.2);
+            text-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
+            animation: drop 5s linear infinite;
+        }
+
+        @keyframes drop {
+            0% {
+                transform: translateY(-10%);
+            }
+            100% {
+                transform: translateY(150vh);
+            }
         }
     </style>
 </head>
 <body>
+    <div class="matrix" id="matrix"></div>
     <div class="center-text">... wake up, dreamer ...</div>
+
+    <script>
+        const matrix = document.getElementById('matrix');
+        const letters = '☀☁☂☃☄★☆☇☈☉☊☋☌☍☎☏☐☑☒☓☕☖☗☘☙☚☛☜☝☞☟☠☡☢☣☤☥☦☧☨☩☪☫☬☭☮☯☰☱☲☳☴☵☶☷☸☹☺☻☼☽☾☿♀♁♂♃♄♅♆♇♔♕♖♗♘♙♚♛♜♝♞♟♠♡♢♣♤♥♦♧♨♩♪♫ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩабвгдежзийклмнопрстуфхцчшщъыьэюяアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン亜院映遠音化会海花界看紀記帰急教局銀空元言語古行光高黄国黒今山';
+
+
+        const createMatrixRain = () => {
+            for (let i = 0; i < 200; i++) {
+                const span = document.createElement('span');
+                span.textContent = letters.charAt(Math.floor(Math.random() * letters.length));
+                span.style.left = Math.random() * 100 + 'vw';
+         	span.style.top = "-5em";
+                span.style.animationDelay = Math.random() * 50 + 's';
+                span.style.animationDuration = Math.random() * 5 + 3 + 's';
+		a_mod = Math.random();
+                span.style.color = "rgba(0, 0, 0, " + (0.3 - 0.3 * a_mod) +")";
+                //span.style.text-shadow = "0 0 5px rgba(0, 0, 0, " + (0.3 - 0.25 * a_mod) +")";
+
+                matrix.appendChild(span);
+
+                // Remove span after animation ends
+                span.addEventListener('animationend', () => {
+                    span.remove();
+	            if (span.parentNode) {
+        	        span.parentNode.removeChild(span);
+	            }
+                });
+            }
+        };
+
+	createMatrixRain();
+
+        // setInterval(createMatrixRain, 500);
+    </script>
 </body>
 </html>
