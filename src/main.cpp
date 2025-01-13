@@ -4,5 +4,8 @@
 
 int main() {
     std::cout << "Hello, World!" << std::endl;
+
+    klartraum::BackendVulkan backendVulkan;
+    
     return 0;
 }
