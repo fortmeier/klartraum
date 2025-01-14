@@ -3,6 +3,8 @@
 
 namespace klartraum {
 
+class BackendVulkanImplentation;    
+
 class BackendVulkan {
 public:
     BackendVulkan();
@@ -11,10 +13,11 @@ public:
     void initialize();
 
     void loop();
-    
+
     void shutdown();
 
 private:
+    BackendVulkanImplentation* impl;
     // Private member variables and methods
 };
 
