@@ -9,6 +9,9 @@ public:
     ~BackendVulkan();
 
     void initialize();
+
+    void loop();
+    
     void shutdown();
 
 private:
