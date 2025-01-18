@@ -18,8 +18,11 @@ set(Python3_LIBRARY ${PROJECT_SOURCE_DIR}/3rdparty/cpython/PCbuild/amd64/python3
 find_package(Python3 3.12.8 REQUIRED COMPONENTS Interpreter Development)
 include_directories(${Python3_INCLUDE_DIRS})
 
-
-set(SRC src/main.cpp src/backend_vulkan.cpp)
+set(SRC 
+  src/main.cpp
+  src/backend_vulkan.cpp
+  src/vulkan_gaussian_splatting.cpp
+  )
 
 add_executable(klartraum ${SRC})
 
