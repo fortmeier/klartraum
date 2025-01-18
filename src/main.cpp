@@ -3,6 +3,7 @@
 #include <Python.h>
 
 #include "klartraum/backend_vulkan.hpp"
+#include "klartraum/vulkan_gaussian_splatting.hpp"
 
 int main() {
     std::cout << "Hello, World!" << std::endl;
@@ -12,6 +13,8 @@ int main() {
     PyConfig_InitPythonConfig(&config);
 
     klartraum::BackendVulkan backendVulkan;
+
+    klartraum::VulkanGaussianSplatting gaussianSplatting(backendVulkan);
 
     backendVulkan.initialize();
 
