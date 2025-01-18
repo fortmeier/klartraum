@@ -1,6 +1,8 @@
 #ifndef BACKEND_VULKAN_HPP
 #define BACKEND_VULKAN_HPP
 
+#include <vulkan/vulkan.h>
+
 namespace klartraum {
 
 class BackendVulkanImplentation;    
@@ -15,6 +17,10 @@ public:
     void loop();
 
     void shutdown();
+
+    VkDevice& getDevice();
+
+    static const size_t MAX_FRAMES_IN_FLIGHT = 2;
 
 private:
     BackendVulkanImplentation* impl;

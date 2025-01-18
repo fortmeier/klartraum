@@ -14,6 +14,9 @@ class BackendVulkanImplentation {
     VkInstance instance;
 
     public:
+
+    VkDevice device;
+
     void createInstance() {
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -80,6 +83,10 @@ void BackendVulkan::loop() {
 void BackendVulkan::shutdown() {
     // Shutdown Vulkan
     glfwTerminate();
+}
+
+VkDevice& BackendVulkan::getDevice() {
+    return impl->device;
 }
 
 } // namespace klartraum
