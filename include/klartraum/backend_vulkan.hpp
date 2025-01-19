@@ -3,9 +3,12 @@
 
 #include <vector>
 #include <optional>
+#include <memory>
 
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
+
+#include "klartraum/draw_component.hpp"
 
 namespace klartraum {
 
@@ -39,9 +42,12 @@ public:
     static constexpr uint32_t WIDTH = 800;
     static constexpr uint32_t HEIGHT = 600;
 
+    void addDrawComponent(std::unique_ptr<DrawComponent> drawComponent);
+
 private:
     BackendVulkanImplementation* impl;
     GLFWwindow* window;
+    std::vector<std::unique_ptr<DrawComponent> > drawComponents;
 };
 
 } // namespace klartraum

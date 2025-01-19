@@ -12,9 +12,7 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
 
 }
 
-void VulkanGaussianSplatting::drawFrame() {
-    // TODO: continue copying from tutorial
-    
+void VulkanGaussianSplatting::draw() {
 }
 
 void VulkanGaussianSplatting::createCommandPool() {
