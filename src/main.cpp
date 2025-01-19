@@ -14,9 +14,10 @@ int main() {
 
     klartraum::BackendVulkan backendVulkan;
 
+    backendVulkan.initialize();
+    
     klartraum::VulkanGaussianSplatting gaussianSplatting(backendVulkan);
 
-    backendVulkan.initialize();
 
     backendVulkan.loop();
 

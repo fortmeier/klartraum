@@ -13,12 +13,14 @@ public:
     VulkanGaussianSplatting(BackendVulkan &backendVulkan);
     ~VulkanGaussianSplatting();
 
+    void drawFrame();
+
 private:
     void createSyncObjects();
     void createCommandPool();
     void createCommandBuffers();
 
-    VkDevice& device;
+    BackendVulkan &backendVulkan;
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;

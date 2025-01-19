@@ -1,11 +1,24 @@
 #ifndef BACKEND_VULKAN_HPP
 #define BACKEND_VULKAN_HPP
 
+#include <vector>
+#include <optional>
+
 #include <vulkan/vulkan.h>
+#include <GLFW/glfw3.h>
 
 namespace klartraum {
 
-class BackendVulkanImplentation;    
+class BackendVulkanImplementation;
+
+struct QueueFamilyIndices {
+    std::optional<uint32_t> graphicsFamily;
+    std::optional<uint32_t> presentFamily;
+
+    bool isComplete() {
+        return graphicsFamily.has_value() && presentFamily.has_value();
+    }
+};
 
 class BackendVulkan {
 public:
@@ -20,11 +33,15 @@ public:
 
     VkDevice& getDevice();
 
-    static const size_t MAX_FRAMES_IN_FLIGHT = 2;
+    QueueFamilyIndices getQueueFamilyIndices();
+
+    static constexpr size_t MAX_FRAMES_IN_FLIGHT = 2;
+    static constexpr uint32_t WIDTH = 800;
+    static constexpr uint32_t HEIGHT = 600;
 
 private:
-    BackendVulkanImplentation* impl;
-    // Private member variables and methods
+    BackendVulkanImplementation* impl;
+    GLFWwindow* window;
 };
 
 } // namespace klartraum
