@@ -8,12 +8,12 @@
 
 namespace klartraum {
 
-class VulkanGaussianSplatting {
+class VulkanGaussianSplatting : public DrawComponent {
 public:
     VulkanGaussianSplatting(BackendVulkan &backendVulkan);
     ~VulkanGaussianSplatting();
 
-    void drawFrame();
+    void draw();
 
 private:
     void createSyncObjects();
