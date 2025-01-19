@@ -11,6 +11,7 @@
 #include <vulkan/vulkan.h>
 
 #include "klartraum/backend_vulkan.hpp"
+#include "klartraum/backend_vulkan.hpp"
 
 namespace klartraum {
 
@@ -550,18 +551,6 @@ class BackendVulkanImplementation {
     }
 
     ~BackendVulkanImplementation() {
-        for (auto framebuffer : swapChainFramebuffers) {
-            vkDestroyFramebuffer(device, framebuffer, nullptr);
-        }
-
-        vkDestroyPipeline(device, graphicsPipeline, nullptr);
-        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-        vkDestroyRenderPass(device, renderPass, nullptr);
-
-        for (auto imageView : swapChainImageViews) {
-            vkDestroyImageView(device, imageView, nullptr);
-        }
-
         vkDestroySwapchainKHR(device, swapChain, nullptr);
 
         vkDestroyDevice(device, nullptr);
@@ -619,6 +608,9 @@ void BackendVulkan::loop() {
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        for(auto &drawComponent : drawComponents) {
+            drawComponent->draw();
+        }   
     }
 
 }
@@ -644,6 +636,11 @@ QueueFamilyIndices BackendVulkan::getQueueFamilyIndices() {
     }    
     QueueFamilyIndices queueFamilyIndices = impl->findQueueFamiliesPhysicalDevice();
     return queueFamilyIndices;
+}
+
+void BackendVulkan::addDrawComponent(std::unique_ptr<DrawComponent> drawComponent)
+{
+    drawComponents.push_back(std::move(drawComponent));
 }
 
 } // namespace klartraum

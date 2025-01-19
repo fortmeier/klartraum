@@ -16,8 +16,9 @@ int main() {
 
     backendVulkan.initialize();
     
-    klartraum::VulkanGaussianSplatting gaussianSplatting(backendVulkan);
+    std::unique_ptr<klartraum::VulkanGaussianSplatting> gaussianSplatting = std::make_unique<klartraum::VulkanGaussianSplatting>(backendVulkan);
 
+    backendVulkan.addDrawComponent(std::move(gaussianSplatting));
 
     backendVulkan.loop();
 
