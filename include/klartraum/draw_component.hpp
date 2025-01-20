@@ -4,7 +4,7 @@
 namespace klartraum {
 class DrawComponent {
 public:
-    virtual void draw() = 0;
+    virtual void draw(uint32_t currentFrame) = 0;
 };
 
 } // namespace klartraum
