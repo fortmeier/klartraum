@@ -13,15 +13,21 @@ public:
     VulkanGaussianSplatting(BackendVulkan &backendVulkan);
     ~VulkanGaussianSplatting();
 
-    void draw();
+    virtual void draw(uint32_t currentFrame) override;
 
 private:
     void createSyncObjects();
     void createCommandPool();
     void createCommandBuffers();
 
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+
     BackendVulkan &backendVulkan;
 
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> renderFinishedSemaphores;
+    std::vector<VkFence> inFlightFences;
+    
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 };
