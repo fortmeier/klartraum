@@ -35,6 +35,15 @@ public:
     void shutdown();
 
     VkDevice& getDevice();
+    VkSwapchainKHR& getSwapChain();
+    VkRenderPass& getRenderPass();
+    
+    VkPipeline& getGraphicsPipeline();
+    
+    VkFramebuffer& getFramebuffer(uint32_t imageIndex);
+    VkExtent2D& getSwapChainExtent();
+
+    
 
     QueueFamilyIndices getQueueFamilyIndices();
 

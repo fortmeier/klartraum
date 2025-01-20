@@ -11,7 +11,6 @@
 #include <vulkan/vulkan.h>
 
 #include "klartraum/backend_vulkan.hpp"
-#include "klartraum/backend_vulkan.hpp"
 
 namespace klartraum {
 
@@ -54,21 +53,15 @@ class BackendVulkanImplementation {
 
     VkSurfaceKHR surface;
 
-    VkSwapchainKHR swapChain;
 
     std::vector<VkImage> swapChainImages;
 
     VkFormat swapChainImageFormat;
-    VkExtent2D swapChainExtent;
+    
 
     std::vector<VkImageView> swapChainImageViews;
 
-    VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
-
-    VkPipeline graphicsPipeline;
-
-    std::vector<VkFramebuffer> swapChainFramebuffers;
 
     VkCommandPool commandPool;
 
@@ -572,7 +565,12 @@ class BackendVulkanImplementation {
     }
 
     VkDevice device;
+    VkSwapchainKHR swapChain;
+    VkRenderPass renderPass;
+    VkPipeline graphicsPipeline;
 
+    std::vector<VkFramebuffer> swapChainFramebuffers;
+    VkExtent2D swapChainExtent;
 
 };
 
@@ -604,13 +602,14 @@ void BackendVulkan::initialize() {
 
 void BackendVulkan::loop() {
 
-
+    uint32_t currentFrame = 0;
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         for(auto &drawComponent : drawComponents) {
-            drawComponent->draw();
-        }   
+            drawComponent->draw(currentFrame);
+        }
+        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
 }
@@ -627,6 +626,50 @@ VkDevice& BackendVulkan::getDevice() {
         throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
     }
     return impl->device;
+}
+
+VkSwapchainKHR& BackendVulkan::getSwapChain()
+{
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
+    }
+    return impl->swapChain;
+}
+
+VkRenderPass& BackendVulkan::getRenderPass()
+{
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
+    }
+    return impl->renderPass;
+}
+
+VkPipeline& BackendVulkan::getGraphicsPipeline()
+{
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
+    }
+    return impl->graphicsPipeline;
+}
+
+VkFramebuffer& BackendVulkan::getFramebuffer(uint32_t imageIndex){
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
+    }
+    return impl->swapChainFramebuffers[imageIndex];
+}
+
+VkExtent2D& BackendVulkan::getSwapChainExtent()
+{
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
+    }
+    return impl->swapChainExtent;
 }
 
 QueueFamilyIndices BackendVulkan::getQueueFamilyIndices() {
