@@ -39,7 +39,9 @@ public:
     VkRenderPass& getRenderPass();
     
     VkPipeline& getGraphicsPipeline();
-    
+    VkQueue& getGraphicsQueue();
+
+
     VkFramebuffer& getFramebuffer(uint32_t imageIndex);
     VkExtent2D& getSwapChainExtent();
 
@@ -57,6 +59,11 @@ private:
     BackendVulkanImplementation* impl;
     GLFWwindow* window;
     std::vector<std::unique_ptr<DrawComponent> > drawComponents;
+
+    std::vector<VkFence> inFlightFences;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+
+    void createSyncObjects();
 };
 
 } // namespace klartraum

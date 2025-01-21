@@ -13,64 +13,42 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
     auto device = backendVulkan.getDevice();
     for (size_t i = 0; i < backendVulkan.MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
         vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
-        vkDestroyFence(device, inFlightFences[i], nullptr);
     }
 
     vkDestroyCommandPool(device, commandPool, nullptr);
 }
 
-void VulkanGaussianSplatting::draw(uint32_t currentFrame) {
+VkSemaphore VulkanGaussianSplatting::draw(uint32_t currentFrame, VkFramebuffer framebuffer, VkSemaphore imageAvailableSemaphore) {
     auto device = backendVulkan.getDevice();
     auto swapChain = backendVulkan.getSwapChain();
+    auto graphicsQueue = backendVulkan.getGraphicsQueue();
 
-    vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
-    vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
-    uint32_t imageIndex;
-    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    vkResetCommandBuffer(commandBuffers[currentFrame], 0);
+    recordCommandBuffer(commandBuffers[currentFrame], framebuffer);
 
-    // vkResetCommandBuffer(commandBuffers[currentFrame], 0);
-    // recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-    // VkSubmitInfo submitInfo{};
-    // submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
 
-    // VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
-    // VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    // submitInfo.waitSemaphoreCount = 1;
-    // submitInfo.pWaitSemaphores = waitSemaphores;
-    // submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
-    // submitInfo.commandBufferCount = 1;
-    // submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
 
-    // VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
-    // submitInfo.signalSemaphoreCount = 1;
-    // submitInfo.pSignalSemaphores = signalSemaphores;
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit draw command buffer!");
+    }
 
-    // if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
-    //     throw std::runtime_error("failed to submit draw command buffer!");
-    // }
-
-    // VkPresentInfoKHR presentInfo{};
-    // presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-
-    // presentInfo.waitSemaphoreCount = 1;
-    // presentInfo.pWaitSemaphores = signalSemaphores;
-
-    // VkSwapchainKHR swapChains[] = { swapChain };
-    // presentInfo.swapchainCount = 1;
-    // presentInfo.pSwapchains = swapChains;
-    // presentInfo.pImageIndices = &imageIndex;
-
-    // presentInfo.pResults = nullptr; // Optional
-
-    // vkQueuePresentKHR(presentQueue, &presentInfo);
-
-    // currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+   return renderFinishedSemaphores[currentFrame];
 }
 
 void VulkanGaussianSplatting::createCommandPool() {
@@ -106,28 +84,20 @@ void VulkanGaussianSplatting::createSyncObjects()
 {
     auto device = backendVulkan.getDevice();
 
-    imageAvailableSemaphores.resize(backendVulkan.MAX_FRAMES_IN_FLIGHT);
     renderFinishedSemaphores.resize(backendVulkan.MAX_FRAMES_IN_FLIGHT);
-    inFlightFences.resize(backendVulkan.MAX_FRAMES_IN_FLIGHT);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
     for (size_t i = 0; i < backendVulkan.MAX_FRAMES_IN_FLIGHT; i++)
     {
-        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
-            vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create semaphores!");
         }
     }    
 }
 
-void VulkanGaussianSplatting::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+void VulkanGaussianSplatting::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer)
 {
     auto swapChainExtent = backendVulkan.getSwapChainExtent();
     auto graphicsPipeline = backendVulkan.getGraphicsPipeline();
@@ -144,7 +114,7 @@ void VulkanGaussianSplatting::recordCommandBuffer(VkCommandBuffer commandBuffer,
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = backendVulkan.getRenderPass();
-    renderPassInfo.framebuffer = backendVulkan.getFramebuffer(imageIndex);
+    renderPassInfo.framebuffer = framebuffer;
 
     renderPassInfo.renderArea.offset = { 0, 0 };
     renderPassInfo.renderArea.extent = swapChainExtent;
