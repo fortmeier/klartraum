@@ -24,6 +24,7 @@ set(SRC
   src/main.cpp
   src/backend_vulkan.cpp
   src/vulkan_gaussian_splatting.cpp
+  src/vulkan_helpers.cpp
   )
 
 add_executable(klartraum ${SRC})

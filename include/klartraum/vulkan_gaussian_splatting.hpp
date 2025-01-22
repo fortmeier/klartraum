@@ -16,6 +16,7 @@ public:
     virtual VkSemaphore draw(uint32_t currentFrame, VkFramebuffer framebuffer, VkSemaphore imageAvailableSemaphore) override;
 
 private:
+    void createGraphicsPipeline();
     void createSyncObjects();
     void createCommandPool();
     void createCommandBuffers();
@@ -23,6 +24,10 @@ private:
     void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
     BackendVulkan &backendVulkan;
+
+    VkPipelineLayout pipelineLayout;
+    VkPipeline graphicsPipeline;
+
 
     std::vector<VkSemaphore> renderFinishedSemaphores;
     
