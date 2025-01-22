@@ -38,7 +38,6 @@ public:
     VkSwapchainKHR& getSwapChain();
     VkRenderPass& getRenderPass();
     
-    VkPipeline& getGraphicsPipeline();
     VkQueue& getGraphicsQueue();
 
 
