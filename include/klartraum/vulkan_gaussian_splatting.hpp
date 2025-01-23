@@ -20,6 +20,7 @@ private:
     void createSyncObjects();
     void createCommandPool();
     void createCommandBuffers();
+    void createVertexBuffer();
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
@@ -28,6 +29,8 @@ private:
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
 
     std::vector<VkSemaphore> renderFinishedSemaphores;
     

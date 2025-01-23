@@ -47,7 +47,6 @@ class BackendVulkanImplementation {
     VkInstance instance;
     VkDebugUtilsMessengerEXT debugMessenger;
 
-    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
     VkSurfaceKHR surface;
 
@@ -609,6 +608,8 @@ class BackendVulkanImplementation {
         return findQueueFamilies(physicalDevice);
     }
 
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+
     VkDevice device;
     VkSwapchainKHR swapChain;
     VkRenderPass renderPass;
@@ -801,5 +802,23 @@ void BackendVulkan::createSyncObjects()
         }
     }    
 }
+
+uint32_t BackendVulkan::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::findMemoryType() called before initialize()");
+    }   
+
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(impl->physicalDevice, &memProperties);
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+    throw std::runtime_error("failed to find suitable memory type!");
+}
+
 
 } // namespace klartraum
