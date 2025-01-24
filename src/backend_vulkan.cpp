@@ -632,7 +632,7 @@ BackendVulkan::BackendVulkan() : impl(nullptr)
 BackendVulkan::~BackendVulkan()
 {
     auto device = impl->device;
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(device, inFlightFences[i], nullptr);
@@ -649,10 +649,14 @@ void BackendVulkan::initialize() {
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    window = glfwCreateWindow(this->WIDTH, this->HEIGHT, "Vulkan", nullptr, nullptr);
+    window = glfwCreateWindow(config.WIDTH, config.HEIGHT, "Vulkan", nullptr, nullptr);
 
     impl = new BackendVulkanImplementation(window);
+    
+    camera = std::make_unique<Camera>(this);
+
     createSyncObjects();
+
 
 }
 
@@ -679,6 +683,8 @@ void BackendVulkan::loop() {
             signalSemaphores.push_back(draw_finish_semaphore);
         }
 
+        camera->update(currentFrame);
+
         if (vkQueueSubmit(impl->graphicsQueue, 0, nullptr, inFlightFences[currentFrame]) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit inFlightFence");
         }
@@ -699,13 +705,13 @@ void BackendVulkan::loop() {
         
         vkQueuePresentKHR(impl->presentQueue, &presentInfo);
             
-        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;
     }
 
 }
 
 void BackendVulkan::shutdown() {
-
+    camera = nullptr;
     glfwDestroyWindow(window);
     glfwTerminate();
 }
@@ -774,15 +780,57 @@ QueueFamilyIndices BackendVulkan::getQueueFamilyIndices() {
     return queueFamilyIndices;
 }
 
+Camera& BackendVulkan::getCamera()
+{
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::getCamera() called before initialize()");
+    }    
+    return *camera;
+}
+
+BackendConfig& BackendVulkan::getConfig()
+{
+    return config;
+}
+
 void BackendVulkan::addDrawComponent(std::unique_ptr<DrawComponent> drawComponent)
 {
     drawComponents.push_back(std::move(drawComponent));
 }
 
+void BackendVulkan::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+    auto device = impl->device;
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create buffer!");
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate buffer memory!");
+    }
+
+    vkBindBufferMemory(device, buffer, bufferMemory, 0);
+}
+
 void BackendVulkan::createSyncObjects()
 {
-    imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    imageAvailableSemaphores.resize(config.MAX_FRAMES_IN_FLIGHT);
+    inFlightFences.resize(config.MAX_FRAMES_IN_FLIGHT);
 
     auto device = impl->device;
 
@@ -793,7 +841,7 @@ void BackendVulkan::createSyncObjects()
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
     {
         if (
             vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
