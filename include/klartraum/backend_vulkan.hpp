@@ -8,7 +8,9 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
+#include "klartraum/backend_config.hpp"
 #include "klartraum/draw_component.hpp"
+#include "klartraum/camera.hpp"
 
 namespace klartraum {
 
@@ -51,15 +53,20 @@ public:
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
-    static constexpr size_t MAX_FRAMES_IN_FLIGHT = 2;
-    static constexpr uint32_t WIDTH = 800;
-    static constexpr uint32_t HEIGHT = 600;
+    Camera& getCamera();
+    BackendConfig& getConfig();
 
     void addDrawComponent(std::unique_ptr<DrawComponent> drawComponent);
 
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+
+
 private:
+    BackendConfig config;
     BackendVulkanImplementation* impl;
     GLFWwindow* window;
+
+    std::unique_ptr<Camera> camera;
     std::vector<std::unique_ptr<DrawComponent> > drawComponents;
 
     std::vector<VkFence> inFlightFences;

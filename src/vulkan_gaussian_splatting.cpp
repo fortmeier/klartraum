@@ -56,7 +56,7 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
 
-    for (size_t i = 0; i < backendVulkan.MAX_FRAMES_IN_FLIGHT; i++)
+    for (size_t i = 0; i < backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
     }
@@ -211,8 +211,8 @@ void VulkanGaussianSplatting::createGraphicsPipeline() {
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0; // Optional
-    pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &(backendVulkan.getCamera().getDescriptorSetLayout());
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -298,7 +298,7 @@ void VulkanGaussianSplatting::createCommandPool() {
 void VulkanGaussianSplatting::createCommandBuffers() {
     auto device = backendVulkan.getDevice();
 
-    commandBuffers.resize(BackendVulkan::MAX_FRAMES_IN_FLIGHT);
+    commandBuffers.resize(backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT);
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.commandPool = commandPool;
@@ -314,12 +314,12 @@ void VulkanGaussianSplatting::createSyncObjects()
 {
     auto device = backendVulkan.getDevice();
 
-    renderFinishedSemaphores.resize(backendVulkan.MAX_FRAMES_IN_FLIGHT);
+    renderFinishedSemaphores.resize(backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-    for (size_t i = 0; i < backendVulkan.MAX_FRAMES_IN_FLIGHT; i++)
+    for (size_t i = 0; i < backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT; i++)
     {
         if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create semaphores!");
