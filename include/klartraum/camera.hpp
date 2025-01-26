@@ -24,6 +24,7 @@ public:
     ~Camera();
 
     VkDescriptorSetLayout& getDescriptorSetLayout();
+    std::vector<VkDescriptorSet>& getDescriptorSets();
 
     void update(uint32_t currentImage);
 
@@ -32,8 +33,12 @@ private:
 
     void createDescriptorSetLayout();
     void createUniformBuffers();
-    
+    void createDescriptorPool();
+    void createDescriptorSets();
+
     VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorPool descriptorPool;
+    std::vector<VkDescriptorSet> descriptorSets;
 
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
