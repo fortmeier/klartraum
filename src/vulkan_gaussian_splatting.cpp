@@ -1,6 +1,8 @@
 #include <glm/glm.hpp>
 #include <array>
 
+#include "load-spz.h"
+
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 #include <stdexcept>
@@ -36,18 +38,22 @@ struct Vertex {
     }
 };
 
+
 const std::vector<Vertex> vertices = {
     {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
     {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     {{-0.5f, 0.5f}, {1.0f, 0.0f, 1.0f}}
 };
 
-VulkanGaussianSplatting::VulkanGaussianSplatting(BackendVulkan &backendVulkan) : backendVulkan(backendVulkan) {
+VulkanGaussianSplatting::VulkanGaussianSplatting(BackendVulkan &backendVulkan, std::string path) : backendVulkan(backendVulkan) {
+    loadSPZModel(path);
+
     createGraphicsPipeline();
     createVertexBuffer();
     createCommandPool();
     createCommandBuffers();
     createSyncObjects();
+
 }
 
 VulkanGaussianSplatting::~VulkanGaussianSplatting() {
@@ -383,6 +389,11 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
         throw std::runtime_error("failed to record command buffer!");
     }
+}
+
+void VulkanGaussianSplatting::loadSPZModel(std::string path)
+{
+    spz::GaussianCloud cloud = spz::loadSpz(path);
 }
 
 } // namespace klartraum

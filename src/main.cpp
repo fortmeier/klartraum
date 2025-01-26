@@ -15,8 +15,10 @@ int main() {
     klartraum::BackendVulkan backendVulkan;
 
     backendVulkan.initialize();
+
+    std::string spzFile = "data/hornedlizard.spz";
     
-    std::unique_ptr<klartraum::VulkanGaussianSplatting> gaussianSplatting = std::make_unique<klartraum::VulkanGaussianSplatting>(backendVulkan);
+    std::unique_ptr<klartraum::VulkanGaussianSplatting> gaussianSplatting = std::make_unique<klartraum::VulkanGaussianSplatting>(backendVulkan, spzFile);
 
     backendVulkan.addDrawComponent(std::move(gaussianSplatting));
 
