@@ -22,7 +22,7 @@ private:
     void createCommandBuffers();
     void createVertexBuffer();
 
-    void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
+    void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
     BackendVulkan &backendVulkan;
 
