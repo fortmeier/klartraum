@@ -1,3 +1,15 @@
 [submodule "3rdparty/glfw"]
 	path = 3rdparty/glfw
 	url = https://github.com/glfw/glfw.git
+[submodule "3rdparty/cppy3"]
+	path = 3rdparty/cppy3
+	url = https://github.com/reefactor/cppy3.git
+[submodule "3rdparty/cpython"]
+	path = 3rdparty/cpython
+	url = https://github.com/python/cpython.git
+[submodule "3rdparty/spz"]
+	path = 3rdparty/spz
+	url = https://github.com/nianticlabs/spz.git
+[submodule "3rdparty/zlib"]
+	path = 3rdparty/zlib
+	url = https://github.com/madler/zlib.git

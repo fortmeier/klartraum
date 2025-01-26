@@ -20,14 +20,26 @@ set(Python3_LIBRARY ${PROJECT_SOURCE_DIR}/3rdparty/cpython/PCbuild/amd64/python3
 find_package(Python3 3.12.8 REQUIRED COMPONENTS Interpreter Development)
 include_directories(${Python3_INCLUDE_DIRS})
 
+set(ZLIB_BUILD_EXAMPLES OFF)
+add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/zlib)
+
+
+include_directories(${PROJECT_SOURCE_DIR}/3rdparty/spz/src/cc/)
+set(SPZ_SRC
+  3rdparty/spz/src/cc/load-spz.cc
+  3rdparty/spz/src/cc/splat-c-types.cc
+  3rdparty/spz/src/cc/splat-types.cc
+)
+
 set(SRC 
   src/main.cpp
   src/backend_vulkan.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
   src/camera.cpp
+  ${SPZ_SRC}
   )
 
 add_executable(klartraum ${SRC})
 
-target_link_libraries(klartraum glfw ${Vulkan_LIBRARIES} ${Python3_LIBRARIES})
+target_link_libraries(klartraum glfw zlibstatic ${Vulkan_LIBRARIES} ${Python3_LIBRARIES})
