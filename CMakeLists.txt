@@ -37,6 +37,7 @@ set(SRC
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
   src/camera.cpp
+  src/interface_camera_orbit.cpp
   ${SPZ_SRC}
   )
 
