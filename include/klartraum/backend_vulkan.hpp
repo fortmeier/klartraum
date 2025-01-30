@@ -11,6 +11,7 @@
 #include "klartraum/backend_config.hpp"
 #include "klartraum/draw_component.hpp"
 #include "klartraum/camera.hpp"
+#include "klartraum/interface_camera.hpp"
 
 namespace klartraum {
 
@@ -54,6 +55,8 @@ public:
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
     Camera& getCamera();
+    void setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera);
+
     BackendConfig& getConfig();
 
     void addDrawComponent(std::unique_ptr<DrawComponent> drawComponent);
@@ -66,7 +69,9 @@ private:
     BackendVulkanImplementation* impl;
     GLFWwindow* window;
 
-    std::unique_ptr<Camera> camera;
+    std::shared_ptr<Camera> camera;
+    std::shared_ptr<InterfaceCamera> interfaceCamera;
+
     std::vector<std::unique_ptr<DrawComponent> > drawComponents;
 
     std::vector<VkFence> inFlightFences;
