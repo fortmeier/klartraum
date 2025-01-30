@@ -5,6 +5,8 @@
 #include "klartraum/backend_vulkan.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 
+#include "klartraum/interface_camera_orbit.hpp"
+
 int main() {
     std::cout << "Hello, World!" << std::endl;
 
@@ -21,6 +23,9 @@ int main() {
     std::unique_ptr<klartraum::VulkanGaussianSplatting> gaussianSplatting = std::make_unique<klartraum::VulkanGaussianSplatting>(backendVulkan, spzFile);
 
     backendVulkan.addDrawComponent(std::move(gaussianSplatting));
+
+    std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(&backendVulkan);
+    backendVulkan.setInterfaceCamera(cameraOrbit);
 
     backendVulkan.loop();
 

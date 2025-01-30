@@ -12,6 +12,7 @@
 #include <vulkan/vulkan.h>
 
 #include "klartraum/backend_vulkan.hpp"
+#include "klartraum/interface_camera.hpp"
 
 namespace klartraum {
 
@@ -683,6 +684,11 @@ void BackendVulkan::loop() {
             signalSemaphores.push_back(draw_finish_semaphore);
         }
 
+        if(interfaceCamera != nullptr && camera != nullptr)
+        {
+            interfaceCamera->update(*camera);
+        }
+
         camera->update(currentFrame);
 
         if (vkQueueSubmit(impl->graphicsQueue, 0, nullptr, inFlightFences[currentFrame]) != VK_SUCCESS) {
@@ -787,6 +793,15 @@ Camera& BackendVulkan::getCamera()
         throw std::runtime_error("BackendVulkan::getCamera() called before initialize()");
     }    
     return *camera;
+}
+
+void BackendVulkan::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
+{
+    if(impl == nullptr)
+    {
+        throw std::runtime_error("BackendVulkan::setInterfaceCamera() called before initialize()");
+    }    
+    this->interfaceCamera = camera;
 }
 
 BackendConfig& BackendVulkan::getConfig()

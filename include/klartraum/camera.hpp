@@ -28,6 +28,8 @@ public:
 
     void update(uint32_t currentImage);
 
+    UniformBufferObject ubo;
+
 private:
     BackendVulkan* backend;
 
