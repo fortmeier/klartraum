@@ -10,9 +10,12 @@ public:
     InterfaceCameraOrbit(BackendVulkan* backend);
 
     virtual void update(Camera& camera);
+    virtual void onEvent(Event& event);
 
 private:
     BackendVulkan* backend;
+    double azimuth = 0.0;
+    double elevation = 0.0;
 };
 
 } // namespace klartraum
