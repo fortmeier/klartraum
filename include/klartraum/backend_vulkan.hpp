@@ -80,8 +80,11 @@ private:
 
     std::vector<std::unique_ptr<DrawComponent> > drawComponents;
 
-    int old_mouse_x;
-    int old_mouse_y;
+    int old_mouse_x = 0;
+    int old_mouse_y = 0;
+
+    bool leftButtonDown = false;
+    bool rightButtonDown = false;
 
     std::vector<VkFence> inFlightFences;
     std::vector<VkSemaphore> imageAvailableSemaphores;

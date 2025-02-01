@@ -731,8 +731,8 @@ void BackendVulkan::shutdown() {
 void BackendVulkan::processGLFWEvents() {
     double xpos, ypos;
     glfwGetCursorPos(window, &xpos, &ypos);
-    int new_mouse_x = xpos;
-    int new_mouse_y = ypos;
+    int new_mouse_x = (int)xpos;
+    int new_mouse_y = (int)ypos;
     if(new_mouse_x != old_mouse_x || new_mouse_y != old_mouse_y) {
         int dx = new_mouse_x - old_mouse_x;
         int dy = new_mouse_y - old_mouse_y;
@@ -741,6 +741,18 @@ void BackendVulkan::processGLFWEvents() {
         old_mouse_x = new_mouse_x;
         old_mouse_y = new_mouse_y;
     }
+
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !leftButtonDown) {
+        auto event = std::make_unique<EventMouseButton>(EventMouseButton::Button::Left, EventMouseButton::Action::Press);
+        eventQueue.push(std::move(event));
+        leftButtonDown = true;
+    }
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_RELEASE && leftButtonDown) {
+        auto event = std::make_unique<EventMouseButton>(EventMouseButton::Button::Left, EventMouseButton::Action::Release);
+        eventQueue.push(std::move(event));
+        leftButtonDown = false;
+    }
+
 }
 
 VkDevice& BackendVulkan::getDevice() {
