@@ -21,7 +21,7 @@ void InterfaceCameraOrbit::update(Camera &camera)
 
     auto& ubo = camera.ubo;
 
-    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo.model = glm::mat4(1.0f); //glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
     ubo.view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -2.0f)) *
                glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 1.0f, 0.0f)) *
@@ -46,20 +46,29 @@ void InterfaceCameraOrbit::onEvent(Event &event)
 
     if (EventMouseMove *e = dynamic_cast<EventMouseMove *>(&event))
     {
-        azimuth += e->dx / 1000.0f * time;
-        elevation += e->dy / 1000.0f * time;
+        if(leftButtonDown)
+        {
+            azimuth += e->dx / 1000.0f * time;
+            elevation += e->dy / 1000.0f * time;
 
-        if (elevation > glm::radians(89.0f))
-            elevation = glm::radians(89.0f);
-        if (elevation < glm::radians(-89.0f))
-            elevation = glm::radians(-89.0f);
+            if (elevation > glm::radians(89.0f))
+                elevation = glm::radians(89.0f);
+            if (elevation < glm::radians(-89.0f))
+                elevation = glm::radians(-89.0f);
 
-        if (azimuth > glm::radians(360.0f))
-            azimuth -= glm::radians(360.0f);
-        if (azimuth < glm::radians(0.0f))
-            azimuth += glm::radians(360.0f);
+            if (azimuth > glm::radians(360.0f))
+                azimuth -= glm::radians(360.0f);
+            if (azimuth < glm::radians(0.0f))
+                azimuth += glm::radians(360.0f);
+        }
+    }
+    else if(EventMouseButton *e = dynamic_cast<EventMouseButton *>(&event))
+    {
+        if(e->button == EventMouseButton::Button::Left )
+        {
+            leftButtonDown = e->action == EventMouseButton::Action::Press;
+        }
 
-        std::cout << "azimuth: " << azimuth << " elevation: " << elevation << std::endl;
     }
 
 }
