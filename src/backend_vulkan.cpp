@@ -626,7 +626,7 @@ class BackendVulkanImplementation {
 };
 
 
-BackendVulkan::BackendVulkan() : impl(nullptr)
+BackendVulkan::BackendVulkan() : impl(nullptr), old_mouse_x(0), old_mouse_y(0)
 {
 }
 
@@ -658,7 +658,6 @@ void BackendVulkan::initialize() {
 
     createSyncObjects();
 
-
 }
 
 void BackendVulkan::loop() {
@@ -677,6 +676,8 @@ void BackendVulkan::loop() {
         uint32_t imageIndex;
         vkAcquireNextImageKHR(device, impl->swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
+        processGLFWEvents();
+        
         for(auto &drawComponent : drawComponents) {
             auto framebuffer = getFramebuffer(imageIndex);
             auto imageAvailableSemaphore = imageAvailableSemaphores[currentFrame];
@@ -686,6 +687,11 @@ void BackendVulkan::loop() {
 
         if(interfaceCamera != nullptr && camera != nullptr)
         {
+            while (!eventQueue.empty()) {
+                auto event = std::move(eventQueue.front());
+                eventQueue.pop();
+                interfaceCamera->onEvent(*event);
+            }
             interfaceCamera->update(*camera);
         }
 
@@ -720,6 +726,33 @@ void BackendVulkan::shutdown() {
     camera = nullptr;
     glfwDestroyWindow(window);
     glfwTerminate();
+}
+
+void BackendVulkan::processGLFWEvents() {
+    double xpos, ypos;
+    glfwGetCursorPos(window, &xpos, &ypos);
+    int new_mouse_x = (int)xpos;
+    int new_mouse_y = (int)ypos;
+    if(new_mouse_x != old_mouse_x || new_mouse_y != old_mouse_y) {
+        int dx = new_mouse_x - old_mouse_x;
+        int dy = new_mouse_y - old_mouse_y;
+        auto event = std::make_unique<EventMouseMove>(new_mouse_x, new_mouse_y, dx, dy);
+        eventQueue.push(std::move(event));
+        old_mouse_x = new_mouse_x;
+        old_mouse_y = new_mouse_y;
+    }
+
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !leftButtonDown) {
+        auto event = std::make_unique<EventMouseButton>(EventMouseButton::Button::Left, EventMouseButton::Action::Press);
+        eventQueue.push(std::move(event));
+        leftButtonDown = true;
+    }
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_RELEASE && leftButtonDown) {
+        auto event = std::make_unique<EventMouseButton>(EventMouseButton::Button::Left, EventMouseButton::Action::Release);
+        eventQueue.push(std::move(event));
+        leftButtonDown = false;
+    }
+
 }
 
 VkDevice& BackendVulkan::getDevice() {

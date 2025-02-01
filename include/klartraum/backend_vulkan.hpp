@@ -2,6 +2,7 @@
 #define BACKEND_VULKAN_HPP
 
 #include <vector>
+#include <queue>
 #include <optional>
 #include <memory>
 
@@ -12,6 +13,7 @@
 #include "klartraum/draw_component.hpp"
 #include "klartraum/camera.hpp"
 #include "klartraum/interface_camera.hpp"
+#include "klartraum/events.hpp"
 
 namespace klartraum {
 
@@ -36,6 +38,8 @@ public:
     void loop();
 
     void shutdown();
+
+    void processGLFWEvents();
 
     VkDevice& getDevice();
     VkSwapchainKHR& getSwapChain();
@@ -72,7 +76,15 @@ private:
     std::shared_ptr<Camera> camera;
     std::shared_ptr<InterfaceCamera> interfaceCamera;
 
+    std::queue<std::unique_ptr<Event> > eventQueue;
+
     std::vector<std::unique_ptr<DrawComponent> > drawComponents;
+
+    int old_mouse_x = 0;
+    int old_mouse_y = 0;
+
+    bool leftButtonDown = false;
+    bool rightButtonDown = false;
 
     std::vector<VkFence> inFlightFences;
     std::vector<VkSemaphore> imageAvailableSemaphores;
