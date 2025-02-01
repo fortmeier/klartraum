@@ -3,7 +3,7 @@
 #include <Python.h>
 
 #include "klartraum/backend_vulkan.hpp"
-#include "klartraum/vulkan_gaussian_splatting.hpp"
+#include "klartraum/draw_basics.hpp"
 
 #include "klartraum/interface_camera_orbit.hpp"
 
@@ -20,7 +20,7 @@ int main() {
 
     std::string spzFile = "data/hornedlizard.spz";
     
-    std::unique_ptr<klartraum::VulkanGaussianSplatting> gaussianSplatting = std::make_unique<klartraum::VulkanGaussianSplatting>(backendVulkan, spzFile);
+    std::unique_ptr<klartraum::DrawBasics> gaussianSplatting = std::make_unique<klartraum::DrawBasics>(backendVulkan, klartraum::DrawBasicsType::Axes);
 
     backendVulkan.addDrawComponent(std::move(gaussianSplatting));
 

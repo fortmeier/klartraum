@@ -38,6 +38,7 @@ set(SRC
   src/vulkan_helpers.cpp
   src/camera.cpp
   src/interface_camera_orbit.cpp
+  src/draw_basics.cpp
   ${SPZ_SRC}
   )
 
