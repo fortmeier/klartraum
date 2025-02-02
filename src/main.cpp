@@ -4,6 +4,7 @@
 
 #include "klartraum/backend_vulkan.hpp"
 #include "klartraum/draw_basics.hpp"
+#include "klartraum/vulkan_gaussian_splatting.hpp"
 
 #include "klartraum/interface_camera_orbit.hpp"
 
@@ -18,11 +19,15 @@ int main() {
 
     backendVulkan.initialize();
 
-    std::string spzFile = "data/hornedlizard.spz";
     
-    std::unique_ptr<klartraum::DrawBasics> gaussianSplatting = std::make_unique<klartraum::DrawBasics>(backendVulkan, klartraum::DrawBasicsType::Axes);
+    std::unique_ptr<klartraum::DrawBasics> axes = std::make_unique<klartraum::DrawBasics>(backendVulkan, klartraum::DrawBasicsType::Axes);
+    backendVulkan.addDrawComponent(std::move(axes));
 
-    backendVulkan.addDrawComponent(std::move(gaussianSplatting));
+
+    std::string spzFile = "data/hornedlizard.spz";
+    std::unique_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_unique<klartraum::VulkanGaussianSplatting>(backendVulkan, spzFile);
+    backendVulkan.addDrawComponent(std::move(splatting));
+
 
     std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(&backendVulkan);
     backendVulkan.setInterfaceCamera(cameraOrbit);

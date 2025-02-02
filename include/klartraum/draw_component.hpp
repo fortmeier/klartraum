@@ -7,7 +7,7 @@
 namespace klartraum {
 class DrawComponent {
 public:
-    virtual VkSemaphore draw(uint32_t currentFrame, VkFramebuffer framebuffer, VkSemaphore imageAvailableSemaphore) = 0;
+    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) = 0;
 };
 
 } // namespace klartraum
