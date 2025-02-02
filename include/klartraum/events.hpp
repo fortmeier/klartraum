@@ -43,6 +43,15 @@ public:
     EventMouseButton(Button button, Action action) : button(button), action(action) {}
 };
 
+class EventMouseScroll : public Event
+{
+public:
+    double x;
+    double y;
+    EventMouseScroll(double x, double y) : x(x), y(y) {}
+
+};
+
 } // namespace klartraum
 
 #endif // KLARTRAUM_EVENTS_HPP

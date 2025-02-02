@@ -25,6 +25,7 @@ private:
     BackendVulkan* backend;
     double azimuth = 0.0;
     double elevation = 0.0;
+    double distance = 2.0;
 
     bool leftButtonDown = false;
 

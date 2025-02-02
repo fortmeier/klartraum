@@ -642,6 +642,16 @@ BackendVulkan::~BackendVulkan()
     delete impl;
 }
 
+static double scrollYAccum = 0.0;
+static double scrollXAccum = 0.0;
+
+static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    scrollXAccum += xoffset;
+    scrollYAccum += yoffset;
+}
+
+
 void BackendVulkan::initialize() {
     // Initialize Vulkan
     if (!glfwInit()) {
@@ -651,6 +661,8 @@ void BackendVulkan::initialize() {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     window = glfwCreateWindow(config.WIDTH, config.HEIGHT, "Vulkan", nullptr, nullptr);
+
+    glfwSetScrollCallback(window, scroll_callback);
 
     impl = new BackendVulkanImplementation(window);
     
@@ -728,6 +740,7 @@ void BackendVulkan::shutdown() {
     glfwTerminate();
 }
 
+
 void BackendVulkan::processGLFWEvents() {
     double xpos, ypos;
     glfwGetCursorPos(window, &xpos, &ypos);
@@ -751,6 +764,13 @@ void BackendVulkan::processGLFWEvents() {
         auto event = std::make_unique<EventMouseButton>(EventMouseButton::Button::Left, EventMouseButton::Action::Release);
         eventQueue.push(std::move(event));
         leftButtonDown = false;
+    }
+
+    if (scrollXAccum != 0.0 || scrollYAccum != 0.0) {
+        auto event = std::make_unique<EventMouseScroll>(scrollXAccum, scrollYAccum);
+        eventQueue.push(std::move(event));
+        scrollXAccum = 0.0;
+        scrollYAccum = 0.0;
     }
 
 }

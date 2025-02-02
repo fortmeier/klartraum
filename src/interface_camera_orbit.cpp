@@ -26,7 +26,7 @@ void InterfaceCameraOrbit::update(Camera &camera)
     switch (up)
     {
     case UpDirection::Z:
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
+        ubo.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
                 glm::rotate(glm::mat4(1.0f), (float)elevation, glm::vec3(0.0f, 1.0f, 0.0f)) *    
                 glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 0.0f, 1.0f));
         break;
@@ -76,6 +76,11 @@ void InterfaceCameraOrbit::onEvent(Event &event)
             leftButtonDown = e->action == EventMouseButton::Action::Press;
         }
 
+    }
+    else if(EventMouseScroll *e = dynamic_cast<EventMouseScroll *>(&event))
+    {
+        distance += e->y / 10.0;
+        distance = glm::clamp(distance, 0.1, 10000.0);
     }
 
 }
