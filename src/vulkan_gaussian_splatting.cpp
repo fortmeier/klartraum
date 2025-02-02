@@ -50,8 +50,6 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(BackendVulkan &backendVulkan, s
 
     createGraphicsPipeline();
     createVertexBuffer();
-    createCommandPool();
-    createCommandBuffers();
     createSyncObjects();
 
 }
@@ -62,44 +60,19 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
 
-    for (size_t i = 0; i < backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
-    }
 
-    vkDestroyCommandPool(device, commandPool, nullptr);
 }
 
-VkSemaphore VulkanGaussianSplatting::draw(uint32_t currentFrame, VkFramebuffer framebuffer, VkSemaphore imageAvailableSemaphore) {
-    auto device = backendVulkan.getDevice();
-    auto swapChain = backendVulkan.getSwapChain();
-    auto graphicsQueue = backendVulkan.getGraphicsQueue();
+void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) {
+    auto& device = backendVulkan.getDevice();
+    auto& swapChain = backendVulkan.getSwapChain();
+    auto& graphicsQueue = backendVulkan.getGraphicsQueue();
 
 
 
-    vkResetCommandBuffer(commandBuffers[currentFrame], 0);
-    recordCommandBuffer(currentFrame, commandBuffers[currentFrame], framebuffer);
+    recordCommandBuffer(currentFrame, commandBuffer, framebuffer);
 
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-    VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = waitSemaphores;
-    submitInfo.pWaitDstStageMask = waitStages;
-
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
-
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
-
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr) != VK_SUCCESS) {
-        throw std::runtime_error("failed to submit draw command buffer!");
-    }
-
-   return renderFinishedSemaphores[currentFrame];
 }
 
 void VulkanGaussianSplatting::createGraphicsPipeline() {
@@ -287,50 +260,13 @@ void VulkanGaussianSplatting::createVertexBuffer() {
     vkUnmapMemory(device, vertexBufferMemory);
 }
 
-void VulkanGaussianSplatting::createCommandPool() {
 
-    auto device = backendVulkan.getDevice();
-
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    poolInfo.queueFamilyIndex = backendVulkan.getQueueFamilyIndices().graphicsFamily.value();
-
-    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create command pool!");
-    }    
-}
-
-void VulkanGaussianSplatting::createCommandBuffers() {
-    auto device = backendVulkan.getDevice();
-
-    commandBuffers.resize(backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT);
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = static_cast<uint32_t>(commandBuffers.size());
-
-    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate command buffers!");
-    }
-}
 
 void VulkanGaussianSplatting::createSyncObjects()
 {
     auto device = backendVulkan.getDevice();
 
-    renderFinishedSemaphores.resize(backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT);
 
-    VkSemaphoreCreateInfo semaphoreInfo{};
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-    for (size_t i = 0; i < backendVulkan.getConfig().MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create semaphores!");
-        }
-    }    
 }
 
 void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer)
@@ -338,29 +274,6 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     auto& swapChainExtent = backendVulkan.getSwapChainExtent();
     auto& camera = backendVulkan.getCamera();
     
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = 0; // Optional
-    beginInfo.pInheritanceInfo = nullptr; // Optional
-
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-        throw std::runtime_error("failed to begin recording command buffer!");
-    }
-
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = backendVulkan.getRenderPass();
-    renderPassInfo.framebuffer = framebuffer;
-
-    renderPassInfo.renderArea.offset = { 0, 0 };
-    renderPassInfo.renderArea.extent = swapChainExtent;
-
-    VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkViewport viewport{};
@@ -384,11 +297,6 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
     vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
-    vkCmdEndRenderPass(commandBuffer);
-
-    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to record command buffer!");
-    }
 }
 
 void VulkanGaussianSplatting::loadSPZModel(std::string path)

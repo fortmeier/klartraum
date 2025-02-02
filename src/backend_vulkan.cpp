@@ -633,13 +633,23 @@ BackendVulkan::BackendVulkan() : impl(nullptr), old_mouse_x(0), old_mouse_y(0)
 BackendVulkan::~BackendVulkan()
 {
     auto device = impl->device;
+    
+    vkDestroyCommandPool(device, commandPool, nullptr);
+    
     for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(device, inFlightFences[i], nullptr);
     }
+    
+    for (size_t i = 0; i < getConfig().MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+    }
 
     delete impl;
+
+
 }
 
 static double scrollYAccum = 0.0;
@@ -668,6 +678,9 @@ void BackendVulkan::initialize() {
     
     camera = std::make_unique<Camera>(this);
 
+    createCommandPool();
+    createCommandBuffers();
+
     createSyncObjects();
 
 }
@@ -689,13 +702,19 @@ void BackendVulkan::loop() {
         vkAcquireNextImageKHR(device, impl->swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
         processGLFWEvents();
+
+        auto& framebuffer = getFramebuffer(imageIndex);
+        auto& commandBuffer = commandBuffers[currentFrame];
+        
+        beginRenderPass(currentFrame, framebuffer);
         
         for(auto &drawComponent : drawComponents) {
-            auto framebuffer = getFramebuffer(imageIndex);
             auto imageAvailableSemaphore = imageAvailableSemaphores[currentFrame];
-            auto draw_finish_semaphore = drawComponent->draw(currentFrame, framebuffer, imageAvailableSemaphore);
-            signalSemaphores.push_back(draw_finish_semaphore);
+            drawComponent->draw(currentFrame, commandBuffer, framebuffer, imageAvailableSemaphore);
         }
+
+        signalSemaphores.push_back(renderFinishedSemaphores[currentFrame]);
+        endRenderPass(currentFrame);
 
         if(interfaceCamera != nullptr && camera != nullptr)
         {
@@ -916,7 +935,16 @@ void BackendVulkan::createSyncObjects()
             vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create semaphores!");
         }
-    }    
+    }
+
+    renderFinishedSemaphores.resize(getConfig().MAX_FRAMES_IN_FLIGHT);
+
+    for (size_t i = 0; i < getConfig().MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create semaphores!");
+        }
+    }
 }
 
 uint32_t BackendVulkan::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -936,5 +964,92 @@ uint32_t BackendVulkan::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
+void BackendVulkan::beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer) {
+    VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
+
+    vkResetCommandBuffer(commandBuffer, 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0; // Optional
+    beginInfo.pInheritanceInfo = nullptr; // Optional
+
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin recording command buffer!");
+    }
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = impl->renderPass;
+    renderPassInfo.framebuffer = framebuffer;
+
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = getSwapChainExtent();
+
+    VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);    
+}
+
+void BackendVulkan::endRenderPass(uint32_t currentFrame) {
+    VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
+
+    vkCmdEndRenderPass(commandBuffer);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to record command buffer!");
+    }
+
+    VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
+
+    if (vkQueueSubmit(impl->graphicsQueue, 1, &submitInfo, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit draw command buffer!");
+    }    
+}
+
+void BackendVulkan::createCommandPool() {
+
+    auto device = impl->device;
+
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = getQueueFamilyIndices().graphicsFamily.value();
+
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create command pool!");
+    }    
+}
+
+void BackendVulkan::createCommandBuffers() {
+    auto device = impl->device;
+
+    commandBuffers.resize(getConfig().MAX_FRAMES_IN_FLIGHT);
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = static_cast<uint32_t>(commandBuffers.size());
+
+    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate command buffers!");
+    }
+}
 
 } // namespace klartraum

@@ -88,8 +88,18 @@ private:
 
     std::vector<VkFence> inFlightFences;
     std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> renderFinishedSemaphores;  
 
     void createSyncObjects();
+
+    void beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer);
+    void endRenderPass(uint32_t currentFrame);
+
+    void createCommandPool();
+    void createCommandBuffers();
+
+    VkCommandPool commandPool;
+    std::vector<VkCommandBuffer> commandBuffers;    
 };
 
 } // namespace klartraum

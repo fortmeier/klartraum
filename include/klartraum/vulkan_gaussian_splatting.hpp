@@ -14,13 +14,12 @@ public:
     VulkanGaussianSplatting(BackendVulkan &backendVulkan, std::string path);
     ~VulkanGaussianSplatting();
 
-    virtual VkSemaphore draw(uint32_t currentFrame, VkFramebuffer framebuffer, VkSemaphore imageAvailableSemaphore) override;
+    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
 
 private:
     void createGraphicsPipeline();
     void createSyncObjects();
-    void createCommandPool();
-    void createCommandBuffers();
+
     void createVertexBuffer();
 
     void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
@@ -34,11 +33,8 @@ private:
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
-
-    std::vector<VkSemaphore> renderFinishedSemaphores;
+ 
     
-    VkCommandPool commandPool;
-    std::vector<VkCommandBuffer> commandBuffers;
 };
 
 } // namespace klartraum
