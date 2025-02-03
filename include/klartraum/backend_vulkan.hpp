@@ -61,7 +61,7 @@ public:
 
 private:
     BackendConfig config;
-    BackendVulkanImplementation* impl;
+    VulkanKernel* impl;
     GLFWwindow* window;
 
     VkSurfaceKHR surface;
