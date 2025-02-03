@@ -79,7 +79,7 @@ const VkPrimitiveTopology getTopology(DrawBasicsType type) {
 }
 
 
-DrawBasics::DrawBasics(BackendVulkan &backendVulkan, DrawBasicsType type) : backendVulkan(backendVulkan), type(type) {
+DrawBasics::DrawBasics(GlfwFrontend &backendVulkan, DrawBasicsType type) : backendVulkan(backendVulkan), type(type) {
 
     createGraphicsPipeline();
     createVertexBuffer();

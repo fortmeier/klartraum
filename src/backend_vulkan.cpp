@@ -19,11 +19,11 @@
 namespace klartraum {
 
 
-BackendVulkan::BackendVulkan() : impl(nullptr), old_mouse_x(0), old_mouse_y(0)
+GlfwFrontend::GlfwFrontend() : impl(nullptr), old_mouse_x(0), old_mouse_y(0)
 {
 }
 
-BackendVulkan::~BackendVulkan()
+GlfwFrontend::~GlfwFrontend()
 {
     auto device = impl->device;
     
@@ -55,7 +55,7 @@ static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 }
 
 
-void BackendVulkan::initialize() {
+void GlfwFrontend::initialize() {
     // Initialize Vulkan
     if (!glfwInit()) {
         throw std::runtime_error("Failed to initialize GLFW");
@@ -86,7 +86,7 @@ void BackendVulkan::initialize() {
 }
 
 
-void BackendVulkan::loop() {
+void GlfwFrontend::loop() {
     auto device = impl->device;
 
     uint32_t currentFrame = 0;
@@ -154,7 +154,7 @@ void BackendVulkan::loop() {
 
 }
 
-void BackendVulkan::shutdown() {
+void GlfwFrontend::shutdown() {
     camera = nullptr;
 
     vkDestroySurfaceKHR(impl->instance, surface, nullptr);
@@ -165,7 +165,7 @@ void BackendVulkan::shutdown() {
 }
 
 
-void BackendVulkan::processGLFWEvents() {
+void GlfwFrontend::processGLFWEvents() {
     double xpos, ypos;
     glfwGetCursorPos(window, &xpos, &ypos);
     int new_mouse_x = (int)xpos;
@@ -199,7 +199,7 @@ void BackendVulkan::processGLFWEvents() {
 
 }
 
-VkDevice& BackendVulkan::getDevice() {
+VkDevice& GlfwFrontend::getDevice() {
     if(impl == nullptr)
     {
         throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
@@ -207,7 +207,7 @@ VkDevice& BackendVulkan::getDevice() {
     return impl->device;
 }
 
-VkSwapchainKHR& BackendVulkan::getSwapChain()
+VkSwapchainKHR& GlfwFrontend::getSwapChain()
 {
     if(impl == nullptr)
     {
@@ -216,7 +216,7 @@ VkSwapchainKHR& BackendVulkan::getSwapChain()
     return impl->swapChain;
 }
 
-VkRenderPass& BackendVulkan::getRenderPass()
+VkRenderPass& GlfwFrontend::getRenderPass()
 {
     if(impl == nullptr)
     {
@@ -225,7 +225,7 @@ VkRenderPass& BackendVulkan::getRenderPass()
     return impl->renderPass;
 }
 
-VkQueue& BackendVulkan::getGraphicsQueue()
+VkQueue& GlfwFrontend::getGraphicsQueue()
 {
     if(impl == nullptr)
     {
@@ -234,7 +234,7 @@ VkQueue& BackendVulkan::getGraphicsQueue()
     return impl->graphicsQueue;
 }
 
-VkFramebuffer& BackendVulkan::getFramebuffer(uint32_t imageIndex){
+VkFramebuffer& GlfwFrontend::getFramebuffer(uint32_t imageIndex){
     if(impl == nullptr)
     {
         throw std::runtime_error("BackendVulkan::getDevice() called before initialize()");
@@ -245,7 +245,7 @@ VkFramebuffer& BackendVulkan::getFramebuffer(uint32_t imageIndex){
     return impl->swapChainFramebuffers[imageIndex];
 }
 
-VkExtent2D& BackendVulkan::getSwapChainExtent()
+VkExtent2D& GlfwFrontend::getSwapChainExtent()
 {
     if(impl == nullptr)
     {
@@ -254,7 +254,7 @@ VkExtent2D& BackendVulkan::getSwapChainExtent()
     return impl->swapChainExtent;
 }
 
-QueueFamilyIndices BackendVulkan::getQueueFamilyIndices() {
+QueueFamilyIndices GlfwFrontend::getQueueFamilyIndices() {
     if(impl == nullptr)
     {
         throw std::runtime_error("BackendVulkan::getQueueFamilyIndices() called before initialize()");
@@ -263,7 +263,7 @@ QueueFamilyIndices BackendVulkan::getQueueFamilyIndices() {
     return queueFamilyIndices;
 }
 
-Camera& BackendVulkan::getCamera()
+Camera& GlfwFrontend::getCamera()
 {
     if(impl == nullptr)
     {
@@ -272,7 +272,7 @@ Camera& BackendVulkan::getCamera()
     return *camera;
 }
 
-void BackendVulkan::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
+void GlfwFrontend::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
 {
     if(impl == nullptr)
     {
@@ -281,17 +281,17 @@ void BackendVulkan::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
     this->interfaceCamera = camera;
 }
 
-BackendConfig& BackendVulkan::getConfig()
+BackendConfig& GlfwFrontend::getConfig()
 {
     return config;
 }
 
-void BackendVulkan::addDrawComponent(std::unique_ptr<DrawComponent> drawComponent)
+void GlfwFrontend::addDrawComponent(std::unique_ptr<DrawComponent> drawComponent)
 {
     drawComponents.push_back(std::move(drawComponent));
 }
 
-void BackendVulkan::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+void GlfwFrontend::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
     auto device = impl->device;
 
     VkBufferCreateInfo bufferInfo{};
@@ -319,7 +319,7 @@ void BackendVulkan::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Vk
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
-void BackendVulkan::createSyncObjects()
+void GlfwFrontend::createSyncObjects()
 {
     imageAvailableSemaphores.resize(config.MAX_FRAMES_IN_FLIGHT);
     inFlightFences.resize(config.MAX_FRAMES_IN_FLIGHT);
@@ -352,7 +352,7 @@ void BackendVulkan::createSyncObjects()
     }
 }
 
-uint32_t BackendVulkan::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+uint32_t GlfwFrontend::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
     if(impl == nullptr)
     {
         throw std::runtime_error("BackendVulkan::findMemoryType() called before initialize()");
@@ -369,7 +369,7 @@ uint32_t BackendVulkan::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-void BackendVulkan::beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer) {
+void GlfwFrontend::beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer) {
     VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
 
     vkResetCommandBuffer(commandBuffer, 0);
@@ -398,7 +398,7 @@ void BackendVulkan::beginRenderPass(uint32_t currentFrame, VkFramebuffer& frameb
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);    
 }
 
-void BackendVulkan::endRenderPass(uint32_t currentFrame) {
+void GlfwFrontend::endRenderPass(uint32_t currentFrame) {
     VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
 
     vkCmdEndRenderPass(commandBuffer);
@@ -428,7 +428,7 @@ void BackendVulkan::endRenderPass(uint32_t currentFrame) {
     }    
 }
 
-void BackendVulkan::createCommandPool() {
+void GlfwFrontend::createCommandPool() {
 
     auto device = impl->device;
 
@@ -442,7 +442,7 @@ void BackendVulkan::createCommandPool() {
     }    
 }
 
-void BackendVulkan::createCommandBuffers() {
+void GlfwFrontend::createCommandBuffers() {
     auto device = impl->device;
 
     commandBuffers.resize(getConfig().MAX_FRAMES_IN_FLIGHT);
