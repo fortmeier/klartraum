@@ -7,7 +7,7 @@
 
 namespace klartraum {
 
-InterfaceCameraOrbit::InterfaceCameraOrbit(BackendVulkan *backend) : backend(backend)
+InterfaceCameraOrbit::InterfaceCameraOrbit(GlfwFrontend *backend) : backend(backend)
 {
 }
 

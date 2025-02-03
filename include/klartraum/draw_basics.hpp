@@ -18,7 +18,7 @@ enum class DrawBasicsType {
 class DrawBasics : public DrawComponent {
 public:
 
-    DrawBasics(BackendVulkan &backendVulkan, DrawBasicsType type);
+    DrawBasics(GlfwFrontend &backendVulkan, DrawBasicsType type);
     ~DrawBasics();
 
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
@@ -30,7 +30,7 @@ private:
 
     void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
-    BackendVulkan &backendVulkan;
+    GlfwFrontend &backendVulkan;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;

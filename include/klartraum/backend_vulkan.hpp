@@ -19,10 +19,10 @@
 
 namespace klartraum {
 
-class BackendVulkan {
+class GlfwFrontend {
 public:
-    BackendVulkan();
-    ~BackendVulkan();
+    GlfwFrontend();
+    ~GlfwFrontend();
 
     void initialize();
 
