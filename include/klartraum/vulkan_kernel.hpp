@@ -45,7 +45,7 @@ struct SwapChainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;
 };
 
-class BackendVulkanImplementation {
+class VulkanKernel {
     private:
     //GLFWwindow* window = nullptr;
     const uint32_t WIDTH = 800;
@@ -150,12 +150,12 @@ class BackendVulkanImplementation {
     void createFramebuffers();
 
     public:
-    BackendVulkanImplementation(/*GLFWwindow* window*/);
+    VulkanKernel(/*GLFWwindow* window*/);
 
     void initialize(VkSurfaceKHR& surface);
 
 
-    ~BackendVulkanImplementation();
+    ~VulkanKernel();
 
     QueueFamilyIndices findQueueFamiliesPhysicalDevice();
 

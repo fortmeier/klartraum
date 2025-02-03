@@ -19,7 +19,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
     }
 }
 
-bool BackendVulkanImplementation::checkValidationLayerSupport() {
+bool VulkanKernel::checkValidationLayerSupport() {
     uint32_t layerCount;
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 
@@ -42,7 +42,7 @@ bool BackendVulkanImplementation::checkValidationLayerSupport() {
     return true;
 }
 
-std::vector<const char*> BackendVulkanImplementation::getRequiredExtensions() {
+std::vector<const char*> VulkanKernel::getRequiredExtensions() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions;
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -56,7 +56,7 @@ std::vector<const char*> BackendVulkanImplementation::getRequiredExtensions() {
     return extensions;
 }
 
-VKAPI_ATTR VkBool32 VKAPI_CALL BackendVulkanImplementation::debugCallback(
+VKAPI_ATTR VkBool32 VKAPI_CALL VulkanKernel::debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -67,7 +67,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL BackendVulkanImplementation::debugCallback(
     return VK_FALSE;
 }
 
-SwapChainSupportDetails BackendVulkanImplementation::querySwapChainSupport(VkPhysicalDevice device) {
+SwapChainSupportDetails VulkanKernel::querySwapChainSupport(VkPhysicalDevice device) {
     SwapChainSupportDetails details;
 
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
@@ -92,7 +92,7 @@ SwapChainSupportDetails BackendVulkanImplementation::querySwapChainSupport(VkPhy
     return details;
 }
 
-void BackendVulkanImplementation::createInstance() {
+void VulkanKernel::createInstance() {
 
     std::cout << "use validation layers: " << (enableValidationLayers ? "true" : "false") << std::endl;
     if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -153,7 +153,7 @@ void BackendVulkanImplementation::createInstance() {
 
 }
 
-void BackendVulkanImplementation::setupDebugMessenger() {
+void VulkanKernel::setupDebugMessenger() {
     if (!enableValidationLayers) return;
     VkDebugUtilsMessengerCreateInfoEXT createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -167,7 +167,7 @@ void BackendVulkanImplementation::setupDebugMessenger() {
     }
 }
 
-QueueFamilyIndices BackendVulkanImplementation::findQueueFamilies(VkPhysicalDevice device) {
+QueueFamilyIndices VulkanKernel::findQueueFamilies(VkPhysicalDevice device) {
     QueueFamilyIndices indices;
 
     uint32_t queueFamilyCount = 0;
@@ -199,7 +199,7 @@ QueueFamilyIndices BackendVulkanImplementation::findQueueFamilies(VkPhysicalDevi
     return indices;
 }
 
-bool BackendVulkanImplementation::isDeviceSuitable(VkPhysicalDevice device) {
+bool VulkanKernel::isDeviceSuitable(VkPhysicalDevice device) {
     QueueFamilyIndices indices = findQueueFamilies(device);
 
     bool extensionsSupported = checkDeviceExtensionSupport(device);
@@ -213,7 +213,7 @@ bool BackendVulkanImplementation::isDeviceSuitable(VkPhysicalDevice device) {
     return indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
 
-VkSurfaceFormatKHR BackendVulkanImplementation::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+VkSurfaceFormatKHR VulkanKernel::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
     for (const auto& availableFormat : availableFormats) {
         if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             return availableFormat;
@@ -223,7 +223,7 @@ VkSurfaceFormatKHR BackendVulkanImplementation::chooseSwapSurfaceFormat(const st
     return availableFormats[0];
 }
 
-VkPresentModeKHR BackendVulkanImplementation::chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+VkPresentModeKHR VulkanKernel::chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
     for (const auto& availablePresentMode : availablePresentModes) {
         if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
             return availablePresentMode;
@@ -233,7 +233,7 @@ VkPresentModeKHR BackendVulkanImplementation::chooseSwapPresentMode(const std::v
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D BackendVulkanImplementation::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+VkExtent2D VulkanKernel::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return capabilities.currentExtent;
     }
@@ -254,7 +254,7 @@ VkExtent2D BackendVulkanImplementation::chooseSwapExtent(const VkSurfaceCapabili
     }
 }
 
-void BackendVulkanImplementation::createSwapChain() {
+void VulkanKernel::createSwapChain() {
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
@@ -309,7 +309,7 @@ void BackendVulkanImplementation::createSwapChain() {
     swapChainExtent = extent;
 }
 
-void BackendVulkanImplementation::createImageViews() {
+void VulkanKernel::createImageViews() {
     swapChainImageViews.resize(swapChainImages.size());
     for (size_t i = 0; i < swapChainImages.size(); i++) {
         VkImageViewCreateInfo createInfo{};
@@ -338,7 +338,7 @@ void BackendVulkanImplementation::createImageViews() {
 
 
 
-bool BackendVulkanImplementation::checkDeviceExtensionSupport(VkPhysicalDevice device) {
+bool VulkanKernel::checkDeviceExtensionSupport(VkPhysicalDevice device) {
     uint32_t extensionCount;
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
@@ -354,7 +354,7 @@ bool BackendVulkanImplementation::checkDeviceExtensionSupport(VkPhysicalDevice d
     return requiredExtensions.empty();
 }
 
-void BackendVulkanImplementation::pickPhysicalDevice() {
+void VulkanKernel::pickPhysicalDevice() {
 
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
@@ -381,7 +381,7 @@ void BackendVulkanImplementation::pickPhysicalDevice() {
     }
 }
 
-void BackendVulkanImplementation::createLogicalDevice() {
+void VulkanKernel::createLogicalDevice() {
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
@@ -426,7 +426,7 @@ void BackendVulkanImplementation::createLogicalDevice() {
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 }
 
-void BackendVulkanImplementation::createRenderPass() {
+void VulkanKernel::createRenderPass() {
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = swapChainImageFormat;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -475,7 +475,7 @@ void BackendVulkanImplementation::createRenderPass() {
     }
 }
 
-void BackendVulkanImplementation::createFramebuffers() {
+void VulkanKernel::createFramebuffers() {
     swapChainFramebuffers.resize(swapChainImageViews.size());
 
     for (size_t i = 0; i < swapChainImageViews.size(); i++) {
@@ -498,7 +498,7 @@ void BackendVulkanImplementation::createFramebuffers() {
     }
 }
 
-BackendVulkanImplementation::BackendVulkanImplementation(/*GLFWwindow* window*/) {
+VulkanKernel::VulkanKernel(/*GLFWwindow* window*/) {
     //this->window = window;
 
     createInstance();
@@ -506,7 +506,7 @@ BackendVulkanImplementation::BackendVulkanImplementation(/*GLFWwindow* window*/)
 
 }
 
-void BackendVulkanImplementation::initialize(VkSurfaceKHR& surface) {
+void VulkanKernel::initialize(VkSurfaceKHR& surface) {
     this->surface = surface;
 
     pickPhysicalDevice();
@@ -518,7 +518,7 @@ void BackendVulkanImplementation::initialize(VkSurfaceKHR& surface) {
 }
 
 
-BackendVulkanImplementation::~BackendVulkanImplementation() {
+VulkanKernel::~VulkanKernel() {
     vkDestroySwapchainKHR(device, swapChain, nullptr);
 
     vkDestroyDevice(device, nullptr);
@@ -534,7 +534,7 @@ BackendVulkanImplementation::~BackendVulkanImplementation() {
     //glfwTerminate();
 }
 
-QueueFamilyIndices BackendVulkanImplementation::findQueueFamiliesPhysicalDevice() {
+QueueFamilyIndices VulkanKernel::findQueueFamiliesPhysicalDevice() {
     return findQueueFamilies(physicalDevice);
 }
 

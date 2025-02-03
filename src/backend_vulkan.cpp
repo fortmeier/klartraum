@@ -67,7 +67,7 @@ void BackendVulkan::initialize() {
 
     glfwSetScrollCallback(window, scroll_callback);
 
-    impl = new BackendVulkanImplementation();
+    impl = new VulkanKernel();
 
     if (glfwCreateWindowSurface(impl->instance, window, nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create window surface!");
