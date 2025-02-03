@@ -7,7 +7,7 @@ namespace klartraum {
 
 class InterfaceCameraOrbit : public InterfaceCamera {
 public:
-    InterfaceCameraOrbit(BackendVulkan* backend);
+    InterfaceCameraOrbit(GlfwFrontend* backend);
 
     virtual void update(Camera& camera);
     virtual void onEvent(Event& event);
@@ -22,7 +22,7 @@ public:
 
 
 private:
-    BackendVulkan* backend;
+    GlfwFrontend* backend;
     double azimuth = 0.0;
     double elevation = 0.0;
     double distance = 2.0;

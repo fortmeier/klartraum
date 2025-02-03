@@ -45,7 +45,7 @@ const std::vector<Vertex> vertices = {
     {{-0.5f, 0.5f}, {1.0f, 0.0f, 1.0f}}
 };
 
-VulkanGaussianSplatting::VulkanGaussianSplatting(BackendVulkan &backendVulkan, std::string path) : backendVulkan(backendVulkan) {
+VulkanGaussianSplatting::VulkanGaussianSplatting(GlfwFrontend &backendVulkan, std::string path) : backendVulkan(backendVulkan) {
     loadSPZModel(path);
 
     createGraphicsPipeline();

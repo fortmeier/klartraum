@@ -12,7 +12,7 @@
 
 namespace klartraum {
 
-Camera::Camera(BackendVulkan* backend) : backend(backend) {
+Camera::Camera(GlfwFrontend* backend) : backend(backend) {
     createDescriptorSetLayout();
     createUniformBuffers();
     createDescriptorPool();

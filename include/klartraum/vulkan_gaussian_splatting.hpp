@@ -11,7 +11,7 @@ namespace klartraum {
 
 class VulkanGaussianSplatting : public DrawComponent {
 public:
-    VulkanGaussianSplatting(BackendVulkan &backendVulkan, std::string path);
+    VulkanGaussianSplatting(GlfwFrontend &backendVulkan, std::string path);
     ~VulkanGaussianSplatting();
 
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
@@ -26,7 +26,7 @@ private:
 
     void loadSPZModel(std::string path);
 
-    BackendVulkan &backendVulkan;
+    GlfwFrontend &backendVulkan;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;

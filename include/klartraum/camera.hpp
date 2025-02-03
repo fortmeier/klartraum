@@ -16,11 +16,11 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
-class BackendVulkan;
+class GlfwFrontend;
 
 class Camera {
 public:
-    Camera(BackendVulkan* backend);
+    Camera(GlfwFrontend* backend);
     ~Camera();
 
     VkDescriptorSetLayout& getDescriptorSetLayout();
@@ -31,7 +31,7 @@ public:
     UniformBufferObject ubo;
 
 private:
-    BackendVulkan* backend;
+    GlfwFrontend* backend;
 
     void createDescriptorSetLayout();
     void createUniformBuffers();

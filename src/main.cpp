@@ -15,7 +15,7 @@ int main() {
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
 
-    klartraum::BackendVulkan backendVulkan;
+    klartraum::GlfwFrontend backendVulkan;
 
     backendVulkan.initialize();
 
