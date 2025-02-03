@@ -73,6 +73,8 @@ private:
     BackendVulkanImplementation* impl;
     GLFWwindow* window;
 
+    VkSurfaceKHR surface;
+
     std::shared_ptr<Camera> camera;
     std::shared_ptr<InterfaceCamera> interfaceCamera;
 
