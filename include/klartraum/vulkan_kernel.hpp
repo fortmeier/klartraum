@@ -13,8 +13,6 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include <vulkan/vulkan.h>
-
 
 #include "klartraum/backend_config.hpp"
 #include "klartraum/draw_component.hpp"
@@ -80,12 +78,6 @@ class VulkanKernel {
     
 
     std::vector<VkImageView> swapChainImageViews;
-
-    VkCommandPool commandPool;
-
-    std::vector<VkCommandBuffer> commandBuffers;
-
-    uint32_t currentFrame = 0;
 
     const std::vector<const char*> validationLayers = {
 		"VK_LAYER_KHRONOS_validation"
@@ -178,6 +170,55 @@ class VulkanKernel {
 
     std::vector<VkFramebuffer> swapChainFramebuffers;
     VkExtent2D swapChainExtent;
+
+    VkInstance& getInstance();
+
+    VkDevice& getDevice();
+    VkSwapchainKHR& getSwapChain();
+    VkRenderPass& getRenderPass();
+    
+    VkQueue& getGraphicsQueue();
+
+
+    VkFramebuffer& getFramebuffer(uint32_t imageIndex);
+    VkExtent2D& getSwapChainExtent();
+
+    
+
+    QueueFamilyIndices getQueueFamilyIndices();
+
+    BackendConfig config;
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    BackendConfig& getConfig();
+
+    std::vector<VkFence> inFlightFences;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> renderFinishedSemaphores;  
+    //std::vector<VkSemaphore> signalSemaphores;
+
+    void createSyncObjects();
+
+    uint32_t currentFrame = 0;
+
+    uint32_t beginRender();
+    void endRender(uint32_t imageIndex);
+
+    void beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer);
+    void endRenderPass(uint32_t currentFrame);
+
+    void createCommandPool();
+    void createCommandBuffers();
+
+    VkCommandPool commandPool;
+    std::vector<VkCommandBuffer> commandBuffers;
+
+
+    std::shared_ptr<Camera> camera;
+ 
+    Camera& getCamera();
+
 
 };
 

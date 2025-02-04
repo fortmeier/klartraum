@@ -1,3 +1,6 @@
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
 #include "klartraum/vulkan_kernel.hpp"
 
 namespace klartraum {
@@ -515,10 +518,31 @@ void VulkanKernel::initialize(VkSurfaceKHR& surface) {
     createImageViews();
     createRenderPass();
     createFramebuffers();
+    
+    createCommandPool();
+    createCommandBuffers();
+    createSyncObjects();
+
+    camera = std::make_unique<Camera>(this);
+
 }
 
 
 VulkanKernel::~VulkanKernel() {
+    vkDestroyCommandPool(device, commandPool, nullptr);
+    
+    for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+        vkDestroyFence(device, inFlightFences[i], nullptr);
+    }
+    
+    for (size_t i = 0; i < getConfig().MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+    }
+
+
     vkDestroySwapchainKHR(device, swapChain, nullptr);
 
     vkDestroyDevice(device, nullptr);
@@ -537,5 +561,266 @@ VulkanKernel::~VulkanKernel() {
 QueueFamilyIndices VulkanKernel::findQueueFamiliesPhysicalDevice() {
     return findQueueFamilies(physicalDevice);
 }
+
+VkInstance& VulkanKernel::getInstance() {
+    return instance;
+}
+
+VkDevice& VulkanKernel::getDevice() {
+    return device;
+}
+
+VkSwapchainKHR& VulkanKernel::getSwapChain()
+{
+    return swapChain;
+}
+
+VkRenderPass& VulkanKernel::getRenderPass()
+{
+    return renderPass;
+}
+
+VkQueue& VulkanKernel::getGraphicsQueue()
+{
+    return graphicsQueue;
+}
+
+VkFramebuffer& VulkanKernel::getFramebuffer(uint32_t imageIndex){
+    if (imageIndex >= swapChainFramebuffers.size()) {
+        throw std::runtime_error("Invalid image index!");
+    }
+    return swapChainFramebuffers[imageIndex];
+}
+
+VkExtent2D& VulkanKernel::getSwapChainExtent()
+{
+    return swapChainExtent;
+}
+
+QueueFamilyIndices VulkanKernel::getQueueFamilyIndices() {
+    QueueFamilyIndices queueFamilyIndices = findQueueFamiliesPhysicalDevice();
+    return queueFamilyIndices;
+}
+
+
+void VulkanKernel::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create buffer!");
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate buffer memory!");
+    }
+
+    vkBindBufferMemory(device, buffer, bufferMemory, 0);
+}
+
+BackendConfig& VulkanKernel::getConfig()
+{
+    return config;
+}
+
+void VulkanKernel::createSyncObjects()
+{
+    imageAvailableSemaphores.resize(config.MAX_FRAMES_IN_FLIGHT);
+    inFlightFences.resize(config.MAX_FRAMES_IN_FLIGHT);
+
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (
+            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create semaphores!");
+        }
+    }
+
+    renderFinishedSemaphores.resize(getConfig().MAX_FRAMES_IN_FLIGHT);
+
+    for (size_t i = 0; i < getConfig().MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create semaphores!");
+        }
+    }
+}
+
+uint32_t VulkanKernel::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+    throw std::runtime_error("failed to find suitable memory type!");
+}
+
+uint32_t VulkanKernel::beginRender() {
+
+    vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
+    vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
+    uint32_t imageIndex;
+    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+
+    auto& framebuffer = getFramebuffer(imageIndex);
+    auto& commandBuffer = commandBuffers[currentFrame];
+    
+    beginRenderPass(currentFrame, framebuffer);
+    return imageIndex;
+}
+
+void VulkanKernel::endRender(uint32_t imageIndex) {
+    
+    // signalSemaphores.push_back();
+    //renderFinishedSemaphores[currentFrame];
+    endRenderPass(currentFrame);
+
+
+    camera->update(currentFrame);
+
+    if (vkQueueSubmit(graphicsQueue, 0, nullptr, inFlightFences[currentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit inFlightFence");
+    }
+
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentFrame];
+
+    VkSwapchainKHR swapChains[] = { swapChain };
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &imageIndex;
+
+    presentInfo.pResults = nullptr; // Optional
+
+    
+    vkQueuePresentKHR(presentQueue, &presentInfo);
+        
+    currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;    
+}
+
+void VulkanKernel::beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer) {
+    VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
+
+    vkResetCommandBuffer(commandBuffer, 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0; // Optional
+    beginInfo.pInheritanceInfo = nullptr; // Optional
+
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin recording command buffer!");
+    }
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = framebuffer;
+
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = getSwapChainExtent();
+
+    VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);    
+}
+
+void VulkanKernel::endRenderPass(uint32_t currentFrame) {
+    VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
+
+    vkCmdEndRenderPass(commandBuffer);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to record command buffer!");
+    }
+
+    VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
+
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit draw command buffer!");
+    }    
+}
+
+void VulkanKernel::createCommandPool() {
+
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = getQueueFamilyIndices().graphicsFamily.value();
+
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create command pool!");
+    }    
+}
+
+void VulkanKernel::createCommandBuffers() {
+
+    commandBuffers.resize(getConfig().MAX_FRAMES_IN_FLIGHT);
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = static_cast<uint32_t>(commandBuffers.size());
+
+    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate command buffers!");
+    }
+}
+
+Camera& VulkanKernel::getCamera()
+{
+    if(camera == nullptr)
+    {
+        throw std::runtime_error("VulkanKernel::getCamera() called before initialize()");
+    }    
+    return *camera;
+}
+
 
 } // namespace klartraum
