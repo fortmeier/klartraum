@@ -19,10 +19,14 @@ GlfwFrontend::GlfwFrontend() : old_mouse_x(0), old_mouse_y(0)
     }
 
     klartraumCore = std::make_unique<KlartraumCore>();
+
+    initialize();
 }
 
 GlfwFrontend::~GlfwFrontend()
 {
+    shutdown();
+    glfwTerminate();
 }
 
 static double scrollYAccum = 0.0;

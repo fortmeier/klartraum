@@ -19,16 +19,8 @@ namespace klartraum {
 
 class KlartraumCore {
 public:
-    /*
     KlartraumCore();
     ~KlartraumCore();
-
-
-    void loop();
-
-    */
-    void initialize();
-    void shutdown();
 
     void step();
 
@@ -37,7 +29,7 @@ public:
     void setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera);
 
 
-    void addDrawComponent(std::unique_ptr<DrawComponent> drawComponent);
+    void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent);
 
     VulkanKernel& getVulkanKernel();
 
@@ -50,7 +42,7 @@ private:
 
     std::queue<std::unique_ptr<Event> > eventQueue;
 
-    std::vector<std::unique_ptr<DrawComponent> > drawComponents;
+    std::vector<std::shared_ptr<DrawComponent> > drawComponents;
 
 
 
