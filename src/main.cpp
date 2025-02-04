@@ -3,9 +3,9 @@
 #include <Python.h>
 
 #include "klartraum/glfw_frontend.hpp"
+
 #include "klartraum/draw_basics.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
-
 #include "klartraum/interface_camera_orbit.hpp"
 
 int main() {
@@ -24,13 +24,13 @@ int main() {
     auto& kernel = core.getVulkanKernel();
 
     
-    std::unique_ptr<klartraum::DrawBasics> axes = std::make_unique<klartraum::DrawBasics>(kernel, klartraum::DrawBasicsType::Axes);
-    core.addDrawComponent(std::move(axes));
+    std::shared_ptr<klartraum::DrawBasics> axes = std::make_shared<klartraum::DrawBasics>(kernel, klartraum::DrawBasicsType::Axes);
+    core.addDrawComponent(axes);
 
 
     std::string spzFile = "data/hornedlizard.spz";
-    std::unique_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_unique<klartraum::VulkanGaussianSplatting>(kernel, spzFile);
-    core.addDrawComponent(std::move(splatting));
+    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(kernel, spzFile);
+    core.addDrawComponent(splatting);
 
 
     std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(&kernel);
