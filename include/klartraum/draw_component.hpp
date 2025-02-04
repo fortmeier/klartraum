@@ -1,7 +1,9 @@
 #ifndef DRAW_COMPONENT_HPP
 #define DRAW_COMPONENT_HPP
 
-#include <vulkan/vulkan.h>
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
 #include <memory>
 
 namespace klartraum {

@@ -3,10 +3,13 @@
 
 #include <vector>
 
-#include <vulkan/vulkan.h>
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
 #include <glm/glm.hpp>
 
 #include "klartraum/backend_config.hpp"
+
 
 namespace klartraum {
 
@@ -16,11 +19,11 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
-class GlfwFrontend;
+class VulkanKernel;
 
 class Camera {
 public:
-    Camera(GlfwFrontend* backend);
+    Camera(VulkanKernel* vulkanKernel);
     ~Camera();
 
     VkDescriptorSetLayout& getDescriptorSetLayout();
@@ -31,7 +34,7 @@ public:
     UniformBufferObject ubo;
 
 private:
-    GlfwFrontend* backend;
+    VulkanKernel* vulkanKernel;
 
     void createDescriptorSetLayout();
     void createUniformBuffers();
