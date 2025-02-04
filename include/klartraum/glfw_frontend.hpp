@@ -1,21 +1,9 @@
 #ifndef BACKEND_VULKAN_HPP
 #define BACKEND_VULKAN_HPP
 
-#include <vector>
-#include <queue>
-#include <optional>
-#include <memory>
-
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include "klartraum/backend_config.hpp"
-#include "klartraum/draw_component.hpp"
-#include "klartraum/camera.hpp"
-#include "klartraum/interface_camera.hpp"
-#include "klartraum/events.hpp"
-
-#include "klartraum/vulkan_kernel.hpp"
 #include "klartraum/klartraum_core.hpp"
 
 namespace klartraum {
@@ -35,11 +23,12 @@ public:
 
     void shutdown();
 
-    void processGLFWEvents();
 
     KlartraumCore& getKlartraumCore();
 
 private:
+    void processGLFWEvents();
+    
     GLFWwindow* window;
     VkSurfaceKHR surface;
 

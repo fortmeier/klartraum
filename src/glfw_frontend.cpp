@@ -1,24 +1,19 @@
+#include <stdexcept>
+
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include <stdexcept>
-#include <vector>
-#include <optional>
-#include <iostream>
-#include <algorithm>
-#include <set>
-#include <fstream>
 
 #include "klartraum/glfw_frontend.hpp"
-#include "klartraum/interface_camera.hpp"
-
-#include "klartraum/vulkan_kernel.hpp"
+#include "klartraum/events.hpp"
 
 namespace klartraum {
 
 
 GlfwFrontend::GlfwFrontend() : old_mouse_x(0), old_mouse_y(0)
 {
+    // GLFW needs to be initialized before Vulkan
+    // which is done in the core afterwards
     if (!glfwInit()) {
         throw std::runtime_error("Failed to initialize GLFW");
     }
@@ -41,42 +36,32 @@ static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 
 
 void GlfwFrontend::initialize() {
-    // Initialize Vulkan
+    // Initialize the glfw window
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     
+    // TODO window size should be configurable somewhere else
     auto config = klartraumCore->getVulkanKernel().getConfig();
-
     window = glfwCreateWindow(config.WIDTH, config.HEIGHT, "Klartraum Engine", nullptr, nullptr);
 
+    // set GLFW event callbacks
     glfwSetScrollCallback(window, scroll_callback);
-
-    // gets create in the core
-    //impl = new VulkanKernel();
 
     auto instance = klartraumCore->getVulkanKernel().getInstance();
 
+    // cerate the window surface
+    // (this needs to be done after the Vulkan instance is created)
     if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create window surface!");
     }
 
     klartraumCore->getVulkanKernel().initialize(surface);
-
-    
-   
-
-
-
 }
 
 
 void GlfwFrontend::loop() {
-    auto device = klartraumCore->getVulkanKernel().getDevice();
 
-    uint32_t currentFrame = 0;
-    // Main loop
-    
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
@@ -91,7 +76,6 @@ void GlfwFrontend::shutdown() {
     auto& instance = klartraumCore->getVulkanKernel().getInstance();
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
-
 
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -138,8 +122,5 @@ KlartraumCore& GlfwFrontend::getKlartraumCore()
 {
     return *klartraumCore;
 }
-
-
-
 
 } // namespace klartraum
