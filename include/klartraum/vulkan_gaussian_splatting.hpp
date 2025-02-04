@@ -1,17 +1,19 @@
 #ifndef VULKAN_GAUSSIAN_SPLATTING_HPP
 #define VULKAN_GAUSSIAN_SPLATTING_HPP
 
-#include <vulkan/vulkan.h>
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
 #include <vector>
 #include <string>
 
-#include "klartraum/backend_vulkan.hpp"
+#include "klartraum/glfw_frontend.hpp"
 
 namespace klartraum {
 
 class VulkanGaussianSplatting : public DrawComponent {
 public:
-    VulkanGaussianSplatting(GlfwFrontend &backendVulkan, std::string path);
+    VulkanGaussianSplatting(VulkanKernel& vulkanKernel, std::string path);
     ~VulkanGaussianSplatting();
 
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
@@ -26,7 +28,7 @@ private:
 
     void loadSPZModel(std::string path);
 
-    GlfwFrontend &backendVulkan;
+    VulkanKernel& vulkanKernel;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;

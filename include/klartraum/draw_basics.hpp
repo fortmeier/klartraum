@@ -1,11 +1,12 @@
 #ifndef KLARTRAUM_DRAW_BASICS_HPP
 #define KLARTRAUM_DRAW_BASICS_HPP
 
-#include <vulkan/vulkan.h>
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
 #include <vector>
 #include <string>
 
-#include "klartraum/backend_vulkan.hpp"
+#include "klartraum/vulkan_kernel.hpp"
 
 namespace klartraum {
 
@@ -18,7 +19,7 @@ enum class DrawBasicsType {
 class DrawBasics : public DrawComponent {
 public:
 
-    DrawBasics(GlfwFrontend &backendVulkan, DrawBasicsType type);
+    DrawBasics(VulkanKernel& vulkanKernel, DrawBasicsType type);
     ~DrawBasics();
 
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
@@ -30,7 +31,7 @@ private:
 
     void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
-    GlfwFrontend &backendVulkan;
+    VulkanKernel& vulkanKernel;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;

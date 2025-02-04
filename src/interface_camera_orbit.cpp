@@ -3,17 +3,17 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "klartraum/interface_camera_orbit.hpp"
-#include "klartraum/backend_vulkan.hpp"
+#include "klartraum/glfw_frontend.hpp"
 
 namespace klartraum {
 
-InterfaceCameraOrbit::InterfaceCameraOrbit(GlfwFrontend *backend) : backend(backend)
+InterfaceCameraOrbit::InterfaceCameraOrbit(VulkanKernel* vulkanKernel) : vulkanKernel(vulkanKernel)
 {
 }
 
 void InterfaceCameraOrbit::update(Camera &camera)
 {
-    auto swapChainExtent = backend->getSwapChainExtent();
+    auto swapChainExtent = vulkanKernel->getSwapChainExtent();
 
     static auto startTime = std::chrono::high_resolution_clock::now();
     auto currentTime = std::chrono::high_resolution_clock::now();
@@ -36,7 +36,7 @@ void InterfaceCameraOrbit::update(Camera &camera)
         break;
     }
     
-    ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 10.0f);
+    ubo.proj = glm::perspective(glm::radians(45.0f), vulkanKernel->getSwapChainExtent().width / (float) swapChainExtent.height, 0.1f, 10.0f);
 
     // Vulkan has inverted Y coordinates compared to OpenGL
     ubo.proj[1][1] *= -1;

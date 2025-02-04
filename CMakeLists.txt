@@ -33,10 +33,11 @@ set(SPZ_SRC
 
 set(SRC 
   src/main.cpp
-  src/backend_vulkan.cpp
+  src/glfw_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
   src/vulkan_kernel.cpp
+  src/klartraum_core.cpp
   src/camera.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp

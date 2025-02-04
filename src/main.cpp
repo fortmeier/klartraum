@@ -2,7 +2,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
-#include "klartraum/backend_vulkan.hpp"
+#include "klartraum/glfw_frontend.hpp"
 #include "klartraum/draw_basics.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 
@@ -15,26 +15,30 @@ int main() {
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
 
-    klartraum::GlfwFrontend backendVulkan;
+    klartraum::GlfwFrontend frontend;
 
-    backendVulkan.initialize();
+    frontend.initialize();
+
+    auto& core = frontend.getKlartraumCore();
+
+    auto& kernel = core.getVulkanKernel();
 
     
-    std::unique_ptr<klartraum::DrawBasics> axes = std::make_unique<klartraum::DrawBasics>(backendVulkan, klartraum::DrawBasicsType::Axes);
-    backendVulkan.addDrawComponent(std::move(axes));
+    std::unique_ptr<klartraum::DrawBasics> axes = std::make_unique<klartraum::DrawBasics>(kernel, klartraum::DrawBasicsType::Axes);
+    core.addDrawComponent(std::move(axes));
 
 
     std::string spzFile = "data/hornedlizard.spz";
-    std::unique_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_unique<klartraum::VulkanGaussianSplatting>(backendVulkan, spzFile);
-    backendVulkan.addDrawComponent(std::move(splatting));
+    std::unique_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_unique<klartraum::VulkanGaussianSplatting>(kernel, spzFile);
+    core.addDrawComponent(std::move(splatting));
 
 
-    std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(&backendVulkan);
-    backendVulkan.setInterfaceCamera(cameraOrbit);
+    std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(&kernel);
+    core.setInterfaceCamera(cameraOrbit);
 
-    backendVulkan.loop();
+    frontend.loop();
 
-    backendVulkan.shutdown();
+    frontend.shutdown();
 
     return 0;
 }

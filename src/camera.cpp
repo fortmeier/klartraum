@@ -6,13 +6,13 @@
 #include <chrono>
 
 #include "klartraum/camera.hpp"
-#include "klartraum/backend_vulkan.hpp"
+#include "klartraum/glfw_frontend.hpp"
 #include "klartraum/camera.hpp"
 
 
 namespace klartraum {
 
-Camera::Camera(GlfwFrontend* backend) : backend(backend) {
+Camera::Camera(VulkanKernel* vulkanKernel) : vulkanKernel(vulkanKernel) {
     createDescriptorSetLayout();
     createUniformBuffers();
     createDescriptorPool();
@@ -20,8 +20,8 @@ Camera::Camera(GlfwFrontend* backend) : backend(backend) {
 }
 
 Camera::~Camera() {
-    auto config = backend->getConfig();
-    auto device = backend->getDevice();
+    auto config = vulkanKernel->getConfig();
+    auto device = vulkanKernel->getDevice();
 
     for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(device, uniformBuffers[i], nullptr);
@@ -49,7 +49,7 @@ void Camera::update(uint32_t currentImage) {
 }
 
 void Camera::createDescriptorSetLayout() {
-    auto device = backend->getDevice();
+    auto device = vulkanKernel->getDevice();
 
     VkDescriptorSetLayoutBinding uboLayoutBinding{};
     uboLayoutBinding.binding = 0;
@@ -69,8 +69,8 @@ void Camera::createDescriptorSetLayout() {
 }
 
 void Camera::createUniformBuffers() {
-    auto config = backend->getConfig();
-    auto device = backend->getDevice();
+    auto config = vulkanKernel->getConfig();
+    auto device = vulkanKernel->getDevice();
 
     VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
@@ -79,7 +79,7 @@ void Camera::createUniformBuffers() {
     uniformBuffersMapped.resize(config.MAX_FRAMES_IN_FLIGHT);
 
     for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
-        backend->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+        vulkanKernel->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
 
         vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
     }
@@ -87,8 +87,8 @@ void Camera::createUniformBuffers() {
 
 void Camera::createDescriptorPool()
 {
-    auto device = backend->getDevice();
-    auto config = backend->getConfig();
+    auto device = vulkanKernel->getDevice();
+    auto config = vulkanKernel->getConfig();
 
     VkDescriptorPoolSize poolSize{};
     poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -109,8 +109,8 @@ void Camera::createDescriptorPool()
 
 void Camera::createDescriptorSets()
 {
-    auto device = backend->getDevice();
-    auto config = backend->getConfig();
+    auto device = vulkanKernel->getDevice();
+    auto config = vulkanKernel->getConfig();
 
     std::vector<VkDescriptorSetLayout> layouts(config.MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
