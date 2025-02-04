@@ -57,9 +57,9 @@ void KlartraumCore::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
     this->interfaceCamera = camera;
 }
 
-void KlartraumCore::addDrawComponent(std::unique_ptr<DrawComponent> drawComponent)
+void KlartraumCore::addDrawComponent(std::shared_ptr<DrawComponent> drawComponent)
 {
-    drawComponents.push_back(std::move(drawComponent));
+    drawComponents.push_back(drawComponent);
 }
 
 VulkanKernel& KlartraumCore::getVulkanKernel()
