@@ -6,22 +6,21 @@
 namespace klartraum
 {
 
-/* 
-void KlartraumCore::initialize()
-{
-    camera = std::make_unique<Camera>(this);
+KlartraumCore::KlartraumCore() {
+
 }
 
-void KlartraumCore::shutdown() {
-    camera = nullptr;    
+KlartraumCore::~KlartraumCore() {
+
 }
-*/
 
 void KlartraumCore::step() {
 
+    // start frame rendering
     uint32_t imageIndex = vulkanKernel.beginRender();
 
-
+    // process event queue,
+    // this currently only updates the camera
     if(interfaceCamera != nullptr)
     {
         while (!eventQueue.empty()) {
@@ -33,7 +32,7 @@ void KlartraumCore::step() {
         interfaceCamera->update(camera);
     }
 
-
+    // draw all draw components
     auto& currentFrame = vulkanKernel.currentFrame;
     auto& framebuffer = vulkanKernel.getFramebuffer(currentFrame);
     auto& commandBuffer = vulkanKernel.commandBuffers[currentFrame];
@@ -42,6 +41,8 @@ void KlartraumCore::step() {
     for(auto &drawComponent : drawComponents) {
         drawComponent->draw(currentFrame, commandBuffer, framebuffer, imageAvailableSemaphore);
     }
+
+    // finish frame rendering
     vulkanKernel.endRender(imageIndex);
  
 }
