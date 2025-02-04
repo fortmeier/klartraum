@@ -17,18 +17,18 @@ public:
     GlfwFrontend();
     ~GlfwFrontend();
 
-    void initialize();
 
     void loop();
 
-    void shutdown();
 
 
     KlartraumCore& getKlartraumCore();
 
 private:
+    void initialize();
+    void shutdown();
     void processGLFWEvents();
-    
+
     GLFWwindow* window;
     VkSurfaceKHR surface;
 
