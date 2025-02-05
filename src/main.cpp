@@ -14,14 +14,14 @@ int main() {
     auto& core = frontend.getKlartraumCore();
     auto& kernel = core.getVulkanKernel();
 
-    std::shared_ptr<klartraum::DrawBasics> axes = std::make_shared<klartraum::DrawBasics>(kernel, klartraum::DrawBasicsType::Axes);
+    std::shared_ptr<klartraum::DrawBasics> axes = std::make_shared<klartraum::DrawBasics>(klartraum::DrawBasicsType::Axes);
     core.addDrawComponent(axes);
 
     std::string spzFile = "data/hornedlizard.spz";
-    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(kernel, spzFile);
+    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(spzFile);
     core.addDrawComponent(splatting);
 
-    std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(&kernel);
+    std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>();
     core.setInterfaceCamera(cameraOrbit);
 
     frontend.loop();

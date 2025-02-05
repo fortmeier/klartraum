@@ -55,11 +55,13 @@ std::queue<std::unique_ptr<Event> >& KlartraumCore::getEventQueue()
 
 void KlartraumCore::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
 {
+    camera->initialize(vulkanKernel);
     this->interfaceCamera = camera;
 }
 
 void KlartraumCore::addDrawComponent(std::shared_ptr<DrawComponent> drawComponent)
 {
+    drawComponent->initialize(vulkanKernel);
     drawComponents.push_back(drawComponent);
 }
 

@@ -45,17 +45,14 @@ const std::vector<Vertex> vertices = {
     {{-0.5f, 0.5f}, {1.0f, 0.0f, 1.0f}}
 };
 
-VulkanGaussianSplatting::VulkanGaussianSplatting(VulkanKernel& vulkanKernel, std::string path) : vulkanKernel(vulkanKernel) {
+VulkanGaussianSplatting::VulkanGaussianSplatting(std::string path) {
     loadSPZModel(path);
 
-    createGraphicsPipeline();
-    createVertexBuffer();
-    createSyncObjects();
 
 }
 
 VulkanGaussianSplatting::~VulkanGaussianSplatting() {
-    auto device = vulkanKernel.getDevice();
+    auto device = vulkanKernel->getDevice();
 
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
@@ -64,9 +61,9 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
 }
 
 void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) {
-    auto& device = vulkanKernel.getDevice();
-    auto& swapChain = vulkanKernel.getSwapChain();
-    auto& graphicsQueue = vulkanKernel.getGraphicsQueue();
+    auto& device = vulkanKernel->getDevice();
+    auto& swapChain = vulkanKernel->getSwapChain();
+    auto& graphicsQueue = vulkanKernel->getGraphicsQueue();
 
 
 
@@ -75,9 +72,17 @@ void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& comma
 
 }
 
+void VulkanGaussianSplatting::initialize(VulkanKernel &vulkanKernel) {
+    this->vulkanKernel = &vulkanKernel;
+    createGraphicsPipeline();
+    createVertexBuffer();
+    createSyncObjects();
+
+}
+
 void VulkanGaussianSplatting::createGraphicsPipeline() {
-    auto device = vulkanKernel.getDevice();
-    auto swapChainExtent = vulkanKernel.getSwapChainExtent();
+    auto device = vulkanKernel->getDevice();
+    auto swapChainExtent = vulkanKernel->getSwapChainExtent();
 
     auto vertShaderCode = readFile("shaders/vert.spv");
     auto fragShaderCode = readFile("shaders/frag.spv");
@@ -191,7 +196,7 @@ void VulkanGaussianSplatting::createGraphicsPipeline() {
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &(vulkanKernel.getCamera().getDescriptorSetLayout());
+    pipelineLayoutInfo.pSetLayouts = &(vulkanKernel->getCamera().getDescriptorSetLayout());
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -213,7 +218,7 @@ void VulkanGaussianSplatting::createGraphicsPipeline() {
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
 
-    pipelineInfo.renderPass = vulkanKernel.getRenderPass();
+    pipelineInfo.renderPass = vulkanKernel->getRenderPass();
     pipelineInfo.subpass = 0;
 
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
@@ -228,7 +233,7 @@ void VulkanGaussianSplatting::createGraphicsPipeline() {
 }
 
 void VulkanGaussianSplatting::createVertexBuffer() {
-    auto device = vulkanKernel.getDevice();
+    auto device = vulkanKernel->getDevice();
 
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -246,7 +251,7 @@ void VulkanGaussianSplatting::createVertexBuffer() {
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = vulkanKernel.findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    allocInfo.memoryTypeIndex = vulkanKernel->findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate vertex buffer memory!");
@@ -264,15 +269,15 @@ void VulkanGaussianSplatting::createVertexBuffer() {
 
 void VulkanGaussianSplatting::createSyncObjects()
 {
-    auto device = vulkanKernel.getDevice();
+    auto device = vulkanKernel->getDevice();
 
 
 }
 
 void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer)
 {
-    auto& swapChainExtent = vulkanKernel.getSwapChainExtent();
-    auto& camera = vulkanKernel.getCamera();
+    auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
+    auto& camera = vulkanKernel->getCamera();
     
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
