@@ -7,7 +7,9 @@ namespace klartraum {
 
 class InterfaceCameraOrbit : public InterfaceCamera {
 public:
-    InterfaceCameraOrbit(VulkanKernel* vulkanKernel);
+    InterfaceCameraOrbit();
+
+    virtual void initialize(VulkanKernel& vulkanKernel) override;
 
     virtual void update(Camera& camera);
     virtual void onEvent(Event& event);

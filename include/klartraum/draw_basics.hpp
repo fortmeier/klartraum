@@ -6,7 +6,7 @@
 #include <vector>
 #include <string>
 
-#include "klartraum/vulkan_kernel.hpp"
+#include "klartraum/draw_component.hpp"
 
 namespace klartraum {
 
@@ -19,10 +19,12 @@ enum class DrawBasicsType {
 class DrawBasics : public DrawComponent {
 public:
 
-    DrawBasics(VulkanKernel& vulkanKernel, DrawBasicsType type);
+    DrawBasics(DrawBasicsType type);
     ~DrawBasics();
 
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
+
+    virtual void initialize(VulkanKernel& vulkanKernel) override;
 
 private:
     void createGraphicsPipeline();
@@ -31,7 +33,7 @@ private:
 
     void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
-    VulkanKernel& vulkanKernel;
+    VulkanKernel* vulkanKernel;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;

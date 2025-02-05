@@ -7,8 +7,13 @@
 
 namespace klartraum {
 
-InterfaceCameraOrbit::InterfaceCameraOrbit(VulkanKernel* vulkanKernel) : vulkanKernel(vulkanKernel)
+InterfaceCameraOrbit::InterfaceCameraOrbit()
 {
+    
+}
+
+void InterfaceCameraOrbit::initialize(VulkanKernel& vulkanKernel) {
+    this->vulkanKernel = &vulkanKernel;
 }
 
 void InterfaceCameraOrbit::update(Camera &camera)

@@ -6,10 +6,14 @@
 
 #include <memory>
 
+#include "klartraum/vulkan_kernel.hpp"
+
 namespace klartraum {
 class DrawComponent {
 public:
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) = 0;
+
+    virtual void initialize(VulkanKernel& vulkanKernel) {}
 };
 
 } // namespace klartraum

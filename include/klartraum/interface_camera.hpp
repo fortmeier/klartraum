@@ -8,6 +8,9 @@ namespace klartraum {
 
 class InterfaceCamera {
 public:
+
+    virtual void initialize(VulkanKernel& vulkanKernel) = 0;
+
     virtual void update(Camera& camera) = 0;
     virtual void onEvent(Event& event) {}
 };
