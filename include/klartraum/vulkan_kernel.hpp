@@ -10,15 +10,10 @@
 #include <algorithm>
 #include <set>
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
+#include <vulkan/vulkan.h>
 
 #include "klartraum/backend_config.hpp"
-#include "klartraum/draw_component.hpp"
 #include "klartraum/camera.hpp"
-#include "klartraum/interface_camera.hpp"
-#include "klartraum/events.hpp"
 
 namespace klartraum {
 
