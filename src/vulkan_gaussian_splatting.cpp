@@ -37,10 +37,8 @@ struct Gaussian {
     }
 };
 
-VulkanGaussianSplatting::VulkanGaussianSplatting(std::string path) {
+VulkanGaussianSplatting::VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type) {
     loadSPZModel(path);
-
-
 }
 
 VulkanGaussianSplatting::~VulkanGaussianSplatting() {
