@@ -1,7 +1,12 @@
 # klartraum
-Klartraum is a real-time neural rendering engine build on top of vulkan with Python integration.
+Klartraum will be a real-time neural rendering engine build on top of vulkan.
+
+Status: No neural rendering yet, still setting up the vulkan scaffold 😊
 
 # example
+
+![Screenshot](docs/screenshot.png)
+
 ```cpp
 #include <iostream>
 
@@ -42,6 +47,8 @@ int main() {
 ```
 # Build
 ## Prerequisites
+THIS SECTIONS NEEDS A REWORK!
+
 Building needs a development build of python.
 
 ### Build Python for Windows Development
