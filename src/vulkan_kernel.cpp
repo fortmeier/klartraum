@@ -528,8 +528,6 @@ void VulkanKernel::initialize(VkSurfaceKHR& surface) {
 
 
 VulkanKernel::~VulkanKernel() {
-    camera = nullptr;
-    
     vkDestroyCommandPool(device, commandPool, nullptr);
     
     for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
