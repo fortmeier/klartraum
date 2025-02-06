@@ -22,7 +22,6 @@ int main() {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& kernel = core.getVulkanKernel();
 
     std::shared_ptr<klartraum::DrawBasics> axes =
         std::make_shared<klartraum::DrawBasics>(klartraum::DrawBasicsType::Axes);
