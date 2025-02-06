@@ -38,6 +38,9 @@ private:
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+
+    std::vector<uint8_t> data;
+    size_t number_of_gaussians;
  
     
 };
