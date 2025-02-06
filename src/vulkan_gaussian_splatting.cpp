@@ -9,14 +9,13 @@
 
 namespace klartraum {
 
-struct Vertex {
-    glm::vec2 pos;
-    glm::vec3 color;
+struct Gaussian {
+    spz::UnpackedGaussian gaussian;
 
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription bindingDescription{};
         bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.stride = sizeof(Gaussian);
         bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
         return bindingDescription;
@@ -26,23 +25,16 @@ struct Vertex {
 
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[0].offset = offsetof(spz::UnpackedGaussian, position);
 
         attributeDescriptions[1].binding = 0;
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);        
+        attributeDescriptions[1].offset = offsetof(spz::UnpackedGaussian, color);        
 
         return attributeDescriptions;
     }
-};
-
-
-const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 0.0f, 1.0f}}
 };
 
 VulkanGaussianSplatting::VulkanGaussianSplatting(std::string path) {
@@ -117,8 +109,8 @@ void VulkanGaussianSplatting::createGraphicsPipeline() {
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = Gaussian::getBindingDescription();
+    auto attributeDescriptions = Gaussian::getAttributeDescriptions();
 
     vertexInputInfo.vertexBindingDescriptionCount = 1;
     vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
@@ -127,7 +119,7 @@ void VulkanGaussianSplatting::createGraphicsPipeline() {
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
 
     VkViewport viewport{};
@@ -237,7 +229,7 @@ void VulkanGaussianSplatting::createVertexBuffer() {
 
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+    bufferInfo.size = sizeof(Gaussian) * number_of_gaussians;
     bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -259,9 +251,9 @@ void VulkanGaussianSplatting::createVertexBuffer() {
 
     vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
 
-    void* data;
-    vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-    memcpy(data, vertices.data(), (size_t) bufferInfo.size);
+    void* gpu_data;
+    vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &gpu_data);
+    memcpy(gpu_data, data.data(), (size_t) bufferInfo.size);
     vkUnmapMemory(device, vertexBufferMemory);
 }
 
@@ -300,13 +292,24 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
     auto& descriptorSets = camera.getDescriptorSets();
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
-    vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+    vkCmdDraw(commandBuffer, static_cast<uint32_t>(number_of_gaussians), 1, 0, 0);
 
 }
 
 void VulkanGaussianSplatting::loadSPZModel(std::string path)
 {
-    spz::GaussianCloud cloud = spz::loadSpz(path);
+    spz::PackedGaussians packed = spz::loadSpzPacked(path);
+    std::vector<spz::UnpackedGaussian> gaussians;
+    for (int i = 0; i < packed.numPoints-1; i++) {
+        spz::UnpackedGaussian gaussian = packed.unpack(i);
+        gaussians.push_back(gaussian);
+    }
+
+    number_of_gaussians = gaussians.size();
+    data.resize(gaussians.size() * sizeof(spz::UnpackedGaussian));
+    memcpy(data.data(), gaussians.data(), data.size());
+
+
 }
 
 } // namespace klartraum
