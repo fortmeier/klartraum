@@ -11,9 +11,14 @@
 
 namespace klartraum {
 
+enum class GaussianSplattingRenderingType {
+    PointCloud,
+    // GaussianSplatting, not implemented yet
+};    
+
 class VulkanGaussianSplatting : public DrawComponent {
 public:
-    VulkanGaussianSplatting(std::string path);
+    VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type=GaussianSplattingRenderingType::PointCloud);
     ~VulkanGaussianSplatting();
 
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
