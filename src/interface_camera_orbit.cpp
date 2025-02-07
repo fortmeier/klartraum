@@ -7,9 +7,9 @@
 
 namespace klartraum {
 
-InterfaceCameraOrbit::InterfaceCameraOrbit()
+InterfaceCameraOrbit::InterfaceCameraOrbit(UpDirection up)
 {
-    
+    setUpDirection(up);
 }
 
 void InterfaceCameraOrbit::initialize(VulkanKernel& vulkanKernel) {
@@ -30,12 +30,17 @@ void InterfaceCameraOrbit::update(Camera &camera)
 
     switch (up)
     {
+    case UpDirection::Y:
+        ubo.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
+                glm::rotate(glm::mat4(1.0f), (float)elevation, glm::vec3(0.0f, 0.0f, 1.0f)) *    
+                glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 1.0f, 0.0f));
+        break;
+
     case UpDirection::Z:
         ubo.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
                 glm::rotate(glm::mat4(1.0f), (float)elevation, glm::vec3(0.0f, 1.0f, 0.0f)) *    
                 glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 0.0f, 1.0f));
         break;
-    
     default:
         throw std::runtime_error("Unknown up direction");
         break;

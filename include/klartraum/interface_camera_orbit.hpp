@@ -7,16 +7,18 @@ namespace klartraum {
 
 class InterfaceCameraOrbit : public InterfaceCamera {
 public:
-    InterfaceCameraOrbit();
+    enum class UpDirection {
+        Z,
+        Y
+    };    
+
+    InterfaceCameraOrbit(UpDirection up = UpDirection::Z);
 
     virtual void initialize(VulkanKernel& vulkanKernel) override;
 
     virtual void update(Camera& camera);
     virtual void onEvent(Event& event);
 
-    enum class UpDirection {
-        Z
-    };    
 
     void setUpDirection(UpDirection up) {
         this->up = up;
