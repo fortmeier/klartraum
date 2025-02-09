@@ -74,8 +74,8 @@ void VulkanGaussianSplatting::createGraphicsPipeline() {
     auto device = vulkanKernel->getDevice();
     auto swapChainExtent = vulkanKernel->getSwapChainExtent();
 
-    auto vertShaderCode = readFile("shaders/vert.spv");
-    auto fragShaderCode = readFile("shaders/frag.spv");
+    auto vertShaderCode = readFile("shaders/shader.vert.spv");
+    auto fragShaderCode = readFile("shaders/shader.frag.spv");
 
     VkShaderModule vertShaderModule = createShaderModule(vertShaderCode, device);
     VkShaderModule fragShaderModule = createShaderModule(fragShaderCode, device);
