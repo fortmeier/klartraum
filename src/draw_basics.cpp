@@ -112,8 +112,8 @@ void DrawBasics::createGraphicsPipeline() {
     auto device = vulkanKernel->getDevice();
     auto swapChainExtent = vulkanKernel->getSwapChainExtent();
 
-    auto vertShaderCode = readFile("shaders/vert_draw_basics.spv");
-    auto fragShaderCode = readFile("shaders/frag.spv");
+    auto vertShaderCode = readFile("shaders/shader_draw_basics.vert.spv");
+    auto fragShaderCode = readFile("shaders/shader.frag.spv");
 
     VkShaderModule vertShaderModule = createShaderModule(vertShaderCode, device);
     VkShaderModule fragShaderModule = createShaderModule(fragShaderCode, device);
