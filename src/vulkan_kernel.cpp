@@ -180,8 +180,8 @@ QueueFamilyIndices VulkanKernel::findQueueFamilies(VkPhysicalDevice device) {
 
     int i = 0;
     for (const auto& queueFamily : queueFamilies) {
-        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            indices.graphicsFamily = i;
+        if ((queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) && (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
+            indices.graphicsAndComputeFamily = i;
         }
 
         VkBool32 presentSupport = false;
@@ -277,9 +277,9 @@ void VulkanKernel::createSwapChain() {
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-    uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+    uint32_t queueFamilyIndices[] = { indices.graphicsAndComputeFamily.value(), indices.presentFamily.value() };
 
-    if (indices.graphicsFamily != indices.presentFamily) {
+    if (indices.graphicsAndComputeFamily != indices.presentFamily) {
         createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
         createInfo.queueFamilyIndexCount = 2;
         createInfo.pQueueFamilyIndices = queueFamilyIndices;
@@ -387,7 +387,7 @@ void VulkanKernel::createLogicalDevice() {
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-    std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+    std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsAndComputeFamily.value(), indices.presentFamily.value() };
 
     float queuePriority = 1.0f;
     for (uint32_t queueFamily : uniqueQueueFamilies) {
@@ -424,7 +424,7 @@ void VulkanKernel::createLogicalDevice() {
         throw std::runtime_error("failed to create logical device!");
     }
 
-    vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+    vkGetDeviceQueue(device, indices.graphicsAndComputeFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 }
 
@@ -589,6 +589,14 @@ VkFramebuffer& VulkanKernel::getFramebuffer(uint32_t imageIndex){
         throw std::runtime_error("Invalid image index!");
     }
     return swapChainFramebuffers[imageIndex];
+}
+
+VkImageView& VulkanKernel::getImageView(uint32_t imageIndex)
+{
+    if (imageIndex >= swapChainImageViews.size()) {
+        throw std::runtime_error("Invalid image index!");
+    }
+    return swapChainImageViews[imageIndex];
 }
 
 VkExtent2D& VulkanKernel::getSwapChainExtent()
@@ -791,7 +799,7 @@ void VulkanKernel::createCommandPool() {
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    poolInfo.queueFamilyIndex = getQueueFamilyIndices().graphicsFamily.value();
+    poolInfo.queueFamilyIndex = getQueueFamilyIndices().graphicsAndComputeFamily.value();
 
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
