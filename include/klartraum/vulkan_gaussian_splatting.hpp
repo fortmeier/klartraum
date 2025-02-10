@@ -27,6 +27,10 @@ public:
 
 
 private:
+    void createComputeDescriptorSetLayout();
+    void createDescriptorPool();
+    void createComputeDescriptorSets();
+    void createComputePipeline();
     void createGraphicsPipeline();
     void createSyncObjects();
 
@@ -43,6 +47,12 @@ private:
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+
+    VkDescriptorPool descriptorPool;
+    std::vector<VkDescriptorSet> computeDescriptorSets;
+    VkDescriptorSetLayout computeDescriptorSetLayout;
+    VkPipelineLayout computePipelineLayout;
+    VkPipeline computePipeline;
 
     std::vector<uint8_t> data;
     size_t number_of_gaussians;
