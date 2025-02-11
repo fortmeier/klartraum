@@ -166,7 +166,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
         descriptorWrites[1].dstSet = computeDescriptorSets[i];
         descriptorWrites[1].dstBinding = 2;
         descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         descriptorWrites[1].descriptorCount = 1;
         descriptorWrites[1].pImageInfo = &imageInfo;
 
