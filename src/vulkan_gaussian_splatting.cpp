@@ -164,7 +164,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
 
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[1].dstSet = computeDescriptorSets[i];
-        descriptorWrites[1].dstBinding = 2;
+        descriptorWrites[1].dstBinding = 1;
         descriptorWrites[1].dstArrayElement = 0;
         descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         descriptorWrites[1].descriptorCount = 1;
@@ -434,12 +434,38 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
     vkCmdDraw(commandBuffer, static_cast<uint32_t>(number_of_gaussians), 1, 0, 0);
 
+    // Ensure compute writes are visible to graphics
+    VkImageMemoryBarrier imageBarrier = {};
+    imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    imageBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;  // Graphics writes
+    imageBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
+    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
+    imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
+    imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
+    imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageBarrier.image = vulkanKernel->getSwapChainImage(currentFrame);  // The image used as framebuffer and compute input
+    imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageBarrier.subresourceRange.baseMipLevel = 0;
+    imageBarrier.subresourceRange.levelCount = 1;
+    imageBarrier.subresourceRange.baseArrayLayer = 0;
+    imageBarrier.subresourceRange.layerCount = 1;
+    
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, // Wait for fragment shader writes
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, // Ensure compute shader waits
+        0,  // No dependency flags
+        0, nullptr,  // No global memory barriers
+        0, nullptr,  // No buffer memory barriers
+        1, &imageBarrier // Image memory barrier
+    );
+    
 
     // issue the compute pipeline for gaussian splatting
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, 0);
     
-    vkCmdDispatch(commandBuffer, 64, 64, 1);    
+    vkCmdDispatch(commandBuffer, 8, 8, 1);    
 
 }
 

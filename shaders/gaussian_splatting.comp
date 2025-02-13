@@ -16,13 +16,21 @@ layout(std140, binding = 0) readonly buffer GaussiansSSBOIn {
 };*/
 
 
-layout (local_size_x = 10, local_size_y = 10, local_size_z = 1) in;
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 layout (binding = 1, rgba8) uniform writeonly image2D outputImage;
 
+#extension GL_EXT_debug_printf : enable
+
 void main()
 {
-    vec4 pixel = vec4(gl_GlobalInvocationID.x / 10.0, gl_GlobalInvocationID.y / 10.0, 0.0, 1.0);
+    //1.0 / 0.0;
+    vec4 pixel = vec4(gl_GlobalInvocationID.x / 8.0, gl_GlobalInvocationID.y / 8.0, 0.0, 1.0);
+
+    debugPrintfEXT("Debug info: value = %f\n", pixel.x);
 
     imageStore(outputImage, ivec2(gl_GlobalInvocationID.xy), pixel);
+
+    debugPrintfEXT("scjeebug info: value = %f\n", pixel.x);
+
 }
