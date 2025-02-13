@@ -599,6 +599,14 @@ VkImageView& VulkanKernel::getImageView(uint32_t imageIndex)
     return swapChainImageViews[imageIndex];
 }
 
+VkImage& VulkanKernel::getSwapChainImage(uint32_t imageIndex)
+{
+    if (imageIndex >= swapChainImages.size()) {
+        throw std::runtime_error("Invalid image index!");
+    }
+    return swapChainImages[imageIndex];
+}
+
 VkExtent2D& VulkanKernel::getSwapChainExtent()
 {
     return swapChainExtent;
