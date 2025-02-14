@@ -22,7 +22,7 @@ public:
     DrawBasics(DrawBasicsType type);
     ~DrawBasics();
 
-    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
+    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) override;
 
     virtual void initialize(VulkanKernel& vulkanKernel) override;
 

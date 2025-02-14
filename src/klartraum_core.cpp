@@ -39,7 +39,7 @@ void KlartraumCore::step() {
     auto& imageAvailableSemaphore = vulkanKernel.imageAvailableSemaphores[currentFrame];
 
     for(auto &drawComponent : drawComponents) {
-        drawComponent->draw(currentFrame, commandBuffer, framebuffer, imageAvailableSemaphore);
+        drawComponent->draw(currentFrame, commandBuffer, framebuffer, imageAvailableSemaphore, imageIndex);
     }
 
     // finish frame rendering
