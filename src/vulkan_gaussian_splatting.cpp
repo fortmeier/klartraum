@@ -50,14 +50,14 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
 
 }
 
-void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) {
+void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) {
     auto& device = vulkanKernel->getDevice();
     auto& swapChain = vulkanKernel->getSwapChain();
     auto& graphicsQueue = vulkanKernel->getGraphicsQueue();
 
 
 
-    recordCommandBuffer(currentFrame, commandBuffer, framebuffer);
+    recordCommandBuffer(currentFrame, commandBuffer, framebuffer, imageIndex);
 
 
 }
@@ -159,7 +159,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
 
 
         VkDescriptorImageInfo imageInfo = {};
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // TODO ????
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // TODO ????
         imageInfo.imageView = vulkanKernel->getImageView(i);
 
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -406,7 +406,7 @@ void VulkanGaussianSplatting::createSyncObjects()
 
 }
 
-void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer)
+void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t imageIndex)
 {
     auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
     auto& camera = vulkanKernel->getCamera();
@@ -437,13 +437,13 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     // Ensure compute writes are visible to graphics
     VkImageMemoryBarrier imageBarrier = {};
     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    imageBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;  // Graphics writes
-    imageBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
-    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
+    imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
+    imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
+    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
     imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
     imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
     imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    imageBarrier.image = vulkanKernel->getSwapChainImage(currentFrame);  // The image used as framebuffer and compute input
+    imageBarrier.image = vulkanKernel->getSwapChainImage(imageIndex);  // The image used as framebuffer and compute input
     imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     imageBarrier.subresourceRange.baseMipLevel = 0;
     imageBarrier.subresourceRange.levelCount = 1;
@@ -452,8 +452,8 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     
     vkCmdPipelineBarrier(
         commandBuffer,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, // Wait for fragment shader writes
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, // Ensure compute shader waits
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
         0,  // No dependency flags
         0, nullptr,  // No global memory barriers
         0, nullptr,  // No buffer memory barriers
@@ -465,7 +465,33 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, 0);
     
-    vkCmdDispatch(commandBuffer, 8, 8, 1);    
+    vkCmdDispatch(commandBuffer, 256, 256, 1);
+
+    VkImageMemoryBarrier barrierBack = {};
+    barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrierBack.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrierBack.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrierBack.image = vulkanKernel->getSwapChainImage(imageIndex);
+    barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrierBack.subresourceRange.baseMipLevel = 0;
+    barrierBack.subresourceRange.levelCount = 1;
+    barrierBack.subresourceRange.baseArrayLayer = 0;
+    barrierBack.subresourceRange.layerCount = 1;
+    
+    barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrierBack);
+    
 
 }
 

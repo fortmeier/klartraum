@@ -91,7 +91,7 @@ DrawBasics::~DrawBasics() {
 
 }
 
-void DrawBasics::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) {
+void DrawBasics::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) {
     auto device = vulkanKernel->getDevice();
     auto swapChain = vulkanKernel->getSwapChain();
     auto graphicsQueue = vulkanKernel->getGraphicsQueue();
