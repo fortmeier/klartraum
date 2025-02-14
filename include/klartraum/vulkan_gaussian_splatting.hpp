@@ -21,7 +21,7 @@ public:
     VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type=GaussianSplattingRenderingType::PointCloud);
     ~VulkanGaussianSplatting();
 
-    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
+    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) override;
 
     virtual void initialize(VulkanKernel& vulkanKernel) override;
 
@@ -36,7 +36,7 @@ private:
 
     void createVertexBuffer();
 
-    void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
+    void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t imageIndex);
 
     void loadSPZModel(std::string path);
 

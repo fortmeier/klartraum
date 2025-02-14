@@ -11,7 +11,7 @@
 namespace klartraum {
 class DrawComponent {
 public:
-    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) = 0;
+    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) = 0;
 
     virtual void initialize(VulkanKernel& vulkanKernel) {}
 };
