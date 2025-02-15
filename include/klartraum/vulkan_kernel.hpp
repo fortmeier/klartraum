@@ -18,11 +18,11 @@
 namespace klartraum {
 
 struct QueueFamilyIndices {
-    std::optional<uint32_t> graphicsFamily;
     std::optional<uint32_t> presentFamily;
+    std::optional<uint32_t> graphicsAndComputeFamily;
 
     bool isComplete() {
-        return graphicsFamily.has_value() && presentFamily.has_value();
+        return graphicsAndComputeFamily.has_value() && presentFamily.has_value();
     }
 };
 
@@ -79,7 +79,8 @@ class VulkanKernel {
 	};
 
     const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME 
     };
 
 
@@ -176,6 +177,10 @@ class VulkanKernel {
 
 
     VkFramebuffer& getFramebuffer(uint32_t imageIndex);
+    VkImageView& getImageView(uint32_t imageIndex);
+    
+VkImage& getSwapChainImage(uint32_t imageIndex);
+    
     VkExtent2D& getSwapChainExtent();
 
     

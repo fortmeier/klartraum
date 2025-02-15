@@ -21,18 +21,22 @@ public:
     VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type=GaussianSplattingRenderingType::PointCloud);
     ~VulkanGaussianSplatting();
 
-    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore) override;
+    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) override;
 
     virtual void initialize(VulkanKernel& vulkanKernel) override;
 
 
 private:
+    void createComputeDescriptorSetLayout();
+    void createDescriptorPool();
+    void createComputeDescriptorSets();
+    void createComputePipeline();
     void createGraphicsPipeline();
     void createSyncObjects();
 
     void createVertexBuffer();
 
-    void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
+    void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t imageIndex);
 
     void loadSPZModel(std::string path);
 
@@ -43,6 +47,12 @@ private:
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+
+    VkDescriptorPool descriptorPool;
+    std::vector<VkDescriptorSet> computeDescriptorSets;
+    VkDescriptorSetLayout computeDescriptorSetLayout;
+    VkPipelineLayout computePipelineLayout;
+    VkPipeline computePipeline;
 
     std::vector<uint8_t> data;
     size_t number_of_gaussians;
