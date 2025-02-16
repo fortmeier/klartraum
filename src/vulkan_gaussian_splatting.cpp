@@ -108,18 +108,20 @@ void VulkanGaussianSplatting::createDescriptorPool() {
     auto& device = vulkanKernel->getDevice();
     auto& config = vulkanKernel->getConfig();
 
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    constexpr uint32_t swapChainSize = 3; // TODO
+
+    std::array<VkDescriptorPoolSize, swapChainSize> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(config.MAX_FRAMES_IN_FLIGHT);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainSize);
     
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(config.MAX_FRAMES_IN_FLIGHT) * 2;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainSize) * 2;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 2;
+    poolInfo.poolSizeCount = swapChainSize;
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = static_cast<uint32_t>(config.MAX_FRAMES_IN_FLIGHT);
+    poolInfo.maxSets = static_cast<uint32_t>(swapChainSize);
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -130,19 +132,22 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
     auto& device = vulkanKernel->getDevice();
     auto& config = vulkanKernel->getConfig();
 
-    std::vector<VkDescriptorSetLayout> layouts(config.MAX_FRAMES_IN_FLIGHT, computeDescriptorSetLayout);
+    uint32_t swapChainSize = 3; // TODO
+
+    std::vector<VkDescriptorSetLayout> layouts(swapChainSize, computeDescriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(config.MAX_FRAMES_IN_FLIGHT);
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainSize);
     allocInfo.pSetLayouts = layouts.data();
 
-    computeDescriptorSets.resize(config.MAX_FRAMES_IN_FLIGHT);
-    if (vkAllocateDescriptorSets(device, &allocInfo, computeDescriptorSets.data()) != VK_SUCCESS) {
+    computeDescriptorSets.resize(swapChainSize);
+    VkResult result = vkAllocateDescriptorSets(device, &allocInfo, computeDescriptorSets.data());
+    if (result != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate descriptor sets!");
     }
 
-    for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
+    for (size_t i = 0; i < swapChainSize; i++) {
         VkDescriptorBufferInfo uniformBufferInfo{};
         uniformBufferInfo.buffer = vertexBuffer;
         uniformBufferInfo.offset = 0;
@@ -463,7 +468,7 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
 
     // issue the compute pipeline for gaussian splatting
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, 0);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[imageIndex], 0, 0);
     
     vkCmdDispatch(commandBuffer, 256, 256, 1);
 
