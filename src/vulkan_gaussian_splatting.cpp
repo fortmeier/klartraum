@@ -197,8 +197,10 @@ void VulkanGaussianSplatting::createComputePipeline() {
     
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
+    pipelineLayoutInfo.setLayoutCount = 2;
+
+    VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, vulkanKernel->getCamera().getDescriptorSetLayout()};
+    pipelineLayoutInfo.pSetLayouts = combinedLayouts;
     
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create compute pipeline layout!");
@@ -468,7 +470,9 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
 
     // issue the compute pipeline for gaussian splatting
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[imageIndex], 0, 0);
+
+    std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[imageIndex], descriptorSets[currentFrame]};
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
     
     vkCmdDispatch(commandBuffer, 256, 256, 1);
 
