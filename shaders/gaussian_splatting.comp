@@ -2,10 +2,18 @@
 
 struct Gaussian {
     vec3 position;
+    vec4 rotation;
+    vec3 scale;
     vec3 color;
+    float alpha;
+    float shR[15];
+    float shG[15];
+    float shB[15];
 };
 
-layout(std140, set = 0, binding = 0) readonly buffer GaussiansSSBOIn {
+#extension GL_EXT_scalar_block_layout : enable
+
+layout(scalar, set = 0, binding = 0) readonly buffer GaussiansSSBOIn {
    Gaussian gaussianIn[ ];
 };
 

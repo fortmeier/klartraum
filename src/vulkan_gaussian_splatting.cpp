@@ -83,7 +83,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSetLayout() {
     // gaussians binding
     layoutBindings[0].binding = 0;
     layoutBindings[0].descriptorCount = 1;
-    layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     layoutBindings[0].pImmutableSamplers = nullptr;
     layoutBindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     
@@ -110,16 +110,18 @@ void VulkanGaussianSplatting::createDescriptorPool() {
 
     constexpr uint32_t swapChainSize = 3; // TODO
 
-    std::array<VkDescriptorPoolSize, swapChainSize> poolSizes{};
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    // gaussians binding
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainSize);
     
+    // output frame binding
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainSize) * 2;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainSize);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = swapChainSize;
+    poolInfo.poolSizeCount = poolSizes.size();
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = static_cast<uint32_t>(swapChainSize);
 
@@ -148,19 +150,20 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
     }
 
     for (size_t i = 0; i < swapChainSize; i++) {
-        VkDescriptorBufferInfo uniformBufferInfo{};
-        uniformBufferInfo.buffer = vertexBuffer;
-        uniformBufferInfo.offset = 0;
-        uniformBufferInfo.range = sizeof(UniformBufferObject);
+        VkDescriptorBufferInfo storageBufferInfo{};
+        storageBufferInfo.buffer = vertexBuffer;
+        storageBufferInfo.offset = 0;
+        storageBufferInfo.range = sizeof(Gaussian) * number_of_gaussians;
+
 
         std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = computeDescriptorSets[i];
         descriptorWrites[0].dstBinding = 0;
         descriptorWrites[0].dstArrayElement = 0;
-        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
+        descriptorWrites[0].pBufferInfo = &storageBufferInfo;
 
 
         VkDescriptorImageInfo imageInfo = {};
@@ -377,7 +380,7 @@ void VulkanGaussianSplatting::createVertexBuffer() {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = sizeof(Gaussian) * number_of_gaussians;
-    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT ;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
