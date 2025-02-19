@@ -8,8 +8,8 @@ namespace klartraum {
 class BackendConfig {
 public:
     static constexpr size_t MAX_FRAMES_IN_FLIGHT = 2;
-    static constexpr uint32_t WIDTH = 800;
-    static constexpr uint32_t HEIGHT = 600;
+    static constexpr uint32_t WIDTH = 512;
+    static constexpr uint32_t HEIGHT = 512;
 };
 
 } // namespace klartraum
