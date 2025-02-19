@@ -41,8 +41,8 @@ struct SwapChainSupportDetails {
 class VulkanKernel {
     private:
     //GLFWwindow* window = nullptr;
-    const uint32_t WIDTH = 800;
-    const uint32_t HEIGHT = 600;
+    const uint32_t WIDTH = 512;
+    const uint32_t HEIGHT = 512;
 
     VkDebugUtilsMessengerEXT debugMessenger;
 

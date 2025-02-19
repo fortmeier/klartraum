@@ -477,7 +477,7 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
     std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[imageIndex], descriptorSets[currentFrame]};
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
     
-    vkCmdDispatch(commandBuffer, 256, 256, 1);
+    vkCmdDispatch(commandBuffer, 16, 16, number_of_gaussians);
 
     VkImageMemoryBarrier barrierBack = {};
     barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
