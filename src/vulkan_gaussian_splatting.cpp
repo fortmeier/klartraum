@@ -420,90 +420,97 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
 {
     auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
     auto& camera = vulkanKernel->getCamera();
-    
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(swapChainExtent.width);
-    viewport.height = static_cast<float>(swapChainExtent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = swapChainExtent;
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-    VkBuffer vertexBuffers[] = {vertexBuffer};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
     auto& descriptorSets = camera.getDescriptorSets();
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
-    vkCmdDraw(commandBuffer, static_cast<uint32_t>(number_of_gaussians), 1, 0, 0);
 
-    // Ensure compute writes are visible to graphics
-    VkImageMemoryBarrier imageBarrier = {};
-    imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
-    imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
-    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
-    imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
-    imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
-    imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    imageBarrier.image = vulkanKernel->getSwapChainImage(imageIndex);  // The image used as framebuffer and compute input
-    imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    imageBarrier.subresourceRange.baseMipLevel = 0;
-    imageBarrier.subresourceRange.levelCount = 1;
-    imageBarrier.subresourceRange.baseArrayLayer = 0;
-    imageBarrier.subresourceRange.layerCount = 1;
+    bool use_graphics = false;
     
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
-        0,  // No dependency flags
-        0, nullptr,  // No global memory barriers
-        0, nullptr,  // No buffer memory barriers
-        1, &imageBarrier // Image memory barrier
-    );
-    
+    if(use_graphics) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    // issue the compute pipeline for gaussian splatting
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = static_cast<float>(swapChainExtent.width);
+        viewport.height = static_cast<float>(swapChainExtent.height);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
-    std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[imageIndex], descriptorSets[currentFrame]};
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
-    
-    vkCmdDispatch(commandBuffer, 16, 16, number_of_gaussians);
+        VkRect2D scissor{};
+        scissor.offset = { 0, 0 };
+        scissor.extent = swapChainExtent;
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    VkImageMemoryBarrier barrierBack = {};
-    barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrierBack.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrierBack.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrierBack.image = vulkanKernel->getSwapChainImage(imageIndex);
-    barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrierBack.subresourceRange.baseMipLevel = 0;
-    barrierBack.subresourceRange.levelCount = 1;
-    barrierBack.subresourceRange.baseArrayLayer = 0;
-    barrierBack.subresourceRange.layerCount = 1;
-    
-    barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrierBack);
-    
+        VkBuffer vertexBuffers[] = {vertexBuffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+        
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+        vkCmdDraw(commandBuffer, static_cast<uint32_t>(number_of_gaussians), 1, 0, 0);
+    }
+    else
+    {
+        // Ensure compute writes are visible to graphics
+        VkImageMemoryBarrier imageBarrier = {};
+        imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
+        imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
+        imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
+        imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
+        imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
+        imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imageBarrier.image = vulkanKernel->getSwapChainImage(imageIndex);  // The image used as framebuffer and compute input
+        imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageBarrier.subresourceRange.baseMipLevel = 0;
+        imageBarrier.subresourceRange.levelCount = 1;
+        imageBarrier.subresourceRange.baseArrayLayer = 0;
+        imageBarrier.subresourceRange.layerCount = 1;
+        
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+            0,  // No dependency flags
+            0, nullptr,  // No global memory barriers
+            0, nullptr,  // No buffer memory barriers
+            1, &imageBarrier // Image memory barrier
+        );
+        
+        // issue the compute pipeline for gaussian splatting
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+
+        std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[imageIndex], descriptorSets[currentFrame]};
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
+        
+        uint32_t num_groups_z = number_of_gaussians / 16;
+
+        vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);
+
+        VkImageMemoryBarrier barrierBack = {};
+        barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrierBack.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrierBack.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrierBack.image = vulkanKernel->getSwapChainImage(imageIndex);
+        barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrierBack.subresourceRange.baseMipLevel = 0;
+        barrierBack.subresourceRange.levelCount = 1;
+        barrierBack.subresourceRange.baseArrayLayer = 0;
+        barrierBack.subresourceRange.layerCount = 1;
+        
+        barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrierBack);
+    }
 
 }
 
