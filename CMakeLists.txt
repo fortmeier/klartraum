@@ -32,7 +32,6 @@ set(SPZ_SRC
 )
 
 set(SRC 
-  src/main.cpp
   src/glfw_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
@@ -44,7 +43,7 @@ set(SRC
   ${SPZ_SRC}
   )
 
-add_executable(klartraum ${SRC})
+add_executable(klartraum src/main.cpp ${SRC})
 
 target_link_libraries(klartraum glfw zlibstatic ${Vulkan_LIBRARIES} ${Python3_LIBRARIES})
 
@@ -72,3 +71,33 @@ add_custom_target(
 )
 
 add_dependencies(klartraum Shaders)
+
+
+# Add Google Test
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/release-1.11.0.zip
+)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+add_executable(
+  klartraum_tests
+  tests/test_main.cpp
+  ${SRC}
+)
+
+target_link_libraries(
+  klartraum_tests
+  gtest_main
+  glfw
+  zlibstatic
+  ${Vulkan_LIBRARIES}
+  )
+
+include(GoogleTest)
+gtest_discover_tests(klartraum_tests)
