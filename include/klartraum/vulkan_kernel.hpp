@@ -215,7 +215,7 @@ class VulkanKernel {
     std::vector<VkCommandBuffer> commandBuffers;
 
 
-    std::shared_ptr<Camera> camera;
+    std::unique_ptr<Camera> camera;
  
     Camera& getCamera();
 
