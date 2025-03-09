@@ -4,7 +4,7 @@
 #include "klartraum/vulkan_buffer.hpp"
 
 
-TEST(VulkanBuffer, memcopy) {
+TEST(KlartraumGlfwFrontend, smoke) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
