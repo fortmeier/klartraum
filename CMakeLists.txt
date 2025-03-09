@@ -88,6 +88,7 @@ enable_testing()
 add_executable(
   klartraum_tests
   tests/test_main.cpp
+  tests/test_vulkan_buffers.cpp
   ${SRC}
 )
 
