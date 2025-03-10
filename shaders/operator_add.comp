@@ -1,0 +1,24 @@
+#version 450
+
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer InputsA {
+    float A[ ];
+};
+
+layout(set = 0, binding = 1) readonly buffer InputsB {
+    float B[ ];
+};
+
+layout(set = 0, binding = 2) buffer Output {
+    float R[ ];
+};
+
+#extension GL_EXT_debug_printf : enable
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    R[index] = A[index] + B[index];
+
+}
