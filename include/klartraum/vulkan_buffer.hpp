@@ -58,6 +58,14 @@ public:
         vkUnmapMemory(device, vertexBufferMemory);
     }
 
+    VkBuffer& getBuffer() {
+        return vertexBuffer;
+    }
+
+    size_t getBufferMemSize() {
+        return sizeof(T) * size;
+    }
+
 private:
     const uint32_t size;
 

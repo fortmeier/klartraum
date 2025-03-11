@@ -209,6 +209,8 @@ class VulkanKernel {
     void endRenderPass(uint32_t currentFrame);
 
     void createCommandPool();
+
+    VkCommandBuffer createCommandBuffer();
     void createCommandBuffers();
 
     VkCommandPool commandPool;
