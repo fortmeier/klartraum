@@ -26,9 +26,14 @@ TEST(VulkanOperator, simple_add) {
     Buffer result(vulkanKernel, 7);
 
     std::vector<float> result_data(7, 0.0f);
-    result.memcopy_to(result_data);
     
-    auto op = klartraum::VulkanOperator<Buffer, Buffer, Buffer>(vulkanKernel, "shaders/operator_add.comp.spv");
+    auto add = klartraum::VulkanOperator<Buffer, Buffer, Buffer>(vulkanKernel, "shaders/operator_add.comp.spv");
+    auto commandBuffer = vulkanKernel.createCommandBuffer();
+    klartraum::VulkanOperationContext context(commandBuffer, device); // = vulkanKernel.createOperationContext();
+    context(add(buffer, buffer2, result));
+    context.eval(vulkanKernel.getGraphicsQueue());
+    
+    result.memcopy_to(result_data);
 
     for (int i = 0; i < 7; i++) {
         EXPECT_EQ(result_data[i], 9.0f);
