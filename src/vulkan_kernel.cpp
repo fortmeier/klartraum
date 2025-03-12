@@ -65,6 +65,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanKernel::debugCallback(
     void* pUserData) {
 
     std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+    std::cerr << std::endl;
 
     return VK_FALSE;
 }
@@ -97,6 +98,13 @@ SwapChainSupportDetails VulkanKernel::querySwapChainSupport(VkPhysicalDevice dev
 void VulkanKernel::createInstance() {
 
     std::cout << "use validation layers: " << (enableValidationLayers ? "true" : "false") << std::endl;
+    if (enableValidationLayers)
+    {
+        for (const char* layer : validationLayers) {
+            std::cout << "validation layer: " << layer << std::endl;
+        }
+    }
+    
     if (enableValidationLayers && !checkValidationLayerSupport()) {
         throw std::runtime_error("validation layers requested, but not available");
     }
@@ -112,6 +120,11 @@ void VulkanKernel::createInstance() {
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
+
+    if (enableValidationLayers) {
+        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+    }
 
     //uint32_t glfwExtensionCount = 0;
     //const char** glfwExtensions;
@@ -412,13 +425,6 @@ void VulkanKernel::createLogicalDevice() {
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
-    if (enableValidationLayers) {
-        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-        createInfo.ppEnabledLayerNames = validationLayers.data();
-    }
-    else {
-        createInfo.enabledLayerCount = 0;
-    }
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
         throw std::runtime_error("failed to create logical device!");
