@@ -33,7 +33,8 @@ public:
     
         if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate vertex buffer memory!");
-        }        
+        }
+        vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
     }
 
     ~VulkanBuffer() {

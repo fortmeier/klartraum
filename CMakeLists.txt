@@ -92,6 +92,8 @@ add_executable(
   ${SRC}
 )
 
+add_dependencies(klartraum_tests Shaders)
+
 target_link_libraries(
   klartraum_tests
   gtest_main
