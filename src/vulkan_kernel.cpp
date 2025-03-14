@@ -66,6 +66,11 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanKernel::debugCallback(
 
     std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
     std::cerr << std::endl;
+    std::cerr << std::flush;
+
+    if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        throw std::runtime_error("validation layer error");
+    }
 
     return VK_FALSE;
 }
@@ -511,10 +516,15 @@ VulkanKernel::VulkanKernel(/*GLFWwindow* window*/) {
 
     createInstance();
     setupDebugMessenger();
+    state = State::UNINITIALIZED;
 
 }
 
 void VulkanKernel::initialize(VkSurfaceKHR& surface) {
+    if(state != State::UNINITIALIZED) {
+        throw std::runtime_error("VulkanKernel already initialized!");
+    }
+
     this->surface = surface;
 
     pickPhysicalDevice();
@@ -529,11 +539,15 @@ void VulkanKernel::initialize(VkSurfaceKHR& surface) {
     createSyncObjects();
 
     camera = std::make_unique<Camera>(this);
+    state = State::INITIALIZED;
 
 }
 
+void VulkanKernel::shutdown() {
+    if (state != State::INITIALIZED) {
+        throw std::runtime_error("VulkanKernel not initialized!");
+    }
 
-VulkanKernel::~VulkanKernel() {
     camera.reset();
 
     vkDestroyCommandPool(device, commandPool, nullptr);
@@ -549,20 +563,32 @@ VulkanKernel::~VulkanKernel() {
         vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
     }
 
+    for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+        vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
+    }
+
+    vkDestroyRenderPass(device, renderPass, nullptr);
 
     vkDestroySwapchainKHR(device, swapChain, nullptr);
+
+    for (size_t i = 0; i < swapChainImages.size(); i++) {
+        vkDestroyImageView(device, swapChainImageViews[i], nullptr);
+    }
 
     vkDestroyDevice(device, nullptr);
 
     if (enableValidationLayers) {
         DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
     }
+    state = State::SHUTDOWN;
+}
 
+
+VulkanKernel::~VulkanKernel() {
+    if (state != State::SHUTDOWN) {
+        throw std::runtime_error("VulkanKernel not shut down!");
+    }
     vkDestroyInstance(instance, nullptr);
-
-    //glfwDestroyWindow(window);
-
-    //glfwTerminate();
 }
 
 QueueFamilyIndices VulkanKernel::findQueueFamiliesPhysicalDevice() {
