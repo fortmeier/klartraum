@@ -137,13 +137,21 @@ class VulkanKernel {
 
     void createFramebuffers();
 
+    enum class State {
+        UNINITIALIZED,
+        INITIALIZED,
+        SHUTDOWN
+    } state = State::UNINITIALIZED;
     public:
     VulkanKernel(/*GLFWwindow* window*/);
 
-    void initialize(VkSurfaceKHR& surface);
-
-
     ~VulkanKernel();
+    
+    void initialize(VkSurfaceKHR& surface);
+    void shutdown();
+
+
+    
 
     QueueFamilyIndices findQueueFamiliesPhysicalDevice();
 

@@ -28,7 +28,12 @@ public:
         //createSyncObjects();
     }
 
-    virtual ~VulkanOperator() {};
+    virtual ~VulkanOperator() {
+        vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
+        vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
+        vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
+        vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+    };
 
     VulkanOperationResult* operator()(A& a, B& b, R& result)
     {
