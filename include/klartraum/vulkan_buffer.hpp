@@ -63,6 +63,10 @@ public:
         return vertexBuffer;
     }
 
+    uint32_t getSize() {
+        return size;
+    }
+
     size_t getBufferMemSize() {
         return sizeof(T) * size;
     }

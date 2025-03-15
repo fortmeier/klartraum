@@ -26,7 +26,7 @@ TEST(VulkanOperator, simple_matmul) {
     std::vector<Mat4> dataMat = {Mat4(1.0f), Mat4(2.0f)};
     bufferMat.memcopy_from(dataMat);
 
-    std::vector<Vec4> dataVec = {Vec4(1.0f, 0.0f, 0.0f, 1.0f)};
+    std::vector<Vec4> dataVec = {Vec4(1.0f, 0.0f, 0.0f, 1.0f), Vec4(1.0f, 0.0f, 0.0f, 1.0f)};
     bufferVec.memcopy_from(dataVec);
     
     BufferVec result(vulkanKernel, 2);
