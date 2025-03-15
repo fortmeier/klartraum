@@ -37,6 +37,13 @@ public:
 
     VulkanOperationResult* operator()(A& a, B& b, R& result)
     {
+        if(a.getSize() != b.getSize() || a.getSize() != result.getSize())
+        {
+            std::stringstream ss;
+            ss << "VulkanOperator::operator() operand size mismatch: a:" << a.getSize() << " b:" << b.getSize() << " result:" << result.getSize();
+            throw std::runtime_error(ss.str());
+        }
+        groupCountX = a.getSize();
         createComputeDescriptorSets(a, b, result);
         VulkanOperationResult* res = dynamic_cast<VulkanOperationResult*>(this);
         return res;
@@ -48,7 +55,7 @@ public:
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSet, 0, 0);
         
-        vkCmdDispatch(commandBuffer, 7, 1, 1);
+        vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
 
     }
 
@@ -60,6 +67,10 @@ private:
     VkPipeline computePipeline;
 
     VulkanKernel* vulkanKernel;
+
+    uint32_t groupCountX = 1;
+    uint32_t groupCountY = 1;
+    uint32_t groupCountZ = 1;
 
     void createDescriptorPool() {
         auto& device = vulkanKernel->getDevice();
