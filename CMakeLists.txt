@@ -67,7 +67,7 @@ endforeach()
 
 add_custom_target(
   Shaders
-  DEPENDS ${SPIRV_BINARY_FILES}
+  DEPENDS ${SPIRV_BINARY_FILES} ${GLSL_SOURCE_FILES}
 )
 
 add_dependencies(klartraum Shaders)
