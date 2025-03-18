@@ -292,7 +292,7 @@ void VulkanKernel::createSwapChain() {
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
     uint32_t queueFamilyIndices[] = { indices.graphicsAndComputeFamily.value(), indices.presentFamily.value() };
@@ -327,6 +327,73 @@ void VulkanKernel::createSwapChain() {
 
     swapChainImageFormat = surfaceFormat.format;
     swapChainExtent = extent;
+
+    stagingImageMemory.resize(imageCount);
+    stagingImages.resize(imageCount);
+    stagingImageViews.resize(imageCount);
+
+    VkPhysicalDeviceProperties deviceProperties;
+    vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+
+    // Create image and image view for storing images with the same format as the swap chain images
+    for(auto i = 0; i < swapChainImages.size(); i++) {
+        VkImageCreateInfo imageCreateInfo{};
+        imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageCreateInfo.extent.width = swapChainExtent.width;
+        imageCreateInfo.extent.height = swapChainExtent.height;
+        imageCreateInfo.extent.depth = 1;
+        imageCreateInfo.mipLevels = 1;
+        imageCreateInfo.arrayLayers = 1;
+        imageCreateInfo.format = VK_FORMAT_B8G8R8A8_UNORM; // swapChainImageFormat;
+        //imageCreateInfo.tiling = VK_IMAGE_TILING_LINEAR;
+        imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+        imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        //imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        //imageCreateInfo.imageCreateMaxMipLevels = 1;
+        //imageCreateInfo.imageCreateMaxArrayLayers = 1;
+        
+
+        if (vkCreateImage(device, &imageCreateInfo, nullptr, &stagingImages[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create staging image!");
+        }
+        
+        VkMemoryRequirements memRequirements;
+        vkGetImageMemoryRequirements(device, stagingImages[i], &memRequirements);
+        
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingImageMemory[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate staging image memory!");
+        }
+        
+        vkBindImageMemory(device, stagingImages[i], stagingImageMemory[i], 0);
+        
+        VkImageViewCreateInfo viewCreateInfo{};
+        viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewCreateInfo.image = stagingImages[i];
+        viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewCreateInfo.format = VK_FORMAT_B8G8R8A8_UNORM; // swapChainImageFormat;
+        viewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewCreateInfo.subresourceRange.baseMipLevel = 0;
+        viewCreateInfo.subresourceRange.levelCount = 1;
+        viewCreateInfo.subresourceRange.baseArrayLayer = 0;
+        viewCreateInfo.subresourceRange.layerCount = 1;
+        
+        if (vkCreateImageView(device, &viewCreateInfo, nullptr, &stagingImageViews[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create staging image view!");
+        }
+    }
+
+
 }
 
 void VulkanKernel::createImageViews() {
