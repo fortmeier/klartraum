@@ -144,12 +144,6 @@ void VulkanKernel::createInstance() {
         createInfo.ppEnabledLayerNames = validationLayers.data();
     }
 
-    //uint32_t glfwExtensionCount = 0;
-    //const char** glfwExtensions;
-
-    // glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-    // createInfo.enabledExtensionCount = glfwExtensionCount;
-    // createInfo.ppEnabledExtensionNames = glfwExtensions;
     auto extensions = getRequiredExtensions();
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
@@ -159,22 +153,6 @@ void VulkanKernel::createInstance() {
     for(auto extension : extensions) {
         std::cout << extension << std::endl;
     }
-
-    //// Check for available extensions
-    //
-    //uint32_t extensionCount = 0;
-    //vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-
-    //std::vector<VkExtensionProperties> extensions(extensionCount);
-
-    //vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-
-    //std::cout << "available extensions: " << std::endl;
-
-    //for (const auto& extension : extensions) {
-    //    std::cout << extension.extensionName << std::endl;
-    //}
-
 
     VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
 
@@ -536,7 +514,7 @@ void VulkanKernel::createRenderPass() {
 
     VkAttachmentReference colorAttachmentRef{};
     colorAttachmentRef.attachment = 0;
-    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -711,7 +689,8 @@ VkImageView& VulkanKernel::getImageView(uint32_t imageIndex)
     if (imageIndex >= swapChainImageViews.size()) {
         throw std::runtime_error("Invalid image index!");
     }
-    return swapChainImageViews[imageIndex];
+    return stagingImageViews[imageIndex];
+    //return swapChainImageViews[imageIndex];
 }
 
 VkImage& VulkanKernel::getSwapChainImage(uint32_t imageIndex)
