@@ -86,8 +86,10 @@ class VulkanKernel {
 
 #ifdef NDEBUG
     const bool enableValidationLayers = false;
+    const bool enableGPUPrintf = false;
 #else
     const bool enableValidationLayers = true;
+    const bool enableGPUPrintf = true;
 #endif
 
     // void initWindow() {
