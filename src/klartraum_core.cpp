@@ -34,7 +34,7 @@ void KlartraumCore::step() {
 
     // draw all draw components
     auto& currentFrame = vulkanKernel.currentFrame;
-    auto& framebuffer = vulkanKernel.getFramebuffer(currentFrame);
+    auto& framebuffer = vulkanKernel.getFramebuffer(imageIndex);
     auto& commandBuffer = vulkanKernel.commandBuffers[currentFrame];
     auto& imageAvailableSemaphore = vulkanKernel.imageAvailableSemaphores[currentFrame];
 
