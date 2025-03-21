@@ -126,9 +126,10 @@ void VulkanKernel::createInstance() {
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
+    std::vector<VkValidationFeatureEnableEXT>  validation_feature_enables = {};
     if (enableValidationLayers && enableGPUPrintf)
     {
-        std::vector<VkValidationFeatureEnableEXT>  validation_feature_enables = {VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT};
+        validation_feature_enables.push_back(VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT);
 
         VkValidationFeaturesEXT validation_features{};
         validation_features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
