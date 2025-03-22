@@ -305,6 +305,20 @@ void DrawBasics::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer comm
     auto& camera = vulkanKernel->getCamera();
     auto& vertices = getVertices(type);
     
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = vulkanKernel->getRenderPass();
+    renderPassInfo.framebuffer = framebuffer;
+
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = swapChainExtent;
+
+    VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);   
+
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkViewport viewport{};
@@ -327,6 +341,8 @@ void DrawBasics::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer comm
     auto& descriptorSets = camera.getDescriptorSets();
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
     vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+
+    vkCmdEndRenderPass(commandBuffer);
 
 }
 
