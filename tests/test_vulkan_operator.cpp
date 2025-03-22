@@ -5,7 +5,7 @@
 #include "klartraum/vulkan_operator.hpp"
 
 
-// TEST(VulkanOperator, simple_add) {
+TEST(VulkanOperator, simple_add) {
     klartraum::GlfwFrontend frontend;
 
     
