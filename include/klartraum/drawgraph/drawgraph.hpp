@@ -7,7 +7,7 @@
 #include <vector>
 #include <queue>
 
-#include "klartraum/drawgraphelement.hpp"
+#include "klartraum/drawgraph/drawgraphelement.hpp"
 
 namespace klartraum {
 
