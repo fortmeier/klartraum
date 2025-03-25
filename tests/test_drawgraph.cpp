@@ -5,7 +5,7 @@
 
 #include "klartraum/glfw_frontend.hpp"
 
-#include "klartraum/drawgraph.hpp"
+#include "klartraum/drawgraph/drawgraph.hpp"
 
 using namespace klartraum;
 
