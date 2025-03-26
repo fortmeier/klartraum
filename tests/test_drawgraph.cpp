@@ -43,6 +43,21 @@ class CopyOp : public DrawGraphElement {
 
 };
 
+class ImageViewSrc : public DrawGraphElement {
+    virtual const char* getName() const {
+        return "ImageViewSrc";
+    }
+};
+
+class FramebufferSrc : public DrawGraphElement {
+public:
+    FramebufferSrc(int index) : framebuffer_index(index) {}
+
+    virtual const char* getName() const {
+        return "FramebufferSrc";
+    }
+    uint32_t framebuffer_index;
+};
 
 
 TEST(DrawGraph, create) {
@@ -55,8 +70,11 @@ TEST(DrawGraph, create) {
     /*
     STEP 1: create the drawgraph elements
     */
-    
+
+    auto framebuffer_src = std::make_shared<FramebufferSrc>(0);
     auto drawable = std::make_shared<Drawable>();
+    drawable->set_input(framebuffer_src);
+
     auto blur = std::make_shared<BlurOp>();
     blur->set_input(drawable);
     auto noise = std::make_shared<NoiseOp>();
@@ -76,17 +94,9 @@ TEST(DrawGraph, create) {
     
     // this traverses the drawgraph and creates the vulkan objects
     auto& drawgraph = DrawGraph();
-    drawgraph.compile_from(copy);
+    drawgraph.compileFrom(copy);
 
-    exit(0);
-    
-    // klartraum::VulkanBuffer<float> buffer(vulkanKernel, 7);
-    // std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    // buffer.memcopy_from(data);
-    // std::vector<float> data2(7);
-    // buffer.memcopy_to(data2);
-    // for (int i = 0; i < 7; i++) {
-    //     EXPECT_EQ(data[i], data2[i]);
-    // }
+    drawgraph.submitTo(vulkanKernel.getGraphicsQueue());
+
     return;
 }
