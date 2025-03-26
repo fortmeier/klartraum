@@ -30,17 +30,60 @@ public:
         }
     }
 
-    void compile_from(DrawGraphElementPtr element) {
-        // traverse the graph and create vulkan objects
-        //backwards(element);
 
-        // Use Kahn's algorithm to find the execution order
+    void compileFrom(DrawGraphElementPtr element) {
+        computeOrder(element);
+        for(auto& element : ordered_elements) {
+            submit_infos.push_back(getSubmitInfoForElement(element));
+        }
+    }
+
+
+    /*
+    * Submit the graph to the graphics queue
+    *
+    * The submit infos will have to be prepared before by calling compile_from
+    */
+    VkFence& submitTo(VkQueue graphicsQueue) {
+        // TODO implement the fence to return
+        VkFence fence = VK_NULL_HANDLE;
+        if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit the graph elements!");
+        }
+        return fence;
+    }
+
+private:
+    std::vector<DrawGraphElementPtr> ordered_elements;
+
+    std::vector<VkSubmitInfo> submit_infos;
+
+    VkSubmitInfo getSubmitInfoForElement(DrawGraphElementPtr element) {
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 0;
+        // submitInfo.pCommandBuffers = &commandBuffer;
+       
+        // submitInfo.waitSemaphoreCount = 1;
+        // submitInfo.pWaitSemaphores = waitSemaphores;
+        // submitInfo.pWaitDstStageMask = waitStages;
     
+    
+        // submitInfo.signalSemaphoreCount = 1;
+        // submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
+        return submitInfo;
+    }
+
+
+    void computeOrder(DrawGraphElementPtr element) {
+        // Use Kahn's algorithm to find the execution order
+
         auto& L = ordered_elements;
+        L.clear();
+
         std::queue<DrawGraphElementPtr> S;
         S.push(element);
 
-        //std::set<std::pair<DrawGraphElementPtr, DrawGraphElementPtr>> remove_edges;
         EdgeList edges;
         EdgeList incoming_edges;
         fill_edges(edges, incoming_edges, element);
@@ -50,8 +93,6 @@ public:
             // remove a node n from S
             auto n = S.front();
             S.pop();
-
-            std::cout << "node: " << n->getName() << std::endl;
 
             L.push_back(n);
             for(auto input = n->inputs.begin(); input != n->inputs.end(); input++) {
@@ -71,55 +112,25 @@ public:
                         S.push(m);
                     }
                 }
-
-
             }
         }
         size_t sum_edges = 0;
         for(auto& element : edges) {
-            std::cout << element.first->getName() << " -> " << element.second.size() << std::endl;
             sum_edges += element.second.size();
         }
-        std::cout << "edges size: " << sum_edges << std::endl;
 
         size_t sum_incoming_edges = 0;
         for(auto& element : incoming_edges) {
-            std::cout << element.first->getName() << " <- " << element.second.size() << std::endl;
             sum_incoming_edges += element.second.size();
         }
-        std::cout << "incoming edges size: " << sum_incoming_edges << std::endl;
 
-        for(auto& element : L) {
-            std::cout << element->getName() << std::endl;
+        if (sum_edges > 0 || sum_incoming_edges > 0) {
+            throw std::runtime_error("graph has cycles!");
         }
 
-        std::cout << "" << std::endl;
-        
-    }
+        std::reverse(L.begin(), L.end());
 
-    void backwards(DrawGraphElementPtr element, bool mainpath = true) {
-        // do not traverse if element already in graph
-        if(visited.find(element) != visited.end()) {
-            return;
-        }
-
-        visited.insert(element);
-
-        std::cout << element->getName() << " mainpath = " << mainpath << std::endl;
-        for(auto& input : element->inputs) {
-            backwards(input.second, mainpath);
-            mainpath = false;
-        }
-        
-    }
-
-    std::vector<DrawGraphElementPtr> ordered_elements;
-
-    std::set<DrawGraphElementPtr> visited;
-
-    typedef std::vector<DrawGraphElementPtr> Branch;
-    std::vector<Branch> branches;
-
+    }        
 };
 
 } // namespace klartraum
