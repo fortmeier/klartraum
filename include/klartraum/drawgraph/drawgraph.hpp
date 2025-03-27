@@ -13,28 +13,66 @@ namespace klartraum {
 
 class DrawGraph {
 public:
+    DrawGraph(VulkanKernel& vulkanKernel) : device(vulkanKernel.getDevice())
+    {
 
-    typedef std::map<DrawGraphElementPtr, std::vector<DrawGraphElementPtr>> EdgeList;
+        // create the command pool
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        poolInfo.queueFamilyIndex = vulkanKernel.getQueueFamilyIndices().graphicsAndComputeFamily.value();
+    
+        if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create command pool!");
+        }    
 
-    void fill_edges(EdgeList& edges, EdgeList& incoming, DrawGraphElementPtr element) {
-        for(auto& input : element->inputs) {
-            // check if input already in graph
-            auto it = find(edges[element].begin(), edges[element].end(), input.second);
-            if(it == edges[element].end()) {
-                // if not, add it
-                edges[element].push_back(input.second);
-                incoming[input.second].push_back(element);
-                std::cout << "edge: " << element->getName() << " -> " << input.second->getName() << std::endl;
-                fill_edges(edges, incoming, input.second);
-            }
-        }
+  
     }
-
 
     void compileFrom(DrawGraphElementPtr element) {
         computeOrder(element);
+
         for(auto& element : ordered_elements) {
-            submit_infos.push_back(getSubmitInfoForElement(element));
+            element->_setup(device);
+        }
+
+        commandBuffers.resize(ordered_elements.size());
+
+        // create the command buffers
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = commandBuffers.size();
+    
+        if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate command buffers!");
+        }
+
+        for(auto& commandBuffer : commandBuffers) {
+            // reset the command buffer before recording
+            vkResetCommandBuffer(commandBuffer, 0);
+
+            VkCommandBufferBeginInfo beginInfo{};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags = 0; // Optional
+            beginInfo.pInheritanceInfo = nullptr; // Optional
+        
+            if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+                throw std::runtime_error("failed to begin recording command buffer!");
+            }
+            
+            // record the command buffer
+            element->_record(commandBuffer);
+
+            if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+                throw std::runtime_error("failed to record command buffer!");
+            }        
+
+            // for now, all command buffers will be submitted to the same queue without any synchronization
+            // this is okay since we sorted the elements in the graph before and the queue is
+            // processing them one after another (assumption!!!)
+            submit_infos.push_back(getSubmitInfoForElement(element, &commandBuffer));
         }
     }
 
@@ -54,15 +92,19 @@ public:
     }
 
 private:
+    VkDevice device;
+    VkCommandPool commandPool;
+    std::vector<VkCommandBuffer> commandBuffers;
+
     std::vector<DrawGraphElementPtr> ordered_elements;
 
     std::vector<VkSubmitInfo> submit_infos;
 
-    VkSubmitInfo getSubmitInfoForElement(DrawGraphElementPtr element) {
+    VkSubmitInfo getSubmitInfoForElement(DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 0;
-        // submitInfo.pCommandBuffers = &commandBuffer;
+        submitInfo.pCommandBuffers = pCommandBuffer;
        
         // submitInfo.waitSemaphoreCount = 1;
         // submitInfo.pWaitSemaphores = waitSemaphores;
@@ -74,6 +116,21 @@ private:
         return submitInfo;
     }
 
+    typedef std::map<DrawGraphElementPtr, std::vector<DrawGraphElementPtr>> EdgeList;
+
+    void fill_edges(EdgeList& edges, EdgeList& incoming, DrawGraphElementPtr element) {
+        for(auto& input : element->inputs) {
+            // check if input already in graph
+            auto it = find(edges[element].begin(), edges[element].end(), input.second);
+            if(it == edges[element].end()) {
+                // if not, add it
+                edges[element].push_back(input.second);
+                incoming[input.second].push_back(element);
+                std::cout << "edge: " << element->getName() << " -> " << input.second->getName() << std::endl;
+                fill_edges(edges, incoming, input.second);
+            }
+        }
+    }
 
     void computeOrder(DrawGraphElementPtr element) {
         // Use Kahn's algorithm to find the execution order

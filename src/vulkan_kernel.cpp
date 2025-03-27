@@ -707,6 +707,11 @@ VkExtent2D& VulkanKernel::getSwapChainExtent()
     return swapChainExtent;
 }
 
+const VkFormat& VulkanKernel::getSwapChainImageFormat() const
+{
+    return swapChainImageFormat;
+}
+
 QueueFamilyIndices VulkanKernel::getQueueFamilyIndices() {
     QueueFamilyIndices queueFamilyIndices = findQueueFamiliesPhysicalDevice();
     return queueFamilyIndices;
