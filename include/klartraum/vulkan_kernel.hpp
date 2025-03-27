@@ -193,6 +193,8 @@ class VulkanKernel {
     
     VkExtent2D& getSwapChainExtent();
 
+    const VkFormat& getSwapChainImageFormat() const;
+
     
 
     QueueFamilyIndices getQueueFamilyIndices();

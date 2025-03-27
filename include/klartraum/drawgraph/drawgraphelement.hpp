@@ -17,6 +17,10 @@ public:
     }
     //virtual DrawGraphElement& get_output() = 0;
 
+    virtual void _setup(VkDevice& device) {};
+
+    virtual void _record(VkCommandBuffer commandBuffer) {};
+
     virtual const char* getName() const = 0;
 
     std::map<int, DrawGraphElementPtr> inputs;
