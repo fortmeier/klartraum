@@ -13,8 +13,9 @@ namespace klartraum {
 
 class DrawGraph {
 public:
-    DrawGraph(VulkanKernel& vulkanKernel) : device(vulkanKernel.getDevice())
+    DrawGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : device(vulkanKernel.getDevice()), numberPaths(numberPaths) 
     {
+        all_path_submit_infos.resize(numberPaths);
 
         // create the command pool
         VkCommandPoolCreateInfo poolInfo{};
@@ -33,46 +34,33 @@ public:
         computeOrder(element);
 
         for(auto& element : ordered_elements) {
-            element->_setup(device);
+            element->_setup(device, numberPaths);
         }
 
-        commandBuffers.resize(ordered_elements.size());
+        commandBuffers.resize(ordered_elements.size() * numberPaths);
 
         // create the command buffers
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = commandPool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = commandBuffers.size();
+        allocInfo.commandBufferCount = (uint32_t)(commandBuffers.size());
     
         if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
-        for(auto& commandBuffer : commandBuffers) {
-            // reset the command buffer before recording
-            vkResetCommandBuffer(commandBuffer, 0);
-
-            VkCommandBufferBeginInfo beginInfo{};
-            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            beginInfo.flags = 0; // Optional
-            beginInfo.pInheritanceInfo = nullptr; // Optional
-        
-            if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-                throw std::runtime_error("failed to begin recording command buffer!");
+        for(uint32_t pathId = 0; pathId < numberPaths; pathId++) {
+            for(size_t i = 0; i < ordered_elements.size(); i++) {
+                auto& element = ordered_elements[i];
+                VkCommandBuffer& commandBuffer = commandBuffers[i * numberPaths + pathId];                
+                recordCommandBuffer(commandBuffer, element, pathId);
+                // for now, all command buffers will be submitted to the same queue without any synchronization
+                // this is okay since we sorted the elements in the graph before and the queue is
+                // processing them one after another (assumption!!!)
+                SubmitInfoList& submit_infos = all_path_submit_infos[pathId];
+                submit_infos.push_back(getSubmitInfoForElement(element, &commandBuffer));
             }
-            
-            // record the command buffer
-            element->_record(commandBuffer);
-
-            if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-                throw std::runtime_error("failed to record command buffer!");
-            }        
-
-            // for now, all command buffers will be submitted to the same queue without any synchronization
-            // this is okay since we sorted the elements in the graph before and the queue is
-            // processing them one after another (assumption!!!)
-            submit_infos.push_back(getSubmitInfoForElement(element, &commandBuffer));
         }
     }
 
@@ -82,9 +70,10 @@ public:
     *
     * The submit infos will have to be prepared before by calling compile_from
     */
-    VkFence& submitTo(VkQueue graphicsQueue) {
+    VkFence& submitTo(VkQueue graphicsQueue, uint32_t pathId) {
         // TODO implement the fence to return
         VkFence fence = VK_NULL_HANDLE;
+        auto& submit_infos = all_path_submit_infos[pathId];
         if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");
         }
@@ -93,12 +82,36 @@ public:
 
 private:
     VkDevice device;
+    uint32_t numberPaths;
+
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 
     std::vector<DrawGraphElementPtr> ordered_elements;
 
-    std::vector<VkSubmitInfo> submit_infos;
+    typedef std::vector<VkSubmitInfo> SubmitInfoList;
+    std::vector<SubmitInfoList> all_path_submit_infos;
+
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, DrawGraphElementPtr element, uint32_t pathId) {
+        // reset the command buffer before recording
+        vkResetCommandBuffer(commandBuffer, 0);
+
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = 0; // Optional
+        beginInfo.pInheritanceInfo = nullptr; // Optional
+    
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            throw std::runtime_error("failed to begin recording command buffer!");
+        }
+        
+        // record the command buffer
+        element->_record(commandBuffer, pathId);
+
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to record command buffer!");
+        }        
+    }
 
     VkSubmitInfo getSubmitInfoForElement(DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
         VkSubmitInfo submitInfo{};

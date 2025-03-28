@@ -20,7 +20,7 @@ public:
         return "RenderPass";
     }
 
-    virtual void _setup(VkDevice& device) {
+    virtual void _setup(VkDevice& device, uint32_t numberPath) {
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = swapChainImageFormat;
         colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -70,7 +70,7 @@ public:
     };
 
 
-    virtual void _record(VkCommandBuffer commandBuffer) {
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
         // auto& camera = vulkanKernel->getCamera();
         // auto& vertices = getVertices(type);
 
@@ -79,8 +79,13 @@ public:
         if (!framebufferSrc) {
             throw std::runtime_error("FramebufferSrc not set!");
         }
-
-        VkFramebuffer framebuffer = framebufferSrc->framebuffer;
+        if (framebufferSrc->framebuffers.size() == 0) {
+            throw std::runtime_error("FramebufferSrc has no framebuffers!");
+        }
+        if (pathId >= framebufferSrc->framebuffers.size()) {
+            throw std::runtime_error("FramebufferSrc has no framebuffers for this pathId!");
+        }
+        VkFramebuffer framebuffer = framebufferSrc->framebuffers[pathId];
         
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
