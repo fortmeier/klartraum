@@ -17,9 +17,9 @@ public:
     }
     //virtual DrawGraphElement& get_output() = 0;
 
-    virtual void _setup(VkDevice& device) {};
+    virtual void _setup(VkDevice& device, uint32_t numberPath) {};
 
-    virtual void _record(VkCommandBuffer commandBuffer) {};
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
 
     virtual const char* getName() const = 0;
 
