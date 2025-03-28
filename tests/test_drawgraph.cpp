@@ -96,10 +96,46 @@ TEST(DrawGraph, create) {
     */
     
     // this traverses the drawgraph and creates the vulkan objects
-    auto& drawgraph = DrawGraph(vulkanKernel);
+    auto& drawgraph = DrawGraph(vulkanKernel, 1);
     drawgraph.compileFrom(copy);
 
-    drawgraph.submitTo(vulkanKernel.getGraphicsQueue());
+    drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), 0);
+
+    return;
+}
+
+TEST(DrawGraph, trippleFramebuffer) {
+    klartraum::GlfwFrontend frontend;
+
+    auto& core = frontend.getKlartraumCore();
+    auto& vulkanKernel = core.getVulkanKernel();
+    auto& device = vulkanKernel.getDevice();
+
+    /*
+    STEP 1: create the drawgraph elements
+    */
+
+    std::vector<VkFramebuffer> framebuffers;
+    for (int i = 0; i < 3; i++) {
+        framebuffers.push_back(vulkanKernel.getFramebuffer(i));
+    }
+    auto framebuffer_src = std::make_shared<FramebufferSrc>(framebuffers);
+
+    auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
+    auto swapChainExtent = vulkanKernel.getSwapChainExtent();
+    auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
+
+    renderpass->set_input(framebuffer_src);
+
+    /*
+    STEP 2: create the drawgraph backend
+    */
+    
+    // this traverses the drawgraph and creates the vulkan objects
+    auto& drawgraph = DrawGraph(vulkanKernel, 3);
+    drawgraph.compileFrom(renderpass);
+
+    drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), 0);
 
     return;
 }
