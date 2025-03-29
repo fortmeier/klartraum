@@ -135,8 +135,6 @@ class VulkanKernel {
 
     void createLogicalDevice();
 
-    void createRenderPass();
-
     void createFramebuffers();
 
     enum class State {
@@ -161,7 +159,6 @@ class VulkanKernel {
 
     VkDevice device;
     VkSwapchainKHR swapChain;
-    VkRenderPass renderPass;
 
     VkQueue graphicsQueue;
     VkQueue presentQueue;
@@ -181,7 +178,6 @@ class VulkanKernel {
 
     VkDevice& getDevice();
     VkSwapchainKHR& getSwapChain();
-    VkRenderPass& getRenderPass();
     
     VkQueue& getGraphicsQueue();
 
