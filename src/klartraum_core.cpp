@@ -17,7 +17,7 @@ KlartraumCore::~KlartraumCore() {
 void KlartraumCore::step() {
 
     // start frame rendering
-    uint32_t imageIndex = vulkanKernel.beginRender();
+    auto [imageIndex, semaphore] = vulkanKernel.beginRender();
 
     // process event queue,
     // this currently only updates the camera
@@ -33,17 +33,23 @@ void KlartraumCore::step() {
     }
 
     // draw all draw components
-    auto& currentFrame = vulkanKernel.currentFrame;
-    auto& framebuffer = vulkanKernel.getFramebuffer(imageIndex);
-    auto& commandBuffer = vulkanKernel.commandBuffers[currentFrame];
-    auto& imageAvailableSemaphore = vulkanKernel.imageAvailableSemaphores[currentFrame];
+    // auto& currentFrame = vulkanKernel.currentFrame;
+    // auto& framebuffer = vulkanKernel.getFramebuffer(imageIndex);
+    // auto& commandBuffer = vulkanKernel.commandBuffers[currentFrame];
+    // auto& imageAvailableSemaphore = vulkanKernel.imageAvailableSemaphores[currentFrame];
 
-    for(auto &drawComponent : drawComponents) {
-        drawComponent->draw(currentFrame, commandBuffer, framebuffer, imageAvailableSemaphore, imageIndex);
+    // for(auto &drawComponent : drawComponents) {
+    //     drawComponent->draw(currentFrame, commandBuffer, framebuffer, imageAvailableSemaphore, imageIndex);
+    // }
+    auto& graphicsQueue = vulkanKernel.getGraphicsQueue();
+
+    VkSemaphore renderFinishedSemaphore;
+    for(auto &drawGraph : drawGraphs) {
+        renderFinishedSemaphore = drawGraph.submitToWithSemaphore(graphicsQueue, imageIndex);
     }
 
     // finish frame rendering
-    vulkanKernel.endRender(imageIndex);
+    vulkanKernel.endRender(imageIndex, renderFinishedSemaphore);
  
 }
 
@@ -57,12 +63,6 @@ void KlartraumCore::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
 {
     camera->initialize(vulkanKernel);
     this->interfaceCamera = camera;
-}
-
-void KlartraumCore::addDrawComponent(std::shared_ptr<DrawComponent> drawComponent)
-{
-    drawComponent->initialize(vulkanKernel);
-    drawComponents.push_back(drawComponent);
 }
 
 VulkanKernel& KlartraumCore::getVulkanKernel()
