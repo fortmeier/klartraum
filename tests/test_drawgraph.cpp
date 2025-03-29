@@ -139,7 +139,9 @@ TEST(DrawGraph, trippleFramebuffer) {
     auto& drawgraph = DrawGraph(vulkanKernel, 3);
     drawgraph.compileFrom(renderpass);
 
-    drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), 0);
+    auto [imageIndex, semaphore] = vulkanKernel.beginRender();
+    auto finishSemaphore = drawgraph.submitToWithSemaphore(vulkanKernel.getGraphicsQueue(), imageIndex);
+    vulkanKernel.endRender(imageIndex, finishSemaphore);
 
     return;
 }
