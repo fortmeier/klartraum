@@ -101,8 +101,10 @@ void DrawBasics::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkF
 
 }
 
-void DrawBasics::initialize(VulkanKernel &vulkanKernel) {
+void DrawBasics::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass) {
     this->vulkanKernel = &vulkanKernel;
+    this->renderPass = &renderPass;
+
     createGraphicsPipeline();
     createVertexBuffer();
     createSyncObjects();
@@ -245,8 +247,7 @@ void DrawBasics::createGraphicsPipeline() {
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
-
-    pipelineInfo.renderPass = vulkanKernel->getRenderPass();
+    pipelineInfo.renderPass = *renderPass;
     pipelineInfo.subpass = 0;
 
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
@@ -307,7 +308,7 @@ void DrawBasics::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer comm
     
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = vulkanKernel->getRenderPass();
+    renderPassInfo.renderPass = *renderPass;
     renderPassInfo.framebuffer = framebuffer;
 
     renderPassInfo.renderArea.offset = { 0, 0 };

@@ -7,8 +7,9 @@
 
 #include "klartraum/drawgraph/drawgraph.hpp"
 
-#include "klartraum/drawgraph/framebuffersrc.hpp"
+#include "klartraum/drawgraph/imageviewsrc.hpp"
 #include "klartraum/drawgraph/renderpass.hpp"
+#include "klartraum/draw_basics.hpp"
 
 using namespace klartraum;
 
@@ -115,17 +116,20 @@ TEST(DrawGraph, trippleFramebuffer) {
     STEP 1: create the drawgraph elements
     */
 
-    std::vector<VkFramebuffer> framebuffers;
+    std::vector<VkImageView> imageViews;
     for (int i = 0; i < 3; i++) {
-        framebuffers.push_back(vulkanKernel.getFramebuffer(i));
+        imageViews.push_back(vulkanKernel.getImageView(i));
     }
-    auto framebuffer_src = std::make_shared<FramebufferSrc>(framebuffers);
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
 
     auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->set_input(framebuffer_src);
+    renderpass->set_input(imageViewSrc);
+
+    auto axes = std::make_shared<DrawBasics>(DrawBasicsType::Axes);
+    renderpass->addDrawComponent(axes);
 
     /*
     STEP 2: create the drawgraph backend
