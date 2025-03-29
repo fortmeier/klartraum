@@ -14,6 +14,8 @@
 #include "klartraum/interface_camera.hpp"
 #include "klartraum/events.hpp"
 
+#include "klartraum/drawgraph/drawgraph.hpp"
+
 
 namespace klartraum {
 
@@ -29,7 +31,7 @@ public:
     void setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera);
 
 
-    void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent);
+    // void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent);
 
     VulkanKernel& getVulkanKernel();
 
@@ -42,7 +44,9 @@ private:
 
     std::queue<std::unique_ptr<Event> > eventQueue;
 
-    std::vector<std::shared_ptr<DrawComponent> > drawComponents;
+    //std::vector<std::shared_ptr<DrawComponent> > drawComponents;
+
+    std::vector<DrawGraph> drawGraphs;
 
 
 

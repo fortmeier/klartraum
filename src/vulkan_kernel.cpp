@@ -522,7 +522,6 @@ void VulkanKernel::initialize(VkSurfaceKHR& surface) {
     createImageViews();
     
     createCommandPool();
-    createCommandBuffers();
     createSyncObjects();
 
     camera = std::make_unique<Camera>(this);
@@ -713,7 +712,7 @@ uint32_t VulkanKernel::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-uint32_t VulkanKernel::beginRender() {
+std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
 
     vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
@@ -723,21 +722,38 @@ uint32_t VulkanKernel::beginRender() {
     vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
 
-    auto& framebuffer = getFramebuffer(imageIndex);
-    auto& commandBuffer = commandBuffers[currentFrame];
-    
-    beginRenderPass(currentFrame, framebuffer);
-    return imageIndex;
-}
-
-void VulkanKernel::endRender(uint32_t imageIndex) {
-    
-    // signalSemaphores.push_back();
-    //renderFinishedSemaphores[currentFrame];
-    endRenderPass(currentFrame);
-
+    // auto& framebuffer = getFramebuffer(imageIndex);
+    // auto& commandBuffer = commandBuffers[currentFrame];
 
     camera->update(currentFrame);
+    
+    // TODO imageAvailableSemaphores should be returned;
+    return {imageIndex, imageAvailableSemaphores[currentFrame]};
+}
+
+void VulkanKernel::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
+    
+    // VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
+    // VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    // VkSubmitInfo submitInfo{};
+    // submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    // submitInfo.waitSemaphoreCount = 1;
+    // submitInfo.pWaitSemaphores = waitSemaphores;
+    // submitInfo.pWaitDstStageMask = waitStages;
+
+    // submitInfo.commandBufferCount = 1;
+    // submitInfo.pCommandBuffers = &commandBuffer;
+
+    // submitInfo.signalSemaphoreCount = 1;
+    // submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
+
+    // if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr) != VK_SUCCESS) {
+    //     throw std::runtime_error("failed to submit draw command buffer!");
+    // }    
+
+
 
     if (vkQueueSubmit(graphicsQueue, 0, nullptr, inFlightFences[currentFrame]) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit inFlightFence");
@@ -747,7 +763,7 @@ void VulkanKernel::endRender(uint32_t imageIndex) {
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentFrame];
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphore; //s[currentFrame];
 
     VkSwapchainKHR swapChains[] = { swapChain };
     presentInfo.swapchainCount = 1;
@@ -762,51 +778,6 @@ void VulkanKernel::endRender(uint32_t imageIndex) {
     currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;    
 }
 
-void VulkanKernel::beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer) {
-    VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
-
-    vkResetCommandBuffer(commandBuffer, 0);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = 0; // Optional
-    beginInfo.pInheritanceInfo = nullptr; // Optional
-
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-        throw std::runtime_error("failed to begin recording command buffer!");
-    }
-
- 
-}
-
-void VulkanKernel::endRenderPass(uint32_t currentFrame) {
-    VkCommandBuffer& commandBuffer = commandBuffers[currentFrame];
-
-    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to record command buffer!");
-    }
-
-    VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = waitSemaphores;
-    submitInfo.pWaitDstStageMask = waitStages;
-
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
-
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr) != VK_SUCCESS) {
-        throw std::runtime_error("failed to submit draw command buffer!");
-    }    
-}
-
 void VulkanKernel::createCommandPool() {
 
     VkCommandPoolCreateInfo poolInfo{};
@@ -817,36 +788,6 @@ void VulkanKernel::createCommandPool() {
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
     }    
-}
-
-VkCommandBuffer VulkanKernel::createCommandBuffer()
-{
-    VkCommandBuffer commandBuffer;
-
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
-
-    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate command buffers!");
-    }
-    return commandBuffer;
-}
-
-void VulkanKernel::createCommandBuffers() {
-
-    commandBuffers.resize(getConfig().MAX_FRAMES_IN_FLIGHT);
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = static_cast<uint32_t>(commandBuffers.size());
-
-    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate command buffers!");
-    }
 }
 
 Camera& VulkanKernel::getCamera()

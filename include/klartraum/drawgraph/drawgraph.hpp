@@ -74,14 +74,25 @@ public:
     *
     * The submit infos will have to be prepared before by calling compile_from
     */
-    VkFence& submitTo(VkQueue graphicsQueue, uint32_t pathId) {
-        // TODO implement the fence to return
-        VkFence fence = VK_NULL_HANDLE;
+    void submitTo(VkQueue graphicsQueue, uint32_t pathId) {
         auto& submit_infos = all_path_submit_infos[pathId];
-        if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
+        if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), nullptr) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");
         }
+    }
+
+    VkFence& submitToWithFence(VkQueue graphicsQueue, uint32_t pathId) {
+        // TODO implement the fence to return
+        VkFence fence = VK_NULL_HANDLE;
+        submitTo(graphicsQueue, pathId);
         return fence;
+    }
+
+    VkSemaphore submitToWithSemaphore(VkQueue graphicsQueue, uint32_t pathId) {
+        // TODO implement the semaphore to return
+        VkSemaphore semaphore = VK_NULL_HANDLE;
+        submitTo(graphicsQueue, pathId);
+        return semaphore;
     }
 
 private:

@@ -39,6 +39,21 @@ struct SwapChainSupportDetails {
 };
 
 class VulkanKernel {
+    /*
+     * The VulkanKernel kernels responsibities are
+     * - create the Vulkan instance
+     * - create the Vulkan device
+     * - create the Vulkan swapchain
+     * - setup the debug messenger
+     * - setup the layers and extensions
+     * 
+     * Is should not deal with
+     * - creating the Vulkan renderpasses, pipelines, framebuffers, etc.
+     * 
+     * This is to be done in the drawgraphs, which can be used standalone or via the
+     * Klartraum core.
+     * 
+    */
     private:
     //GLFWwindow* window = nullptr;
     const uint32_t WIDTH = 512;
@@ -92,13 +107,6 @@ class VulkanKernel {
     const bool enableGPUPrintf = true;
 #endif
 
-    // void initWindow() {
-    //     glfwInit();
-    //     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    //     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    //     window = glfwCreateWindow(this->WIDTH, this->HEIGHT, "Vulkan", nullptr, nullptr);
-    // }
-
     bool checkValidationLayerSupport();
 
     std::vector<const char*> getRequiredExtensions();
@@ -135,15 +143,13 @@ class VulkanKernel {
 
     void createLogicalDevice();
 
-    void createFramebuffers();
-
     enum class State {
         UNINITIALIZED,
         INITIALIZED,
         SHUTDOWN
     } state = State::UNINITIALIZED;
     public:
-    VulkanKernel(/*GLFWwindow* window*/);
+    VulkanKernel();
 
     ~VulkanKernel();
     
@@ -210,16 +216,10 @@ class VulkanKernel {
 
     uint32_t currentFrame = 0;
 
-    uint32_t beginRender();
-    void endRender(uint32_t imageIndex);
-
-    void beginRenderPass(uint32_t currentFrame, VkFramebuffer& framebuffer);
-    void endRenderPass(uint32_t currentFrame);
+    std::tuple<uint32_t, VkSemaphore&> beginRender();
+    void endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore);
 
     void createCommandPool();
-
-    VkCommandBuffer createCommandBuffer();
-    void createCommandBuffers();
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
