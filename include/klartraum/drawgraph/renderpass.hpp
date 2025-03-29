@@ -20,7 +20,9 @@ public:
         return "RenderPass";
     }
 
-    virtual void _setup(VkDevice& device, uint32_t numberPath) {
+    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPath) {
+        auto& device = vulkanKernel.getDevice();
+
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = swapChainImageFormat;
         colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -66,7 +68,43 @@ public:
     
         if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
             throw std::runtime_error("failed to create render pass!");
-        }        
+        }
+
+        framebuffers.resize(numberPath);
+
+        for (size_t i = 0; i < framebuffers.size(); i++) {
+            if(inputs.size() == 0) {
+                throw std::runtime_error("no input!");
+            }
+            ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+            if (imageViewSrc == nullptr) {
+                throw std::runtime_error("input is not an ImageViewSrc!");
+            }
+            VkImageView imageView = imageViewSrc->imageViews[i];
+            VkImageView attachments[] = {
+                imageView
+            };
+    
+            // TODO create framebuffer with render pass drawgraph element
+            // and create imageviewsrc instead of framebuffer src
+    
+            VkFramebufferCreateInfo framebufferInfo{};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = renderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = attachments;
+            framebufferInfo.width = swapChainExtent.width;
+            framebufferInfo.height = swapChainExtent.height;
+            framebufferInfo.layers = 1;
+    
+            if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create framebuffer!");
+            }
+        }
+
+        for(auto& drawComponent : drawComponents) {
+            drawComponent->initialize(vulkanKernel, renderPass);
+        }
     };
 
 
@@ -75,22 +113,11 @@ public:
         // auto& vertices = getVertices(type);
 
         
-        FramebufferSrc* framebufferSrc = std::dynamic_pointer_cast<FramebufferSrc>(inputs[0]).get();
-        if (!framebufferSrc) {
-            throw std::runtime_error("FramebufferSrc not set!");
-        }
-        if (framebufferSrc->framebuffers.size() == 0) {
-            throw std::runtime_error("FramebufferSrc has no framebuffers!");
-        }
-        if (pathId >= framebufferSrc->framebuffers.size()) {
-            throw std::runtime_error("FramebufferSrc has no framebuffers for this pathId!");
-        }
-        VkFramebuffer framebuffer = framebufferSrc->framebuffers[pathId];
-        
+       
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = framebuffer;
+        renderPassInfo.framebuffer = framebuffers[pathId];
     
         renderPassInfo.renderArea.offset = { 0, 0 };
         renderPassInfo.renderArea.extent = swapChainExtent;
@@ -128,10 +155,18 @@ public:
 
     };
 
+    void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) {
+        drawComponents.push_back(drawComponent);
+    }
+
 private:
     VkRenderPass renderPass;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
+
+    std::vector<VkFramebuffer> framebuffers;
+
+    std::vector<std::shared_ptr<DrawComponent> > drawComponents;
 
 };
 

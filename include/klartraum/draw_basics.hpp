@@ -24,7 +24,7 @@ public:
 
     virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) override;
 
-    virtual void initialize(VulkanKernel& vulkanKernel) override;
+    virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderpass) override;
 
 private:
     void createGraphicsPipeline();
@@ -34,6 +34,8 @@ private:
     void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
     VulkanKernel* vulkanKernel;
+
+    VkRenderPass* renderPass;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;

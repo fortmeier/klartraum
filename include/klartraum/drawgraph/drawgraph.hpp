@@ -13,8 +13,10 @@ namespace klartraum {
 
 class DrawGraph {
 public:
-    DrawGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : device(vulkanKernel.getDevice()), numberPaths(numberPaths) 
+    DrawGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : vulkanKernel(vulkanKernel), numberPaths(numberPaths) 
     {
+        auto& device = vulkanKernel.getDevice();
+
         all_path_submit_infos.resize(numberPaths);
 
         // create the command pool
@@ -31,10 +33,12 @@ public:
     }
 
     void compileFrom(DrawGraphElementPtr element) {
+        auto& device = vulkanKernel.getDevice();
+        
         computeOrder(element);
 
         for(auto& element : ordered_elements) {
-            element->_setup(device, numberPaths);
+            element->_setup(vulkanKernel, numberPaths);
         }
 
         commandBuffers.resize(ordered_elements.size() * numberPaths);
@@ -81,7 +85,7 @@ public:
     }
 
 private:
-    VkDevice device;
+    VulkanKernel& vulkanKernel;
     uint32_t numberPaths;
 
     VkCommandPool commandPool;

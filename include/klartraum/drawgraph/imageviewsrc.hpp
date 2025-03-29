@@ -10,26 +10,25 @@
 
 namespace klartraum {
 
-class FramebufferSrc : public DrawGraphElement {
+class ImageViewSrc : public DrawGraphElement {
 public:
-    FramebufferSrc(VkFramebuffer framebuffer) {
-        framebuffers.push_back(framebuffer);
+    ImageViewSrc(VkImageView imageView) {
+        imageViews.push_back(imageView);
     };
 
-    FramebufferSrc(std::vector<VkFramebuffer> framebuffers) {
-        this->framebuffers = framebuffers;
+    ImageViewSrc(std::vector<VkImageView> imageViews) {
+        this->imageViews = imageViews;
     };
 
     virtual const char* getName() const {
-        return "FramebufferSrc";
+        return "ImageViewSrc";
     }
-
-    //uint32_t framebuffer_index;
-    std::vector<VkFramebuffer> framebuffers;
 
     virtual void _record(VkCommandBuffer commandBuffer) {
 
     };
+
+    std::vector<VkImageView> imageViews;
 
 };
 

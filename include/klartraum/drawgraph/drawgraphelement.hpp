@@ -4,6 +4,8 @@
 #include <map>
 #include <memory>
 
+#include "klartraum/vulkan_kernel.hpp"
+
 namespace klartraum {
 
 class DrawGraphElement;
@@ -17,7 +19,7 @@ public:
     }
     //virtual DrawGraphElement& get_output() = 0;
 
-    virtual void _setup(VkDevice& device, uint32_t numberPath) {};
+    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPath) {};
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
 

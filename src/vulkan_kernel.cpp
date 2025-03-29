@@ -321,70 +321,70 @@ void VulkanKernel::createSwapChain() {
     swapChainImageFormat = surfaceFormat.format;
     swapChainExtent = extent;
 
-    stagingImageMemory.resize(imageCount);
-    stagingImages.resize(imageCount);
-    stagingImageViews.resize(imageCount);
+    // stagingImageMemory.resize(imageCount);
+    // stagingImages.resize(imageCount);
+    // stagingImageViews.resize(imageCount);
 
-    VkPhysicalDeviceProperties deviceProperties;
-    vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+    // VkPhysicalDeviceProperties deviceProperties;
+    // vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
 
-    // Create image and image view for storing images with the same format as the swap chain images
-    for(auto i = 0; i < swapChainImages.size(); i++) {
-        VkImageCreateInfo imageCreateInfo{};
-        imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
-        imageCreateInfo.extent.width = swapChainExtent.width;
-        imageCreateInfo.extent.height = swapChainExtent.height;
-        imageCreateInfo.extent.depth = 1;
-        imageCreateInfo.mipLevels = 1;
-        imageCreateInfo.arrayLayers = 1;
-        imageCreateInfo.format = VK_FORMAT_B8G8R8A8_UNORM; // swapChainImageFormat;
-        //imageCreateInfo.tiling = VK_IMAGE_TILING_LINEAR;
-        imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-        imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-        //imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        //imageCreateInfo.imageCreateMaxMipLevels = 1;
-        //imageCreateInfo.imageCreateMaxArrayLayers = 1;
+    // // Create image and image view for storing images with the same format as the swap chain images
+    // for(auto i = 0; i < swapChainImages.size(); i++) {
+    //     VkImageCreateInfo imageCreateInfo{};
+    //     imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    //     imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+    //     imageCreateInfo.extent.width = swapChainExtent.width;
+    //     imageCreateInfo.extent.height = swapChainExtent.height;
+    //     imageCreateInfo.extent.depth = 1;
+    //     imageCreateInfo.mipLevels = 1;
+    //     imageCreateInfo.arrayLayers = 1;
+    //     imageCreateInfo.format = VK_FORMAT_B8G8R8A8_UNORM; // swapChainImageFormat;
+    //     //imageCreateInfo.tiling = VK_IMAGE_TILING_LINEAR;
+    //     imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    //     imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    //     imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    //     //imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    //     //imageCreateInfo.imageCreateMaxMipLevels = 1;
+    //     //imageCreateInfo.imageCreateMaxArrayLayers = 1;
         
 
-        if (vkCreateImage(device, &imageCreateInfo, nullptr, &stagingImages[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create staging image!");
-        }
+    //     if (vkCreateImage(device, &imageCreateInfo, nullptr, &stagingImages[i]) != VK_SUCCESS) {
+    //         throw std::runtime_error("failed to create staging image!");
+    //     }
         
-        VkMemoryRequirements memRequirements;
-        vkGetImageMemoryRequirements(device, stagingImages[i], &memRequirements);
+    //     VkMemoryRequirements memRequirements;
+    //     vkGetImageMemoryRequirements(device, stagingImages[i], &memRequirements);
         
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    //     VkMemoryAllocateInfo allocInfo{};
+    //     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    //     allocInfo.allocationSize = memRequirements.size;
+    //     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingImageMemory[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate staging image memory!");
-        }
+    //     if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingImageMemory[i]) != VK_SUCCESS) {
+    //         throw std::runtime_error("failed to allocate staging image memory!");
+    //     }
         
-        vkBindImageMemory(device, stagingImages[i], stagingImageMemory[i], 0);
+    //     vkBindImageMemory(device, stagingImages[i], stagingImageMemory[i], 0);
         
-        VkImageViewCreateInfo viewCreateInfo{};
-        viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewCreateInfo.image = stagingImages[i];
-        viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewCreateInfo.format = VK_FORMAT_B8G8R8A8_UNORM; // swapChainImageFormat;
-        viewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewCreateInfo.subresourceRange.baseMipLevel = 0;
-        viewCreateInfo.subresourceRange.levelCount = 1;
-        viewCreateInfo.subresourceRange.baseArrayLayer = 0;
-        viewCreateInfo.subresourceRange.layerCount = 1;
+    //     VkImageViewCreateInfo viewCreateInfo{};
+    //     viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    //     viewCreateInfo.image = stagingImages[i];
+    //     viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    //     viewCreateInfo.format = VK_FORMAT_B8G8R8A8_UNORM; // swapChainImageFormat;
+    //     viewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    //     viewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    //     viewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    //     viewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    //     viewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    //     viewCreateInfo.subresourceRange.baseMipLevel = 0;
+    //     viewCreateInfo.subresourceRange.levelCount = 1;
+    //     viewCreateInfo.subresourceRange.baseArrayLayer = 0;
+    //     viewCreateInfo.subresourceRange.layerCount = 1;
         
-        if (vkCreateImageView(device, &viewCreateInfo, nullptr, &stagingImageViews[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create staging image view!");
-        }
-    }
+    //     if (vkCreateImageView(device, &viewCreateInfo, nullptr, &stagingImageViews[i]) != VK_SUCCESS) {
+    //         throw std::runtime_error("failed to create staging image view!");
+    //     }
+    // }
 
 
 }
@@ -499,77 +499,6 @@ void VulkanKernel::createLogicalDevice() {
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 }
 
-void VulkanKernel::createRenderPass() {
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = swapChainImageFormat;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    VkAttachmentReference colorAttachmentRef{};
-    colorAttachmentRef.attachment = 0;
-    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_GENERAL;
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentRef;
-
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-
-
-
-    VkSubpassDependency dependency{};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dependency;
-
-    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create render pass!");
-    }
-}
-
-void VulkanKernel::createFramebuffers() {
-    swapChainFramebuffers.resize(swapChainImageViews.size());
-
-    for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-        VkImageView attachments[] = {
-            swapChainImageViews[i]
-        };
-
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
-        framebufferInfo.width = swapChainExtent.width;
-        framebufferInfo.height = swapChainExtent.height;
-        framebufferInfo.layers = 1;
-
-        if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create framebuffer!");
-        }
-    }
-}
 
 VulkanKernel::VulkanKernel(/*GLFWwindow* window*/) {
     //this->window = window;
@@ -591,8 +520,6 @@ void VulkanKernel::initialize(VkSurfaceKHR& surface) {
     createLogicalDevice();
     createSwapChain();
     createImageViews();
-    createRenderPass();
-    createFramebuffers();
     
     createCommandPool();
     createCommandBuffers();
@@ -626,8 +553,6 @@ void VulkanKernel::shutdown() {
     for (size_t i = 0; i < swapChainImageViews.size(); i++) {
         vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
     }
-
-    vkDestroyRenderPass(device, renderPass, nullptr);
 
     vkDestroySwapchainKHR(device, swapChain, nullptr);
 
@@ -668,11 +593,6 @@ VkSwapchainKHR& VulkanKernel::getSwapChain()
     return swapChain;
 }
 
-VkRenderPass& VulkanKernel::getRenderPass()
-{
-    return renderPass;
-}
-
 VkQueue& VulkanKernel::getGraphicsQueue()
 {
     return graphicsQueue;
@@ -690,8 +610,7 @@ VkImageView& VulkanKernel::getImageView(uint32_t imageIndex)
     if (imageIndex >= swapChainImageViews.size()) {
         throw std::runtime_error("Invalid image index!");
     }
-    return stagingImageViews[imageIndex];
-    //return swapChainImageViews[imageIndex];
+    return swapChainImageViews[imageIndex];
 }
 
 VkImage& VulkanKernel::getSwapChainImage(uint32_t imageIndex)
