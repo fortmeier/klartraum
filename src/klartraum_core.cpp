@@ -45,7 +45,7 @@ void KlartraumCore::step() {
 
     VkSemaphore renderFinishedSemaphore;
     for(auto &drawGraph : drawGraphs) {
-        renderFinishedSemaphore = drawGraph.submitToWithSemaphore(graphicsQueue, imageIndex);
+        renderFinishedSemaphore = drawGraph.submitTo(graphicsQueue, imageIndex);
     }
 
     // finish frame rendering

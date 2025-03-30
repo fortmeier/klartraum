@@ -18,6 +18,8 @@ public:
         auto& device = vulkanKernel.getDevice();
 
         all_path_submit_infos.resize(numberPaths);
+        allRenderFinishedSemaphores.resize(numberPaths);
+        allRenderWaitSemaphores.resize(numberPaths);
 
         // create the command pool
         VkCommandPoolCreateInfo poolInfo{};
@@ -32,10 +34,19 @@ public:
   
     }
 
+    // TODO implement destructor to destroy the command pool and command buffers and semaphores etc
+
+    void setWaitFor(DrawGraphElementPtr element, uint32_t pathId, VkSemaphore waitSemaphore) {
+        auto& waitSemaphores = allRenderWaitSemaphores[pathId];
+        waitSemaphores[element] = waitSemaphore;
+    }
+
     void compileFrom(DrawGraphElementPtr element) {
         auto& device = vulkanKernel.getDevice();
         
         computeOrder(element);
+
+        createRenderFinishedSemaphores();
 
         for(auto& element : ordered_elements) {
             element->_setup(vulkanKernel, numberPaths);
@@ -63,7 +74,7 @@ public:
                 // this is okay since we sorted the elements in the graph before and the queue is
                 // processing them one after another (assumption!!!)
                 SubmitInfoList& submit_infos = all_path_submit_infos[pathId];
-                submit_infos.push_back(getSubmitInfoForElement(element, &commandBuffer));
+                submit_infos.push_back(getSubmitInfoForElement(pathId, element, &commandBuffer));
             }
         }
     }
@@ -74,11 +85,14 @@ public:
     *
     * The submit infos will have to be prepared before by calling compile_from
     */
-    void submitTo(VkQueue graphicsQueue, uint32_t pathId) {
+   VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId) {
         auto& submit_infos = all_path_submit_infos[pathId];
+
         if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), nullptr) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");
         }
+        VkSemaphore& renderFinishedSemaphore = allRenderFinishedSemaphores[pathId][ordered_elements.back()];
+        return renderFinishedSemaphore;
     }
 
     VkFence& submitToWithFence(VkQueue graphicsQueue, uint32_t pathId) {
@@ -86,13 +100,6 @@ public:
         VkFence fence = VK_NULL_HANDLE;
         submitTo(graphicsQueue, pathId);
         return fence;
-    }
-
-    VkSemaphore submitToWithSemaphore(VkQueue graphicsQueue, uint32_t pathId) {
-        // TODO implement the semaphore to return
-        VkSemaphore semaphore = VK_NULL_HANDLE;
-        submitTo(graphicsQueue, pathId);
-        return semaphore;
     }
 
 private:
@@ -106,6 +113,12 @@ private:
 
     typedef std::vector<VkSubmitInfo> SubmitInfoList;
     std::vector<SubmitInfoList> all_path_submit_infos;
+
+    typedef std::map<DrawGraphElementPtr, VkSemaphore> SemaphoreMap;
+    
+    std::vector<SemaphoreMap> allRenderWaitSemaphores;
+    std::vector<SemaphoreMap> allRenderFinishedSemaphores;
+
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, DrawGraphElementPtr element, uint32_t pathId) {
         // reset the command buffer before recording
@@ -128,20 +141,55 @@ private:
         }        
     }
 
-    VkSubmitInfo getSubmitInfoForElement(DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
+    VkSubmitInfo getSubmitInfoForElement(uint32_t pathId, DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
+        std::vector<VkSemaphore> waitSemaphores;
+
+        if(allRenderWaitSemaphores[pathId].find(element) != allRenderWaitSemaphores[pathId].end()) {
+            waitSemaphores.push_back(allRenderWaitSemaphores[pathId][element]);
+        }
+
+        for(auto& input : element->inputs) {
+            auto& inputElement = input.second;
+            auto it = allRenderFinishedSemaphores[pathId].find(inputElement);
+            if(it != allRenderFinishedSemaphores[pathId].end()) {
+                waitSemaphores.push_back(it->second);
+            }
+        }
+        
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 0;
         submitInfo.pCommandBuffers = pCommandBuffer;
        
-        // submitInfo.waitSemaphoreCount = 1;
-        // submitInfo.pWaitSemaphores = waitSemaphores;
-        // submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.waitSemaphoreCount = waitSemaphores.size();
+        submitInfo.pWaitSemaphores = waitSemaphores.data();
+        //submitInfo.pWaitDstStageMask = waitStages;
     
     
-        // submitInfo.signalSemaphoreCount = 1;
-        // submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &allRenderFinishedSemaphores[pathId][element];
+
         return submitInfo;
+    }
+
+    void createRenderFinishedSemaphores() {
+        auto& device = vulkanKernel.getDevice();
+        auto& config = vulkanKernel.getConfig();
+
+        // create the render finished semaphores
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    
+        for (uint32_t i = 0; i < numberPaths; i++) {
+            auto& renderFinishedSemaphores = allRenderFinishedSemaphores[i];
+            for(auto& element : ordered_elements) {
+                renderFinishedSemaphores[element] = VK_NULL_HANDLE;
+
+                if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[element]) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to create render finished semaphore!");
+                }
+            }
+        }        
     }
 
     typedef std::map<DrawGraphElementPtr, std::vector<DrawGraphElementPtr>> EdgeList;
