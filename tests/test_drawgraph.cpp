@@ -49,15 +49,6 @@ class CopyOp : public DrawGraphElement {
 
 };
 
-class ImageViewSrc : public DrawGraphElement {
-    virtual const char* getName() const {
-        return "ImageViewSrc";
-    }
-
-    virtual void _record(VkCommandBuffer commandBuffer) {};
-};
-
-
 
 
 TEST(DrawGraph, create) {
@@ -117,9 +108,13 @@ TEST(DrawGraph, trippleFramebuffer) {
     */
 
     std::vector<VkImageView> imageViews;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+
     for (int i = 0; i < 3; i++) {
         imageViews.push_back(vulkanKernel.getImageView(i));
+        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphores[i]);
     }
+
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
 
     auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
@@ -137,10 +132,18 @@ TEST(DrawGraph, trippleFramebuffer) {
     
     // this traverses the drawgraph and creates the vulkan objects
     auto& drawgraph = DrawGraph(vulkanKernel, 3);
+
+
+    // DANGER THIS IS NOT WORKING AS EXPECTED, imageAvailableSemaphores is not per image view but per FRAME
+    // this needs to be updated in the vulkan kernel
+    drawgraph.setWaitFor(imageViewSrc, 0, imageAvailableSemaphores[0]);
+    drawgraph.setWaitFor(imageViewSrc, 1, imageAvailableSemaphores[1]);
+    drawgraph.setWaitFor(imageViewSrc, 2, imageAvailableSemaphores[2]);
+
     drawgraph.compileFrom(renderpass);
 
-    auto [imageIndex, semaphore] = vulkanKernel.beginRender();
-    auto finishSemaphore = drawgraph.submitToWithSemaphore(vulkanKernel.getGraphicsQueue(), imageIndex);
+    auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
+    auto finishSemaphore = drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
     vulkanKernel.endRender(imageIndex, finishSemaphore);
 
     return;
