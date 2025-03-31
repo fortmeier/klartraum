@@ -208,7 +208,8 @@ class VulkanKernel {
     BackendConfig& getConfig();
 
     std::vector<VkFence> inFlightFences;
-    std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> imageAvailableSemaphoresPerFrame;
+    std::vector<VkSemaphore> imageAvailableSemaphoresPerImage;
     std::vector<VkSemaphore> renderFinishedSemaphores;  
     //std::vector<VkSemaphore> signalSemaphores;
 
