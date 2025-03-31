@@ -11,6 +11,14 @@
 
 namespace klartraum {
 
+class SubmitInfoWrapper {
+public:
+    std::vector<VkSemaphore> waitSemaphores;
+    VkSubmitInfo submitInfo{};
+    std::vector<VkPipelineStageFlags> waitStages; //{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+};
+
+
 class DrawGraph {
 public:
     DrawGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : vulkanKernel(vulkanKernel), numberPaths(numberPaths) 
@@ -18,6 +26,7 @@ public:
         auto& device = vulkanKernel.getDevice();
 
         all_path_submit_infos.resize(numberPaths);
+        all_path_submit_info_wrappers.resize(numberPaths);
         allRenderFinishedSemaphores.resize(numberPaths);
         allRenderWaitSemaphores.resize(numberPaths);
 
@@ -73,8 +82,14 @@ public:
                 // for now, all command buffers will be submitted to the same queue without any synchronization
                 // this is okay since we sorted the elements in the graph before and the queue is
                 // processing them one after another (assumption!!!)
+                SubmitInfoWrapperList& submitInfoWrappers = all_path_submit_info_wrappers[pathId];
+                // TODO: this is the time to grok move semantics
+                SubmitInfoWrapper submitInfoWrapper;
+                submitInfoWrappers.push_back(submitInfoWrapper);
+                SubmitInfoWrapper& submitInfoWrapper2 = submitInfoWrappers.back();
+                getSubmitInfoForElement(submitInfoWrapper2, pathId, element, &commandBuffer);
                 SubmitInfoList& submit_infos = all_path_submit_infos[pathId];
-                submit_infos.push_back(getSubmitInfoForElement(pathId, element, &commandBuffer));
+                submit_infos.push_back(submitInfoWrapper2.submitInfo);
             }
         }
     }
@@ -112,7 +127,10 @@ private:
     std::vector<DrawGraphElementPtr> ordered_elements;
 
     typedef std::vector<VkSubmitInfo> SubmitInfoList;
+    typedef std::vector<SubmitInfoWrapper> SubmitInfoWrapperList;
+
     std::vector<SubmitInfoList> all_path_submit_infos;
+    std::vector<SubmitInfoWrapperList> all_path_submit_info_wrappers;
 
     typedef std::map<DrawGraphElementPtr, VkSemaphore> SemaphoreMap;
     
@@ -141,8 +159,13 @@ private:
         }        
     }
 
-    VkSubmitInfo getSubmitInfoForElement(uint32_t pathId, DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
-        std::vector<VkSemaphore> waitSemaphores;
+    void getSubmitInfoForElement(SubmitInfoWrapper& submitInfoWrapper, uint32_t pathId, DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
+        
+        auto& submitInfo = submitInfoWrapper.submitInfo;
+        auto& waitSemaphores = submitInfoWrapper.waitSemaphores;
+        auto& waitStages = submitInfoWrapper.waitStages;
+        waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+
 
         if(allRenderWaitSemaphores[pathId].find(element) != allRenderWaitSemaphores[pathId].end()) {
             waitSemaphores.push_back(allRenderWaitSemaphores[pathId][element]);
@@ -156,20 +179,16 @@ private:
             }
         }
         
-        VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 0;
         submitInfo.pCommandBuffers = pCommandBuffer;
        
         submitInfo.waitSemaphoreCount = waitSemaphores.size();
         submitInfo.pWaitSemaphores = waitSemaphores.data();
-        //submitInfo.pWaitDstStageMask = waitStages;
-    
+        submitInfo.pWaitDstStageMask = waitStages.data();
     
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = &allRenderFinishedSemaphores[pathId][element];
-
-        return submitInfo;
     }
 
     void createRenderFinishedSemaphores() {
