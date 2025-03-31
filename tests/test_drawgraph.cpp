@@ -112,7 +112,7 @@ TEST(DrawGraph, trippleFramebuffer) {
 
     for (int i = 0; i < 3; i++) {
         imageViews.push_back(vulkanKernel.getImageView(i));
-        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphores[i]);
+        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);
     }
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);

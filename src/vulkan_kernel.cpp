@@ -540,7 +540,7 @@ void VulkanKernel::shutdown() {
     
     for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+        vkDestroySemaphore(device, imageAvailableSemaphoresPerFrame[i], nullptr);
         vkDestroyFence(device, inFlightFences[i], nullptr);
     }
     
@@ -548,8 +548,9 @@ void VulkanKernel::shutdown() {
     {
         vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
     }
-
+    
     for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+        vkDestroySemaphore(device, imageAvailableSemaphoresPerImage[i], nullptr);
         vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
     }
 
@@ -670,7 +671,9 @@ BackendConfig& VulkanKernel::getConfig()
 
 void VulkanKernel::createSyncObjects()
 {
-    imageAvailableSemaphores.resize(config.MAX_FRAMES_IN_FLIGHT);
+    imageAvailableSemaphoresPerFrame.resize(config.MAX_FRAMES_IN_FLIGHT);
+    imageAvailableSemaphoresPerImage.resize(swapChainImages.size());
+    
     inFlightFences.resize(config.MAX_FRAMES_IN_FLIGHT);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -680,10 +683,17 @@ void VulkanKernel::createSyncObjects()
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
+    for(size_t i = 0; i < swapChainImages.size(); i++)
+    {
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphoresPerImage[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create semaphores!");
+        }
+    }
+
     for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
     {
         if (
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphoresPerFrame[i]) != VK_SUCCESS ||
             vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create semaphores!");
         }
@@ -719,7 +729,23 @@ std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
     vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphoresPerFrame[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &imageAvailableSemaphoresPerFrame[currentFrame];
+    static VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &imageAvailableSemaphoresPerImage[imageIndex];
+    submitInfo.commandBufferCount = 0;
+    submitInfo.pCommandBuffers = nullptr;
+
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("image available delegate semaphore failed to submit!");
+    }    
+  
 
 
     // auto& framebuffer = getFramebuffer(imageIndex);
