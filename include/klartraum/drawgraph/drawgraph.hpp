@@ -180,7 +180,7 @@ private:
         }
         
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitInfo.commandBufferCount = 0;
+        submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = pCommandBuffer;
        
         submitInfo.waitSemaphoreCount = waitSemaphores.size();
