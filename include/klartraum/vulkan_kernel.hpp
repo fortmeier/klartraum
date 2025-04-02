@@ -188,7 +188,6 @@ class VulkanKernel {
     VkQueue& getGraphicsQueue();
 
 
-    VkFramebuffer& getFramebuffer(uint32_t imageIndex);
     VkImageView& getImageView(uint32_t imageIndex);
 
     VkImage& getSwapChainImage(uint32_t imageIndex);
