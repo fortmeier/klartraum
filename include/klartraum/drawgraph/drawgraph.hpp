@@ -43,6 +43,23 @@ public:
   
     }
 
+    virtual ~DrawGraph() {
+        auto& device = vulkanKernel.getDevice();
+
+        // destroy the semaphores
+        for(auto& semaphores: allRenderFinishedSemaphores) {
+            for(auto& semaphore: semaphores) {
+                vkDestroySemaphore(device, semaphore.second, nullptr);
+            }
+        }
+
+        for(auto& buffer: commandBuffers) {
+            vkFreeCommandBuffers(device, commandPool, 1, &buffer);
+        }
+        // destroy the command pool
+        vkDestroyCommandPool(device, commandPool, nullptr);
+    }
+
     // TODO implement destructor to destroy the command pool and command buffers and semaphores etc
 
     void setWaitFor(DrawGraphElementPtr element, uint32_t pathId, VkSemaphore waitSemaphore) {
