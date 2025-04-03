@@ -551,7 +551,6 @@ void VulkanKernel::shutdown() {
     
     for (size_t i = 0; i < swapChainImageViews.size(); i++) {
         vkDestroySemaphore(device, imageAvailableSemaphoresPerImage[i], nullptr);
-        vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
     }
 
     vkDestroySwapchainKHR(device, swapChain, nullptr);
@@ -596,13 +595,6 @@ VkSwapchainKHR& VulkanKernel::getSwapChain()
 VkQueue& VulkanKernel::getGraphicsQueue()
 {
     return graphicsQueue;
-}
-
-VkFramebuffer& VulkanKernel::getFramebuffer(uint32_t imageIndex){
-    if (imageIndex >= swapChainFramebuffers.size()) {
-        throw std::runtime_error("Invalid image index!");
-    }
-    return swapChainFramebuffers[imageIndex];
 }
 
 VkImageView& VulkanKernel::getImageView(uint32_t imageIndex)
