@@ -85,7 +85,8 @@ DrawBasics::DrawBasics(DrawBasicsType type) : type(type) {
 
 DrawBasics::~DrawBasics() {
     auto device = vulkanKernel->getDevice();
-
+    vkDestroyPipeline(device, graphicsPipeline, nullptr);
+    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
 
