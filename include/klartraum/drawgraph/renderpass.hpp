@@ -16,11 +16,22 @@ public:
     
     };
 
+    ~RenderPass() {
+        auto& device = vulkanKernel->getDevice();
+        for (auto framebuffer : framebuffers) {
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+        }
+        vkDestroyRenderPass(device, renderPass, nullptr);
+
+    };
+
     virtual const char* getName() const {
         return "RenderPass";
     }
 
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPath) {
+        this->vulkanKernel = &vulkanKernel;
+        
         auto& device = vulkanKernel.getDevice();
 
         VkAttachmentDescription colorAttachment{};
@@ -160,6 +171,7 @@ public:
     }
 
 private:
+    VulkanKernel* vulkanKernel = nullptr;
     VkRenderPass renderPass;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
