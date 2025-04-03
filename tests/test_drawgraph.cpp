@@ -116,6 +116,9 @@ TEST(DrawGraph, trippleFramebuffer) {
     }
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
+    imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
+    imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
+    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);
 
     auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
@@ -132,13 +135,6 @@ TEST(DrawGraph, trippleFramebuffer) {
     
     // this traverses the drawgraph and creates the vulkan objects
     auto& drawgraph = DrawGraph(vulkanKernel, 3);
-
-
-    // DANGER THIS IS NOT WORKING AS EXPECTED, imageAvailableSemaphores is not per image view but per FRAME
-    // this needs to be updated in the vulkan kernel
-    drawgraph.setWaitFor(imageViewSrc, 0, imageAvailableSemaphores[0]);
-    drawgraph.setWaitFor(imageViewSrc, 1, imageAvailableSemaphores[1]);
-    drawgraph.setWaitFor(imageViewSrc, 2, imageAvailableSemaphores[2]);
 
     drawgraph.compileFrom(renderpass);
 
