@@ -5,6 +5,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 #include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/drawgraph/imageviewsrc.hpp"
 
 namespace klartraum {
 
@@ -161,6 +162,8 @@ private:
     std::vector<std::shared_ptr<DrawComponent> > drawComponents;
 
 };
+
+typedef std::shared_ptr<RenderPass> RenderPassPtr;
 
 } // namespace klartraum
 

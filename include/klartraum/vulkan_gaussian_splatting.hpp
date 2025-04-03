@@ -21,10 +21,10 @@ public:
     VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type=GaussianSplattingRenderingType::PointCloud);
     ~VulkanGaussianSplatting();
 
-    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) override;
-
-    virtual void initialize(VulkanKernel& vulkanKernel) override;
-
+    
+    virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderpass) override;
+    
+    virtual void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) override;
 
 private:
     void createComputeDescriptorSetLayout();

@@ -49,7 +49,7 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
 
 
 }
-
+/*
 void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) {
     auto& device = vulkanKernel->getDevice();
     auto& swapChain = vulkanKernel->getSwapChain();
@@ -61,8 +61,9 @@ void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& comma
 
 
 }
+*/
 
-void VulkanGaussianSplatting::initialize(VulkanKernel &vulkanKernel) {
+void VulkanGaussianSplatting::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass) {
     this->vulkanKernel = &vulkanKernel;
     createDescriptorPool();
     createComputeDescriptorSetLayout();
@@ -416,7 +417,7 @@ void VulkanGaussianSplatting::createSyncObjects()
 
 }
 
-void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t imageIndex)
+void VulkanGaussianSplatting::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId)
 {
     auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
     auto& camera = vulkanKernel->getCamera();
@@ -445,7 +446,7 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
         
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[pathId], 0, nullptr);
         vkCmdDraw(commandBuffer, static_cast<uint32_t>(number_of_gaussians), 1, 0, 0);
     }
     else
@@ -479,7 +480,7 @@ void VulkanGaussianSplatting::recordCommandBuffer(uint32_t currentFrame, VkComma
         // issue the compute pipeline for gaussian splatting
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
 
-        std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[imageIndex], descriptorSets[currentFrame]};
+        std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[pathId], descriptorSets[pathId]};
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
         
         uint32_t num_groups_z = number_of_gaussians / 16;
