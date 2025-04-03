@@ -183,6 +183,9 @@ private:
         auto& waitStages = submitInfoWrapper.waitStages;
         waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 
+        if(element->renderWaitSemaphores.find(pathId) != element->renderWaitSemaphores.end()) {
+            waitSemaphores.push_back(element->renderWaitSemaphores[pathId]);
+        }
 
         if(allRenderWaitSemaphores[pathId].find(element) != allRenderWaitSemaphores[pathId].end()) {
             waitSemaphores.push_back(allRenderWaitSemaphores[pathId][element]);
