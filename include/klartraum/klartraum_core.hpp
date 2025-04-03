@@ -15,6 +15,7 @@
 #include "klartraum/events.hpp"
 
 #include "klartraum/drawgraph/drawgraph.hpp"
+#include "klartraum/drawgraph/renderpass.hpp"
 
 
 namespace klartraum {
@@ -35,6 +36,9 @@ public:
 
     VulkanKernel& getVulkanKernel();
 
+    void add(DrawGraphElementPtr element);
+
+    RenderPassPtr createRenderPass();
 
 
 private:

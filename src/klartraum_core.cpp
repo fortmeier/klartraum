@@ -3,6 +3,10 @@
 
 #include "klartraum/klartraum_core.hpp"
 
+#include "klartraum/drawgraph/drawgraph.hpp"
+#include "klartraum/drawgraph/imageviewsrc.hpp"
+#include "klartraum/drawgraph/renderpass.hpp"
+
 namespace klartraum
 {
 
@@ -68,6 +72,37 @@ void KlartraumCore::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
 VulkanKernel& KlartraumCore::getVulkanKernel()
 {
     return vulkanKernel;
+}
+
+void KlartraumCore::add(DrawGraphElementPtr element)
+{
+    drawGraphs.emplace_back(vulkanKernel, 3);
+    auto& drawGraph = drawGraphs.back();
+    drawGraph.compileFrom(element);
+}
+
+RenderPassPtr KlartraumCore::createRenderPass()
+{
+    std::vector<VkImageView> imageViews;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+
+    for (int i = 0; i < 3; i++) {
+        imageViews.push_back(vulkanKernel.getImageView(i));
+        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);
+    }
+
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
+
+    imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
+    imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
+    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);    
+
+    auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
+    auto swapChainExtent = vulkanKernel.getSwapChainExtent();
+    auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
+
+    renderpass->set_input(imageViewSrc);
+    return renderpass;
 }
 
 } // namespace klartraum
