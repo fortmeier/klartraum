@@ -19,6 +19,10 @@ public:
     }
     //virtual DrawGraphElement& get_output() = 0;
 
+    void setWaitFor(uint32_t pathId, VkSemaphore semaphore) {
+        renderWaitSemaphores[pathId] = semaphore;
+    }
+
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPath) {};
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
@@ -26,6 +30,7 @@ public:
     virtual const char* getName() const = 0;
 
     std::map<int, DrawGraphElementPtr> inputs;
+    std::map<int, VkSemaphore> renderWaitSemaphores;
 };
 
 
