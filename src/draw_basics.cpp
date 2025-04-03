@@ -92,16 +92,6 @@ DrawBasics::~DrawBasics() {
 
 }
 
-void DrawBasics::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) {
-    auto device = vulkanKernel->getDevice();
-    auto swapChain = vulkanKernel->getSwapChain();
-    auto graphicsQueue = vulkanKernel->getGraphicsQueue();
-
-    recordCommandBuffer(currentFrame, commandBuffer, framebuffer);
-
-
-}
-
 void DrawBasics::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass) {
     this->vulkanKernel = &vulkanKernel;
     this->renderPass = &renderPass;
@@ -301,26 +291,12 @@ void DrawBasics::createSyncObjects()
     auto device = vulkanKernel->getDevice();
 }
 
-void DrawBasics::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer)
+void DrawBasics::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId)
 {
     auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
     auto& camera = vulkanKernel->getCamera();
     auto& vertices = getVertices(type);
     
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = *renderPass;
-    renderPassInfo.framebuffer = framebuffer;
-
-    renderPassInfo.renderArea.offset = { 0, 0 };
-    renderPassInfo.renderArea.extent = swapChainExtent;
-
-    VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);   
-
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkViewport viewport{};
@@ -341,11 +317,8 @@ void DrawBasics::recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer comm
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
     auto& descriptorSets = camera.getDescriptorSets();
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[pathId], 0, nullptr);
     vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
-
-    vkCmdEndRenderPass(commandBuffer);
-
 }
 
 } // namespace klartraum

@@ -22,16 +22,15 @@ public:
     DrawBasics(DrawBasicsType type);
     ~DrawBasics();
 
-    virtual void draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) override;
-
     virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderpass) override;
+
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) override;
 
 private:
     void createGraphicsPipeline();
     void createSyncObjects();
     void createVertexBuffer();
 
-    void recordCommandBuffer(uint32_t currentFrame, VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
 
     VulkanKernel* vulkanKernel;
 
