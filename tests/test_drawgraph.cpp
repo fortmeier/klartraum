@@ -68,19 +68,19 @@ TEST(DrawGraph, create) {
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->set_input(framebuffer_src);
+    renderpass->setInput(framebuffer_src);
 
     auto blur = std::make_shared<BlurOp>();
-    blur->set_input(renderpass);
+    blur->setInput(renderpass);
     auto noise = std::make_shared<NoiseOp>();
-    noise->set_input(blur);
+    noise->setInput(blur);
 
     auto add = std::make_shared<AddOp>();
-    add->set_input(blur, 0);
-    add->set_input(noise, 1);
+    add->setInput(blur, 0);
+    add->setInput(noise, 1);
 
     auto copy = std::make_shared<CopyOp>();
-    copy->set_input(add);
+    copy->setInput(add);
 
     
     /*
@@ -124,7 +124,7 @@ TEST(DrawGraph, trippleFramebuffer) {
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->set_input(imageViewSrc);
+    renderpass->setInput(imageViewSrc);
 
     auto axes = std::make_shared<DrawBasics>(DrawBasicsType::Axes);
     renderpass->addDrawComponent(axes);

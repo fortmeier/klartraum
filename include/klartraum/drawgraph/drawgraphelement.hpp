@@ -14,7 +14,7 @@ typedef std::shared_ptr<DrawGraphElement> DrawGraphElementPtr;
 
 class DrawGraphElement {
 public:
-    virtual void set_input(DrawGraphElementPtr input, int index = 0) {
+    virtual void setInput(DrawGraphElementPtr input, int index = 0) {
         inputs[index] = input;
     }
     //virtual DrawGraphElement& get_output() = 0;

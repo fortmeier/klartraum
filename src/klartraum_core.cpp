@@ -101,7 +101,7 @@ RenderPassPtr KlartraumCore::createRenderPass()
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->set_input(imageViewSrc);
+    renderpass->setInput(imageViewSrc);
     return renderpass;
 }
 
