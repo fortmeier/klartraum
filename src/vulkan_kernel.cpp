@@ -727,7 +727,7 @@ std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.waitSemaphoreCount = 1;
     submitInfo.pWaitSemaphores = &imageAvailableSemaphoresPerFrame[currentFrame];
-    static VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+    static VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &imageAvailableSemaphoresPerImage[imageIndex];
@@ -743,7 +743,7 @@ std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
     // auto& framebuffer = getFramebuffer(imageIndex);
     // auto& commandBuffer = commandBuffers[currentFrame];
 
-    camera->update(currentFrame);
+    camera->update(imageIndex);
     
     // TODO imageAvailableSemaphores should be returned;
     return {imageIndex, imageAvailableSemaphores[currentFrame]};
