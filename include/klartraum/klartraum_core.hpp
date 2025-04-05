@@ -31,15 +31,11 @@ public:
 
     void setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera);
 
-
-    // void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent);
-
     VulkanKernel& getVulkanKernel();
 
     void add(DrawGraphElementPtr element);
 
     RenderPassPtr createRenderPass();
-
 
 private:
     VulkanKernel vulkanKernel;
@@ -48,11 +44,7 @@ private:
 
     std::queue<std::unique_ptr<Event> > eventQueue;
 
-    //std::vector<std::shared_ptr<DrawComponent> > drawComponents;
-
     std::vector<DrawGraph> drawGraphs;
-
-
 
 };
 
