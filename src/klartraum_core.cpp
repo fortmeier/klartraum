@@ -36,15 +36,6 @@ void KlartraumCore::step() {
         interfaceCamera->update(camera);
     }
 
-    // draw all draw components
-    // auto& currentFrame = vulkanKernel.currentFrame;
-    // auto& framebuffer = vulkanKernel.getFramebuffer(imageIndex);
-    // auto& commandBuffer = vulkanKernel.commandBuffers[currentFrame];
-    // auto& imageAvailableSemaphore = vulkanKernel.imageAvailableSemaphores[currentFrame];
-
-    // for(auto &drawComponent : drawComponents) {
-    //     drawComponent->draw(currentFrame, commandBuffer, framebuffer, imageAvailableSemaphore, imageIndex);
-    // }
     auto& graphicsQueue = vulkanKernel.getGraphicsQueue();
 
     VkSemaphore renderFinishedSemaphore;
