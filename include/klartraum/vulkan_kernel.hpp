@@ -55,33 +55,11 @@ class VulkanKernel {
      * 
     */
     private:
-    //GLFWwindow* window = nullptr;
     const uint32_t WIDTH = 512;
     const uint32_t HEIGHT = 512;
 
     VkDebugUtilsMessengerEXT debugMessenger;
 
-
-
-    // VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
-    //     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
-    //         return capabilities.currentExtent;
-    //     }
-    //     else {
-    //         int width, height;
-    //         glfwGetFramebufferSize(window, &width, &height);
-
-    //         VkExtent2D actualExtent = {
-    //             static_cast<uint32_t>(width),
-    //             static_cast<uint32_t>(height)
-    //         };
-
-    //         actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-    //         actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
-
-    //         return actualExtent;
-    //     }
-    // }
     std::vector<VkImage> swapChainImages;
 
     VkFormat swapChainImageFormat;
@@ -210,7 +188,6 @@ class VulkanKernel {
     std::vector<VkSemaphore> imageAvailableSemaphoresPerFrame;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerImage;
     std::vector<VkSemaphore> renderFinishedSemaphores;  
-    //std::vector<VkSemaphore> signalSemaphores;
 
     void createSyncObjects();
 
