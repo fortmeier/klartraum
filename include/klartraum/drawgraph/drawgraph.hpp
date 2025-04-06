@@ -181,21 +181,23 @@ private:
         auto& submitInfo = submitInfoWrapper.submitInfo;
         auto& waitSemaphores = submitInfoWrapper.waitSemaphores;
         auto& waitStages = submitInfoWrapper.waitStages;
-        waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-
+        
         if(element->renderWaitSemaphores.find(pathId) != element->renderWaitSemaphores.end()) {
             waitSemaphores.push_back(element->renderWaitSemaphores[pathId]);
+            waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         }
-
+        
         if(allRenderWaitSemaphores[pathId].find(element) != allRenderWaitSemaphores[pathId].end()) {
             waitSemaphores.push_back(allRenderWaitSemaphores[pathId][element]);
+            waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         }
-
+        
         for(auto& input : element->inputs) {
             auto& inputElement = input.second;
             auto it = allRenderFinishedSemaphores[pathId].find(inputElement);
             if(it != allRenderFinishedSemaphores[pathId].end()) {
                 waitSemaphores.push_back(it->second);
+                waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
             }
         }
         
