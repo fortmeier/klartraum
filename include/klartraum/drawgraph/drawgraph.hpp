@@ -47,6 +47,10 @@ public:
     virtual ~DrawGraph() {
         auto& device = vulkanKernel.getDevice();
 
+        // clear the outputs of all elements
+        // otherwise we will have dangling pointers in the graph
+        clearOutputs();
+
         // destroy the semaphores
         for(auto& semaphores: allRenderFinishedSemaphores) {
             for(auto& semaphore_list: semaphores) {
@@ -327,6 +331,12 @@ private:
                 auto& inputElement = input.second;
                 inputElement->outputs.push_back(element);
             }
+        }
+    }
+
+    void clearOutputs() {
+        for(auto& element : ordered_elements) {
+            element->outputs.clear();
         }
     }
 
