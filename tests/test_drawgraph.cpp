@@ -61,14 +61,19 @@ TEST(DrawGraph, create) {
     /*
     STEP 1: create the drawgraph elements
     */
+    std::vector<VkImageView> imageViews;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    for (int i = 0; i < 3; i++) {
+        imageViews.push_back(vulkanKernel.getImageView(i));
+    }
 
-    auto framebuffer_src = std::make_shared<FramebufferSrc>(vulkanKernel.getFramebuffer(0));
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
 
     auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->setInput(framebuffer_src);
+    renderpass->setInput(imageViewSrc);
 
     auto blur = std::make_shared<BlurOp>();
     blur->setInput(renderpass);
@@ -91,7 +96,7 @@ TEST(DrawGraph, create) {
     auto& drawgraph = DrawGraph(vulkanKernel, 1);
     drawgraph.compileFrom(copy);
 
-    drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), 0);
+    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     return;
 }

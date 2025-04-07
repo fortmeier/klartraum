@@ -12,8 +12,12 @@ class DrawGraphElement;
 
 typedef std::shared_ptr<DrawGraphElement> DrawGraphElementPtr;
 
+class DrawGraph;
+
 class DrawGraphElement {
 public:
+    friend class DrawGraph;
+
     virtual void setInput(DrawGraphElementPtr input, int index = 0) {
         inputs[index] = input;
     }
@@ -31,6 +35,11 @@ public:
 
     std::map<int, DrawGraphElementPtr> inputs;
     std::map<int, VkSemaphore> renderWaitSemaphores;
+    
+    private:
+    // these are updated by the DrawGraph, do not set them manually
+    std::vector<DrawGraphElementPtr> outputs;
+
 };
 
 
