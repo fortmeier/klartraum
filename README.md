@@ -1,7 +1,24 @@
 # klartraum
-Klartraum will be a real-time neural rendering engine build on top of vulkan.
+Klartraum will be a real-time neural rendering and inference engine build on top of Vulkan.
 
-Status: No neural rendering yet, still setting up the vulkan scaffold 😊
+The general idea is to provide an execution environment for pretrained deep learning algorithms that runs on a multitude of hardware, given that Vulkan 1.3 is available. Thus, it enables a wide range of embedded devices that span from single-board computers as Raspberry Pies to Virtual Reality headsets to use algorithms as
+* Convolutional Neural Networks
+* Diffusion networks
+* Gaussian splatting
+* Transformers and LLMs
+
+Also it is possible to combine them with classical real-time rendering using Vulkan. This way, complex neural rendering pipelines can be created that for instance first performs Gaussian Splatting in an embedding space, decodes them using a CNN-Decoder, combines it with classic rasterization or raytracing and finally runs DLSS to increase resolution and fidelity. 
+
+Alternatively, it can be simply used as hardware independent neural network inference engine for classical deep learning applications.
+
+A design principle of Klartraum is that all operations shall be as precomputed as possible so that for a single inference only the command buffers have to be submitted, without re-recording to free up CPU as much as possible and reduce latency.
+
+# design
+
+What you do with Klartraum is to write draw graphs that contain processing nodes that perform various graphics and compute operations on Vulkan buffers.
+
+It works with the Klartraum Engine, which also handles user input etc, but also as a standalone that takes vulkan rendering
+buffers.
 
 # example
 
@@ -47,27 +64,5 @@ int main() {
 # Build
 ## Prerequisites
 THIS SECTIONS NEEDS A REWORK!
-
-Building needs a development build of python.
-
-### Build Python for Windows Development
-
-To be able to build with Visual Studio 17 2022, python needs to be build from scratch.
-
-Follow the instructions provided in the [Python Developer's Guide](https://devguide.python.org/getting-started/setup-building/). This boils down to:
-
-1. Clone the Python repository:
-    ```sh
-    cd 3rdparty
-    git clone https://github.com/python/cpython.git
-    git checkout v3.12.8
-    ```
-
-2. Navigate to the `PCbuild` directory and run the build script:
-    ```sh
-    PCbuild\build.bat -c Debug
-    ```
-
-3. Open the solution file (`.sln`) in Visual Studio and compile the project.
 
 
