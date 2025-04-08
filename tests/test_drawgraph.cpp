@@ -143,9 +143,29 @@ TEST(DrawGraph, trippleFramebuffer) {
 
     drawgraph.compileFrom(renderpass);
 
-    auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
-    auto finishSemaphore = drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
-    vulkanKernel.endRender(imageIndex, finishSemaphore);
+    VkSemaphore finishSemaphore = VK_NULL_HANDLE;
 
+    for(int i = 0; i < 6; i++) {
+        auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
+        finishSemaphore = drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
+        vulkanKernel.endRender(imageIndex, finishSemaphore);
+    }
+
+    // finally wait for the queue to be completed
+    // by submitting a fence without any work
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence fence;
+    if (vkCreateFence(device, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create fence!");
+    }
+
+    if (vkQueueSubmit(vulkanKernel.getGraphicsQueue(), 0, nullptr, fence) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit the fence!");
+    }
+
+    vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
+
+    vkDestroyFence(device, fence, nullptr);  
     return;
 }
