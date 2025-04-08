@@ -29,7 +29,6 @@ public:
         all_path_submit_infos.resize(numberPaths);
         all_path_submit_info_wrappers.resize(numberPaths);
         allRenderFinishedSemaphores.resize(numberPaths);
-        allRenderWaitSemaphores.resize(numberPaths);
 
         // create the command pool
         VkCommandPoolCreateInfo poolInfo{};
@@ -69,13 +68,6 @@ public:
         }
         // destroy the command pool
         vkDestroyCommandPool(device, commandPool, nullptr);
-    }
-
-    // TODO implement destructor to destroy the command pool and command buffers and semaphores etc
-
-    void setWaitFor(DrawGraphElementPtr element, uint32_t pathId, VkSemaphore waitSemaphore) {
-        auto& waitSemaphores = allRenderWaitSemaphores[pathId];
-        waitSemaphores[element] = waitSemaphore;
     }
 
     void compileFrom(DrawGraphElementPtr element) {
@@ -143,13 +135,9 @@ public:
         // this is not optimal but it works for now
         // in the future, we will merge command buffers of consecutive elements
         // and submit them together
-        for(VkSubmitInfo& submitInfo : submit_infos) {
-            bool isLast = &submitInfo == &submit_infos.back();
-            VkFence submitFence = isLast ? fence : VK_NULL_HANDLE;
 
-            if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, submitFence) != VK_SUCCESS) {
-                throw std::runtime_error("failed to submit the graph elements!");
-            }
+        if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit the graph elements!");
         }
 
         return graphFinishedSemaphores[pathId];
@@ -192,7 +180,6 @@ private:
     typedef std::map<DrawGraphElementPtr, VkSemaphore> SemaphoreMap;
     typedef std::map<DrawGraphElementPtr, SemaphoreMap> SemaphoreMapMap;
     
-    std::vector<SemaphoreMap> allRenderWaitSemaphores;
     std::vector<SemaphoreMapMap> allRenderFinishedSemaphores;
 
     std::vector<VkSemaphore> graphFinishedSemaphores;
@@ -231,11 +218,7 @@ private:
             waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         }
         
-        if(allRenderWaitSemaphores[pathId].find(element) != allRenderWaitSemaphores[pathId].end()) {
-            waitSemaphores.push_back(allRenderWaitSemaphores[pathId][element]);
-            waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-        }
-        
+       
         // for the element, we want to find the semaphores that connect the
         // element to its inputs (given that the element has inputs)
         // for that we have to first get the SemphoreMapMap for the pathId
@@ -251,15 +234,28 @@ private:
                 // now find the element in the output of the input element
                 auto element_iter = renderFinishedSemaphores[inputElement].find(element);
                 if(element_iter != renderFinishedSemaphores[inputElement].end()) {
-                    signalSemaphores.push_back(element_iter->second);
+                    waitSemaphores.push_back(element_iter->second);
+                    waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
                 } else {
                     throw std::runtime_error("failed to find the element in the output of the input element!");
                 }
             }
         }
+        
+        auto input_output_map_iter = renderFinishedSemaphores.find(element);
+        if(input_output_map_iter != renderFinishedSemaphores.end()) {
+            for(auto& outputElement : element->outputs) {
+                auto element_iter = renderFinishedSemaphores[element].find(outputElement);
+                if(element_iter != renderFinishedSemaphores[element].end()) {
+                    signalSemaphores.push_back(element_iter->second);
+                } else {
+                    throw std::runtime_error("failed to find the semaphore connecting element to the output element!");
+                }
+            }
+        }        
 
         // if it does not have any inputs, we can just use the graph finish semaphore
-        if(element->inputs.size() == 0)
+        if(element->outputs.size() == 0)
         {
             signalSemaphores.push_back(graphFinishedSemaphores[pathId]);
         }
