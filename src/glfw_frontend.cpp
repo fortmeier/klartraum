@@ -78,8 +78,11 @@ void GlfwFrontend::loop() {
 
 void GlfwFrontend::shutdown() {
     auto& instance = klartraumCore->getVulkanKernel().getInstance();
-
-    klartraumCore->getVulkanKernel().shutdown();
+    auto& vulkanKernel = klartraumCore->getVulkanKernel();
+    
+    vulkanKernel.stopRender();
+    klartraumCore->clearDrawGraphs();
+    vulkanKernel.shutdown();
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
 

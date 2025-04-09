@@ -195,6 +195,7 @@ class VulkanKernel {
 
     std::tuple<uint32_t, VkSemaphore&> beginRender();
     void endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore);
+    void stopRender();
 
     void createCommandPool();
 
