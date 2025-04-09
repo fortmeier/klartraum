@@ -465,6 +465,8 @@ void VulkanKernel::shutdown() {
         throw std::runtime_error("VulkanKernel not initialized!");
     }
 
+    stopRender();
+
     camera.reset();
 
     vkDestroyCommandPool(device, commandPool, nullptr);
@@ -700,6 +702,13 @@ void VulkanKernel::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSem
     vkQueuePresentKHR(presentQueue, &presentInfo);
         
     currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;    
+}
+
+void VulkanKernel::stopRender() {
+    // Wait for all frames to finish before shutting down
+    for(uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
+        vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);
+    }
 }
 
 void VulkanKernel::createCommandPool() {
