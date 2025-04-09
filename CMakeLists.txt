@@ -12,14 +12,6 @@ add_subdirectory(3rdparty/glfw)
 find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIRS})
 
-set(Python3_ROOT_DIR ${PROJECT_SOURCE_DIR}/3rdparty/cpython/)
-set(Python3_FIND_STRATEGY LOCATION)
-set(Python3_EXECUTABLE ${PROJECT_SOURCE_DIR}/3rdparty/cpython/PCbuild/amd64/python_d.exe)
-set(Python3_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/3rdparty/cpython/Include)
-set(Python3_LIBRARY ${PROJECT_SOURCE_DIR}/3rdparty/cpython/PCbuild/amd64/python312_d.lib)
-find_package(Python3 3.12.8 REQUIRED COMPONENTS Interpreter Development)
-include_directories(${Python3_INCLUDE_DIRS})
-
 set(ZLIB_BUILD_EXAMPLES OFF)
 add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/zlib)
 
