@@ -75,14 +75,16 @@ void KlartraumCore::add(DrawGraphElementPtr element)
 RenderPassPtr KlartraumCore::createRenderPass()
 {
     std::vector<VkImageView> imageViews;
+    std::vector<VkImage> images;
     std::vector<VkSemaphore> imageAvailableSemaphores;
 
     for (int i = 0; i < 3; i++) {
         imageViews.push_back(vulkanKernel.getImageView(i));
+        images.push_back(vulkanKernel.getSwapChainImage(i));
         imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);
     }
 
-    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
 
     imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
     imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);

@@ -37,6 +37,10 @@ public:
 
     RenderPassPtr createRenderPass();
 
+    void clearDrawGraphs() {
+        drawGraphs.clear();
+    }
+
 private:
     VulkanKernel vulkanKernel;
 
