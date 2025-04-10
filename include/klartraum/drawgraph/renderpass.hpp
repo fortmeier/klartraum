@@ -9,7 +9,7 @@
 
 namespace klartraum {
 
-class RenderPass : public DrawGraphElement {
+class RenderPass : public ImageViewSrc {
 public:
     RenderPass(VkFormat swapChainImageFormat, VkExtent2D extent) :
         swapChainImageFormat(swapChainImageFormat),
@@ -84,18 +84,11 @@ public:
 
         framebuffers.resize(numberPath);
 
-        for (size_t i = 0; i < framebuffers.size(); i++) {
-            if(inputs.size() == 0) {
-                throw std::runtime_error("no input!");
-            }
-            ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
-            if (imageViewSrc == nullptr) {
-                throw std::runtime_error("input is not an ImageViewSrc!");
-            }
-            VkImageView imageView = imageViewSrc->imageViews[i];
+        for (uint32_t i = 0; i < framebuffers.size(); i++) {
+            VkImageView imageView = this->getImageView(i);
             VkImageView attachments[] = {
                 imageView
-            };
+            }; 
     
             // TODO create framebuffer with render pass drawgraph element
             // and create imageviewsrc instead of framebuffer src
@@ -149,6 +142,28 @@ public:
 
     void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) {
         drawComponents.push_back(drawComponent);
+    }
+
+    VkImageView& getImageView(uint32_t pathId) override {
+        if(inputs.size() == 0) {
+            throw std::runtime_error("no input!");
+        }
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+        if (imageViewSrc == nullptr) {
+            throw std::runtime_error("input is not an ImageViewSrc!");
+        }
+        return imageViewSrc->getImageView(pathId);
+    }
+
+    VkImage& getImage(uint32_t pathId) override {
+        if(inputs.size() == 0) {
+            throw std::runtime_error("no input!");
+        }
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+        if (imageViewSrc == nullptr) {
+            throw std::runtime_error("input is not an ImageViewSrc!");
+        }
+        return imageViewSrc->getImage(pathId);
     }
 
 private:

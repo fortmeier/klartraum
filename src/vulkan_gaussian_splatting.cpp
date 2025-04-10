@@ -1,11 +1,12 @@
 #include <glm/glm.hpp>
 #include <array>
+#include <stdexcept>
 
 #include "load-spz.h"
 
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/vulkan_helpers.hpp"
-#include <stdexcept>
+#include "klartraum/drawgraph/imageviewsrc.hpp"
 
 namespace klartraum {
 
@@ -42,37 +43,120 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(std::string path, GaussianSplat
 }
 
 VulkanGaussianSplatting::~VulkanGaussianSplatting() {
-    auto device = vulkanKernel->getDevice();
+    if(vulkanKernel != nullptr)
+    {
+        auto device = vulkanKernel->getDevice();
 
-    vkDestroyBuffer(device, vertexBuffer, nullptr);
-    vkFreeMemory(device, vertexBufferMemory, nullptr);
-
-
-}
-/*
-void VulkanGaussianSplatting::draw(uint32_t currentFrame, VkCommandBuffer& commandBuffer, VkFramebuffer& framebuffer, VkSemaphore& imageAvailableSemaphore, uint32_t imageIndex) {
-    auto& device = vulkanKernel->getDevice();
-    auto& swapChain = vulkanKernel->getSwapChain();
-    auto& graphicsQueue = vulkanKernel->getGraphicsQueue();
-
-
-
-    recordCommandBuffer(currentFrame, commandBuffer, framebuffer, imageIndex);
-
+        vkDestroyBuffer(device, vertexBuffer, nullptr);
+        vkFreeMemory(device, vertexBufferMemory, nullptr);
+    }
 
 }
-*/
 
-void VulkanGaussianSplatting::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass) {
+void VulkanGaussianSplatting::_setup(VulkanKernel& vulkanKernel, uint32_t numberPath)
+{
+    numberOfPaths = numberPath;
     this->vulkanKernel = &vulkanKernel;
+
     createDescriptorPool();
     createComputeDescriptorSetLayout();
-    createGraphicsPipeline();
     createVertexBuffer();
     createComputeDescriptorSets();
     createComputePipeline();
 
     createSyncObjects();
+
+    projectedGaussians = std::make_unique<VulkanBuffer<Gaussian2D>>(vulkanKernel, number_of_gaussians);
+}
+
+void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId)
+{
+    auto& device = vulkanKernel->getDevice();
+    auto& swapChain = vulkanKernel->getSwapChain();
+    auto& graphicsQueue = vulkanKernel->getGraphicsQueue();
+
+
+    auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
+    auto& camera = vulkanKernel->getCamera();
+    auto& descriptorSets = camera.getDescriptorSets();
+
+    if(inputs.size() == 0) {
+        throw std::runtime_error("no input!");
+    }
+    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+    if (imageViewSrc == nullptr) {
+        throw std::runtime_error("input is not an ImageViewSrc!");
+    }
+    VkImage image = imageViewSrc->getImage(pathId);
+
+
+    // Ensure compute writes are visible to graphics
+    VkImageMemoryBarrier imageBarrier = {};
+    imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
+    imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
+    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
+    imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
+    imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
+    imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    // TODO : use the correct image
+    
+    imageBarrier.image = image;  // The image used as framebuffer and compute input
+    imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageBarrier.subresourceRange.baseMipLevel = 0;
+    imageBarrier.subresourceRange.levelCount = 1;
+    imageBarrier.subresourceRange.baseArrayLayer = 0;
+    imageBarrier.subresourceRange.layerCount = 1;
+    
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+        0,  // No dependency flags
+        0, nullptr,  // No global memory barriers
+        0, nullptr,  // No buffer memory barriers
+        1, &imageBarrier // Image memory barrier
+    );
+    
+    // issue the compute pipeline for gaussian splatting
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+
+    std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[pathId], descriptorSets[pathId]};
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
+    
+    uint32_t num_groups_z = number_of_gaussians / 16;
+
+    vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);
+
+    VkImageMemoryBarrier barrierBack = {};
+    barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrierBack.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrierBack.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrierBack.image = image;
+    barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrierBack.subresourceRange.baseMipLevel = 0;
+    barrierBack.subresourceRange.levelCount = 1;
+    barrierBack.subresourceRange.baseArrayLayer = 0;
+    barrierBack.subresourceRange.layerCount = 1;
+    
+    barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrierBack);
+}
+
+void VulkanGaussianSplatting::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass) {
+    this->vulkanKernel = &vulkanKernel;
+
 
 }
 
@@ -91,7 +175,8 @@ void VulkanGaussianSplatting::createComputeDescriptorSetLayout() {
     // output frame binding
     layoutBindings[1].binding = 1;
     layoutBindings[1].descriptorCount = 1;
-    layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    ;
     layoutBindings[1].pImmutableSamplers = nullptr;
     layoutBindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     
@@ -109,22 +194,20 @@ void VulkanGaussianSplatting::createDescriptorPool() {
     auto& device = vulkanKernel->getDevice();
     auto& config = vulkanKernel->getConfig();
 
-    constexpr uint32_t swapChainSize = 3; // TODO
-
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     // gaussians binding
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainSize);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(numberOfPaths);
     
     // output frame binding
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainSize);
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(numberOfPaths);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = poolSizes.size();
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = static_cast<uint32_t>(swapChainSize);
+    poolInfo.maxSets = static_cast<uint32_t>(numberOfPaths);
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -135,22 +218,30 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
     auto& device = vulkanKernel->getDevice();
     auto& config = vulkanKernel->getConfig();
 
-    uint32_t swapChainSize = 3; // TODO
-
-    std::vector<VkDescriptorSetLayout> layouts(swapChainSize, computeDescriptorSetLayout);
+    std::vector<VkDescriptorSetLayout> layouts(numberOfPaths, computeDescriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainSize);
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(numberOfPaths);
     allocInfo.pSetLayouts = layouts.data();
 
-    computeDescriptorSets.resize(swapChainSize);
+    computeDescriptorSets.resize(numberOfPaths);
     VkResult result = vkAllocateDescriptorSets(device, &allocInfo, computeDescriptorSets.data());
     if (result != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate descriptor sets!");
     }
 
-    for (size_t i = 0; i < swapChainSize; i++) {
+    if(inputs.size() == 0) {
+        throw std::runtime_error("no input!");
+    }
+    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+    if (imageViewSrc == nullptr) {
+        throw std::runtime_error("input is not an ImageViewSrc!");
+    }
+    
+    for (size_t i = 0; i < numberOfPaths; i++) {
+        VkImageView imageView = imageViewSrc->getImageView(i);
+
         VkDescriptorBufferInfo storageBufferInfo{};
         storageBufferInfo.buffer = vertexBuffer;
         storageBufferInfo.offset = 0;
@@ -169,7 +260,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
 
         VkDescriptorImageInfo imageInfo = {};
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // TODO ????
-        imageInfo.imageView = vulkanKernel->getImageView(i);
+        imageInfo.imageView = imageView;
 
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[1].dstSet = computeDescriptorSets[i];
@@ -223,158 +314,6 @@ void VulkanGaussianSplatting::createComputePipeline() {
     vkDestroyShaderModule(device, computeShaderModule, nullptr);
 }
 
-void VulkanGaussianSplatting::createGraphicsPipeline() {
-    auto device = vulkanKernel->getDevice();
-    auto swapChainExtent = vulkanKernel->getSwapChainExtent();
-
-    auto vertShaderCode = readFile("shaders/shader.vert.spv");
-    auto fragShaderCode = readFile("shaders/shader.frag.spv");
-
-    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode, device);
-    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode, device);
-
-    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertShaderStageInfo.module = vertShaderModule;
-    vertShaderStageInfo.pName = "main";
-
-    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = fragShaderModule;
-    fragShaderStageInfo.pName = "main";
-
-    VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-    std::vector<VkDynamicState> dynamicStates = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR
-    };
-
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-    dynamicState.pDynamicStates = dynamicStates.data();
-
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-
-    auto bindingDescription = Gaussian::getBindingDescription();
-    auto attributeDescriptions = Gaussian::getAttributeDescriptions();
-
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();    
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-    inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)swapChainExtent.width;
-    viewport.height = (float)swapChainExtent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = swapChainExtent;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.depthClampEnable = VK_FALSE;
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-    rasterizer.depthBiasEnable = VK_FALSE;
-    rasterizer.depthBiasConstantFactor = 0.0f; // Optional
-    rasterizer.depthBiasClamp = 0.0f; // Optional
-    rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisampling.minSampleShading = 1.0f; // Optional
-    multisampling.pSampleMask = nullptr; // Optional
-    multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
-    multisampling.alphaToOneEnable = VK_FALSE; // Optional
-
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = VK_FALSE;
-    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
-    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.logicOpEnable = VK_FALSE;
-    colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-    colorBlending.blendConstants[0] = 0.0f; // Optional
-    colorBlending.blendConstants[1] = 0.0f; // Optional
-    colorBlending.blendConstants[2] = 0.0f; // Optional
-    colorBlending.blendConstants[3] = 0.0f; // Optional
-
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &(vulkanKernel->getCamera().getDescriptorSetLayout());
-    pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
-    pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
-
-    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create pipeline layout!");
-    }
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = shaderStages;
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = nullptr; // Optional
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = pipelineLayout;
-
-    pipelineInfo.renderPass = vulkanKernel->getRenderPass();
-    pipelineInfo.subpass = 0;
-
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
-    pipelineInfo.basePipelineIndex = -1; // Optional
-
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create graphics pipeline!");
-    }
-
-    vkDestroyShaderModule(device, fragShaderModule, nullptr);
-    vkDestroyShaderModule(device, vertShaderModule, nullptr);
-}
-
 void VulkanGaussianSplatting::createVertexBuffer() {
     auto device = vulkanKernel->getDevice();
 
@@ -419,99 +358,7 @@ void VulkanGaussianSplatting::createSyncObjects()
 
 void VulkanGaussianSplatting::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId)
 {
-    auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
-    auto& camera = vulkanKernel->getCamera();
-    auto& descriptorSets = camera.getDescriptorSets();
 
-    bool use_graphics = false;
-    
-    if(use_graphics) {
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-        VkViewport viewport{};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = static_cast<float>(swapChainExtent.width);
-        viewport.height = static_cast<float>(swapChainExtent.height);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-        VkRect2D scissor{};
-        scissor.offset = { 0, 0 };
-        scissor.extent = swapChainExtent;
-        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-        VkBuffer vertexBuffers[] = {vertexBuffer};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-        
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[pathId], 0, nullptr);
-        vkCmdDraw(commandBuffer, static_cast<uint32_t>(number_of_gaussians), 1, 0, 0);
-    }
-    else
-    {
-        // Ensure compute writes are visible to graphics
-        VkImageMemoryBarrier imageBarrier = {};
-        imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
-        imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
-        imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
-        imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
-        imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
-        imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imageBarrier.image = vulkanKernel->getSwapChainImage(imageIndex);  // The image used as framebuffer and compute input
-        imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        imageBarrier.subresourceRange.baseMipLevel = 0;
-        imageBarrier.subresourceRange.levelCount = 1;
-        imageBarrier.subresourceRange.baseArrayLayer = 0;
-        imageBarrier.subresourceRange.layerCount = 1;
-        
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
-            0,  // No dependency flags
-            0, nullptr,  // No global memory barriers
-            0, nullptr,  // No buffer memory barriers
-            1, &imageBarrier // Image memory barrier
-        );
-        
-        // issue the compute pipeline for gaussian splatting
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-
-        std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[pathId], descriptorSets[pathId]};
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
-        
-        uint32_t num_groups_z = number_of_gaussians / 16;
-
-        vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);
-
-        VkImageMemoryBarrier barrierBack = {};
-        barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrierBack.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        barrierBack.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrierBack.image = vulkanKernel->getSwapChainImage(imageIndex);
-        barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrierBack.subresourceRange.baseMipLevel = 0;
-        barrierBack.subresourceRange.levelCount = 1;
-        barrierBack.subresourceRange.baseArrayLayer = 0;
-        barrierBack.subresourceRange.layerCount = 1;
-        
-        barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-        
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-            0,
-            0, nullptr,
-            0, nullptr,
-            1, &barrierBack);
-    }
 
 }
 
@@ -519,6 +366,7 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path)
 {
     spz::PackedGaussians packed = spz::loadSpzPacked(path);
     std::vector<spz::UnpackedGaussian> gaussians;
+    //for (int i = 70000; i < 70020; /*packed.numPoints*/ i++) {
     for (int i = 0; i < packed.numPoints; i++) {
         spz::UnpackedGaussian gaussian = packed.unpack(i);
         gaussians.push_back(gaussian);
