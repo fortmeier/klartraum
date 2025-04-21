@@ -53,9 +53,9 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
 
 }
 
-void VulkanGaussianSplatting::_setup(VulkanKernel& vulkanKernel, uint32_t numberPath)
+void VulkanGaussianSplatting::_setup(VulkanKernel& vulkanKernel, uint32_t numberPaths)
 {
-    numberOfPaths = numberPath;
+    numberOfPaths = numberPaths;
     this->vulkanKernel = &vulkanKernel;
 
     createDescriptorPool();
