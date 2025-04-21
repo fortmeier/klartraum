@@ -30,7 +30,7 @@ public:
         return "RenderPass";
     }
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPath) {
+    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
         this->vulkanKernel = &vulkanKernel;
         
         auto& device = vulkanKernel.getDevice();
@@ -82,7 +82,7 @@ public:
             throw std::runtime_error("failed to create render pass!");
         }
 
-        framebuffers.resize(numberPath);
+        framebuffers.resize(numberPaths);
 
         for (uint32_t i = 0; i < framebuffers.size(); i++) {
             VkImageView imageView = this->getImageView(i);
