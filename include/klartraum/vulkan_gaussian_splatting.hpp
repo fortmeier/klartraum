@@ -22,6 +22,8 @@ public:
     VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type=GaussianSplattingRenderingType::PointCloud);
     ~VulkanGaussianSplatting();
 
+    virtual void checkInput(DrawGraphElementPtr input, int index = 0);
+
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths);
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId);

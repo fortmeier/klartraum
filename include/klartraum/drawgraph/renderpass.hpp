@@ -26,6 +26,13 @@ public:
 
     };
 
+    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
+        if (imageViewSrc == nullptr) {
+            throw std::runtime_error("input is not an ImageViewSrc!");
+        }
+    }
+
     virtual const char* getName() const {
         return "RenderPass";
     }

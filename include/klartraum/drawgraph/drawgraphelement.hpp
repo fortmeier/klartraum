@@ -18,9 +18,15 @@ class DrawGraphElement {
 public:
     friend class DrawGraph;
 
-    virtual void setInput(DrawGraphElementPtr input, int index = 0) {
+    void setInput(DrawGraphElementPtr input, int index = 0) {
+        checkInput(input, index);
         inputs[index] = input;
     }
+
+    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+        throw std::runtime_error("checkInput not implemented for this element");
+    }
+
     //virtual DrawGraphElement& get_output() = 0;
 
     void setWaitFor(uint32_t pathId, VkSemaphore semaphore) {
