@@ -53,6 +53,13 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
 
 }
 
+void VulkanGaussianSplatting::checkInput(DrawGraphElementPtr input, int index) {
+    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
+    if (imageViewSrc == nullptr) {
+        throw std::runtime_error("input is not an ImageViewSrc!");
+    }
+}
+
 void VulkanGaussianSplatting::_setup(VulkanKernel& vulkanKernel, uint32_t numberPaths)
 {
     numberOfPaths = numberPaths;
