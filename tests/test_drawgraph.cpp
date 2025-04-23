@@ -18,6 +18,10 @@ class BlurOp : public DrawGraphElement {
         return "BlurOp";
     }
 
+    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+        // accept everything
+    }
+
     virtual void _record(VkCommandBuffer commandBuffer) {};
 
 };
@@ -25,6 +29,10 @@ class BlurOp : public DrawGraphElement {
 class NoiseOp : public DrawGraphElement {
     virtual const char* getName() const {
         return "NoiseOp";
+    }
+
+    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+        // accept everything
     }
 
     virtual void _record(VkCommandBuffer commandBuffer) {};
@@ -36,6 +44,10 @@ class AddOp : public DrawGraphElement {
         return "AddOp";
     }
 
+    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+        // accept everything
+    }
+
     virtual void _record(VkCommandBuffer commandBuffer) {};
 
 };
@@ -43,6 +55,10 @@ class AddOp : public DrawGraphElement {
 class CopyOp : public DrawGraphElement {
     virtual const char* getName() const {
         return "CopyOp";
+    }
+
+    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+        // accept everything
     }
 
     virtual void _record(VkCommandBuffer commandBuffer) {};
