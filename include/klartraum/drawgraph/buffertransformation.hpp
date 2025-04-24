@@ -10,7 +10,7 @@
 
 namespace klartraum {
 
-template <typename A, typename R>
+template <typename A, typename R, typename U = void>
 class BufferTransformation : public DrawGraphElement {
 public:
     BufferTransformation(VulkanKernel &vulkanKernel, const std::string &shaderPath)
@@ -29,11 +29,20 @@ public:
         vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
         vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
         vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+
+        if constexpr (!std::is_void<U>::value) {
+            delete[] ubo;
+        }        
     };
 
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
         this->numberPaths = numberPaths;
         this->vulkanKernel = &vulkanKernel;
+
+        if constexpr (!std::is_void<U>::value) {
+            ubo = new U[numberPaths];
+            ubo->_setup(vulkanKernel, numberPaths);
+        }
 
         
         uint32_t inputSize = getInput().getSize();
@@ -107,6 +116,8 @@ private:
     uint32_t numberPaths = 1;
 
     std::vector<R> outputBuffers;
+
+    std::conditional_t<!std::is_void<U>::value, U*, void*> ubo = nullptr;
 
     void createDescriptorPool() {
         auto& device = vulkanKernel->getDevice();
