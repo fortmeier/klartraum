@@ -22,6 +22,11 @@ public:
         createComputePipeline(shaderPath);
     
         //createSyncObjects();
+
+        if constexpr (!std::is_void<U>::value) {
+            ubo = new U[numberPaths];
+        }
+
     }
 
     virtual ~BufferTransformation() {
@@ -40,7 +45,6 @@ public:
         this->vulkanKernel = &vulkanKernel;
 
         if constexpr (!std::is_void<U>::value) {
-            ubo = new U[numberPaths];
             ubo->_setup(vulkanKernel, numberPaths);
         }
 
@@ -51,6 +55,7 @@ public:
         }
         groupCountX = inputSize;
 
+        computeDescriptorSets.resize(numberPaths);
         for(uint32_t i = 0; i < numberPaths; i++) {
             outputBuffers.emplace_back(vulkanKernel, inputSize);
             createComputeDescriptorSets(i);
@@ -59,11 +64,23 @@ public:
     };
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSet, 0, 0);
-        
-        vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);        
+        if constexpr (std::is_void<U>::value)
+        {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[pathId], 0, 0);
+            
+            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);        
+        }
+        else
+        {
+            ubo[pathId].update(pathId);
 
+            std::vector<VkDescriptorSet> descriptorSets = {computeDescriptorSets[pathId], ubo->getDescriptorSets()[pathId]};
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, descriptorSets.size(), descriptorSets.data(), 0, 0);
+            
+            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);        
+        }
     };
 
     virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
@@ -74,6 +91,7 @@ public:
     }
 
     A& getInput(uint32_t pathId = 0) {
+        // TODO why inputs[0], and not inputs[pathId]?
         return dynamic_cast<BufferElement<A>*>(inputs[0].get())->getBuffer();
     }
 
@@ -81,28 +99,21 @@ public:
         return "BufferTransformation";
     }    
 
-    // VulkanOperationResult* operator()(A& a, B& b, R& result)
-    // {
-    //     if(a.getSize() != b.getSize() || a.getSize() != result.getSize())
-    //     {
-    //         std::stringstream ss;
-    //         ss << "BufferTransformation::operator() operand size mismatch: a:" << a.getSize() << " b:" << b.getSize() << " result:" << result.getSize();
-    //         throw std::runtime_error(ss.str());
-    //     }
-    //     groupCountX = a.getSize();
-    //     createComputeDescriptorSets(a, b, result);
-    //     VulkanOperationResult* res = dynamic_cast<VulkanOperationResult*>(this);
-    //     return res;
-    // }
-
-
     A& getOutputBuffer(uint32_t pathId = 0) {
         return outputBuffers[pathId];
     }
 
+    std::conditional_t<!std::is_void<U>::value, U*, void*> getUbo(uint32_t pathId = 0) {
+        if constexpr (!std::is_void<U>::value) {
+            return &ubo[pathId];
+        } else {
+            return nullptr;
+        }
+    }    
+
 private:
     VkDescriptorPool descriptorPool;
-    VkDescriptorSet computeDescriptorSet;
+    std::vector<VkDescriptorSet> computeDescriptorSets;
     VkDescriptorSetLayout computeDescriptorSetLayout;
     VkPipelineLayout computePipelineLayout;
     VkPipeline computePipeline;
@@ -119,27 +130,35 @@ private:
 
     std::conditional_t<!std::is_void<U>::value, U*, void*> ubo = nullptr;
 
+    /*
+
+    */
     void createDescriptorPool() {
         auto& device = vulkanKernel->getDevice();
         auto& config = vulkanKernel->getConfig();
-    
+
+        
         std::array<VkDescriptorPoolSize, 3> poolSizes{};
         // A
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        // TODO use numberPaths instead of hardcoded 3 ...
         poolSizes[0].descriptorCount = 3; //static_cast<uint32_t>(swapChainSize);
         
         // B
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        // TODO use numberPaths instead of hardcoded 3 ...
         poolSizes[1].descriptorCount = 3; //static_cast<uint32_t>(swapChainSize);
-    
+        
         // Result
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        // TODO use numberPaths instead of hardcoded 3 ...
         poolSizes[2].descriptorCount = 3; //static_cast<uint32_t>(swapChainSize);
-    
+        
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.poolSizeCount = poolSizes.size();
         poolInfo.pPoolSizes = poolSizes.data();
+        // TODO use numberPaths instead of hardcoded 3 ... or whatever is needed
         poolInfo.maxSets = 3;
     
         if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
@@ -190,7 +209,7 @@ private:
         auto& config = vulkanKernel->getConfig();
 
         A& a = getInput(pathId);
-        R& r = outputBuffers[0];
+        R& r = outputBuffers[pathId];
     
         //VkDescriptorSetLayout layout;
         VkDescriptorSetAllocateInfo allocInfo{};
@@ -199,8 +218,7 @@ private:
         allocInfo.descriptorSetCount = 1;
         allocInfo.pSetLayouts = &computeDescriptorSetLayout;
     
-        //computeDescriptorSet;
-        VkResult result = vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSet);
+        VkResult result = vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSets[pathId]);
         if (result != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate descriptor sets!");
         }
@@ -218,7 +236,7 @@ private:
         std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[0].dstSet = computeDescriptorSet;
+        descriptorWrites[0].dstSet = computeDescriptorSets[pathId];
         descriptorWrites[0].dstBinding = 0;
         descriptorWrites[0].dstArrayElement = 0;
         descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -226,7 +244,7 @@ private:
         descriptorWrites[0].pBufferInfo = &storageBufferInfoA;
 
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[1].dstSet = computeDescriptorSet;
+        descriptorWrites[1].dstSet = computeDescriptorSets[pathId];
         descriptorWrites[1].dstBinding = 2;
         descriptorWrites[1].dstArrayElement = 0;
         descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
