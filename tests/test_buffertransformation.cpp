@@ -77,6 +77,8 @@ TEST(BufferTransformation, create_with_ubo) {
     
     transform->setInput(bufferElement);
 
+    transform->getUbo()->ubo = 3.0f;
+
     /*
     STEP 2: create the drawgraph backend and compile the drawgraph
     */
@@ -96,7 +98,7 @@ TEST(BufferTransformation, create_with_ubo) {
     transform->getOutputBuffer(0).memcopy_to(data_out);
 
     for (int i = 0; i < 7; i++) {
-        EXPECT_EQ(data[i] * 2, data_out[i]);
+        EXPECT_EQ(data[i] * 3.0f data_out[i]);
     }
     return;
 }
