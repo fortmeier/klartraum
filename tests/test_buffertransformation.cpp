@@ -98,7 +98,7 @@ TEST(BufferTransformation, create_with_ubo) {
     transform->getOutputBuffer(0).memcopy_to(data_out);
 
     for (int i = 0; i < 7; i++) {
-        EXPECT_EQ(data[i] * 3.0f data_out[i]);
+        EXPECT_EQ(data[i] * 3.0f, data_out[i]);
     }
     return;
 }
