@@ -102,3 +102,53 @@ TEST(BufferTransformation, create_with_ubo) {
     }
     return;
 }
+
+TEST(BufferTransformation, create_with_ubo_multiple_paths) {
+    klartraum::GlfwFrontend frontend;
+
+    auto& core = frontend.getKlartraumCore();
+    auto& vulkanKernel = core.getVulkanKernel();
+    auto& device = vulkanKernel.getDevice();
+
+    typedef VulkanBuffer<float> typeA;
+    typedef VulkanBuffer<float> typeR;
+    typedef UniformBufferObjectNew<float> typeU;
+
+    auto transform = std::make_shared<BufferTransformation<typeA, typeR, typeU>>(vulkanKernel, "shaders/operator_multiply_scalar.comp.spv");
+    
+    auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
+    std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
+    bufferElement->getBuffer().memcopy_from(data);
+    
+    transform->setInput(bufferElement);
+
+    transform->getUbo()->ubo = 77.0f;
+    
+    /*
+    STEP 2: create the drawgraph backend and compile the drawgraph
+    */
+   
+   // this traverses the drawgraph and creates the vulkan objects
+   auto& drawgraph = DrawGraph(vulkanKernel, 3);
+   drawgraph.compileFrom(transform);
+   
+   /*
+   STEP 3: submit the drawgraph and compare the output
+   */
+  for(uint32_t pathId = 0; pathId < 3; pathId++) {
+        transform->getUbo()->ubo = 1.0f * pathId;
+        transform->getUbo()->update(pathId);
+
+        drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), pathId);
+        
+        // check the output buffer
+        std::vector<float> data_out(7, 0.0f);
+        
+        transform->getOutputBuffer(pathId).memcopy_to(data_out);
+        
+        for (int i = 0; i < 7; i++) {
+            EXPECT_EQ(data[i] * 1.0f * pathId, data_out[i]);
+        }
+    }
+    return;
+}
