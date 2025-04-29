@@ -24,7 +24,7 @@ public:
         //createSyncObjects();
 
         if constexpr (!std::is_void<U>::value) {
-            ubo = new U[numberPaths];
+            ubo = new U();
         }
 
     }
@@ -36,7 +36,7 @@ public:
         vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
 
         if constexpr (!std::is_void<U>::value) {
-            delete[] ubo;
+            delete ubo;
         }        
     };
 
@@ -59,8 +59,13 @@ public:
         for(uint32_t i = 0; i < numberPaths; i++) {
             outputBuffers.emplace_back(vulkanKernel, inputSize);
             createComputeDescriptorSets(i);
+            
+            if constexpr (!std::is_void<U>::value) {
+                ubo->update(i);
+            }
         }
         
+
     };
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
@@ -73,8 +78,6 @@ public:
         }
         else
         {
-            ubo[pathId].update(pathId);
-
             std::vector<VkDescriptorSet> descriptorSets = {computeDescriptorSets[pathId], ubo->getDescriptorSets()[pathId]};
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, descriptorSets.size(), descriptorSets.data(), 0, 0);
@@ -103,9 +106,9 @@ public:
         return outputBuffers[pathId];
     }
 
-    std::conditional_t<!std::is_void<U>::value, U*, void*> getUbo(uint32_t pathId = 0) {
+    std::conditional_t<!std::is_void<U>::value, U*, void*> getUbo() {
         if constexpr (!std::is_void<U>::value) {
-            return &ubo[pathId];
+            return ubo;
         } else {
             return nullptr;
         }
