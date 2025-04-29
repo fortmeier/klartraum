@@ -37,6 +37,15 @@ public:
         vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
     }
 
+    VulkanBuffer(VulkanBuffer&& other) noexcept
+        : size(other.size),
+          vertexBuffer(other.vertexBuffer),
+          vertexBufferMemory(other.vertexBufferMemory),
+          vulkanKernel(other.vulkanKernel) {
+        other.vertexBuffer = VK_NULL_HANDLE;
+        other.vertexBufferMemory = VK_NULL_HANDLE;
+    }
+
     ~VulkanBuffer() {
         auto& device = vulkanKernel.getDevice();
         vkDestroyBuffer(device, vertexBuffer, nullptr);
