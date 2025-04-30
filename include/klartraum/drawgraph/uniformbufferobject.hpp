@@ -39,6 +39,10 @@ public:
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     }
 
+    virtual const char* getName() const {
+        return "UniformBufferObjectNew";
+    }    
+
     VkDescriptorSetLayout& getDescriptorSetLayout()
     {
         return descriptorSetLayout;
