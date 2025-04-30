@@ -16,7 +16,7 @@ public:
 
     virtual void initialize(VulkanKernel& vulkanKernel) override;
 
-    virtual void update(Camera& camera);
+    virtual void update(CameraMVP& mvp);
     virtual void onEvent(Event& event);
 
 
