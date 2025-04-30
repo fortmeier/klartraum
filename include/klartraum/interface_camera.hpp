@@ -3,6 +3,7 @@
 
 #include "klartraum/camera.hpp"
 #include "klartraum/events.hpp"
+#include "klartraum/vulkan_kernel.hpp"
 
 namespace klartraum {
 
@@ -11,7 +12,7 @@ public:
 
     virtual void initialize(VulkanKernel& vulkanKernel) = 0;
 
-    virtual void update(Camera& camera) = 0;
+    virtual void update(CameraMVP& mvp) = 0;
     virtual void onEvent(Event& event) {}
 };
 
