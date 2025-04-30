@@ -89,7 +89,7 @@ private:
         auto config = vulkanKernel->getConfig();
         auto device = vulkanKernel->getDevice();
     
-        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+        VkDeviceSize bufferSize = sizeof(UniformBufferObjectType);
     
         uniformBuffers.resize(numberOfPaths);
         uniformBuffersMemory.resize(numberOfPaths);
@@ -146,7 +146,7 @@ private:
             VkDescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = uniformBuffers[i];
             bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
+            bufferInfo.range = sizeof(UniformBufferObjectType);
     
             VkWriteDescriptorSet descriptorWrite{};
             descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
