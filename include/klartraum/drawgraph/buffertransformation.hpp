@@ -13,19 +13,16 @@ namespace klartraum {
 template <typename A, typename R, typename U = void>
 class BufferTransformation : public DrawGraphElement {
 public:
-    BufferTransformation(VulkanKernel &vulkanKernel, const std::string &shaderPath)
+    BufferTransformation(VulkanKernel &vulkanKernel, const std::string &shaderPath) :
+        shaderPath(shaderPath) 
     {
         this->vulkanKernel = &vulkanKernel;
-        createDescriptorPool();
-        createComputeDescriptorSetLayout();
         
-        createComputePipeline(shaderPath);
-    
-        //createSyncObjects();
-
         if constexpr (!std::is_void<U>::value) {
             ubo = new U();
         }
+
+
 
     }
 
@@ -48,6 +45,9 @@ public:
             ubo->_setup(vulkanKernel, numberPaths);
         }
 
+        createDescriptorPool();
+        createComputeDescriptorSetLayout();
+        createComputePipeline();
         
         uint32_t inputSize = getInput().getSize();
         if (inputSize == 0) {
@@ -122,6 +122,8 @@ private:
     VkPipeline computePipeline;
 
     VulkanKernel* vulkanKernel;
+
+    const std::string shaderPath;
 
     uint32_t groupCountX = 1;
     uint32_t groupCountY = 1;
@@ -257,7 +259,7 @@ private:
         vkUpdateDescriptorSets(device, descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
     }
 
-    void createComputePipeline(const std::string &shaderPath)
+    void createComputePipeline()
     {
         auto& device = vulkanKernel->getDevice();
 
@@ -275,10 +277,16 @@ private:
         
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 2;
-    
-        VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, vulkanKernel->getCamera().getDescriptorSetLayout()};
-        pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+        
+        if constexpr (!std::is_void<U>::value) {
+            pipelineLayoutInfo.setLayoutCount = 2;
+            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, ubo->getDescriptorSetLayout()};
+            pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+        } else {
+            pipelineLayoutInfo.setLayoutCount = 1;
+            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout};
+            pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+        }
         
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline layout!");
