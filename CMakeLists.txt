@@ -29,7 +29,6 @@ set(SRC
   src/vulkan_helpers.cpp
   src/vulkan_kernel.cpp
   src/klartraum_core.cpp
-  src/camera.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
   ${SPZ_SRC}

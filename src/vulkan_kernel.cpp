@@ -455,7 +455,6 @@ void VulkanKernel::initialize(VkSurfaceKHR& surface) {
     createCommandPool();
     createSyncObjects();
 
-    camera = std::make_unique<Camera>(this);
     state = State::INITIALIZED;
 
 }
@@ -466,8 +465,6 @@ void VulkanKernel::shutdown() {
     }
 
     stopRender();
-
-    camera.reset();
 
     vkDestroyCommandPool(device, commandPool, nullptr);
     
@@ -673,8 +670,7 @@ std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
         throw std::runtime_error("image available delegate semaphore failed to submit!");
     }    
   
-    camera->update(imageIndex);
-    
+   
     // TODO imageAvailableSemaphores should be returned;
     return {imageIndex, imageAvailableSemaphoresPerImage[imageIndex]};
 }
@@ -721,15 +717,6 @@ void VulkanKernel::createCommandPool() {
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
     }    
-}
-
-Camera& VulkanKernel::getCamera()
-{
-    if(camera == nullptr)
-    {
-        throw std::runtime_error("VulkanKernel::getCamera() called before initialize()");
-    }    
-    return *camera;
 }
 
 
