@@ -17,11 +17,11 @@ TEST(VulkanOperator, simple_add) {
     
     Buffer buffer(vulkanKernel, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    buffer.memcopy_from(data);
+    buffer.memcopyFrom(data);
     
     Buffer buffer2(vulkanKernel, 7);
     std::vector<float> data2 = {8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f, 2.0f};
-    buffer2.memcopy_from(data2);
+    buffer2.memcopyFrom(data2);
 
     Buffer result(vulkanKernel, 7);
 
@@ -33,7 +33,7 @@ TEST(VulkanOperator, simple_add) {
     context(add(buffer, buffer2, result));
     context.eval(vulkanKernel.getGraphicsQueue());
     
-    result.memcopy_to(result_data);
+    result.memcopyTo(result_data);
 
     for (int i = 0; i < 7; i++) {
         EXPECT_EQ(result_data[i], 9.0f);
@@ -60,10 +60,10 @@ TEST(VulkanOperator, simple_matmul) {
     
 
     std::vector<Mat4> dataMat = {Mat4(1.0f), Mat4(2.0f)};
-    bufferMat.memcopy_from(dataMat);
+    bufferMat.memcopyFrom(dataMat);
 
     std::vector<Vec4> dataVec = {Vec4(1.0f, 0.0f, 0.0f, 1.0f), Vec4(1.0f, 0.0f, 0.0f, 1.0f)};
-    bufferVec.memcopy_from(dataVec);
+    bufferVec.memcopyFrom(dataVec);
     
     BufferVec result(vulkanKernel, 2);
 
@@ -75,7 +75,7 @@ TEST(VulkanOperator, simple_matmul) {
     context(matmul(bufferMat, bufferVec, result));
     context.eval(vulkanKernel.getGraphicsQueue());
     
-    result.memcopy_to(result_data);
+    result.memcopyTo(result_data);
 
     EXPECT_EQ(result_data[0][0], 1.0f);
     EXPECT_EQ(result_data[0][1], 0.0f);
