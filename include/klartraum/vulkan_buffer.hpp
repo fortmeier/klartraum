@@ -52,7 +52,7 @@ public:
         vkFreeMemory(device, vertexBufferMemory, nullptr);
     }
 
-    void memcopy_from(const std::vector<T>& src) {
+    void memcopyFrom(const std::vector<T>& src) {
         auto& device = vulkanKernel.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
@@ -60,7 +60,7 @@ public:
         vkUnmapMemory(device, vertexBufferMemory);
     }
 
-    void memcopy_to(std::vector<T>& dst) {
+    void memcopyTo(std::vector<T>& dst) {
         auto& device = vulkanKernel.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);

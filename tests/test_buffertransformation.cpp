@@ -30,7 +30,7 @@ TEST(BufferTransformation, create) {
     
     auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    bufferElement->getBuffer().memcopy_from(data);
+    bufferElement->getBuffer().memcopyFrom(data);
     
     transform->setInput(bufferElement);
 
@@ -50,7 +50,7 @@ TEST(BufferTransformation, create) {
     // check the output buffer
     std::vector<float> data_out(7, 0.0f);
 
-    transform->getOutputBuffer(0).memcopy_to(data_out);
+    transform->getOutputBuffer(0).memcopyTo(data_out);
 
     for (int i = 0; i < 7; i++) {
         EXPECT_EQ(data[i] * 2, data_out[i]);
@@ -73,7 +73,7 @@ TEST(BufferTransformation, create_with_ubo) {
     
     auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    bufferElement->getBuffer().memcopy_from(data);
+    bufferElement->getBuffer().memcopyFrom(data);
     
     transform->setInput(bufferElement);
 
@@ -95,7 +95,7 @@ TEST(BufferTransformation, create_with_ubo) {
     // check the output buffer
     std::vector<float> data_out(7, 0.0f);
 
-    transform->getOutputBuffer(0).memcopy_to(data_out);
+    transform->getOutputBuffer(0).memcopyTo(data_out);
 
     for (int i = 0; i < 7; i++) {
         EXPECT_EQ(data[i] * 3.0f, data_out[i]);
@@ -118,7 +118,7 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
     
     auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    bufferElement->getBuffer().memcopy_from(data);
+    bufferElement->getBuffer().memcopyFrom(data);
     
     transform->setInput(bufferElement);
 
@@ -144,7 +144,7 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
         // check the output buffer
         std::vector<float> data_out(7, 0.0f);
         
-        transform->getOutputBuffer(pathId).memcopy_to(data_out);
+        transform->getOutputBuffer(pathId).memcopyTo(data_out);
         
         for (int i = 0; i < 7; i++) {
             EXPECT_EQ(data[i] * 1.0f * pathId, data_out[i]);
