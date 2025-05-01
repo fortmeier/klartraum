@@ -141,11 +141,14 @@ TEST(DrawGraph, trippleFramebuffer) {
     imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
     imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);
 
+    auto camera = std::make_shared<CameraUboType>();
+
     auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->setInput(imageViewSrc);
+    renderpass->setInput(imageViewSrc, 0);
+    renderpass->setInput(camera, 1);
 
     auto axes = std::make_shared<DrawBasics>(DrawBasicsType::Axes);
     renderpass->addDrawComponent(axes);
