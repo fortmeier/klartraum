@@ -92,9 +92,8 @@ DrawBasics::~DrawBasics() {
 
 }
 
-void DrawBasics::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass) {
-    this->vulkanKernel = &vulkanKernel;
-    this->renderPass = &renderPass;
+void DrawBasics::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO) {
+    DrawComponent::initialize(vulkanKernel, renderPass, cameraUBO);
 
     createGraphicsPipeline();
     createVertexBuffer();
@@ -217,7 +216,7 @@ void DrawBasics::createGraphicsPipeline() {
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &(vulkanKernel->getCamera().getDescriptorSetLayout());
+    pipelineLayoutInfo.pSetLayouts = &(cameraUBO->getDescriptorSetLayout());
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -294,7 +293,6 @@ void DrawBasics::createSyncObjects()
 void DrawBasics::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId)
 {
     auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
-    auto& camera = vulkanKernel->getCamera();
     auto& vertices = getVertices(type);
     
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
@@ -316,7 +314,7 @@ void DrawBasics::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffe
     VkBuffer vertexBuffers[] = {vertexBuffer};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-    auto& descriptorSets = camera.getDescriptorSets();
+    auto& descriptorSets = cameraUBO->getDescriptorSets();
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[pathId], 0, nullptr);
     vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 }

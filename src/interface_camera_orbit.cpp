@@ -16,7 +16,7 @@ void InterfaceCameraOrbit::initialize(VulkanKernel& vulkanKernel) {
     this->vulkanKernel = &vulkanKernel;
 }
 
-void InterfaceCameraOrbit::update(Camera &camera)
+void InterfaceCameraOrbit::update(CameraMVP &mvp)
 {
     auto swapChainExtent = vulkanKernel->getSwapChainExtent();
 
@@ -24,20 +24,19 @@ void InterfaceCameraOrbit::update(Camera &camera)
     auto currentTime = std::chrono::high_resolution_clock::now();
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-    auto& ubo = camera.ubo;
 
-    ubo.model = glm::mat4(1.0f); //glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.model = glm::mat4(1.0f); //glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
     switch (up)
     {
     case UpDirection::Y:
-        ubo.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
+        mvp.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
                 glm::rotate(glm::mat4(1.0f), (float)elevation, glm::vec3(0.0f, 0.0f, 1.0f)) *    
                 glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 1.0f, 0.0f));
         break;
 
     case UpDirection::Z:
-        ubo.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
+        mvp.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
                 glm::rotate(glm::mat4(1.0f), (float)elevation, glm::vec3(0.0f, 1.0f, 0.0f)) *    
                 glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 0.0f, 1.0f));
         break;
@@ -46,10 +45,10 @@ void InterfaceCameraOrbit::update(Camera &camera)
         break;
     }
     
-    ubo.proj = glm::perspective(glm::radians(45.0f), vulkanKernel->getSwapChainExtent().width / (float) swapChainExtent.height, 0.1f, 10.0f);
+    mvp.proj = glm::perspective(glm::radians(45.0f), vulkanKernel->getSwapChainExtent().width / (float) swapChainExtent.height, 0.1f, 10.0f);
 
     // Vulkan has inverted Y coordinates compared to OpenGL
-    ubo.proj[1][1] *= -1;
+    mvp.proj[1][1] *= -1;
 
 
 }

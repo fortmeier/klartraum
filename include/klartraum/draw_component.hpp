@@ -7,14 +7,28 @@
 #include <memory>
 
 #include "klartraum/vulkan_kernel.hpp"
+#include "klartraum/drawgraph/uniformbufferobject.hpp"
+#include "klartraum/camera.hpp"
 
 namespace klartraum {
+
+typedef UniformBufferObjectNew<CameraMVP> CameraUboType;
+
 class DrawComponent {
 public:
-    virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderPass) {}
+    virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO)
+    {
+        this->vulkanKernel = &vulkanKernel;
+        this->renderPass = &renderPass;
+        this->cameraUBO = cameraUBO;
+    }
 
     virtual void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) = 0;
 
+protected:
+    VulkanKernel* vulkanKernel = nullptr;
+    VkRenderPass* renderPass = nullptr;
+    std::shared_ptr<CameraUboType> cameraUBO;
 };
 
 } // namespace klartraum

@@ -28,8 +28,15 @@ public:
 
     virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
         ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
-        if (imageViewSrc == nullptr) {
+        if (index == 0 && imageViewSrc == nullptr) {
             throw std::runtime_error("input is not an ImageViewSrc!");
+        }
+        CameraUboType* cameraUbo = std::dynamic_pointer_cast<CameraUboType>(input).get();
+        if (index == 1 && cameraUbo == nullptr) {
+            throw std::runtime_error("input is not a CameraUboType!");
+        }
+        if (index > 1) {
+            throw std::runtime_error("input index out of range!");
         }
     }
 
@@ -114,8 +121,9 @@ public:
             }
         }
 
+        auto cameraUBO = getCameraUBO();
         for(auto& drawComponent : drawComponents) {
-            drawComponent->initialize(vulkanKernel, renderPass);
+            drawComponent->initialize(vulkanKernel, renderPass, cameraUBO);
         }
     };
 
@@ -182,6 +190,16 @@ private:
     std::vector<VkFramebuffer> framebuffers;
 
     std::vector<std::shared_ptr<DrawComponent> > drawComponents;
+
+    std::shared_ptr<CameraUboType> getCameraUBO() {
+        for (auto& input : inputs) {
+            auto cameraUbo = std::dynamic_pointer_cast<CameraUboType>(input.second);
+            if (cameraUbo) {
+                return cameraUbo;
+            }
+        }
+        throw std::runtime_error("No CameraUboType found in inputs!");
+    }
 
 };
 

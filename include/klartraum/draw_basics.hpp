@@ -22,7 +22,7 @@ public:
     DrawBasics(DrawBasicsType type);
     ~DrawBasics();
 
-    virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderpass) override;
+    virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderpass, std::shared_ptr<CameraUboType> cameraUBO) override;
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) override;
 
@@ -31,10 +31,6 @@ private:
     void createSyncObjects();
     void createVertexBuffer();
 
-
-    VulkanKernel* vulkanKernel;
-
-    VkRenderPass* renderPass;
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
