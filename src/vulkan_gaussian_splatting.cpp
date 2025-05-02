@@ -55,9 +55,17 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
 
 void VulkanGaussianSplatting::checkInput(DrawGraphElementPtr input, int index) {
     ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
-    if (imageViewSrc == nullptr) {
+    if (index == 0 && imageViewSrc == nullptr) {
         throw std::runtime_error("input is not an ImageViewSrc!");
     }
+    CameraUboType* cameraUbo = std::dynamic_pointer_cast<CameraUboType>(input).get();
+    if (index == 1 && cameraUbo == nullptr) {
+        throw std::runtime_error("input is not a CameraUboType!");
+    }
+    if (index > 1) {
+        throw std::runtime_error("input index out of range!");
+    }
+
 }
 
 void VulkanGaussianSplatting::_setup(VulkanKernel& vulkanKernel, uint32_t numberPaths)
@@ -84,8 +92,6 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
 
 
     auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
-    auto& camera = vulkanKernel->getCamera();
-    auto& descriptorSets = camera.getDescriptorSets();
 
     if(inputs.size() == 0) {
         throw std::runtime_error("no input!");
@@ -128,6 +134,8 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
     // issue the compute pipeline for gaussian splatting
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
 
+    auto& cameraUBO = this->getCameraUBO();
+    auto& descriptorSets = cameraUBO->getDescriptorSets();
     std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[pathId], descriptorSets[pathId]};
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
     
@@ -301,7 +309,9 @@ void VulkanGaussianSplatting::createComputePipeline() {
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 2;
 
-    VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, vulkanKernel->getCamera().getDescriptorSetLayout()};
+    auto& cameraUBO = this->getCameraUBO();
+
+    VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, cameraUBO->getDescriptorSetLayout()};
     pipelineLayoutInfo.pSetLayouts = combinedLayouts;
     
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
