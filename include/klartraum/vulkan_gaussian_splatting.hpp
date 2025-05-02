@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/drawgraph/rendergraphelement.hpp"
 
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
@@ -17,7 +17,7 @@ enum class GaussianSplattingRenderingType {
     // GaussianSplatting, not implemented yet
 };    
 
-class VulkanGaussianSplatting : public DrawGraphElement {
+class VulkanGaussianSplatting : public RenderGraphElement {
 public:
     VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type=GaussianSplattingRenderingType::PointCloud);
     ~VulkanGaussianSplatting();

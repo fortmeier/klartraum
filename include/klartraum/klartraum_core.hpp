@@ -30,6 +30,9 @@ public:
     std::queue<std::unique_ptr<Event> >& getEventQueue();
 
     void setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera);
+    void setCameraUBO(std::shared_ptr<CameraUboType> cameraUBO) {
+        this->cameraUBO = cameraUBO;
+    }
 
     VulkanKernel& getVulkanKernel();
 
@@ -45,6 +48,7 @@ private:
     VulkanKernel vulkanKernel;
 
     std::shared_ptr<InterfaceCamera> interfaceCamera;
+    std::shared_ptr<CameraUboType> cameraUBO;
 
     std::queue<std::unique_ptr<Event> > eventQueue;
 

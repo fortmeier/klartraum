@@ -85,11 +85,14 @@ TEST(DrawGraph, create) {
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
 
+    auto camera = std::make_shared<CameraUboType>();
+
     auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->setInput(imageViewSrc);
+    renderpass->setInput(imageViewSrc, 0);
+    renderpass->setInput(camera, 1);
 
     auto blur = std::make_shared<BlurOp>();
     blur->setInput(renderpass);

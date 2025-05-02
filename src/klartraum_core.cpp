@@ -25,15 +25,16 @@ void KlartraumCore::step() {
 
     // process event queue,
     // this currently only updates the camera
-    if(interfaceCamera != nullptr)
+    if(interfaceCamera != nullptr && cameraUBO != nullptr)
     {
         while (!eventQueue.empty()) {
             auto event = std::move(eventQueue.front());
             eventQueue.pop();
             interfaceCamera->onEvent(*event);
         }
-        auto& camera = vulkanKernel.getCamera();
-        interfaceCamera->update(camera);
+        
+        interfaceCamera->update(cameraUBO->ubo);
+        cameraUBO->update(imageIndex);
     }
 
     auto& graphicsQueue = vulkanKernel.getGraphicsQueue();
@@ -88,13 +89,17 @@ RenderPassPtr KlartraumCore::createRenderPass()
 
     imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
     imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
-    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);    
+    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);
+
+    auto camera = std::make_shared<CameraUboType>();
 
     auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
     auto swapChainExtent = vulkanKernel.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
-    renderpass->setInput(imageViewSrc);
+    renderpass->setInput(imageViewSrc, 0);
+    renderpass->setInput(camera, 1);
+
     return renderpass;
 }
 

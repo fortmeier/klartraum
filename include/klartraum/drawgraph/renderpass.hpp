@@ -4,12 +4,12 @@
 #include <map>
 #include <vector>
 #include <vulkan/vulkan.h>
-#include "klartraum/drawgraph/drawgraphelement.hpp"
 #include "klartraum/drawgraph/imageviewsrc.hpp"
+#include "klartraum/drawgraph/rendergraphelement.hpp"
 
 namespace klartraum {
 
-class RenderPass : public ImageViewSrc {
+class RenderPass : public ImageViewSrc, public RenderGraphElement {
 public:
     RenderPass(VkFormat swapChainImageFormat, VkExtent2D extent) :
         swapChainImageFormat(swapChainImageFormat),
@@ -190,16 +190,6 @@ private:
     std::vector<VkFramebuffer> framebuffers;
 
     std::vector<std::shared_ptr<DrawComponent> > drawComponents;
-
-    std::shared_ptr<CameraUboType> getCameraUBO() {
-        for (auto& input : inputs) {
-            auto cameraUbo = std::dynamic_pointer_cast<CameraUboType>(input.second);
-            if (cameraUbo) {
-                return cameraUbo;
-            }
-        }
-        throw std::runtime_error("No CameraUboType found in inputs!");
-    }
 
 };
 

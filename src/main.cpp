@@ -27,6 +27,7 @@ int main() {
 
     std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
     core.setInterfaceCamera(cameraOrbit);
+    core.setCameraUBO(camera);
 
     frontend.loop();
 
