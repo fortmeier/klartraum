@@ -202,12 +202,6 @@ class VulkanKernel {
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 
-
-    std::unique_ptr<Camera> camera;
- 
-    Camera& getCamera();
-
-
 };
 
 } // namespace klartraum

@@ -10,7 +10,7 @@
 
 namespace klartraum {
 
-class ImageViewSrc : public DrawGraphElement {
+class ImageViewSrc : public virtual DrawGraphElement {
 public:
     ImageViewSrc() {};
 
