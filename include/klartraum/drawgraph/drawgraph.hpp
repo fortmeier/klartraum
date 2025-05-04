@@ -136,7 +136,7 @@ public:
         // in the future, we will merge command buffers of consecutive elements
         // and submit them together
 
-        if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
+        if (vkQueueSubmit(graphicsQueue, (uint32_t)submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");
         }
 
@@ -264,11 +264,11 @@ private:
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = pCommandBuffer;
        
-        submitInfo.waitSemaphoreCount = waitSemaphores.size();
+        submitInfo.waitSemaphoreCount = (uint32_t)waitSemaphores.size();
         submitInfo.pWaitSemaphores = waitSemaphores.data();
         submitInfo.pWaitDstStageMask = waitStages.data();
     
-        submitInfo.signalSemaphoreCount = signalSemaphores.size();
+        submitInfo.signalSemaphoreCount = (uint32_t)signalSemaphores.size();
         submitInfo.pSignalSemaphores = signalSemaphores.data();
     }
 
