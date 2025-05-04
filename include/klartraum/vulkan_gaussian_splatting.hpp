@@ -63,7 +63,7 @@ private:
     VkPipeline computePipeline;
 
     std::vector<uint8_t> data;
-    size_t number_of_gaussians;
+    uint32_t number_of_gaussians;
 
     std::unique_ptr<VulkanBuffer<Gaussian2D>> projectedGaussians;
 

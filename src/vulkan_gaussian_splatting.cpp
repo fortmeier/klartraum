@@ -197,7 +197,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSetLayout() {
     
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = layoutBindings.size();
+    layoutInfo.bindingCount = (uint32_t)layoutBindings.size();
     layoutInfo.pBindings = layoutBindings.data();
     
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS) {
@@ -220,7 +220,7 @@ void VulkanGaussianSplatting::createDescriptorPool() {
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = poolSizes.size();
+    poolInfo.poolSizeCount = (uint32_t)poolSizes.size();
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = static_cast<uint32_t>(numberOfPaths);
 
@@ -254,7 +254,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
         throw std::runtime_error("input is not an ImageViewSrc!");
     }
     
-    for (size_t i = 0; i < numberOfPaths; i++) {
+    for (uint32_t i = 0; i < numberOfPaths; i++) {
         VkImageView imageView = imageViewSrc->getImageView(i);
 
         VkDescriptorBufferInfo storageBufferInfo{};
@@ -285,7 +285,7 @@ void VulkanGaussianSplatting::createComputeDescriptorSets() {
         descriptorWrites[1].descriptorCount = 1;
         descriptorWrites[1].pImageInfo = &imageInfo;
 
-        vkUpdateDescriptorSets(device, descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
+        vkUpdateDescriptorSets(device, (uint32_t)descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
     }
 }
 
@@ -389,7 +389,7 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path)
         gaussians.push_back(gaussian);
     }
 
-    number_of_gaussians = gaussians.size();
+    number_of_gaussians = (uint32_t)gaussians.size();
     data.resize(gaussians.size() * sizeof(spz::UnpackedGaussian));
     memcpy(data.data(), gaussians.data(), data.size());
 
