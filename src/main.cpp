@@ -22,6 +22,9 @@ int main() {
     std::string spzFile = "data/hornedlizard.spz";
     std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(spzFile);
     splatting->setInput(renderpass);
+
+    auto& camera = renderpass->getCameraUBO();
+    splatting->setInput(camera, 1);
     
     core.add(splatting);
 
