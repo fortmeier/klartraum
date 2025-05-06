@@ -65,6 +65,10 @@ TEST(BufferTransformation, create_with_ubo) {
     auto& vulkanKernel = core.getVulkanKernel();
     auto& device = vulkanKernel.getDevice();
 
+    /*
+    STEP 1: cerate the drawgraph elements
+    */
+
     typedef VulkanBuffer<float> typeA;
     typedef VulkanBuffer<float> typeR;
     typedef UniformBufferObjectNew<float> typeU;

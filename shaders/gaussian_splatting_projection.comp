@@ -1,0 +1,52 @@
+#version 450
+
+struct Gaussian {
+    vec3 position;
+    vec4 rotation;
+    vec3 scale;
+    vec3 color;
+    float alpha;
+    float shR[15];
+    float shG[15];
+    float shB[15];
+};
+
+struct Gaussian2D {
+    vec2 position;
+    mat2 covariance;
+};
+
+#extension GL_EXT_scalar_block_layout : enable
+
+layout(scalar, set = 0, binding = 0) readonly buffer GaussiansSSBOIn {
+   Gaussian gaussianIn[ ];
+};
+
+layout (std430, set = 0, binding = 1) buffer outputGaussians {
+    Gaussian2D gaussian2dOut[ ];
+};
+
+layout(set = 1, binding = 0) uniform UniformBufferObject {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+#extension GL_EXT_debug_printf : enable
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    vec3 p = gaussianIn[index].position;
+
+    vec4 position = ubo.proj * ubo.view * ubo.model * vec4(p, 1.0);
+    vec2 norm_pos = position.xy / position.w;
+    Gaussian2D gaussian2d;
+
+    gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
+
+    debugPrintfEXT("gaussian %i: xy = %f, %f\n", index, p.x, p.y);
+
+    gaussian2dOut[index] = gaussian2d;
+
+}

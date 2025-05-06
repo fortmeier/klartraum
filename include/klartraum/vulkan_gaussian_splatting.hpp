@@ -3,11 +3,15 @@
 
 #include <vector>
 #include <string>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "klartraum/drawgraph/rendergraphelement.hpp"
 
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
+
+#include "klartraum/drawgraph/drawgraphgroup.hpp"
+#include "klartraum/drawgraph/buffertransformation.hpp"
 
 namespace klartraum {
 
@@ -17,7 +21,20 @@ enum class GaussianSplattingRenderingType {
     // GaussianSplatting, not implemented yet
 };    
 
-class VulkanGaussianSplatting : public RenderGraphElement {
+class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual public DrawGraphGroup {
+/**
+ * @brief 
+ * 
+ * Gaussian Splatting consists of these steps:
+ * 1. project the 3D Gaussian to 2D
+ * 2. sort the 2D Gaussians by depth using radix sort
+ * 3. distribute the 2D Gaussians to 4x4 subtiles
+ * 4. splat the 2D Gaussians to each subtile of the image
+ * 
+ * Here, this is solved by a drawgraph consisting of
+ * 1. shader drawgraphelent (projection shader, 3D gaussians in, 2D gaussians out)
+ * 2. sorting shader (2D gaussians in, sorted 2D gaussians out)
+ */
 public:
     VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type=GaussianSplattingRenderingType::PointCloud);
     ~VulkanGaussianSplatting();
@@ -68,6 +85,17 @@ private:
     std::unique_ptr<VulkanBuffer<Gaussian2D>> projectedGaussians;
 
     uint32_t numberOfPaths = 0;
+
+    typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
+    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
+    
+    typedef BufferTransformation<Gaussian3DBuffer, Gaussian2DBuffer, CameraUboType> GaussianProjection;
+    std::unique_ptr<GaussianProjection> project3Dto2D;
+    
+    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer> GaussianZSorting;
+    std::unique_ptr<GaussianZSorting> sort2DGaussians;
+    
+    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer> GaussianZSorting;
     
 };
 

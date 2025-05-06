@@ -7,6 +7,7 @@
 
 #include "klartraum/drawgraph/drawgraphelement.hpp"
 #include "klartraum/vulkan_helpers.hpp"
+#include "klartraum/drawgraph/bufferelement.hpp"
 
 namespace klartraum {
 
@@ -102,7 +103,7 @@ public:
         return "BufferTransformation";
     }    
 
-    A& getOutputBuffer(uint32_t pathId = 0) {
+    R& getOutputBuffer(uint32_t pathId = 0) {
         return outputBuffers[pathId];
     }
 
