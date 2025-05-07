@@ -4,6 +4,7 @@
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/drawgraph/imageviewsrc.hpp"
+#include "klartraum/interface_camera_orbit.hpp"
 
 using namespace klartraum;
 
@@ -46,7 +47,7 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
 
     std::vector<Gaussian3D> gaussians3D;
     gaussians3D.push_back(Gaussian3D{
-        {0.6f, 0.7f, 0.8f}, // position
+        {0.0f, 0.0f, 0.0f}, // position
         {0.0f, 0.0f, 0.0f, 1.0f}, // rotation
         {1.0f, 1.0f, 1.0f}, // scale
         {1.0f, 1.0f, 1.0f}, // color
@@ -56,9 +57,9 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
         {1.03f}  // shB
     });
     gaussians3D.push_back(Gaussian3D{
-        {1.1f, 0.0f, 0.0f}, // position
-        {0.0f, 0.0f, 0.0f, 1.05f}, // rotation
-        {1.06f, 1.07f, 1.0f}, // scale
+        {1.0f, 0.0f, 0.0f}, // position
+        {0.0f, 0.0f, 0.0f, 1.0f}, // rotation
+        {1.0f, 1.0f, 1.0f}, // scale
         {1.0f, 0.0f, 0.0f}, // color
         1.0f, // alpha
         {1.0f}, // shR
@@ -66,7 +67,7 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
         {1.0f}  // shB
     });
     gaussians3D.push_back(Gaussian3D{
-        {0.0f, 1.2f, 0.0f}, // position
+        {0.0f, 1.0f, 0.0f}, // position
         {0.0f, 0.0f, 0.0f, 1.0f}, // rotation
         {1.0f, 1.0f, 1.0f}, // scale
         {0.0f, 1.0f, 0.0f}, // color
@@ -76,7 +77,7 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
         {1.0f}  // shB
     });
     gaussians3D.push_back(Gaussian3D{
-        {0.0f, 0.0f, 1.3f}, // position
+        {0.0f, 0.0f, 1.0f}, // position
         {0.0f, 0.0f, 0.0f, 1.0f}, // rotation
         {1.0f, 1.0f, 1.0f}, // scale
         {0.0f, 0.0f, 1.0f}, // color
@@ -99,7 +100,10 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
 
     auto& cameraMVP = project3Dto2D->getUbo()->ubo;
     
-    cameraMVP.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
+    InterfaceCameraOrbit cameraOrbit;
+    cameraOrbit.initialize(vulkanKernel);
+    cameraOrbit.setDistance(5.0f);
+    cameraOrbit.update(cameraMVP);
 
     project3Dto2D->setInput(bufferElement);
 
@@ -118,13 +122,19 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     std::vector<Gaussian2D> gaussians2D(gaussians3D.size());
     project3Dto2D->getOutputBuffer().memcopyTo(gaussians2D);
 
-    for(auto& g : gaussians2D) {
-        std::cout << g.position.x << " " << g.position.y << std::endl;
-    }
+    EXPECT_EQ(gaussians2D[0].position.x, 256.0f);
+    EXPECT_EQ(gaussians2D[0].position.y, 256.0f);
 
-//    for (int i = 0; i < 7; i++) {
-//        EXPECT_EQ(data[i] * 3.0f, data_out[i]);
-//    }
+    EXPECT_EQ(gaussians2D[1].position.x, 256.0f);
+    EXPECT_EQ(gaussians2D[1].position.y, 256.0f);
+
+    
+    EXPECT_NEAR(gaussians2D[2].position.x, 379.6f, 0.1f);
+    EXPECT_EQ(gaussians2D[2].position.y, 256.0f);
+
+    EXPECT_EQ(gaussians2D[3].position.x, 256.0f);
+    EXPECT_NEAR(gaussians2D[3].position.y, 132.39f, 0.1f);
+
    return;    
 
 }

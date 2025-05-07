@@ -24,6 +24,18 @@ public:
         this->up = up;
     }
 
+    void setDistance(double distance) {
+        this->distance = distance;
+    }
+
+    void setAzimuth(double azimuth) {
+        this->azimuth = azimuth;
+    }
+
+    void setElevation(double elevation) {
+        this->elevation = elevation;
+    }
+
 
 private:
     VulkanKernel* vulkanKernel;
