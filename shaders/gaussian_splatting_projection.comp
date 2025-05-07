@@ -13,6 +13,7 @@ struct Gaussian {
 
 struct Gaussian2D {
     vec2 position;
+    float z;
     mat2 covariance;
 };
 
@@ -22,7 +23,7 @@ layout(scalar, set = 0, binding = 0) readonly buffer GaussiansSSBOIn {
    Gaussian gaussianIn[ ];
 };
 
-layout (std430, set = 0, binding = 1) buffer outputGaussians {
+layout (scalar, set = 0, binding = 2) buffer outputGaussians {
     Gaussian2D gaussian2dOut[ ];
 };
 
@@ -44,9 +45,11 @@ void main()
     Gaussian2D gaussian2d;
 
     gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
-
-    debugPrintfEXT("gaussian %i: xy = %f, %f\n", index, p.x, p.y);
+    gaussian2d.z = position.z;
 
     gaussian2dOut[index] = gaussian2d;
+
+    debugPrintfEXT("gaussian %i: xy = %f, %f; z = %f\n", index,  gaussian2d.position.x,  gaussian2d.position.y, gaussian2d.z);
+
 
 }

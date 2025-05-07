@@ -424,6 +424,13 @@ void VulkanKernel::createLogicalDevice() {
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
+    VkPhysicalDeviceScalarBlockLayoutFeatures scalarBlockLayoutFeatures;
+    scalarBlockLayoutFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES;
+    scalarBlockLayoutFeatures.pNext = NULL;
+    scalarBlockLayoutFeatures.scalarBlockLayout = VK_TRUE;
+
+    createInfo.pNext = &scalarBlockLayoutFeatures;
+
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
         throw std::runtime_error("failed to create logical device!");
