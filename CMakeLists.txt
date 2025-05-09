@@ -84,6 +84,7 @@ add_executable(
   tests/test_vulkan_buffers.cpp
   tests/test_drawgraph.cpp
   tests/test_buffertransformation.cpp
+  tests/test_gaussian_splatting.cpp
   ${SRC}
 )
 
