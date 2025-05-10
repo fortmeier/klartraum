@@ -11,7 +11,7 @@
 
 namespace klartraum {
 
-template <typename A, typename R, typename U = void>
+template <typename A, typename R, typename U = void, typename P = void>
 class BufferTransformation : public DrawGraphElement {
 public:
     BufferTransformation(VulkanKernel &vulkanKernel, const std::string &shaderPath) :
@@ -37,6 +37,12 @@ public:
             delete ubo;
         }        
     };
+
+    void setPushConstants(const std::vector<P>& pushConstants) {
+        if constexpr (!std::is_void<P>::value) {
+            this->pushConstants = pushConstants;
+        }
+    }
 
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
         this->numberPaths = numberPaths;
@@ -70,20 +76,22 @@ public:
     };
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
-        if constexpr (std::is_void<U>::value)
-        {
+        if constexpr (std::is_void<U>::value) {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[pathId], 0, 0);
-            
-            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);        
-        }
-        else
-        {
+        } else {
             std::vector<VkDescriptorSet> descriptorSets = {computeDescriptorSets[pathId], ubo->getDescriptorSets()[pathId]};
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, (uint32_t)descriptorSets.size(), descriptorSets.data(), 0, 0);
-            
-            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);        
+        }
+
+        if constexpr (std::is_void<P>::value) {
+            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+        } else {
+            for (const auto& pushConstant : pushConstants) {
+                vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
+                vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+            }
         }
     };
 
@@ -135,6 +143,8 @@ private:
     std::vector<R> outputBuffers;
 
     std::conditional_t<!std::is_void<U>::value, U*, void*> ubo = nullptr;
+
+    std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
     /*
 
@@ -287,6 +297,15 @@ private:
             pipelineLayoutInfo.setLayoutCount = 1;
             VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout};
             pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+        }
+
+        if constexpr (!std::is_void<P>::value) {
+            VkPushConstantRange pushConstantRange{};
+            pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            pushConstantRange.offset = 0;
+            pushConstantRange.size = sizeof(P);
+            pipelineLayoutInfo.pushConstantRangeCount = 1;
+            pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
         }
         
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
