@@ -121,7 +121,12 @@ public:
         } else {
             return nullptr;
         }
-    }    
+    }
+
+    void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement) {
+        otherInputs.push_back(bufferElement);
+        //outputBuffers[pathId].addScratchBuffer(size);
+    }
 
 private:
     VkDescriptorPool descriptorPool;
@@ -146,6 +151,7 @@ private:
 
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
+    std::vector<std::shared_ptr<BufferElementInterface>> otherInputs;
     /*
 
     */
@@ -154,7 +160,7 @@ private:
         auto& config = vulkanKernel->getConfig();
 
         
-        std::array<VkDescriptorPoolSize, 3> poolSizes{};
+        std::vector<VkDescriptorPoolSize> poolSizes(3 + otherInputs.size());
         // A
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         // TODO use numberPaths instead of hardcoded 3 ...
@@ -169,6 +175,12 @@ private:
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         // TODO use numberPaths instead of hardcoded 3 ...
         poolSizes[2].descriptorCount = 3; //static_cast<uint32_t>(swapChainSize);
+
+        // Other inputs
+        for (size_t i = 0; i < otherInputs.size(); i++) {
+            poolSizes[3 + i].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            poolSizes[3 + i].descriptorCount = 3; //static_cast<uint32_t>(swapChainSize);
+        }
         
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -186,7 +198,7 @@ private:
     {
         auto& device = vulkanKernel->getDevice();
 
-        std::array<VkDescriptorSetLayoutBinding, 3> layoutBindings{};
+        std::vector<VkDescriptorSetLayoutBinding> layoutBindings(3 + otherInputs.size());
     
         // A binding
         layoutBindings[0].binding = 0;
@@ -208,6 +220,15 @@ private:
         layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         layoutBindings[2].pImmutableSamplers = nullptr;
         layoutBindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        // Other inputs
+        for (size_t i = 0; i < otherInputs.size(); i++) {
+            layoutBindings[3 + i].binding = 3 + i;
+            layoutBindings[3 + i].descriptorCount = 1;
+            layoutBindings[3 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            layoutBindings[3 + i].pImmutableSamplers = nullptr;
+            layoutBindings[3 + i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
         
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -249,8 +270,9 @@ private:
         storageBufferInfoResult.offset = 0;
         storageBufferInfoResult.range = r.getBufferMemSize();
 
-        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+        std::vector<VkWriteDescriptorSet> descriptorWrites{2+otherInputs.size()};
 
+        // A
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = computeDescriptorSets[pathId];
         descriptorWrites[0].dstBinding = 0;
@@ -259,6 +281,7 @@ private:
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &storageBufferInfoA;
 
+        // R
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[1].dstSet = computeDescriptorSets[pathId];
         descriptorWrites[1].dstBinding = 2;
@@ -266,6 +289,23 @@ private:
         descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         descriptorWrites[1].descriptorCount = 1;
         descriptorWrites[1].pBufferInfo = &storageBufferInfoResult;
+
+        // Other inputs
+        for (size_t i = 0; i < otherInputs.size(); i++) {
+            auto& otherInput = otherInputs[i];
+            VkDescriptorBufferInfo storageBufferInfoOther{};
+            storageBufferInfoOther.buffer = otherInput->getVkBuffer();
+            storageBufferInfoOther.offset = 0;
+            storageBufferInfoOther.range = otherInput->getBufferMemSize();
+
+            descriptorWrites[2 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[2 + i].dstSet = computeDescriptorSets[pathId];
+            descriptorWrites[2 + i].dstBinding = 3 + i;
+            descriptorWrites[2 + i].dstArrayElement = 0;
+            descriptorWrites[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptorWrites[2 + i].descriptorCount = 1;
+            descriptorWrites[2 + i].pBufferInfo = &storageBufferInfoOther;
+        }
 
         vkUpdateDescriptorSets(device, (uint32_t)descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
     }
