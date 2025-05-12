@@ -47,6 +47,12 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
     {
         auto device = vulkanKernel->getDevice();
 
+        vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
+        vkDestroyPipeline(device, computePipeline, nullptr);
+        vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+        
+
         vkDestroyBuffer(device, vertexBuffer, nullptr);
         vkFreeMemory(device, vertexBufferMemory, nullptr);
     }
