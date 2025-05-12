@@ -49,7 +49,4 @@ void main()
 
     gaussian2dOut[index] = gaussian2d;
 
-    debugPrintfEXT("gaussian %i: xy = %f, %f; z = %f\n", index,  gaussian2d.position.x,  gaussian2d.position.y, gaussian2d.z);
-
-
 }
