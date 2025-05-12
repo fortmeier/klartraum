@@ -304,9 +304,10 @@ private:
         descriptorWrites[1].pBufferInfo = &storageBufferInfoResult;
 
         // Other inputs
+        std::vector<VkDescriptorBufferInfo> storageBufferInfoOthers(otherInputs.size());
         for (size_t i = 0; i < otherInputs.size(); i++) {
             auto& otherInput = otherInputs[i];
-            VkDescriptorBufferInfo storageBufferInfoOther{};
+            VkDescriptorBufferInfo& storageBufferInfoOther = storageBufferInfoOthers[i];
             storageBufferInfoOther.buffer = otherInput->getVkBuffer();
             storageBufferInfoOther.offset = 0;
             storageBufferInfoOther.range = otherInput->getBufferMemSize();
