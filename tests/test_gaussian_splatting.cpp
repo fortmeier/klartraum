@@ -140,5 +140,74 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     EXPECT_NEAR(gaussians2D[3].position.y, 132.39f, 0.1f);
 
    return;    
+}
 
+struct sortPushConstants {
+    uint32_t pass;
+    uint32_t numElements;
+    uint32_t numBins;
+};
+
+TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
+    GlfwFrontend frontend;
+
+    auto& core = frontend.getKlartraumCore();
+    auto& vulkanKernel = core.getVulkanKernel();
+    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
+
+    // Create a list of 2D gaussians with different depths (z values)
+    std::vector<Gaussian2D> gaussians2D = {
+        {{100.0f, 100.0f}, -0.5f},
+        {{200.0f, 200.0f}, 0.2f},
+        {{150.0f, 150.0f}, 0.8f},
+        {{250.0f, 250.0f}, 0.1f}
+    };
+
+    // Create buffer and copy data
+    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
+    auto& gaussian2DBuffer = bufferElement->getBuffer();
+    gaussian2DBuffer.memcopyFrom(gaussians2D);
+
+    // Buffer transformation that sorts by z (depth)
+    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, sortPushConstants> GaussianSort;
+    std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
+
+    sort2DGaussians->setInput(bufferElement);
+
+    uint32_t numElements = (uint32_t)gaussians2D.size();
+    uint32_t numBins = 16; // Number of bins for sorting
+    uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
+    std::vector<sortPushConstants> pushConstants;
+    for (uint32_t i = 0; i < 32 / numBitsPerPass; i++) {
+        pushConstants.push_back({i, numElements, numBins}); // pass, numElements, numBins
+    }
+
+    sort2DGaussians->setPushConstants(pushConstants);
+
+    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+
+    sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
+    sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
+
+    auto& drawgraph = DrawGraph(vulkanKernel, 1);
+    drawgraph.compileFrom(sort2DGaussians);
+
+    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+
+    // Read back and check sorted order (should be descending by z)
+    std::vector<Gaussian2D> sortedGaussians2D(gaussians2D.size());
+    sort2DGaussians->getOutputBuffer().memcopyTo(sortedGaussians2D);
+
+    EXPECT_LE(sortedGaussians2D[0].z, sortedGaussians2D[1].z);
+    EXPECT_LE(sortedGaussians2D[1].z, sortedGaussians2D[2].z);
+    EXPECT_LE(sortedGaussians2D[2].z, sortedGaussians2D[3].z);
+
+    // Optionally, check the exact sorted values
+    EXPECT_FLOAT_EQ(sortedGaussians2D[0].z, -0.5f);
+    EXPECT_FLOAT_EQ(sortedGaussians2D[1].z, 0.1f);
+    EXPECT_FLOAT_EQ(sortedGaussians2D[2].z, 0.2f);
+    EXPECT_FLOAT_EQ(sortedGaussians2D[3].z, 0.8f);
+
+    return;
 }
