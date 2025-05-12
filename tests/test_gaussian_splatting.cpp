@@ -8,35 +8,39 @@
 
 using namespace klartraum;
 
-// TEST(KlartraumVulkanGaussianSplatting, smoke) {
-//     GlfwFrontend frontend;
-
-//     auto& core = frontend.getKlartraumCore();
-//     auto& vulkanKernel = core.getVulkanKernel();
-//     auto& device = vulkanKernel.getDevice();
-    
-//     std::vector<VkImageView> imageViews;
-//     std::vector<VkSemaphore> imageAvailableSemaphores;
-//     for (int i = 0; i < 3; i++) {
-//         imageViews.push_back(vulkanKernel.getImageView(i));
-//     }
-
-//     auto imageViewSrc = std::make_shared< ImageViewSrc>(imageViews);
-
-//     std::string spzFile = "data/hornedlizard.spz";
-//     std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(spzFile);
-//     splatting->setInput(imageViewSrc, 0);
-
-//     std::shared_ptr<CameraUboType> cameraUBO = std::make_shared<CameraUboType>();
-//     cameraUBO->ubo.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
-
-//     splatting->setInput(cameraUBO, 1);
-    
-//     core.add(splatting);
-    
-// }
-
 TEST(KlartraumVulkanGaussianSplatting, smoke) {
+    GlfwFrontend frontend;
+
+    auto& core = frontend.getKlartraumCore();
+    auto& vulkanKernel = core.getVulkanKernel();
+    auto& device = vulkanKernel.getDevice();
+    
+    std::vector<VkImageView> imageViews;
+    std::vector<VkImage> images;
+
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    for (int i = 0; i < 3; i++) {
+        imageViews.push_back(vulkanKernel.getImageView(i));
+        images.push_back(vulkanKernel.getSwapChainImage(i));
+        
+    }
+
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
+
+    std::string spzFile = "data/hornedlizard.spz";
+    std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(spzFile);
+    splatting->setInput(imageViewSrc, 0);
+
+    std::shared_ptr<CameraUboType> cameraUBO = std::make_shared<CameraUboType>();
+    cameraUBO->ubo.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
+
+    splatting->setInput(cameraUBO, 1);
+    
+    core.add(splatting);
+    
+}
+
+TEST(KlartraumVulkanGaussianSplatting, project) {
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
