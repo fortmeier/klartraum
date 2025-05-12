@@ -1,0 +1,107 @@
+#version 450
+
+#extension GL_EXT_debug_printf : enable
+
+
+layout(local_size_x = 256) in;
+
+struct Gaussian2D {
+    vec2 position;
+    float z;
+    mat2 covariance;
+};
+
+#extension GL_EXT_scalar_block_layout : enable
+
+layout(scalar, binding = 0) buffer InputBuffer {
+    Gaussian2D gaussians[];
+} inputBuffer;
+
+layout(scalar, binding = 2) buffer OutputBuffer {
+    Gaussian2D gaussians[];
+} outputBuffer;
+
+layout(scalar, binding = 3) buffer CountBuffer {
+    uint counts[];
+} countBuffer;
+
+layout(scalar, binding = 4) buffer OffsetBuffer {
+    uint offsets[];
+} offsetBuffer;
+
+layout(push_constant) uniform PushConstants {
+    uint pass;
+    uint numElements;
+    uint numBins;
+
+} pushConstants;
+
+// Helper function to get the bin at a specific position
+// this uses 16 bins (= 4 bits of the float value for each pass)
+uint getBin(uint value, uint pass) {
+    // Invert the sign bit for correct float sorting
+    value ^= 0x80000000u;
+    // shift the value to the right by 4 * pass bits
+    // and mask it to get the last 4 bits
+    return (value >> (pass * 4)) & 0xF;
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= pushConstants.numElements) return;
+
+    // first, reset the counts and offsets for each bin
+
+    if (idx == 0) {
+        // debugPrintfEXT("Radix sort pass: %u\n", pushConstants.pass);
+        for (uint i = 0; i < pushConstants.numBins; i++) {
+            countBuffer.counts[i] = 0;
+            offsetBuffer.offsets[i] = 0;
+        }
+    }
+
+    barrier();
+
+    // get the value to sort (use z here)
+    uint value = floatBitsToUint(inputBuffer.gaussians[idx].z);
+    
+    // get the bin of the current value for the current pass
+    uint bin = getBin(value, pushConstants.pass);
+
+    // count the occurrences of this bin
+    atomicAdd(countBuffer.counts[bin], 1);
+
+
+    // wait for all threads to finish counting
+    barrier();
+
+    // accumulate the counts for each bin
+    // this is done in the first element only
+    if (idx == 0) {
+        uint accumulatedOffset = 0;
+        for (uint i = 0; i < pushConstants.numBins; i++) {
+            offsetBuffer.offsets[i] = accumulatedOffset;
+            uint count = countBuffer.counts[i];
+            accumulatedOffset += count;
+
+            // reset the count so it can be used for the next step
+            countBuffer.counts[i] = 0;
+        }
+    }
+
+    barrier();
+
+    // Calculate the offset for this element while incrementing the count
+    // for the bin this element is in
+    uint adder = atomicAdd(countBuffer.counts[bin], 1);
+    uint finalPos = offsetBuffer.offsets[bin] + adder;
+
+    // note: this copies the element to the output buffer
+    // but maybe it is better to just sort indices and then copy the elements in a second pass
+    outputBuffer.gaussians[finalPos] = inputBuffer.gaussians[idx];
+    barrier();
+    // copy back to input buffer
+    // this could be circumvented by somehow flipping the input and output buffers
+    inputBuffer.gaussians[idx] = outputBuffer.gaussians[idx];
+ 
+} 
