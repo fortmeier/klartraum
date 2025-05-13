@@ -211,3 +211,122 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
 
     return;
 }
+
+struct binPushConstants {
+    uint32_t numElements;
+    uint32_t gridSize;  // 4 for 4x4 grid
+    float screenWidth;
+    float screenHeight;
+};
+
+TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
+    GlfwFrontend frontend;
+
+    auto& core = frontend.getKlartraumCore();
+    auto& vulkanKernel = core.getVulkanKernel();
+    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
+
+    // Create a list of 2D gaussians with different positions and covariance matrices
+    std::vector<Gaussian2D> gaussians2D = {
+        // Gaussian in top-left quadrant
+        {
+            {115.0f, 100.0f},  // position
+            0.2f,              // z
+            glm::mat2(         // covariance matrix
+                250.0f, 0.0f,
+                0.0f, 50.0f
+            )
+        },
+        // Gaussian in top-right quadrant
+        {
+            {400.0f, 100.0f},
+            0.3f,
+            glm::mat2(
+                60.0f, 0.0f,
+                0.0f, 60.0f
+            )
+        },
+        // Gaussian in bottom-left quadrant
+        {
+            {100.0f, 400.0f},
+            0.4f,
+            glm::mat2(
+                40.0f, 0.0f,
+                0.0f, 40.0f
+            )
+        },
+        // Gaussian in bottom-right quadrant
+        {
+            {400.0f, 400.0f},
+            0.5f,
+            glm::mat2(
+                70.0f, 0.0f,
+                0.0f, 70.0f
+            )
+        }
+    };
+
+    // Create buffer and copy data
+    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
+    auto& gaussian2DBuffer = bufferElement->getBuffer();
+    gaussian2DBuffer.memcopyFrom(gaussians2D);
+
+
+    typedef VulkanBuffer<uint32_t> Gaussian2DCountsAndIndices;
+    // Buffer transformation that bins gaussians into 4x4 grid
+    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DCountsAndIndices, void, binPushConstants> GaussianBinning;
+    std::shared_ptr<GaussianBinning> bin2DGaussians = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+
+    bin2DGaussians->setInput(bufferElement);
+
+    uint32_t outputSize = 4 * 4 * gaussians2D.size() + 4 * 4; // 4x4 grid + 4x4 counts
+    bin2DGaussians->setCustomOutputSize(outputSize);
+
+    // Set up push constants for binning
+    binPushConstants pushConstants = {
+        (uint32_t)gaussians2D.size(),  // numElements
+        4,                             // gridSize (4x4)
+        512.0f,                        // screenWidth
+        512.0f                         // screenHeight
+    };
+    bin2DGaussians->setPushConstants({pushConstants});
+
+    auto& drawgraph = DrawGraph(vulkanKernel, 1);
+    drawgraph.compileFrom(bin2DGaussians);
+
+    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+
+    // Read back and verify binning results
+    std::vector<uint32_t> gaussian2DCountsAndIndices(outputSize);
+    bin2DGaussians->getOutputBuffer().memcopyTo(gaussian2DCountsAndIndices);
+
+    uint32_t binCounts[16];
+    for (uint32_t i = 0; i < 16; i++) {
+        binCounts[i] = gaussian2DCountsAndIndices[i];
+    }
+    std::vector<uint32_t> indicesPerBin[16];
+    for (uint32_t i = 0; i < 16; i++) {
+        indicesPerBin[i] = std::vector<uint32_t>(binCounts[i]);
+        for (uint32_t j = 0; j < binCounts[i]; j++) {
+            indicesPerBin[i][j] = gaussian2DCountsAndIndices[16 + i * gaussians2D.size() + j];
+        }
+    }   
+
+    // Verify that gaussians are binned correctly
+    // Each gaussian should be in its respective quadrant
+    EXPECT_EQ(binCounts[0], 1);  // Top-left quadrant
+    EXPECT_EQ(binCounts[1], 1);  // Right of top-left quadrant 
+    EXPECT_EQ(binCounts[3], 1);  // Top-right quadrant
+    EXPECT_EQ(binCounts[12], 1); // Bottom-left quadrant
+    EXPECT_EQ(binCounts[15], 1); // Bottom-right quadrant
+
+    // Verify that other bins are empty
+    for (int i = 0; i < 16; i++) {
+        if (i != 0 && i != 1 && i != 3 && i != 12 && i != 15) {
+            EXPECT_EQ(binCounts[i], 0);
+        }
+    }
+
+    return;
+}
+
