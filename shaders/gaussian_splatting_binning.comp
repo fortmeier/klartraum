@@ -1,0 +1,104 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+struct Gaussian2D {
+    vec2 position;
+    float z;
+    mat2 covariance;
+};
+
+#extension GL_EXT_scalar_block_layout : enable
+// #extension GL_EXT_debug_printf : enable
+
+layout(scalar, binding = 0) buffer InputBuffer {
+    Gaussian2D gaussians[];
+} inputBuffer;
+
+layout(scalar, binding = 2) buffer OutputBuffer {
+    uint gaussiansCountsAndIndices[];
+} outputBuffer;
+
+
+layout(push_constant) uniform PushConstants {
+    uint numElements;
+    uint gridSize;
+    float screenWidth;
+    float screenHeight;
+} pushConstants;
+
+// Helper function to get the bin index for a position
+uint getBinIndex(vec2 position) {
+    // Calculate grid cell size
+    float cellWidth = pushConstants.screenWidth / float(pushConstants.gridSize);
+    float cellHeight = pushConstants.screenHeight / float(pushConstants.gridSize);
+    
+    // Calculate grid coordinates
+    uint gridX = uint(position.x / cellWidth);
+    uint gridY = uint(position.y / cellHeight);
+    
+    // Clamp to grid bounds
+    gridX = min(gridX, pushConstants.gridSize - 1);
+    gridY = min(gridY, pushConstants.gridSize - 1);
+    
+    // Convert 2D grid coordinates to 1D bin index
+    return gridY * pushConstants.gridSize + gridX;
+}
+
+// Helper function to check if a gaussian overlaps with a bin
+bool overlapsWithBin(Gaussian2D gaussian, uint binIndex) {
+    // Calculate grid cell size
+    float cellWidth = pushConstants.screenWidth / float(pushConstants.gridSize);
+    float cellHeight = pushConstants.screenHeight / float(pushConstants.gridSize);
+    
+    // Calculate bin bounds
+    uint gridX = binIndex % pushConstants.gridSize;
+    uint gridY = binIndex / pushConstants.gridSize;
+    
+    vec2 binMin = vec2(gridX * cellWidth, gridY * cellHeight);
+    vec2 binMax = vec2((gridX + 1) * cellWidth, (gridY + 1) * cellHeight);
+    
+    // Calculate gaussian bounds using covariance matrix
+    // For simplicity, we'll use the diagonal elements of the covariance matrix
+    // as a measure of the gaussian's spread
+    float spreadX = sqrt(gaussian.covariance[0][0]);
+    float spreadY = sqrt(gaussian.covariance[1][1]);
+    
+    vec2 gaussianMin = gaussian.position - vec2(spreadX, spreadY);
+    vec2 gaussianMax = gaussian.position + vec2(spreadX, spreadY);
+
+    // Check for overlap
+    return !(gaussianMax.x < binMin.x || gaussianMin.x > binMax.x ||
+             gaussianMax.y < binMin.y || gaussianMin.y > binMax.y);
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    uint numberGridElements = pushConstants.gridSize * pushConstants.gridSize;
+
+    if (idx >= pushConstants.numElements) return;
+
+    // Reset bin counts
+    if (idx == 0) {
+        for (uint i = 0; i < numberGridElements; i++) {
+            outputBuffer.gaussiansCountsAndIndices[i] = 0;
+        }
+    }
+    
+    barrier();
+
+    // Get the gaussian
+    Gaussian2D gaussian = inputBuffer.gaussians[idx];
+    
+    // Find all bins this gaussian overlaps with
+    for (uint binIndex = 0; binIndex < numberGridElements; binIndex++) {
+        if (overlapsWithBin(gaussian, binIndex)) {
+            // Increment count for this bin
+            uint gaussianIndex = atomicAdd(outputBuffer.gaussiansCountsAndIndices[binIndex], 1);
+
+            // Store the index of this gaussian in the output buffer
+            uint index = numberGridElements + gaussianIndex + binIndex * pushConstants.numElements;
+            outputBuffer.gaussiansCountsAndIndices[index] = idx;
+        }
+    }
+} 

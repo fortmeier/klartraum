@@ -64,7 +64,9 @@ public:
 
         computeDescriptorSets.resize(numberPaths);
         for(uint32_t i = 0; i < numberPaths; i++) {
-            outputBuffers.emplace_back(vulkanKernel, inputSize);
+            // Use custom output size if set, otherwise use input size
+            uint32_t outputSize = customOutputSize > 0 ? customOutputSize : inputSize;
+            outputBuffers.emplace_back(vulkanKernel, outputSize);
             createComputeDescriptorSets(i);
             
             if constexpr (!std::is_void<U>::value) {
@@ -74,6 +76,14 @@ public:
         
 
     };
+
+    void setCustomOutputSize(uint32_t size) {
+        customOutputSize = size;
+    }
+
+    uint32_t getCustomOutputSize() const {
+        return customOutputSize;
+    }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
         if constexpr (std::is_void<U>::value) {
@@ -157,6 +167,7 @@ private:
     uint32_t groupCountZ = 1;
 
     uint32_t numberPaths = 1;
+    uint32_t customOutputSize = 0;  // 0 means use input size
 
     std::vector<R> outputBuffers;
 
