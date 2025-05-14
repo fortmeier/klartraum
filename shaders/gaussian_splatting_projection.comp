@@ -14,6 +14,7 @@ struct Gaussian {
 struct Gaussian2D {
     vec2 position;
     float z;
+    uint binMask;
     mat2 covariance;
 };
 

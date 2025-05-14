@@ -10,6 +10,7 @@ namespace klartraum {
 struct Gaussian2D {
     glm::vec2 position;
     float z;
+    uint32_t binMask;
     glm::mat2 covariance;
 };
 

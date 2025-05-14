@@ -157,10 +157,14 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
 
     // Create a list of 2D gaussians with different depths (z values)
     std::vector<Gaussian2D> gaussians2D = {
-        {{100.0f, 100.0f}, -0.5f},
-        {{200.0f, 200.0f}, 0.2f},
-        {{150.0f, 150.0f}, 0.8f},
-        {{250.0f, 250.0f}, 0.1f}
+        {{100.0f, 100.0f}, -0.5f, 0},
+        {{200.0f, 200.0f}, 0.2f, 0},
+        {{150.0f, 150.0f}, 0.8f, 0},
+        {{250.0f, 250.0f}, 0.1f, 0},
+        {{100.0f, 100.0f}, -0.5f, 4},
+        {{200.0f, 200.0f}, 0.2f, 2},
+        {{150.0f, 150.0f}, 0.8f, 1},
+        {{250.0f, 250.0f}, 0.1f, 16}
     };
 
     // Create buffer and copy data
@@ -175,10 +179,11 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     sort2DGaussians->setInput(bufferElement);
 
     uint32_t numElements = (uint32_t)gaussians2D.size();
-    uint32_t numBins = 16; // Number of bins for sorting
     uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
+    uint32_t numBins = 16; // Number of bins for sorting = 2 ^ numBitsPerPass
+    uint32_t passes = 32 + 16; // 32 bits for depth, 16 bits for binning
     std::vector<sortPushConstants> pushConstants;
-    for (uint32_t i = 0; i < 32 / numBitsPerPass; i++) {
+    for (uint32_t i = 0; i < passes / numBitsPerPass; i++) {
         pushConstants.push_back({i, numElements, numBins}); // pass, numElements, numBins
     }
 
@@ -203,11 +208,16 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     EXPECT_LE(sortedGaussians2D[1].z, sortedGaussians2D[2].z);
     EXPECT_LE(sortedGaussians2D[2].z, sortedGaussians2D[3].z);
 
-    // Optionally, check the exact sorted values
+    // check the exact sorted depth values
     EXPECT_FLOAT_EQ(sortedGaussians2D[0].z, -0.5f);
     EXPECT_FLOAT_EQ(sortedGaussians2D[1].z, 0.1f);
     EXPECT_FLOAT_EQ(sortedGaussians2D[2].z, 0.2f);
     EXPECT_FLOAT_EQ(sortedGaussians2D[3].z, 0.8f);
+
+    // check th binMask values
+    EXPECT_LE(sortedGaussians2D[4].binMask, sortedGaussians2D[5].binMask);
+    EXPECT_LE(sortedGaussians2D[5].binMask, sortedGaussians2D[6].binMask);
+    EXPECT_LE(sortedGaussians2D[6].binMask, sortedGaussians2D[7].binMask);
 
     return;
 }
@@ -232,6 +242,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         {
             {115.0f, 100.0f},  // position
             0.2f,              // z
+            0,
             glm::mat2(         // covariance matrix
                 250.0f, 0.0f,
                 0.0f, 50.0f
@@ -241,6 +252,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         {
             {400.0f, 100.0f},
             0.3f,
+            0,            
             glm::mat2(
                 60.0f, 0.0f,
                 0.0f, 60.0f
@@ -250,6 +262,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         {
             {100.0f, 400.0f},
             0.4f,
+            0,
             glm::mat2(
                 40.0f, 0.0f,
                 0.0f, 40.0f
@@ -259,6 +272,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         {
             {400.0f, 400.0f},
             0.5f,
+            0,
             glm::mat2(
                 70.0f, 0.0f,
                 0.0f, 70.0f
