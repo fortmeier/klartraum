@@ -156,7 +156,10 @@ public:
         }
         auto finishSemaphore = submitTo(graphicsQueue, pathId, fence);
 
-        vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
+        VkResult waitResult = vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
+        if (waitResult != VK_SUCCESS) {
+            throw std::runtime_error("failed to wait for fence!");
+        }
 
         vkDestroyFence(device, fence, nullptr);        
         return;
