@@ -4,6 +4,7 @@
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/drawgraph/imageviewsrc.hpp"
+#include "klartraum/drawgraph/generalcomputation.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 using namespace klartraum;
@@ -334,13 +335,121 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     EXPECT_EQ(binCounts[12], 1); // Bottom-left quadrant
     EXPECT_EQ(binCounts[15], 1); // Bottom-right quadrant
 
-    // Verify that other bins are empty
-    for (int i = 0; i < 16; i++) {
-        if (i != 0 && i != 1 && i != 3 && i != 12 && i != 15) {
-            EXPECT_EQ(binCounts[i], 0);
+
+struct splattingPushConstants {
+    uint32_t numElements;
+    uint32_t gridSize;
+    uint32_t binId;
+    float screenWidth;
+    float screenHeight;
+};
+
+TEST(KlartraumVulkanGaussianSplatting, binAndSplat2DGaussians) {
+    GlfwFrontend frontend;
+
+    auto& core = frontend.getKlartraumCore();
+    auto& vulkanKernel = core.getVulkanKernel();
+    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
+
+    // Create a list of 2D gaussians with different positions and covariance matrices
+    std::vector<Gaussian2D> gaussians2D = {
+        // Gaussian in top-left quadrant
+        {
+            {115.0f, 100.0f},  // position
+            0.2f,              // z
+            0b0011,            // bin mask: top-left and right of top-left
+            glm::mat2(         // covariance matrix
+                250.0f, 0.0f,
+                0.0f, 50.0f
+            )
+        },
+        // Gaussian in top-right quadrant
+        {
+            {400.0f, 100.0f},
+            0.3f,
+            0b1000,            // bin mask: top-right only
+            glm::mat2(
+                60.0f, 0.0f,
+                0.0f, 60.0f
+            )
+        },
+        // Gaussian in bottom-left quadrant
+        {
+            {100.0f, 400.0f},
+            0.4f,
+            0b0001 << 12,      // bin mask: bottom-left only
+            glm::mat2(
+                40.0f, 0.0f,
+                0.0f, 40.0f
+            )
+        },
+        // Gaussian in bottom-right quadrant
+        {
+            {400.0f, 400.0f},
+            0.5f,
+            0b0001 << 15,      // bin mask: bottom-right only
+            glm::mat2(
+                70.0f, 0.0f,
+                0.0f, 70.0f
+            )
         }
+    };
+
+    // Create buffer and copy data
+    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
+    auto& gaussian2DBuffer = bufferElement->getBuffer();
+    gaussian2DBuffer.memcopyFrom(gaussians2D);
+
+    std::vector<uint32_t> binStartAndEnd(16*2);
+    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16*2);
+    auto& scratchBinStartAndEndBuffer = scratchBinStartAndEnd->getBuffer();
+    scratchBinStartAndEndBuffer.memcopyFrom(binStartAndEnd);
+
+    std::vector<splattingPushConstants> pushConstants;
+    for (uint32_t binId = 0; binId < 16; binId++) {
+        // Set up push constants for binning
+        splattingPushConstants pushConstants = {
+            (uint32_t)gaussians2D.size(),  // numElements
+            4,                             // gridSize (4x4)
+            binId,
+            512.0f,                        // screenWidth
+            512.0f                         // screenHeight
+        };
+
+        pushConstants.push_back(pushConstants);
     }
+
+    std::vector<VkImageView> imageViews;
+    std::vector<VkImage> images;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+
+
+    // Step 2: Create output image for splatting
+    for (int i = 0; i < 3; i++) {
+        imageViews.push_back(vulkanKernel.getImageView(i));
+        images.push_back(vulkanKernel.getSwapChainImage(i));
+        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);
+
+        
+    }
+
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
+
+    // Step 3: Create splatting computation
+    auto splattingCompute = std::make_shared<GeneralComputation<splattingPushConstants>>(vulkanKernel, "shaders/gaussian_splatting_binned_splatting.comp.spv");
+    splattingCompute->setInput(scratchBinStartAndEnd, 0);  // Original Gaussian data
+    splattingCompute->setInput(bufferElement, 1);  // Original Gaussian data
+    splattingCompute->setInputOutput(imageViewSrc, 2);   // Input/Output image
+    
+    // Set up push constants for splatting (same as binning)
+    splattingCompute->setPushConstants();
+
+    // Create and execute draw graph
+    auto& drawgraph = DrawGraph(vulkanKernel, 1);
+    drawgraph.compileFrom(splattingCompute);
+
+    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+
 
     return;
 }
-
