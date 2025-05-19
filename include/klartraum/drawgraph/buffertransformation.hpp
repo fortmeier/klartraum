@@ -60,7 +60,9 @@ public:
         if (inputSize == 0) {
             throw std::runtime_error("input size is 0!");
         }
-        groupCountX = inputSize;
+
+        // If groupCountX is 0, use input size, otherwise use groupCountX
+        groupCountX = groupCountX > 0 ? groupCountX : inputSize; 
 
         computeDescriptorSets.resize(numberPaths);
         for(uint32_t i = 0; i < numberPaths; i++) {
@@ -83,6 +85,30 @@ public:
 
     uint32_t getCustomOutputSize() const {
         return customOutputSize;
+    }
+
+    void setGroupCountX(uint32_t count) {
+        groupCountX = count;
+    }
+
+    uint32_t getGroupCountX() const {
+        return groupCountX;
+    }
+
+    void setGroupCountY(uint32_t count) {
+        groupCountY = count;
+    }
+
+    uint32_t getGroupCountY() const {
+        return groupCountY;
+    }
+
+    void setGroupCountZ(uint32_t count) {
+        groupCountZ = count;
+    }
+
+    uint32_t getGroupCountZ() const {
+        return groupCountZ;
     }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
@@ -162,9 +188,9 @@ private:
 
     const std::string shaderPath;
 
-    uint32_t groupCountX = 1;
+    uint32_t groupCountX = 0;
     uint32_t groupCountY = 1;
-    uint32_t groupCountZ = 1;
+    uint32_t groupCountZ = 1; // 0 means use input size
 
     uint32_t numberPaths = 1;
     uint32_t customOutputSize = 0;  // 0 means use input size
