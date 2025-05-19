@@ -3,6 +3,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
+
 #include <klartraum/vulkan_kernel.hpp>
 
 namespace klartraum {
@@ -56,7 +58,8 @@ public:
         auto& device = vulkanKernel.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
-        memcpy(mappedData, src.data(), sizeof(T) * size);
+        size_t dataSize = sizeof(T) * std::min((uint32_t)src.size(), (uint32_t)size);
+        memcpy(mappedData, src.data(), dataSize);
         vkUnmapMemory(device, vertexBufferMemory);
     }
 
@@ -64,7 +67,17 @@ public:
         auto& device = vulkanKernel.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
-        memcpy(dst.data(), mappedData, sizeof(T) * size);
+        size_t dataSize = sizeof(T) * std::min((uint32_t)dst.size(), (uint32_t)size);
+        memcpy(dst.data(), mappedData, dataSize);
+        vkUnmapMemory(device, vertexBufferMemory);
+    }
+
+    void zero()
+    {
+        auto& device = vulkanKernel.getDevice();
+        void* mappedData;
+        vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
+        memset(mappedData, 0, sizeof(T) * size);
         vkUnmapMemory(device, vertexBufferMemory);
     }
 
@@ -81,7 +94,7 @@ public:
     }
 
 private:
-    const uint32_t size;
+    const uint32_t size; // Number of elements in the buffer
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
