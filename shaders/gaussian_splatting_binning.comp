@@ -1,6 +1,6 @@
 #version 450
 
-layout(local_size_x = 256) in;
+layout(local_size_x = 128) in;
 
 struct Gaussian2D {
     vec2 position;
@@ -16,8 +16,8 @@ layout(scalar, binding = 0) buffer InputBuffer {
     Gaussian2D gaussians[];
 } inputBuffer;
 
-layout(scalar, binding = 2) buffer OutputBuffer {
-    uint gaussiansCountsAndIndices[];
+layout(scalar, binding = 1) buffer OutputBuffer {
+    uint numberAdditionalGaussians;
 } outputBuffer;
 
 
@@ -79,27 +79,28 @@ void main() {
 
     if (idx >= pushConstants.numElements) return;
 
-    // Reset bin counts
-    if (idx == 0) {
-        for (uint i = 0; i < numberGridElements; i++) {
-            outputBuffer.gaussiansCountsAndIndices[i] = 0;
-        }
-    }
-    
-    barrier();
 
     // Get the gaussian
     Gaussian2D gaussian = inputBuffer.gaussians[idx];
     
+    uint numberOverlappingBins = 0;
     // Find all bins this gaussian overlaps with
+    // and for the first overlapping bin, set the binMask of the gaussian
+    // for all other overlapping bins, create a new gaussian and put it at
+    // the end of the list
     for (uint binIndex = 0; binIndex < numberGridElements; binIndex++) {
         if (overlapsWithBin(gaussian, binIndex)) {
             // Increment count for this bin
-            uint gaussianIndex = atomicAdd(outputBuffer.gaussiansCountsAndIndices[binIndex], 1);
+            numberOverlappingBins++;
+            if (numberOverlappingBins > 1) {
+                uint newGaussianIndex = pushConstants.numElements + atomicAdd(outputBuffer.numberAdditionalGaussians, 1);
+                inputBuffer.gaussians[newGaussianIndex] = gaussian;
+                inputBuffer.gaussians[newGaussianIndex].binMask = 1 << binIndex;
 
-            // Store the index of this gaussian in the output buffer
-            uint index = numberGridElements + gaussianIndex + binIndex * pushConstants.numElements;
-            outputBuffer.gaussiansCountsAndIndices[index] = idx;
+            } else {
+                inputBuffer.gaussians[idx].binMask = 1 << binIndex;
+            }
+            
         }
     }
 } 

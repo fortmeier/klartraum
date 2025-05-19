@@ -281,68 +281,50 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         }
     };
 
+    // first, assign bin masks to the gaussians and duplicate entries
+    // that are in more than one bin
+
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
+    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size()*2);
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
+    // Create a buffer that holds the number of elements after duplication
+    auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    additionalGaussian2DCounts->getBuffer().zero();
 
-    typedef VulkanBuffer<uint32_t> Gaussian2DCountsAndIndices;
-    // Buffer transformation that bins gaussians into 4x4 grid
-    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DCountsAndIndices, void, binPushConstants> GaussianBinning;
-    std::shared_ptr<GaussianBinning> bin2DGaussians = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
-
-    bin2DGaussians->setInput(bufferElement);
-
-    uint32_t outputSize = 4 * 4 * gaussians2D.size() + 4 * 4; // 4x4 grid + 4x4 counts
-    bin2DGaussians->setCustomOutputSize(outputSize);
-
-    // Set up push constants for binning
     binPushConstants pushConstants = {
-        (uint32_t)gaussians2D.size(),  // numElements
-        4,                             // gridSize (4x4)
-        512.0f,                        // screenWidth
-        512.0f                         // screenHeight
+        (uint32_t)gaussians2D.size(),   // numElements
+        4,                              // gridSize (4x4)
+        512.0f,                         // screenWidth
+        512.0f                          // screenHeight
     };
-    bin2DGaussians->setPushConstants({pushConstants});
+
+    auto bin = std::make_shared<GeneralComputation<binPushConstants>>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    bin->setInput(bufferElement, 0);
+    bin->setInput(additionalGaussian2DCounts, 1);
+    bin->setGroupCountX((gaussians2D.size()+128) / 128);
+    bin->setPushConstants({pushConstants});
 
     auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(bin2DGaussians);
+    drawgraph.compileFrom(bin);
 
     drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
-    // Read back and verify binning results
-    std::vector<uint32_t> gaussian2DCountsAndIndices(outputSize);
-    bin2DGaussians->getOutputBuffer().memcopyTo(gaussian2DCountsAndIndices);
+    std::vector<uint32_t> finalAdditionalGaussiansCount(1);
+    additionalGaussian2DCounts->getBuffer().memcopyTo(finalAdditionalGaussiansCount);
 
-    uint32_t binCounts[16];
-    for (uint32_t i = 0; i < 16; i++) {
-        binCounts[i] = gaussian2DCountsAndIndices[i];
-    }
-    std::vector<uint32_t> indicesPerBin[16];
-    for (uint32_t i = 0; i < 16; i++) {
-        indicesPerBin[i] = std::vector<uint32_t>(binCounts[i]);
-        for (uint32_t j = 0; j < binCounts[i]; j++) {
-            indicesPerBin[i][j] = gaussian2DCountsAndIndices[16 + i * gaussians2D.size() + j];
-        }
-    }   
+    std::vector<Gaussian2D> finalGaussians2D(gaussians2D.size() + finalAdditionalGaussiansCount[0]);
+    bufferElement->getBuffer().memcopyTo(finalGaussians2D);
 
-    // Verify that gaussians are binned correctly
-    // Each gaussian should be in its respective quadrant
-    EXPECT_EQ(binCounts[0], 1);  // Top-left quadrant
-    EXPECT_EQ(binCounts[1], 1);  // Right of top-left quadrant 
-    EXPECT_EQ(binCounts[3], 1);  // Top-right quadrant
-    EXPECT_EQ(binCounts[12], 1); // Bottom-left quadrant
-    EXPECT_EQ(binCounts[15], 1); // Bottom-right quadrant
-
-
-struct splattingPushConstants {
-    uint32_t numElements;
-    uint32_t gridSize;
-    uint32_t binId;
-    float screenWidth;
-    float screenHeight;
-};
+    EXPECT_EQ(finalGaussians2D[0].binMask, 0b0000000000000001);
+    EXPECT_EQ(finalGaussians2D[1].binMask, 0b0000000000001000);
+    EXPECT_EQ(finalGaussians2D[2].binMask, 0b0001000000000000);
+    EXPECT_EQ(finalGaussians2D[3].binMask, 0b1000000000000000);
+    EXPECT_EQ(finalGaussians2D[4].binMask, 0b0000000000000010);
+    
+    return;
+}
 
 TEST(KlartraumVulkanGaussianSplatting, binAndSplat2DGaussians) {
     GlfwFrontend frontend;
