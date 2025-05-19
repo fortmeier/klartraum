@@ -295,7 +295,7 @@ private:
 
                 descriptorWrites[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[i].dstSet = computeDescriptorSets[pathId];
-                descriptorWrites[i].dstBinding = 0;
+                descriptorWrites[i].dstBinding = i;
                 descriptorWrites[i].dstArrayElement = 0;
                 descriptorWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                 descriptorWrites[i].descriptorCount = 1;
