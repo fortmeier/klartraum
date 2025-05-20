@@ -306,8 +306,22 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     bin->setGroupCountX((gaussians2D.size()+128) / 128);
     bin->setPushConstants({pushConstants});
 
+
+    // std::vector<uint32_t> binStartAndEnd(16*2);
+    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16*2);
+    // auto& scratchBinStartAndEndBuffer = scratchBinStartAndEnd->getBuffer();
+    // scratchBinStartAndEndBuffer.memcopyFrom(binStartAndEnd);
+    scratchBinStartAndEnd->getBuffer().zero();
+
+    auto computeBounds = std::make_shared<GeneralComputation<binPushConstants>>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
+
+    computeBounds->setInput(bin, 0, 0); //bufferElement, 0);
+    computeBounds->setInput(bin, 1, 1); //additionalGaussian2DCounts, 1);
+    computeBounds->setInput(scratchBinStartAndEnd, 2 ); //scratchBinStartAndEnd, 2);
+
+
     auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(bin);
+    drawgraph.compileFrom(computeBounds);
 
     drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 

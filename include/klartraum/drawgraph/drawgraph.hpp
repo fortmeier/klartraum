@@ -237,8 +237,11 @@ private:
                 // now find the element in the output of the input element
                 auto element_iter = renderFinishedSemaphores[inputElement].find(element);
                 if(element_iter != renderFinishedSemaphores[inputElement].end()) {
-                    waitSemaphores.push_back(element_iter->second);
-                    waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+                    // Only push back if the semaphore is not already in waitSemaphores
+                    if (std::find(waitSemaphores.begin(), waitSemaphores.end(), element_iter->second) == waitSemaphores.end()) {
+                        waitSemaphores.push_back(element_iter->second);
+                        waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+                    }
                 } else {
                     throw std::runtime_error("failed to find the element in the output of the input element!");
                 }
@@ -250,7 +253,10 @@ private:
             for(auto& outputElement : element->outputs) {
                 auto element_iter = renderFinishedSemaphores[element].find(outputElement);
                 if(element_iter != renderFinishedSemaphores[element].end()) {
-                    signalSemaphores.push_back(element_iter->second);
+                    // Only push back if the semaphore is not already in signalSemaphores
+                    if (std::find(signalSemaphores.begin(), signalSemaphores.end(), element_iter->second) == signalSemaphores.end()) {
+                        signalSemaphores.push_back(element_iter->second);
+                    }
                 } else {
                     throw std::runtime_error("failed to find the semaphore connecting element to the output element!");
                 }
@@ -328,7 +334,10 @@ private:
         for(auto& element : ordered_elements) {
             for(auto& input : element->inputs) {
                 auto& inputElement = input.second;
-                inputElement->outputs.push_back(element);
+                // Only add if element is not already in outputs
+                if (std::find(inputElement->outputs.begin(), inputElement->outputs.end(), element) == inputElement->outputs.end()) {
+                    inputElement->outputs.push_back(element);
+                }
             }
         }
     }

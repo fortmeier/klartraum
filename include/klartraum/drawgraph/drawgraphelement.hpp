@@ -18,16 +18,30 @@ class DrawGraphElement {
 public:
     friend class DrawGraph;
 
-    void setInput(DrawGraphElementPtr input, int index = 0) {
-        checkInput(input, index);
+    void setInput(DrawGraphElementPtr input, int index = 0, int slot = -1) {
+        if(slot == -1) {
+            checkInput(input, index);
+        } else {
+            checkInput(input->getInputElement(slot), index);
+        }
         inputs[index] = input;
+        srcOutputSlots[index] = slot;
     }
 
     virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
         throw std::runtime_error("checkInput not implemented for this element");
     }
 
-    //virtual DrawGraphElement& get_output() = 0;
+    DrawGraphElementPtr getInputElement(int index = 0) {
+        // if a slot is set, we need to get the element from
+        // the inputs of the input element
+        if (srcOutputSlots[index] != -1) {
+            return inputs[index]->inputs[srcOutputSlots[index]];
+        }
+        // otherwise we can just return the input at the index
+        return inputs[index];
+    }
+
 
     void setWaitFor(uint32_t pathId, VkSemaphore semaphore) {
         renderWaitSemaphores[pathId] = semaphore;
@@ -39,8 +53,9 @@ public:
 
     virtual const char* getName() const = 0;
 
-    std::map<int, DrawGraphElementPtr> inputs;
-    std::map<int, VkSemaphore> renderWaitSemaphores;
+    std::map<int, DrawGraphElementPtr> inputs; //TODO: really should be private
+    std::map<int, VkSemaphore> renderWaitSemaphores; //TODO: really should be private
+    std::map<int, int> srcOutputSlots; //TODO: really should be private
     
     private:
     // these are updated by the DrawGraph, do not set them manually
