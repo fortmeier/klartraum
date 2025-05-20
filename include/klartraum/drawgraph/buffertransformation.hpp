@@ -272,7 +272,7 @@ private:
         layoutBindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
         // Other inputs
-        for (size_t i = 0; i < otherInputs.size(); i++) {
+        for (int i = 0; i < otherInputs.size(); i++) {
             layoutBindings[3 + i].binding = 3 + i;
             layoutBindings[3 + i].descriptorCount = 1;
             layoutBindings[3 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -342,7 +342,7 @@ private:
 
         // Other inputs
         std::vector<VkDescriptorBufferInfo> storageBufferInfoOthers(otherInputs.size());
-        for (size_t i = 0; i < otherInputs.size(); i++) {
+        for (int i = 0; i < otherInputs.size(); i++) {
             auto& otherInput = otherInputs[i];
             VkDescriptorBufferInfo& storageBufferInfoOther = storageBufferInfoOthers[i];
             storageBufferInfoOther.buffer = otherInput->getVkBuffer();
