@@ -50,11 +50,6 @@ public:
         initialized = true;
     }
 
-    void setInputOutput(DrawGraphElementPtr input, int index = 0) {
-        setInput(input, index);
-        inputOutputs[index] = input;
-    }
-
     void setGroupCount(uint32_t countX, uint32_t countY, uint32_t countZ) {
         groupCountX = countX;
         groupCountY = countY;
@@ -97,7 +92,8 @@ public:
 
         // Add memory barriers for all ImageViewSrc inputs
         for (int i = 0; i < inputs.size(); i++) {
-            ImageViewSrc* imageElement = dynamic_cast<ImageViewSrc*>(inputs[i].get());
+            DrawGraphElementPtr input = getInputElement(i);
+            ImageViewSrc* imageElement = dynamic_cast<ImageViewSrc*>(input.get());
             if (imageElement) {
                 VkImageMemoryBarrier imageBarrier{};
                 imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -206,7 +202,8 @@ private:
         std::vector<VkDescriptorPoolSize> poolSizes(inputs.size());
         // Other inputs
         for (size_t i = 0; i < inputs.size(); i++) {
-            bool isImage = dynamic_cast<ImageViewSrc*>(inputs[i].get()) != nullptr;
+            DrawGraphElementPtr inputPtr = getInputElement(i);
+            bool isImage = dynamic_cast<ImageViewSrc*>(inputPtr.get()) != nullptr;
             poolSizes[i].type = isImage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             poolSizes[i].descriptorCount = numberPaths;
         }
@@ -228,7 +225,8 @@ private:
         std::vector<VkDescriptorSetLayoutBinding> layoutBindings(inputs.size());
     
         for (int i = 0; i < inputs.size(); i++) {
-            bool isImage = dynamic_cast<ImageViewSrc*>(inputs[i].get()) != nullptr;
+            DrawGraphElementPtr inputPtr = getInputElement(i);
+            bool isImage = dynamic_cast<ImageViewSrc*>(inputPtr.get()) != nullptr;
 
             layoutBindings[i].binding = i;
             layoutBindings[i].descriptorCount = 1;
@@ -270,7 +268,7 @@ private:
 
         std::vector<VkWriteDescriptorSet> descriptorWrites{inputs.size()};
         for(int i = 0; i < inputs.size(); i++) {
-            DrawGraphElementPtr inputPtr = inputs[i];
+            DrawGraphElementPtr inputPtr = getInputElement(i);
 
             // Cast input to BufferElement to access underlying buffer
             BufferElementInterface* bufferElement = dynamic_cast<BufferElementInterface*>(inputPtr.get());
