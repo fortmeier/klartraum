@@ -21,10 +21,12 @@ public:
     }
 
     virtual ~GeneralComputation() {
-        vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
-        vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
-        vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
-        vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+        if(initialized) {
+            vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
+            vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
+            vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
+            vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+        }
     }
 
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
@@ -44,6 +46,8 @@ public:
         for(uint32_t i = 0; i < numberPaths; i++) {
             createComputeDescriptorSets(i);
         }
+
+        initialized = true;
     }
 
     void setInputOutput(DrawGraphElementPtr input, int index = 0) {
@@ -191,6 +195,8 @@ private:
     uint32_t groupCountZ = 1;
 
     uint32_t numberPaths = 1;
+
+    bool initialized = false;
 
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
