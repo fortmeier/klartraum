@@ -153,7 +153,12 @@ public:
 
     A& getInput(uint32_t pathId = 0) {
         // TODO why inputs[0], and not inputs[pathId]?
-        return dynamic_cast<BufferElement<A>*>(inputs[0].get())->getBuffer();
+        auto bufferPtr = dynamic_cast<BufferElement<A>*>(getInputElement(0).get());
+        if (bufferPtr == nullptr) {
+            throw std::runtime_error("input is not a fitting BufferElement!");
+        }
+        
+        return bufferPtr->getBuffer();
     }
 
     virtual const char* getName() const {
