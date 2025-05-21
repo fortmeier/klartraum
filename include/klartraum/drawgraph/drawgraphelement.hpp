@@ -36,7 +36,7 @@ public:
         // if a slot is set, we need to get the element from
         // the inputs of the input element
         if (srcOutputSlots[index] != -1) {
-            return inputs[index]->inputs[srcOutputSlots[index]];
+            return inputs[index]->getInputElement(srcOutputSlots[index]);
         }
         // otherwise we can just return the input at the index
         return inputs[index];
