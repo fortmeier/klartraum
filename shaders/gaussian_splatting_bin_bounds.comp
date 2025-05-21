@@ -1,0 +1,80 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+struct Gaussian2D {
+    vec2 position;
+    float z;
+    uint binMask;
+    mat2 covariance;
+};
+
+struct StartAndEnd {
+    uint start;
+    uint end;
+};
+
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_debug_printf : enable
+
+layout(scalar, binding = 0) buffer InputBuffer {
+    Gaussian2D gaussians[];
+} inputBuffer;
+
+layout(scalar, binding = 1) buffer InputBuffer2 {
+    uint numberAdditionalGaussians;
+} inputBuffer2;
+
+layout(scalar, binding = 2) buffer OutputBuffer {
+    StartAndEnd startAndEnd[];
+} outputBuffer;
+
+
+layout(push_constant) uniform PushConstants {
+    uint numElements;
+    uint gridSize;
+} pushConstants;
+
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+//    debugPrintfEXT("Bounds idx: %u\n", idx);
+
+
+    uint numGridElements = pushConstants.gridSize * pushConstants.gridSize;
+
+    // initialize the start and end indices of the grid element sequences
+    // to zero -> if start and end the same, the sequence for this bin is empty
+    if (idx == 0) {
+        for (uint i = 0; i < numGridElements; i++) {
+            outputBuffer.startAndEnd[i].start = 0;
+            outputBuffer.startAndEnd[i].end = 0;
+        }
+    }
+
+    barrier();
+
+
+    // discard all threads that are not in the range of the input buffer
+    if (idx >= pushConstants.numElements + inputBuffer2.numberAdditionalGaussians) return;
+
+
+    if (idx == pushConstants.numElements + inputBuffer2.numberAdditionalGaussians - 1) {
+        // last element: store the end index of the whole sequence
+        uint binMask = inputBuffer.gaussians[idx].binMask;
+        outputBuffer.startAndEnd[binMask].end = idx;
+        return;
+    } else {
+        // all other elements: store the start and end indices
+        // of the current and next element if they are different
+        // i.e. if there is a boundary between two elements
+        uint binMask = inputBuffer.gaussians[idx].binMask;
+        uint binMaskNext = inputBuffer.gaussians[idx+1].binMask;
+
+        if (binMask != binMaskNext) {
+            outputBuffer.startAndEnd[binMask].end = idx;
+            outputBuffer.startAndEnd[binMaskNext].start = idx + 1;
+        }
+    }
+
+} 
