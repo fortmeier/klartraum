@@ -30,6 +30,10 @@ layout(scalar, binding = 4) buffer OffsetBuffer {
     uint offsets[];
 } offsetBuffer;
 
+layout(scalar, binding = 5) buffer InputBuffer2 {
+    uint numberAdditionalGaussians;
+} inputBuffer2;
+
 layout(push_constant) uniform PushConstants {
     uint pass;
     uint numElements;
@@ -55,7 +59,7 @@ uint getBin(uint value, uint binMask, uint pass) {
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
-    if (idx >= pushConstants.numElements) return;
+    if (idx >= pushConstants.numElements + inputBuffer2.numberAdditionalGaussians) return;
 
     // first, reset the counts and offsets for each bin
 
