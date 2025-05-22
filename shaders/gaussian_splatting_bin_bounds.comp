@@ -62,7 +62,8 @@ void main() {
     if (idx == pushConstants.numElements + inputBuffer2.numberAdditionalGaussians - 1) {
         // last element: store the end index of the whole sequence
         uint binMask = inputBuffer.gaussians[idx].binMask;
-        outputBuffer.startAndEnd[binMask].end = idx;
+        uint logBinMask = uint(log2(binMask));
+        outputBuffer.startAndEnd[logBinMask].end = idx + 1;
         return;
     } else {
         // all other elements: store the start and end indices
@@ -71,9 +72,14 @@ void main() {
         uint binMask = inputBuffer.gaussians[idx].binMask;
         uint binMaskNext = inputBuffer.gaussians[idx+1].binMask;
 
+        uint logBinMask = uint(log2(binMask));
+        uint logBinMaskNext = uint(log2(binMaskNext));
+
+        // debugPrintfEXT("Bounds idx: %u m0: %u m1: %u logm0: %u logm1: %u\n", idx, binMask, binMaskNext, logBinMask, logBinMaskNext);
+
         if (binMask != binMaskNext) {
-            outputBuffer.startAndEnd[binMask].end = idx;
-            outputBuffer.startAndEnd[binMaskNext].start = idx + 1;
+            outputBuffer.startAndEnd[logBinMask].end = idx + 1;
+            outputBuffer.startAndEnd[logBinMaskNext].start = idx + 1;
         }
     }
 
