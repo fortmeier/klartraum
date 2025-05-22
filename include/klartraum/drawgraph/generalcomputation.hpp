@@ -125,6 +125,9 @@ public:
         if constexpr (std::is_void<P>::value) {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
         } else {
+            if(pushConstants.empty()) {
+                throw std::runtime_error("push constants are empty!");
+            }
             for (const auto& pushConstant : pushConstants) {
                 vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
                 vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
