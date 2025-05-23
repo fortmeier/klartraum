@@ -1,22 +1,6 @@
 #version 450
 
-struct Gaussian {
-    vec3 position;
-    vec4 rotation;
-    vec3 scale;
-    vec3 color;
-    float alpha;
-    float shR[15];
-    float shG[15];
-    float shB[15];
-};
-
-struct Gaussian2D {
-    vec2 position;
-    float z;
-    uint binMask;
-    mat2 covariance;
-};
+#include "gaussian_splatting_types.glsl"
 
 #extension GL_EXT_scalar_block_layout : enable
 

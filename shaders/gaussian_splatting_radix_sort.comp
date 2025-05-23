@@ -1,16 +1,11 @@
 #version 450
 
+#include "gaussian_splatting_types.glsl"
+
 #extension GL_EXT_debug_printf : enable
 
 
 layout(local_size_x = 256) in;
-
-struct Gaussian2D {
-    vec2 position;
-    float z;
-    uint binMask;
-    mat2 covariance;
-};
 
 #extension GL_EXT_scalar_block_layout : enable
 
