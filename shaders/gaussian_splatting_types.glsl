@@ -10,10 +10,11 @@ struct Gaussian {
 };
 
 struct Gaussian2D {
-    vec2 position;
-    float z;
-    uint binMask;
-    mat2 covariance;
+    vec2 position; // position in screen space
+    float z; // depth value
+    uint binMask; // bitmask for which bins this gaussian is in, only one bit should be set
+    mat2 covariance; // covariance matrix for the gaussian
+    vec3 color; // color of the gaussian
 };
 
 struct StartAndEnd {
