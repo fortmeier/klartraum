@@ -70,9 +70,7 @@ void main() {
         // Evaluate Gaussian at this pixel
         float contribution = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covariance);
         
-        // For now, use a simple color based on depth
-        vec3 color = vec3(0.5 + 0.5 * gaussian.z);
-        finalColor += vec4(color * contribution, contribution);
+        finalColor += vec4(gaussian.color * contribution, contribution);
     }
 
 

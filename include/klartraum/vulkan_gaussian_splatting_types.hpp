@@ -12,6 +12,7 @@ struct Gaussian2D {
     float z;
     uint32_t binMask;
     glm::mat2 covariance;
+    glm::vec3 color;
 };
 
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
