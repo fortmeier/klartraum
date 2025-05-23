@@ -1,13 +1,8 @@
 #version 450
 
-layout(local_size_x = 128) in;
+#include "gaussian_splatting_types.glsl"
 
-struct Gaussian2D {
-    vec2 position;
-    float z;
-    uint binMask;
-    mat2 covariance;
-};
+layout(local_size_x = 128) in;
 
 #extension GL_EXT_scalar_block_layout : enable
 // #extension GL_EXT_debug_printf : enable
