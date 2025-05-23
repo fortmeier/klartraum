@@ -358,7 +358,8 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
             glm::mat2(         // covariance matrix
                 250.0f, 0.0f,
                 0.0f, 50.0f
-            )
+            ),
+            {1.0f, 0.0f, 0.0f} // color
         },
         // Gaussian in bottom-left quadrant
         {
@@ -368,7 +369,8 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
             glm::mat2(
                 40.0f, 0.0f,
                 0.0f, 40.0f
-            )
+            ),
+            {0.0f, 1.0f, 0.0f} // color
         },
         // Gaussian in top-right quadrant
         {
@@ -378,7 +380,8 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
             glm::mat2(
                 60.0f, 0.0f,
                 0.0f, 60.0f
-            )
+            ),
+            {0.0f, 0.0f, 1.0f} // color
         },
         // Gaussian in bottom-right quadrant
         {
@@ -388,7 +391,8 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
             glm::mat2(
                 70.0f, 0.0f,
                 0.0f, 70.0f
-            )
+            ),
+            {1.0f, 1.0f, 0.0f} // color
         }
     };
 
