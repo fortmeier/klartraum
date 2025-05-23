@@ -1,0 +1,107 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+struct Gaussian2D {
+    vec2 position;
+    float z;
+    uint binMask;
+    mat2 covariance;
+};
+
+struct StartAndEnd {
+    uint start;
+    uint end;
+};
+
+
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_debug_printf : enable
+
+// Original Gaussian2D data
+layout(scalar, binding = 0) buffer GaussianBuffer {
+    Gaussian2D gaussians[];
+} gaussianBuffer;
+
+layout(scalar, binding = 1) buffer InputBuffer2 {
+    uint numberAdditionalGaussians;
+} inputBuffer2;
+
+layout(scalar, binding = 2) buffer OutputBuffer {
+    StartAndEnd startAndEnd[];
+} inputBuffer3;
+
+
+// Output image
+layout(binding = 3, rgba8) uniform writeonly image2D outputImage;
+
+layout(push_constant) uniform PushConstants {
+    uint numElements;
+    uint gridSize;
+    uint binIndexX;
+    uint binIndexY;
+    float screenWidth;
+    float screenHeight;
+} pushConstants;
+
+float evaluateGaussian(vec2 x, vec2 mu, mat2 sigma) {
+    vec2 diff = (x - mu);
+    mat2 sigmaInv = inverse(sigma);
+    float distance = dot(diff, (sigmaInv * diff));
+    return exp(-0.5 * distance);
+}
+
+void main() {
+
+
+    ivec2 binOffset;
+    binOffset.x = int(pushConstants.binIndexX * gl_WorkGroupSize.x * gl_NumWorkGroups.x);
+    binOffset.y = int(pushConstants.binIndexY * gl_WorkGroupSize.y * gl_NumWorkGroups.y);
+
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy) + binOffset;
+    if (pixelCoord.x >= int(pushConstants.screenWidth) || 
+        pixelCoord.y >= int(pushConstants.screenHeight)) {
+        return;
+    }
+
+
+    uint start = inputBuffer3.startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX].start;
+    uint end = inputBuffer3.startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX].end;
+
+    vec4 finalColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+
+    uint binCount = end - start;
+    
+    // Accumulate contributions from all Gaussians in this bin
+    for (uint i = start; i < end; i++) {
+        Gaussian2D gaussian = gaussianBuffer.gaussians[i];
+        
+        // Evaluate Gaussian at this pixel
+        float contribution = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covariance);
+        
+        // For now, use a simple color based on depth
+        vec3 color = vec3(0.5 + 0.5 * gaussian.z);
+        finalColor += vec4(color * contribution, contribution);
+    }
+
+
+    if (gl_GlobalInvocationID.x == 0 && gl_GlobalInvocationID.y == 0) {
+        debugPrintfEXT("pixelCoord: (%d, %d)\n", pixelCoord.x, pixelCoord.y);
+        for (uint i = start; i < end; i++) {
+            Gaussian2D gaussian = gaussianBuffer.gaussians[i];
+            debugPrintfEXT("gaussian[%u]: pos=(%f, %f), cov=(%f, %f, %f, %f), pixelCoord=(%d, %d)\n", 
+                i, gaussian.position.x, gaussian.position.y, 
+                gaussian.covariance[0][0], gaussian.covariance[0][1], 
+                gaussian.covariance[1][0], gaussian.covariance[1][1],
+                pixelCoord.x, pixelCoord.y);
+        }
+        debugPrintfEXT("finalColor: (%f, %f, %f, %f), bin: (%u, %u), start: %u, end: %u\n",
+            finalColor.r, finalColor.g, finalColor.b, finalColor.a, pushConstants.binIndexX, pushConstants.binIndexY, start, end);
+    }
+
+
+    //debugPrintfEXT("pixelCoord: (%d, %d), finalColor: (%f, %f, %f, %f)\n", pixelCoord.x, pixelCoord.y, finalColor.r, finalColor.g, finalColor.b, finalColor.a);
+    // // // Write final color to output image
+    imageStore(outputImage, pixelCoord, finalColor);
+} 
