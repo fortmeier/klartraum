@@ -20,7 +20,7 @@ public:
         this->vulkanKernel = &vulkanKernel;
         
         if constexpr (!std::is_void<U>::value) {
-            ubo = new U();
+            uboPtr = std::make_shared<U>();
         }
 
 
@@ -28,14 +28,16 @@ public:
     }
 
     virtual ~BufferTransformation() {
-        vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
-        vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
-        vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
-        vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+        if (initialized) {
+            vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
+            vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
+            vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
+            vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
 
-        if constexpr (!std::is_void<U>::value) {
-            delete ubo;
-        }        
+            if constexpr (!std::is_void<U>::value) {
+                uboPtr.reset();
+            }
+        }
     };
 
     void setPushConstants(const std::vector<P>& pushConstants) {
@@ -49,7 +51,7 @@ public:
         this->vulkanKernel = &vulkanKernel;
 
         if constexpr (!std::is_void<U>::value) {
-            ubo->_setup(vulkanKernel, numberPaths);
+            uboPtr->_setup(vulkanKernel, numberPaths);
         }
 
         createDescriptorPool();
@@ -72,10 +74,10 @@ public:
             createComputeDescriptorSets(i);
             
             if constexpr (!std::is_void<U>::value) {
-                ubo->update(i);
+                uboPtr->update(i);
             }
         }
-        
+        initialized = true;
 
     };
 
@@ -112,11 +114,14 @@ public:
     }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
+        if (!initialized) {
+            throw std::runtime_error("BufferTransformation not initialized");
+        }
         if constexpr (std::is_void<U>::value) {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[pathId], 0, 0);
         } else {
-            std::vector<VkDescriptorSet> descriptorSets = {computeDescriptorSets[pathId], ubo->getDescriptorSets()[pathId]};
+            std::vector<VkDescriptorSet> descriptorSets = {computeDescriptorSets[pathId], uboPtr->getDescriptorSets()[pathId]};
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, (uint32_t)descriptorSets.size(), descriptorSets.data(), 0, 0);
         }
@@ -169,11 +174,17 @@ public:
         return outputBuffers[pathId];
     }
 
-    std::conditional_t<!std::is_void<U>::value, U*, void*> getUbo() {
+    std::conditional_t<!std::is_void<U>::value, std::shared_ptr<U>, void*> getUbo() {
         if constexpr (!std::is_void<U>::value) {
-            return ubo;
+            return uboPtr;
         } else {
             return nullptr;
+        }
+    }
+
+    void setUbo(std::conditional_t<!std::is_void<U>::value, std::shared_ptr<U>, void*> ubo) {
+        if constexpr (!std::is_void<U>::value) {
+            uboPtr = ubo;
         }
     }
 
@@ -202,7 +213,7 @@ private:
 
     std::vector<R> outputBuffers;
 
-    std::conditional_t<!std::is_void<U>::value, U*, void*> ubo = nullptr;
+    std::conditional_t<!std::is_void<U>::value, std::shared_ptr<U>, void*> uboPtr = nullptr;
 
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
@@ -387,7 +398,7 @@ private:
         
         if constexpr (!std::is_void<U>::value) {
             pipelineLayoutInfo.setLayoutCount = 2;
-            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, ubo->getDescriptorSetLayout()};
+            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, uboPtr->getDescriptorSetLayout()};
             pipelineLayoutInfo.pSetLayouts = combinedLayouts;
         } else {
             pipelineLayoutInfo.setLayoutCount = 1;

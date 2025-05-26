@@ -22,21 +22,25 @@ public:
         createDescriptorSetLayout();
         createUniformBuffers();
         createDescriptorPool();
-        createDescriptorSets();        
+        createDescriptorSets();
+        initialized = true;
     }
 
     virtual ~UniformBufferObjectNew()
     {
-        auto config = vulkanKernel->getConfig();
-        auto device = vulkanKernel->getDevice();
-    
-        for (size_t i = 0; i < numberOfPaths; i++) {
-            vkDestroyBuffer(device, uniformBuffers[i], nullptr);
-            vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+        if(initialized)
+        {
+            auto config = vulkanKernel->getConfig();
+            auto device = vulkanKernel->getDevice();
+        
+            for (size_t i = 0; i < numberOfPaths; i++) {
+                vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+                vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+            }
+        
+            vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
         }
-    
-        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     }
 
     virtual const char* getName() const {
