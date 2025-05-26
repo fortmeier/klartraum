@@ -195,8 +195,6 @@ private:
 
     uint32_t numberPaths = 1;
 
-    bool initialized = false;
-
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
     void createDescriptorPool() {
