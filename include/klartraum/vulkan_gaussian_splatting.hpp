@@ -82,21 +82,13 @@ private:
     std::vector<uint8_t> data;
     uint32_t number_of_gaussians;
 
-    std::unique_ptr<VulkanBuffer<Gaussian2D>> projectedGaussians;
-
     uint32_t numberOfPaths = 0;
 
-    typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
-    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
-    
-    typedef BufferTransformation<Gaussian3DBuffer, Gaussian2DBuffer, CameraUboType> GaussianProjection;
+    // 
+    std::unique_ptr<VulkanBuffer<Gaussian2D>> projectedGaussians;
+
     std::unique_ptr<GaussianProjection> project3Dto2D;
-    
-    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer> GaussianZSorting;
-    std::unique_ptr<GaussianZSorting> sort2DGaussians;
-    
-    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer> GaussianZSorting;
-    
+   
 };
 
 } // namespace klartraum
