@@ -47,9 +47,15 @@ public:
         renderWaitSemaphores[pathId] = semaphore;
     }
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {};
+    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
+        initialized = true;
+    };
 
-    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
+        if (!initialized) {
+            throw std::runtime_error("DrawGraphElement not initialized");
+        }
+    }
 
     virtual const char* getName() const = 0;
 
@@ -57,6 +63,9 @@ public:
     std::map<int, VkSemaphore> renderWaitSemaphores; //TODO: really should be private
     std::map<int, int> srcOutputSlots; //TODO: really should be private
     
+    protected:
+    bool initialized = false;
+
     private:
     // these are updated by the DrawGraph, do not set them manually
     // it is important to reset them before destroying the graph
