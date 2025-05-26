@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "klartraum/glfw_frontend.hpp"
-#include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/drawgraph/imageviewsrc.hpp"
 #include "klartraum/drawgraph/generalcomputation.hpp"
@@ -47,8 +46,6 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     auto& core = frontend.getKlartraumCore();
     auto& vulkanKernel = core.getVulkanKernel();
     auto& device = vulkanKernel.getDevice();
-    typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
-    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
 
     std::vector<Gaussian3D> gaussians3D;
     gaussians3D.push_back(Gaussian3D{
@@ -100,7 +97,6 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     auto& gaussian3DBuffer = bufferElement->getBuffer();
     gaussian3DBuffer.memcopyFrom(gaussians3D);
     
-    typedef BufferTransformation<Gaussian3DBuffer, Gaussian2DBuffer, CameraUboType> GaussianProjection;
     std::shared_ptr<GaussianProjection> project3Dto2D = std::make_shared<GaussianProjection>(vulkanKernel, "shaders/gaussian_splatting_projection.comp.spv");
 
     auto& cameraMVP = project3Dto2D->getUbo()->ubo;
@@ -143,18 +139,11 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
    return;    
 }
 
-struct SortPushConstants {
-    uint32_t pass;
-    uint32_t numElements;
-    uint32_t numBins;
-};
-
 TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
     auto& vulkanKernel = core.getVulkanKernel();
-    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
 
     // Create a list of 2D gaussians with different depths (z values)
     std::vector<Gaussian2D> gaussians2D = {
@@ -174,7 +163,6 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Buffer transformation that sorts by z (depth)
-    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
     std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
 
     sort2DGaussians->setInput(bufferElement);
@@ -227,19 +215,11 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     return;
 }
 
-struct binPushConstants {
-    uint32_t numElements;
-    uint32_t gridSize;
-    float screenWidth;
-    float screenHeight;
-};
-
 TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
     auto& vulkanKernel = core.getVulkanKernel();
-    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
 
     // Create a list of 2D gaussians with different positions and covariance matrices
     std::vector<Gaussian2D> gaussians2D = {
@@ -331,14 +311,6 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     return;
 }
 
-struct SplatPushConstants {
-    uint32_t numElements;
-    uint32_t gridSize;
-    uint32_t gridX;
-    uint32_t gridY;
-    float screenWidth;
-    float screenHeight;
-};
 
 
 TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) {
@@ -346,7 +318,6 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
     auto& core = frontend.getKlartraumCore();
     auto& vulkanKernel = core.getVulkanKernel();
-    typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
 
     // Create a list of 2D gaussians with different positions and covariance matrices
     std::vector<Gaussian2D> gaussians2D = {
@@ -423,7 +394,6 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
 
     // Buffer transformation that sorts by z (depth)
-    typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
     std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
 
     sort2DGaussians->setInput(bin, 0, 0);
