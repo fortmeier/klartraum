@@ -5,6 +5,9 @@
 
 #include <glm/glm.hpp>
 
+#include "klartraum/drawgraph/buffertransformation.hpp"
+#include "klartraum/draw_component.hpp" // for CameraUboType, TODO: remove this dependency
+
 namespace klartraum {
 
 struct Gaussian2D {
@@ -26,6 +29,34 @@ struct Gaussian3D {
     std::array<float, 15> shG;
     std::array<float, 15> shB;
   };
+
+typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
+typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
+
+typedef BufferTransformation<Gaussian3DBuffer, Gaussian2DBuffer, CameraUboType> GaussianProjection;
+
+struct SplatPushConstants {
+  uint32_t numElements;
+  uint32_t gridSize;
+  uint32_t gridX;
+  uint32_t gridY;
+  float screenWidth;
+  float screenHeight;
+};
+
+struct binPushConstants {
+  uint32_t numElements;
+  uint32_t gridSize;
+  float screenWidth;
+  float screenHeight;
+};
+
+struct SortPushConstants {
+  uint32_t pass;
+  uint32_t numElements;
+  uint32_t numBins;
+};
+typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
 
 } // namespace klartraum
 
