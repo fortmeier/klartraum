@@ -20,6 +20,65 @@ layout(set = 1, binding = 0) uniform UniformBufferObject {
 
 #extension GL_EXT_debug_printf : enable
 
+// DANGER: AI GENERATED CODE
+mat3 quatToMat3(vec4 q) {
+    float x = q.x, y = q.y, z = q.z, w = q.w;
+    float xx = x * x, yy = y * y, zz = z * z;
+    float xy = x * y, xz = x * z, yz = y * z;
+    float wx = w * x, wy = w * y, wz = w * z;
+
+    mat3 r = mat3(
+        1.0 - 2.0 * (yy + zz),  2.0 * (xy - wz),        2.0 * (xz + wy),
+        2.0 * (xy + wz),        1.0 - 2.0 * (xx + zz),  2.0 * (yz - wx),
+        2.0 * (xz - wy),        2.0 * (yz + wx),        1.0 - 2.0 * (xx + yy)
+    );
+
+    return r;
+    
+}
+
+mat2 calculateCovarianceMatrix2D(Gaussian gaussian, vec3 u) {
+    mat3 S = mat3(
+        gaussian.scale.x, 0.0, 0.0,
+        0.0, gaussian.scale.y, 0.0,
+        0.0, 0.0, gaussian.scale.z
+    );
+
+    mat3 R = quatToMat3(gaussian.rotation);
+    
+    mat3 cov3dInObjectSpace = R * S * transpose(S) * transpose(R);
+
+    mat4 W4 = ubo.model * ubo.view;
+    mat3 W = mat3(
+        W4[0][0], W4[0][1], W4[0][2],
+        W4[1][0], W4[1][1], W4[1][2],
+        W4[2][0], W4[2][1], W4[2][2]
+    );
+
+
+    float u0 = u[0];
+    float u1 = u[1];
+    float u2 = u[2];
+
+    float l = length(u);
+
+    mat3 J = mat3(
+        1.0 / u2, 0.0, -u0 / (u2 * u2),
+        0.0, 1.0 / u2, -u1 / (u2 * u2),
+        u0 / l, u1 / l, u2 / l);
+
+    mat3 cov3dInCameraSpace = J * W * cov3dInObjectSpace * transpose(W) * transpose(J); 
+
+    mat2 cov2d = mat2(
+        cov3dInCameraSpace[0][0], cov3dInCameraSpace[0][1],
+        cov3dInCameraSpace[1][0], cov3dInCameraSpace[1][1]
+    );
+
+    return cov2d;
+}
+
+    
+
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
@@ -27,10 +86,15 @@ void main()
 
     vec4 position = ubo.proj * ubo.view * ubo.model * vec4(p, 1.0);
     vec2 norm_pos = position.xy / position.w;
+    vec3 u = position.xyz / position.w;
     Gaussian2D gaussian2d;
 
     gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
     gaussian2d.z = position.z;
+
+    gaussian2d.covariance = calculateCovarianceMatrix2D(gaussianIn[index], u);
+
+    gaussian2d.color = gaussianIn[index].color;
 
     gaussian2dOut[index] = gaussian2d;
 
