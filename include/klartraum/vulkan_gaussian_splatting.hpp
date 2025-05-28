@@ -88,6 +88,14 @@ private:
     std::unique_ptr<VulkanBuffer<Gaussian2D>> projectedGaussians;
 
     std::unique_ptr<GaussianProjection> project3Dto2D;
+
+    std::unique_ptr<GaussianSort> sort2DGaussians;
+
+    std::unique_ptr<GaussianBinning> bin;
+
+    std::unique_ptr<GaussianComputeBounds> computeBounds;
+
+    std::unique_ptr<GaussianSplatting> splat;
    
 };
 
