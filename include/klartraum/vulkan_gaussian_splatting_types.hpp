@@ -6,6 +6,8 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/drawgraph/buffertransformation.hpp"
+#include "klartraum/drawgraph/generalcomputation.hpp"
+
 #include "klartraum/draw_component.hpp" // for CameraUboType, TODO: remove this dependency
 
 namespace klartraum {
@@ -57,6 +59,10 @@ struct SortPushConstants {
   uint32_t numBins;
 };
 typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
+
+typedef GeneralComputation<binPushConstants> GaussianBinning;
+typedef GeneralComputation<binPushConstants> GaussianComputeBounds;
+typedef GeneralComputation<SplatPushConstants> GaussianSplatting;
 
 } // namespace klartraum
 

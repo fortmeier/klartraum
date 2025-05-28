@@ -3,7 +3,6 @@
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/drawgraph/imageviewsrc.hpp"
-#include "klartraum/drawgraph/generalcomputation.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 using namespace klartraum;
@@ -284,7 +283,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         512.0f                          // screenHeight
     };
 
-    auto bin = std::make_shared<GeneralComputation<binPushConstants>>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    auto bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setInput(bufferElement, 0);
     bin->setInput(additionalGaussian2DCounts, 1);
     bin->setGroupCountX(gaussians2D.size() / 128 + 1);
@@ -386,7 +385,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
         512.0f                          // screenHeight
     };
 
-    auto bin = std::make_shared<GeneralComputation<binPushConstants>>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    auto bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setInput(bufferElement, 0);
     bin->setInput(additionalGaussian2DCounts, 1);
     bin->setGroupCountX(gaussians2D.size() / 128 + 1);
@@ -425,7 +424,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     // scratchBinStartAndEndBuffer.memcopyFrom(binStartAndEnd);
     scratchBinStartAndEnd->getBuffer().zero();
 
-    auto computeBounds = std::make_shared<GeneralComputation<binPushConstants>>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
+    auto computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
 
     binPushConstants computeBoundsPushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
@@ -458,7 +457,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
     imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);    
 
-    auto splat = std::make_shared<GeneralComputation<SplatPushConstants>>(vulkanKernel, "shaders/gaussian_splatting_binned_splatting.comp.spv");
+    auto splat = std::make_shared<GaussianSplatting>(vulkanKernel, "shaders/gaussian_splatting_binned_splatting.comp.spv");
 
     std::vector<SplatPushConstants> splatPushConstants;
     for(uint32_t y = 0; y < 4; y++) {
