@@ -30,17 +30,18 @@ TEST(BufferTransformation, create) {
     
     auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    bufferElement->getBuffer().memcopyFrom(data);
     
     transform->setInput(bufferElement);
-
+    
     /*
     STEP 2: create the drawgraph backend and compile the drawgraph
     */
-    
+   
     // this traverses the drawgraph and creates the vulkan objects
     auto& drawgraph = DrawGraph(vulkanKernel, 1);
     drawgraph.compileFrom(transform);
+
+    bufferElement->getBuffer(0).memcopyFrom(data);
 
     /*
     STEP 3: submit the drawgraph and compare the output
@@ -77,19 +78,20 @@ TEST(BufferTransformation, create_with_ubo) {
     
     auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    bufferElement->getBuffer().memcopyFrom(data);
     
     transform->setInput(bufferElement);
-
+    
     transform->getUbo()->ubo = 3.0f;
-
+    
     /*
     STEP 2: create the drawgraph backend and compile the drawgraph
     */
-    
-    // this traverses the drawgraph and creates the vulkan objects
-    auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(transform);
+   
+   // this traverses the drawgraph and creates the vulkan objects
+   auto& drawgraph = DrawGraph(vulkanKernel, 1);
+   drawgraph.compileFrom(transform);
+
+   bufferElement->getBuffer(0).memcopyFrom(data);
 
     /*
     STEP 3: submit the drawgraph and compare the output
@@ -122,20 +124,20 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
     
     auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-    bufferElement->getBuffer().memcopyFrom(data);
     
     transform->setInput(bufferElement);
-
+    
     transform->getUbo()->ubo = 77.0f;
     
     /*
-    STEP 2: create the drawgraph backend and compile the drawgraph
+    STEP 2: create the drawgraph backend and compile the drawgraph and copy the data to the buffer
     */
    
    // this traverses the drawgraph and creates the vulkan objects
    auto& drawgraph = DrawGraph(vulkanKernel, 3);
    drawgraph.compileFrom(transform);
    
+   bufferElement->getBuffer(0).memcopyFrom(data);
    /*
    STEP 3: submit the drawgraph and compare the output
    */

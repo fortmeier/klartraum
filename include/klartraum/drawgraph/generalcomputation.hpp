@@ -294,7 +294,7 @@ private:
                 bufferInfos.emplace_back();
                 VkDescriptorBufferInfo& inputBufferInfo = bufferInfos.back();
 
-                inputBufferInfo.buffer = bufferElement->getVkBuffer();
+                inputBufferInfo.buffer = bufferElement->getVkBuffer(pathId);
                 inputBufferInfo.offset = 0;
                 inputBufferInfo.range = bufferElement->getBufferMemSize();
 

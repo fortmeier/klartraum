@@ -92,7 +92,7 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     STEP 1: cerate the drawgraph elements
     */
 
-    auto bufferElement = std::make_shared<BufferElement<Gaussian3DBuffer>>(vulkanKernel, gaussians3D.size());
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanKernel, gaussians3D.size());
     auto& gaussian3DBuffer = bufferElement->getBuffer();
     gaussian3DBuffer.memcopyFrom(gaussians3D);
     
@@ -157,7 +157,7 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     };
 
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
@@ -180,7 +180,7 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
     auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
     auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->getBuffer().zero();
+    additionalGaussian2DCounts->zero();
 
 
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
@@ -268,13 +268,13 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     // that are in more than one bin
 
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size()*2);
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size()*2);
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Create a buffer that holds the number of elements after duplication
     auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->getBuffer().zero();
+    additionalGaussian2DCounts->zero();
 
     binPushConstants pushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
@@ -295,10 +295,10 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     std::vector<uint32_t> finalAdditionalGaussiansCount(1);
-    additionalGaussian2DCounts->getBuffer().memcopyTo(finalAdditionalGaussiansCount);
+    additionalGaussian2DCounts->getBuffer(0).memcopyTo(finalAdditionalGaussiansCount);
 
     std::vector<Gaussian2D> finalGaussians2D(gaussians2D.size() + finalAdditionalGaussiansCount[0]);
-    bufferElement->getBuffer().memcopyTo(finalGaussians2D);
+    bufferElement->getBuffer(0).memcopyTo(finalGaussians2D);
 
     EXPECT_EQ(finalGaussians2D[0].binMask, 0b0000000000000001);
     EXPECT_EQ(finalGaussians2D[1].binMask, 0b0000000000001000);
@@ -370,13 +370,13 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     // that are in more than one bin
 
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size()*2);
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size()*2);
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Create a buffer that holds the number of elements after duplication
     auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->getBuffer().zero();
+    additionalGaussian2DCounts->zero();
 
     binPushConstants pushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
@@ -422,7 +422,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16*2);
     // auto& scratchBinStartAndEndBuffer = scratchBinStartAndEnd->getBuffer();
     // scratchBinStartAndEndBuffer.memcopyFrom(binStartAndEnd);
-    scratchBinStartAndEnd->getBuffer().zero();
+    scratchBinStartAndEnd->zero();
 
     auto computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
 
@@ -509,10 +509,10 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
 
     std::vector<uint32_t> finalAdditionalGaussiansCount(1);
-    additionalGaussian2DCounts->getBuffer().memcopyTo(finalAdditionalGaussiansCount);
+    additionalGaussian2DCounts->getBuffer(0).memcopyTo(finalAdditionalGaussiansCount);
 
     std::vector<Gaussian2D> finalGaussians2D(gaussians2D.size() + finalAdditionalGaussiansCount[0]);
-    bufferElement->getBuffer().memcopyTo(finalGaussians2D);
+    bufferElement->getBuffer(0).memcopyTo(finalGaussians2D);
 
     EXPECT_EQ(finalGaussians2D[0].binMask, 0b0000000000000001);
     EXPECT_EQ(finalGaussians2D[1].binMask, 0b0000000000000010);
@@ -521,7 +521,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     EXPECT_EQ(finalGaussians2D[4].binMask, 0b1000000000000000);
 
     std::vector<uint32_t> binBounds(16 * 2);
-    scratchBinStartAndEnd->getBuffer().memcopyTo(binBounds);
+    scratchBinStartAndEnd->getBuffer(0).memcopyTo(binBounds);
 
     // Print or check the bounds for each bin (start and end indices)
     for (int i = 0; i < 16; i++) {
