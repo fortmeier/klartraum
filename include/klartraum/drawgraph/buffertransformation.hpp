@@ -54,6 +54,10 @@ public:
             uboPtr->_setup(vulkanKernel, numberPaths);
         }
 
+        for (auto& other : otherInputs) {
+            other->_setup(vulkanKernel, numberPaths);
+        }
+
         createDescriptorPool();
         createComputeDescriptorSetLayout();
         createComputePipeline();
@@ -150,20 +154,20 @@ public:
     };
 
     virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
-        BufferElement<A>* bufferSrc = std::dynamic_pointer_cast<BufferElement<A>>(input).get();
+        BufferElementInterface* bufferSrc = std::dynamic_pointer_cast<BufferElementInterface>(input).get();
         if (bufferSrc == nullptr) {
-            throw std::runtime_error("input is not a fitting BufferElement!");
+            throw std::runtime_error("input is not a fitting BufferElementInterface!");
         }
     }
 
     A& getInput(uint32_t pathId = 0) {
         // TODO why inputs[0], and not inputs[pathId]?
-        auto bufferPtr = dynamic_cast<BufferElement<A>*>(getInputElement(0).get());
+        auto bufferPtr = dynamic_cast<TemplatedBufferElementInterface<A>*>(getInputElement(0).get());
         if (bufferPtr == nullptr) {
             throw std::runtime_error("input is not a fitting BufferElement!");
         }
         
-        return bufferPtr->getBuffer();
+        return bufferPtr->getBuffer(pathId);
     }
 
     virtual const char* getName() const {
@@ -361,7 +365,7 @@ private:
         for (int i = 0; i < otherInputs.size(); i++) {
             auto& otherInput = otherInputs[i];
             VkDescriptorBufferInfo& storageBufferInfoOther = storageBufferInfoOthers[i];
-            storageBufferInfoOther.buffer = otherInput->getVkBuffer();
+            storageBufferInfoOther.buffer = otherInput->getVkBuffer(pathId);
             storageBufferInfoOther.offset = 0;
             storageBufferInfoOther.range = otherInput->getBufferMemSize();
 
