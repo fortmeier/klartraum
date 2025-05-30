@@ -228,7 +228,7 @@ private:
         // and then find the SemaphoreMap for the element, which
         // contains the semaphore for the connection between the element and its input element
         auto& renderFinishedSemaphores = allRenderFinishedSemaphores[pathId];
-        for(auto& input : element->inputs) {
+        for(auto& input : element->getInputs()) {
             auto& inputElement = input.second;
 
             auto input_output_map_iter = renderFinishedSemaphores.find(inputElement);
@@ -332,7 +332,7 @@ private:
 
         // now, update the outputs of all elements
         for(auto& element : ordered_elements) {
-            for(auto& input : element->inputs) {
+            for(auto& input : element->getInputs()) {
                 auto& inputElement = input.second;
                 // Only add if element is not already in outputs
                 if (std::find(inputElement->outputs.begin(), inputElement->outputs.end(), element) == inputElement->outputs.end()) {
@@ -351,7 +351,7 @@ private:
     typedef std::map<DrawGraphElementPtr, std::vector<DrawGraphElementPtr>> EdgeList;
 
     void fill_edges(EdgeList& edges, EdgeList& incoming, DrawGraphElementPtr element) {
-        for(auto& input : element->inputs) {
+        for(auto& input : element->getInputs()) {
             // check if input already in graph
             auto it = find(edges[element].begin(), edges[element].end(), input.second);
             if(it == edges[element].end()) {
@@ -384,7 +384,7 @@ private:
             S.pop();
 
             L.push_back(n);
-            for(auto input = n->inputs.begin(); input != n->inputs.end(); input++) {
+            for(auto input = n->getInputs().begin(); input != n->getInputs().end(); input++) {
                 // note the convention that N and M are iterators
                 auto m = input->second;
                 // first check if the input node is still in the graph
