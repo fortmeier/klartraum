@@ -59,14 +59,18 @@ public:
 
     virtual const char* getName() const = 0;
 
+    virtual std::map<int, DrawGraphElementPtr> getInputs() const {
+        return inputs;
+    }
+
+protected:
     std::map<int, DrawGraphElementPtr> inputs; //TODO: really should be private
     std::map<int, VkSemaphore> renderWaitSemaphores; //TODO: really should be private
     std::map<int, int> srcOutputSlots; //TODO: really should be private
     
-    protected:
     bool initialized = false;
 
-    private:
+private:
     // these are updated by the DrawGraph, do not set them manually
     // it is important to reset them before destroying the graph
     // otherwise we will have dangling pointers in the graph
