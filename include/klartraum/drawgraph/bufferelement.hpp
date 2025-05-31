@@ -12,7 +12,7 @@ public:
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "BufferElement";
     }
 

@@ -170,7 +170,7 @@ public:
         return bufferPtr->getBuffer(pathId);
     }
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "BufferTransformation";
     }    
 

@@ -162,7 +162,7 @@ public:
     //     return *dynamic_cast<BufferElementInterface*>(inputs[0].get());
     // }
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "GeneralComputation";
     }    
 

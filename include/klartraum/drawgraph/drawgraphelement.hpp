@@ -57,10 +57,18 @@ public:
         }
     }
 
-    virtual const char* getName() const = 0;
+    virtual const char* getType() const = 0;
 
+    virtual const char* getName() const {
+        return name.c_str();
+    }
+    
     virtual std::map<int, DrawGraphElementPtr> getInputs() const {
         return inputs;
+    }
+
+    void setName(const std::string& name) {
+        this->name = name;
     }
 
 protected:
@@ -69,6 +77,8 @@ protected:
     std::map<int, int> srcOutputSlots; //TODO: really should be private
     
     bool initialized = false;
+
+    std::string name;
 
 private:
     // these are updated by the DrawGraph, do not set them manually
