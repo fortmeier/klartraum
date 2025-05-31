@@ -7,15 +7,7 @@ namespace klartraum {
 
 class DrawGraphGroup : public virtual DrawGraphElement {
 public:
-    virtual void setInput(DrawGraphElementPtr input, int index = 0) {
-        inputs[index] = input;
-    }
-
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
-        // Default implementation does nothing
-    }
-
-    virtual std::string getType() const {
+    virtual const char* getType() const {
         return "DrawGraphGroup";
     }
 

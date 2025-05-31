@@ -27,7 +27,7 @@ public:
         this->imageViews = imageViews;
     };
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "ImageViewSrc";
     }
 
