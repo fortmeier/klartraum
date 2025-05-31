@@ -40,7 +40,7 @@ public:
         }
     }
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "RenderPass";
     }
 
