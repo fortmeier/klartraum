@@ -46,7 +46,7 @@ public:
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "BufferElement";
     }
 
@@ -87,7 +87,7 @@ public:
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "BufferElementSinglePath";
     }
 
