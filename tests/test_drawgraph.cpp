@@ -14,7 +14,7 @@
 using namespace klartraum;
 
 class BlurOp : public DrawGraphElement {
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "BlurOp";
     }
 
@@ -27,7 +27,7 @@ class BlurOp : public DrawGraphElement {
 };
 
 class NoiseOp : public DrawGraphElement {
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "NoiseOp";
     }
 
@@ -40,7 +40,7 @@ class NoiseOp : public DrawGraphElement {
 };
 
 class AddOp : public DrawGraphElement {
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "AddOp";
     }
 
@@ -53,7 +53,7 @@ class AddOp : public DrawGraphElement {
 };
 
 class CopyOp : public DrawGraphElement {
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "CopyOp";
     }
 
