@@ -64,7 +64,7 @@ ImageSrc(VkImage image) {
         this->images = images;
     };
 
-    virtual const char* getName() const {
+    virtual const char* getType() const {
         return "ImageSrc";
     }
 
