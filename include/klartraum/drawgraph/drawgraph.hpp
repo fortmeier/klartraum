@@ -384,9 +384,9 @@ private:
             S.pop();
 
             L.push_back(n);
-            for(auto input = n->getInputs().begin(); input != n->getInputs().end(); input++) {
+            for(auto input : n->getInputs()) {
                 // note the convention that N and M are iterators
-                auto m = input->second;
+                auto m = input.second;
                 // first check if the input node is still in the graph
                 auto M = find(edges[n].begin(), edges[n].end(), m);
                 if(M != edges[n].end()) {

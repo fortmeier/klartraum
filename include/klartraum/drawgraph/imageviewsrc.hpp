@@ -56,8 +56,8 @@ private:
 
 class ImageSrc : public DrawGraphElement {
 public:
-ImageSrc(VkImage image) {
-    images.push_back(image);
+    ImageSrc(VkImage image) {
+        images.push_back(image);
     };
 
     ImageSrc(std::vector<VkImage> images) {

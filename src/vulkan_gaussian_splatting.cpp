@@ -10,51 +10,146 @@
 
 namespace klartraum {
 
-struct Gaussian {
-    spz::UnpackedGaussian gaussian;
-
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription{};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Gaussian);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        return bindingDescription;
-    }
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
-
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(spz::UnpackedGaussian, position);
-
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(spz::UnpackedGaussian, color);        
-
-        return attributeDescriptions;
-    }
-};
-
-VulkanGaussianSplatting::VulkanGaussianSplatting(std::string path, GaussianSplattingRenderingType type) {
+VulkanGaussianSplatting::VulkanGaussianSplatting(
+    VulkanKernel& vulkanKernel,
+    std::shared_ptr<ImageViewSrc> _imageViewSrc,
+    std::shared_ptr<CameraUboType> _cameraUBO,
+    std::string path
+) {
     loadSPZModel(path);
+
+    this->vulkanKernel = &vulkanKernel;
+    this->setInput(_imageViewSrc, 0);
+    this->setInput(_cameraUBO, 1);
+
+    if(inputs.size() == 0) {
+        throw std::runtime_error("no input!");
+    }
+    std::shared_ptr<ImageViewSrc> imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
+    if (imageViewSrc == nullptr) {
+        throw std::runtime_error("input is not an ImageViewSrc!");
+    }
+
+    gaussians3D = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanKernel, number_of_gaussians);
+
+    gaussians3D->getBuffer().memcopyFrom(gaussians3DData);
+
+    // setup projection stage
+    /////////////////////////////////////////////
+    project3Dto2D = std::make_unique<GaussianProjection>(vulkanKernel, "shaders/gaussian_splatting_projection.comp.spv");
+    project3Dto2D->setInput(gaussians3D);
+    project3Dto2D->setGroupCountX(number_of_gaussians * 2);
+
+    project3Dto2D->setUbo(std::dynamic_pointer_cast<CameraUboType>(getInputElement(1)));
+
+    // setup binning stage
+    /////////////////////////////////////////////
+        binPushConstants pushConstants = {
+        number_of_gaussians,   // numElements
+        4,                              // gridSize (4x4)
+        512.0f,                         // screenWidth
+        512.0f                          // screenHeight
+    };
+
+    auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    additionalGaussian2DCounts->zero();    
+
+    bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    bin->setInput(project3Dto2D, 0);
+    bin->setInput(additionalGaussian2DCounts, 1);
+    bin->setGroupCountX((number_of_gaussians*2) / 128 + 1);
+    bin->setPushConstants({pushConstants});
+
+    // setup sorting stage
+    /////////////////////////////////////////////
+    sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
+
+    sort2DGaussians->setInput(bin, 0, 0);
+
+    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+
+    sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
+    sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
+    sort2DGaussians->addScratchBufferElement(additionalGaussian2DCounts);
+
+    sort2DGaussians->setGroupCountX((number_of_gaussians*2) / 128 * 2 + 1);
+
+
+    uint32_t numElements = (uint32_t)((number_of_gaussians*2));
+    uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
+    uint32_t numBins = 16; // Number of bins for sorting = 2 ^ numBitsPerPass
+    uint32_t passes = 32 + 16; // 32 bits for depth, 16 bits for binning
+    std::vector<SortPushConstants> sortPushConstants;
+    for (uint32_t i = 0; i < passes / numBitsPerPass; i++) {
+        sortPushConstants.push_back({i, numElements, numBins}); // pass, numElements, numBins
+    }
+
+    sort2DGaussians->setPushConstants(sortPushConstants);
+
+    // setup bounds computation stage
+    /////////////////////////////////////////////
+    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16*2);
+    scratchBinStartAndEnd->zero();
+
+    computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
+
+    binPushConstants computeBoundsPushConstants = {
+        (uint32_t)((number_of_gaussians*2)),   // numElements
+        4,                              // gridSize (4x4)
+        512.0f,                         // screenWidth
+        512.0f                          // screenHeight
+    };
+
+    computeBounds->setInput(sort2DGaussians, 0, 0); //bufferElement, 0);
+    computeBounds->setInput(bin, 1, 1); //additionalGaussian2DCounts, 1);
+    computeBounds->setInput(scratchBinStartAndEnd, 2 ); //scratchBinStartAndEnd, 2);
+    computeBounds->setGroupCountX((number_of_gaussians*2) / 256 + 1);
+
+    computeBounds->setPushConstants({computeBoundsPushConstants});
+
+
+    // setup splatting stage
+    /////////////////////////////////////////////
+    splat = std::make_shared<GaussianSplatting>(vulkanKernel, "shaders/gaussian_splatting_binned_splatting.comp.spv");
+
+    std::vector<SplatPushConstants> splatPushConstants;
+    for(uint32_t y = 0; y < 4; y++) {
+        for(uint32_t x = 0; x < 4; x++) {
+            splatPushConstants.push_back({
+                (uint32_t)(number_of_gaussians*2),   // numElements
+                4,                              // gridSize (4x4)
+                x,                              // gridX
+                y,                              // gridY
+                512.0f,                         // screenWidth
+                512.0f                          // screenHeight
+            });
+        }
+    }
+    
+    splat->setInput(computeBounds, 0, 0); // bufferElement, 0);
+    splat->setInput(computeBounds, 1, 1); // additionalGaussian2DCounts, 1);
+    splat->setInput(computeBounds, 2, 2); // scratchBinStartAndEnd, 2);
+    splat->setInput(imageViewSrc, 3); 
+
+    uint32_t groupsPerBin = (512 / 16) / 4; // = 8 groups per bin with 16 threads each
+
+    splat->setGroupCountX(groupsPerBin);
+    splat->setGroupCountY(groupsPerBin);
+    splat->setGroupCountZ(1);
+
+    splat->setPushConstants(splatPushConstants);
+
+    // this is the last element in the splatting pipeline
+    // it will be used as the output of the drawgraphgroup
+    // so that the drawgraph compilation traversal can
+    // traverse from this element back through all the elements of the gaussian splatting pipeline
+    outputElements[0] = splat;    
 }
 
 VulkanGaussianSplatting::~VulkanGaussianSplatting() {
     if(vulkanKernel != nullptr)
     {
-        auto device = vulkanKernel->getDevice();
-
-        vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
-        vkDestroyPipeline(device, computePipeline, nullptr);
-        vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
-        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-        
-
-        vkDestroyBuffer(device, vertexBuffer, nullptr);
-        vkFreeMemory(device, vertexBufferMemory, nullptr);
     }
 
 }
@@ -77,17 +172,7 @@ void VulkanGaussianSplatting::checkInput(DrawGraphElementPtr input, int index) {
 void VulkanGaussianSplatting::_setup(VulkanKernel& vulkanKernel, uint32_t numberPaths)
 {
     numberOfPaths = numberPaths;
-    this->vulkanKernel = &vulkanKernel;
 
-    createDescriptorPool();
-    createComputeDescriptorSetLayout();
-    createVertexBuffer();
-    createComputeDescriptorSets();
-    createComputePipeline();
-
-    createSyncObjects();
-
-    projectedGaussians = std::make_unique<VulkanBuffer<Gaussian2D>>(vulkanKernel, number_of_gaussians);
 }
 
 void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId)
@@ -99,55 +184,53 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
 
     auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
 
-    if(inputs.size() == 0) {
-        throw std::runtime_error("no input!");
-    }
-    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
     if (imageViewSrc == nullptr) {
         throw std::runtime_error("input is not an ImageViewSrc!");
     }
     VkImage image = imageViewSrc->getImage(pathId);
 
 
-    // Ensure compute writes are visible to graphics
-    VkImageMemoryBarrier imageBarrier = {};
-    imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
-    imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
-    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
-    imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
-    imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
-    imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    // TODO : use the correct image
+//     // Ensure compute writes are visible to graphics
+//     VkImageMemoryBarrier imageBarrier = {};
+//     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+//     imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
+//     imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
+//     imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
+//     imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
+//     imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
+//     imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+//     // TODO : use the correct image
     
-    imageBarrier.image = image;  // The image used as framebuffer and compute input
-    imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    imageBarrier.subresourceRange.baseMipLevel = 0;
-    imageBarrier.subresourceRange.levelCount = 1;
-    imageBarrier.subresourceRange.baseArrayLayer = 0;
-    imageBarrier.subresourceRange.layerCount = 1;
+//     // imageBarrier.image = image;  // The image used as framebuffer and compute input
+//     imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+//     imageBarrier.subresourceRange.baseMipLevel = 0;
+//     imageBarrier.subresourceRange.levelCount = 1;
+//     imageBarrier.subresourceRange.baseArrayLayer = 0;
+//     imageBarrier.subresourceRange.layerCount = 1;
     
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
-        0,  // No dependency flags
-        0, nullptr,  // No global memory barriers
-        0, nullptr,  // No buffer memory barriers
-        1, &imageBarrier // Image memory barrier
-    );
+//     vkCmdPipelineBarrier(
+//         commandBuffer,
+//         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+//         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+//         0,  // No dependency flags
+//         0, nullptr,  // No global memory barriers
+//         0, nullptr,  // No buffer memory barriers
+//         1, &imageBarrier // Image memory barrier
+//     );
     
-    // issue the compute pipeline for gaussian splatting
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+// /*
+//     // issue the compute pipeline for gaussian splatting
+//     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
 
-    auto& cameraUBO = this->getCameraUBO();
-    auto& descriptorSets = cameraUBO->getDescriptorSets();
-    std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[pathId], descriptorSets[pathId]};
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
+//     auto& cameraUBO = this->getCameraUBO();
+//     auto& descriptorSets = cameraUBO->getDescriptorSets();
+//     std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[pathId], descriptorSets[pathId]};
+//     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
     
-    uint32_t num_groups_z = number_of_gaussians / 16;
+//     uint32_t num_groups_z = number_of_gaussians / 16;
 
-    vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);
+//     vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);*/
 
     VkImageMemoryBarrier barrierBack = {};
     barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -175,229 +258,24 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
         1, &barrierBack);
 }
 
-void VulkanGaussianSplatting::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass) {
-    this->vulkanKernel = &vulkanKernel;
-
-
-}
-
-void VulkanGaussianSplatting::createComputeDescriptorSetLayout() {
-    auto& device = vulkanKernel->getDevice();
-
-    std::array<VkDescriptorSetLayoutBinding, 2> layoutBindings{};
-
-    // gaussians binding
-    layoutBindings[0].binding = 0;
-    layoutBindings[0].descriptorCount = 1;
-    layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    layoutBindings[0].pImmutableSamplers = nullptr;
-    layoutBindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    
-    // output frame binding
-    layoutBindings[1].binding = 1;
-    layoutBindings[1].descriptorCount = 1;
-    layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    ;
-    layoutBindings[1].pImmutableSamplers = nullptr;
-    layoutBindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = (uint32_t)layoutBindings.size();
-    layoutInfo.pBindings = layoutBindings.data();
-    
-    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create compute descriptor set layout!");
-    }
-}
-
-void VulkanGaussianSplatting::createDescriptorPool() {
-    auto& device = vulkanKernel->getDevice();
-    auto& config = vulkanKernel->getConfig();
-
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
-    // gaussians binding
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(numberOfPaths);
-    
-    // output frame binding
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(numberOfPaths);
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = (uint32_t)poolSizes.size();
-    poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = static_cast<uint32_t>(numberOfPaths);
-
-    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor pool!");
-    }
-}
-
-void VulkanGaussianSplatting::createComputeDescriptorSets() {
-    auto& device = vulkanKernel->getDevice();
-    auto& config = vulkanKernel->getConfig();
-
-    std::vector<VkDescriptorSetLayout> layouts(numberOfPaths, computeDescriptorSetLayout);
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(numberOfPaths);
-    allocInfo.pSetLayouts = layouts.data();
-
-    computeDescriptorSets.resize(numberOfPaths);
-    VkResult result = vkAllocateDescriptorSets(device, &allocInfo, computeDescriptorSets.data());
-    if (result != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate descriptor sets!");
-    }
-
-    if(inputs.size() == 0) {
-        throw std::runtime_error("no input!");
-    }
-    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
-    if (imageViewSrc == nullptr) {
-        throw std::runtime_error("input is not an ImageViewSrc!");
-    }
-    
-    for (uint32_t i = 0; i < numberOfPaths; i++) {
-        VkImageView imageView = imageViewSrc->getImageView(i);
-
-        VkDescriptorBufferInfo storageBufferInfo{};
-        storageBufferInfo.buffer = vertexBuffer;
-        storageBufferInfo.offset = 0;
-        storageBufferInfo.range = sizeof(Gaussian) * number_of_gaussians;
-
-
-        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
-        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[0].dstSet = computeDescriptorSets[i];
-        descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].dstArrayElement = 0;
-        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].pBufferInfo = &storageBufferInfo;
-
-
-        VkDescriptorImageInfo imageInfo = {};
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // TODO ????
-        imageInfo.imageView = imageView;
-
-        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[1].dstSet = computeDescriptorSets[i];
-        descriptorWrites[1].dstBinding = 1;
-        descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].pImageInfo = &imageInfo;
-
-        vkUpdateDescriptorSets(device, (uint32_t)descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
-    }
-}
-
-
-void VulkanGaussianSplatting::createComputePipeline() {
-    auto& device = vulkanKernel->getDevice();
-
-    auto computeShaderCode = readFile("shaders/gaussian_splatting.comp.spv");
-
-    VkShaderModule computeShaderModule = createShaderModule(computeShaderCode, vulkanKernel->getDevice());
-    
-    VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
-    computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    computeShaderStageInfo.module = computeShaderModule;
-    computeShaderStageInfo.pName = "main";
-
-
-    
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 2;
-
-    auto& cameraUBO = this->getCameraUBO();
-
-    VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, cameraUBO->getDescriptorSetLayout()};
-    pipelineLayoutInfo.pSetLayouts = combinedLayouts;
-    
-    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create compute pipeline layout!");
-    }
-
-
-    VkComputePipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.layout = computePipelineLayout;
-    pipelineInfo.stage = computeShaderStageInfo;
-    
-    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create compute pipeline!");
-    }
-
-    vkDestroyShaderModule(device, computeShaderModule, nullptr);
-}
-
-void VulkanGaussianSplatting::createVertexBuffer() {
-    auto device = vulkanKernel->getDevice();
-
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = sizeof(Gaussian) * number_of_gaussians;
-    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT ;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create vertex buffer!");
-    }
-
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = vulkanKernel->findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate vertex buffer memory!");
-    }
-
-    vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
-
-    void* gpu_data;
-    vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &gpu_data);
-    memcpy(gpu_data, data.data(), (size_t) bufferInfo.size);
-    vkUnmapMemory(device, vertexBufferMemory);
-}
-
-
-
-void VulkanGaussianSplatting::createSyncObjects()
-{
-    auto device = vulkanKernel->getDevice();
-
-
-}
-
-void VulkanGaussianSplatting::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId)
-{
-
-
-}
 
 void VulkanGaussianSplatting::loadSPZModel(std::string path)
 {
+    
     spz::PackedGaussians packed = spz::loadSpzPacked(path);
-    std::vector<spz::UnpackedGaussian> gaussians;
-    //for (int i = 70000; i < 70020; /*packed.numPoints*/ i++) {
-    for (int i = 0; i < packed.numPoints; i++) {
+    
+    gaussians3DData.clear();
+    gaussians3DData.reserve(packed.numPoints);
+    for (int i = 70000; i < 70020; /*packed.numPoints*/ i++) {
+    //for (int i = 0; i < packed.numPoints; i++) {
         spz::UnpackedGaussian gaussian = packed.unpack(i);
-        gaussians.push_back(gaussian);
+        Gaussian3D gaussian3D;
+        memcpy(&gaussian3D, &gaussian, sizeof(spz::UnpackedGaussian));
+        gaussians3DData.push_back(gaussian3D);
     }
 
-    number_of_gaussians = (uint32_t)gaussians.size();
-    data.resize(gaussians.size() * sizeof(spz::UnpackedGaussian));
-    memcpy(data.data(), gaussians.data(), data.size());
+    // number_of_gaussians = (uint32_t)packed.numPoints;
+    number_of_gaussians = 20;
 
 
 }

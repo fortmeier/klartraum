@@ -21,21 +21,44 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     for (int i = 0; i < 3; i++) {
         imageViews.push_back(vulkanKernel.getImageView(i));
         images.push_back(vulkanKernel.getSwapChainImage(i));
+        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);        
         
     }
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
+    imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
+    imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
+    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);    
 
-    std::string spzFile = "data/hornedlizard.spz";
-    std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(spzFile);
-    splatting->setInput(imageViewSrc, 0);
-
+    /*
+    STEP 1: create the drawgraph elements
+    */
+   
     std::shared_ptr<CameraUboType> cameraUBO = std::make_shared<CameraUboType>();
     cameraUBO->ubo.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
+   
+    std::string spzFile = "data/hornedlizard.spz";
+    std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(vulkanKernel, imageViewSrc, cameraUBO, spzFile);
 
-    splatting->setInput(cameraUBO, 1);
-    
-    core.add(splatting);
+    /*
+    STEP 2: create the drawgraph backend and compile the drawgraph
+    */
+    auto& drawgraph = DrawGraph(vulkanKernel, 1);
+    drawgraph.compileFrom(splatting);
+
+    /*
+    STEP 3: submit the drawgraph and compare the output
+    */
+    VkSemaphore finishSemaphore = VK_NULL_HANDLE;   
+    for(int i = 0; i < 1; i++) {
+        auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
+        finishSemaphore = drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
+        vulkanKernel.endRender(imageIndex, finishSemaphore);
+    }
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    vkQueueWaitIdle(vulkanKernel.getGraphicsQueue());
+    return;
     
 }
 
