@@ -111,4 +111,4 @@ void main() {
     // this could be circumvented by somehow flipping the input and output buffers
     inputBuffer.gaussians[idx] = outputBuffer.gaussians[idx];
  
-} 
+}

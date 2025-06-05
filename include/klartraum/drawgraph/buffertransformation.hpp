@@ -12,7 +12,7 @@
 namespace klartraum {
 
 template <typename A, typename R, typename U = void, typename P = void>
-class BufferTransformation : public DrawGraphElement {
+class BufferTransformation : public TemplatedBufferElementInterface<R> {
 public:
     BufferTransformation(VulkanKernel &vulkanKernel, const std::string &shaderPath) :
         shaderPath(shaderPath) 
@@ -195,6 +195,20 @@ public:
     void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement) {
         otherInputs.push_back(bufferElement);
         //outputBuffers[pathId].addScratchBuffer(size);
+    }
+
+
+    virtual size_t getBufferMemSize() const override {
+        return outputBuffers[0].getBufferMemSize();
+    }
+
+    virtual VkBuffer& getVkBuffer(uint32_t pathId) override {
+        return outputBuffers[pathId].getBuffer();
+    }
+
+
+    virtual R& getBuffer(uint32_t pathId) override {
+        return outputBuffers[pathId];
     }
 
 private:
