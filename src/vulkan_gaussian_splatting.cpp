@@ -36,20 +36,23 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     // setup projection stage
     /////////////////////////////////////////////
-    project3Dto2D = std::make_unique<GaussianProjection>(vulkanKernel, "shaders/gaussian_splatting_projection.comp.spv");
-    project3Dto2D->setInput(gaussians3D);
-    project3Dto2D->setGroupCountX(number_of_gaussians * 2);
 
-    project3Dto2D->setUbo(std::dynamic_pointer_cast<CameraUboType>(getInputElement(1)));
-
-    // setup binning stage
-    /////////////////////////////////////////////
-        binPushConstants pushConstants = {
+    ProjectionPushConstants pushConstants = {
         number_of_gaussians,   // numElements
         4,                              // gridSize (4x4)
         512.0f,                         // screenWidth
         512.0f                          // screenHeight
     };
+
+    project3Dto2D = std::make_unique<GaussianProjection>(vulkanKernel, "shaders/gaussian_splatting_projection.comp.spv");
+    project3Dto2D->setInput(gaussians3D);
+    project3Dto2D->setGroupCountX(number_of_gaussians / 128 + 1);
+    project3Dto2D->setPushConstants({pushConstants});
+
+    project3Dto2D->setUbo(std::dynamic_pointer_cast<CameraUboType>(getInputElement(1)));
+
+    // setup binning stage
+    /////////////////////////////////////////////
 
     auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
     additionalGaussian2DCounts->zero();    
@@ -94,7 +97,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
 
-    binPushConstants computeBoundsPushConstants = {
+    ProjectionPushConstants computeBoundsPushConstants = {
         (uint32_t)((number_of_gaussians*2)),   // numElements
         4,                              // gridSize (4x4)
         512.0f,                         // screenWidth

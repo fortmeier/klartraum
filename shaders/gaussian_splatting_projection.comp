@@ -2,6 +2,8 @@
 
 #include "gaussian_splatting_types.glsl"
 
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
 #extension GL_EXT_scalar_block_layout : enable
 
 layout(scalar, set = 0, binding = 0) readonly buffer GaussiansSSBOIn {
@@ -17,6 +19,13 @@ layout(set = 1, binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
 } ubo;
+
+layout(push_constant) uniform PushConstants {
+    uint numElements;
+    uint gridSize;
+    float screenWidth;
+    float screenHeight;
+} pushConstants;
 
 #extension GL_EXT_debug_printf : enable
 
@@ -82,6 +91,11 @@ mat2 calculateCovarianceMatrix2D(Gaussian gaussian, vec3 u) {
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
+
+    if (index >= pushConstants.numElements) {
+        return; // Out of bounds
+    }
+    
     vec3 p = gaussianIn[index].position;
 
     vec4 position = ubo.proj * ubo.view * ubo.model * vec4(p, 1.0);

@@ -299,7 +299,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
     additionalGaussian2DCounts->zero();
 
-    binPushConstants pushConstants = {
+    ProjectionPushConstants pushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
         4,                              // gridSize (4x4)
         512.0f,                         // screenWidth
@@ -401,7 +401,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
     additionalGaussian2DCounts->zero();
 
-    binPushConstants pushConstants = {
+    ProjectionPushConstants pushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
         4,                              // gridSize (4x4)
         512.0f,                         // screenWidth
@@ -449,7 +449,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
     auto computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
 
-    binPushConstants computeBoundsPushConstants = {
+    ProjectionPushConstants computeBoundsPushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
         4,                              // gridSize (4x4)
         512.0f,                         // screenWidth

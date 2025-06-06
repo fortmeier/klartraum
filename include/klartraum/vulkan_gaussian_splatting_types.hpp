@@ -35,7 +35,14 @@ struct Gaussian3D {
 typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
 typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
 
-typedef BufferTransformation<Gaussian3DBuffer, Gaussian2DBuffer, CameraUboType> GaussianProjection;
+struct ProjectionPushConstants {
+  uint32_t numElements;
+  uint32_t gridSize;
+  float screenWidth;
+  float screenHeight;
+};
+
+typedef BufferTransformation<Gaussian3DBuffer, Gaussian2DBuffer, CameraUboType, ProjectionPushConstants> GaussianProjection;
 
 struct SplatPushConstants {
   uint32_t numElements;
@@ -46,12 +53,6 @@ struct SplatPushConstants {
   float screenHeight;
 };
 
-struct binPushConstants {
-  uint32_t numElements;
-  uint32_t gridSize;
-  float screenWidth;
-  float screenHeight;
-};
 
 struct SortPushConstants {
   uint32_t pass;
@@ -60,8 +61,8 @@ struct SortPushConstants {
 };
 typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
 
-typedef GeneralComputation<binPushConstants> GaussianBinning;
-typedef GeneralComputation<binPushConstants> GaussianComputeBounds;
+typedef GeneralComputation<ProjectionPushConstants> GaussianBinning;
+typedef GeneralComputation<ProjectionPushConstants> GaussianComputeBounds;
 typedef GeneralComputation<SplatPushConstants> GaussianSplatting;
 
 } // namespace klartraum
