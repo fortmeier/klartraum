@@ -48,7 +48,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     project3Dto2D->setInput(gaussians3D);
     project3Dto2D->setGroupCountX(number_of_gaussians / 128 + 1);
     project3Dto2D->setPushConstants({pushConstants});
-
+    project3Dto2D->setCustomOutputSize(number_of_gaussians * 2);
     project3Dto2D->setUbo(std::dynamic_pointer_cast<CameraUboType>(getInputElement(1)));
 
     // setup binning stage
