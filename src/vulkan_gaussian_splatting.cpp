@@ -31,6 +31,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     }
 
     gaussians3D = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanKernel, number_of_gaussians);
+    gaussians3D->setName("Gaussians3D");
 
     gaussians3D->getBuffer().memcopyFrom(gaussians3DData);
 
@@ -45,6 +46,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     };
 
     project3Dto2D = std::make_unique<GaussianProjection>(vulkanKernel, "shaders/gaussian_splatting_projection.comp.spv");
+    project3Dto2D->setName("GaussianProjection");
     project3Dto2D->setInput(gaussians3D);
     project3Dto2D->setGroupCountX(number_of_gaussians / 128 + 1);
     project3Dto2D->setPushConstants({pushConstants});
@@ -55,9 +57,11 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     /////////////////////////////////////////////
 
     auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->zero();    
+    additionalGaussian2DCounts->zero();
+    additionalGaussian2DCounts->setName("AdditionalGaussian2DCounts");
 
     bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    bin->setName("GaussianBinning");
     bin->setInput(project3Dto2D, 0);
     bin->setInput(additionalGaussian2DCounts, 1);
     bin->setGroupCountX((number_of_gaussians*2) / 128 + 1);
@@ -66,11 +70,14 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup sorting stage
     /////////////////////////////////////////////
     sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
+    sort2DGaussians->setName("GaussianSort");
 
     sort2DGaussians->setInput(bin, 0, 0);
 
     auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+    scratchBufferCounts->setName("ScratchBufferCounts");
     auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+    scratchBufferOffsets->setName("ScratchBufferOffsets");
 
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
@@ -93,9 +100,11 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup bounds computation stage
     /////////////////////////////////////////////
     auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16*2);
+    scratchBinStartAndEnd->setName("ScratchBinStartAndEnd");
     scratchBinStartAndEnd->zero();
 
     computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
+    computeBounds->setName("GaussianComputeBounds");
 
     ProjectionPushConstants computeBoundsPushConstants = {
         (uint32_t)((number_of_gaussians)),   // numElements
@@ -115,6 +124,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup splatting stage
     /////////////////////////////////////////////
     splat = std::make_shared<GaussianSplatting>(vulkanKernel, "shaders/gaussian_splatting_binned_splatting.comp.spv");
+    splat->setName("GaussianSplatting");
 
     std::vector<SplatPushConstants> splatPushConstants;
     for(uint32_t y = 0; y < 4; y++) {
