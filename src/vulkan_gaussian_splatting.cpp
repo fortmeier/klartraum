@@ -79,7 +79,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     sort2DGaussians->setGroupCountX((number_of_gaussians*2) / 128 * 2 + 1);
 
 
-    uint32_t numElements = (uint32_t)((number_of_gaussians*2));
+    uint32_t numElements = (uint32_t)((number_of_gaussians));
     uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
     uint32_t numBins = 16; // Number of bins for sorting = 2 ^ numBitsPerPass
     uint32_t passes = 32 + 16; // 32 bits for depth, 16 bits for binning
@@ -98,7 +98,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
 
     ProjectionPushConstants computeBoundsPushConstants = {
-        (uint32_t)((number_of_gaussians*2)),   // numElements
+        (uint32_t)((number_of_gaussians)),   // numElements
         4,                              // gridSize (4x4)
         512.0f,                         // screenWidth
         512.0f                          // screenHeight
