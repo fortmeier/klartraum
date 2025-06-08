@@ -72,8 +72,15 @@ void main() {
     uint idx = gl_GlobalInvocationID.x;
     uint numberGridElements = pushConstants.gridSize * pushConstants.gridSize;
 
+    if (idx == 0) {
+        // Initialize the number of additional gaussians to zero
+        outputBuffer.numberAdditionalGaussians = 0;
+    }
+
+    //return;
     if (idx >= pushConstants.numElements) return;
 
+    barrier();
 
     // Get the gaussian
     Gaussian2D gaussian = inputBuffer.gaussians[idx];
@@ -88,14 +95,43 @@ void main() {
             // Increment count for this bin
             numberOverlappingBins++;
             if (numberOverlappingBins > 1) {
+                
                 uint newGaussianIndex = pushConstants.numElements + atomicAdd(outputBuffer.numberAdditionalGaussians, 1);
-                inputBuffer.gaussians[newGaussianIndex] = gaussian;
-                inputBuffer.gaussians[newGaussianIndex].binMask = 1 << binIndex;
+
+                if(newGaussianIndex < pushConstants.numElements * 2) {
+                    // Create a new gaussian for this bin
+                    Gaussian2D newGaussian = gaussian;
+                    newGaussian.binMask = 1 << binIndex; // Set the binMask to the current bin
+                    inputBuffer.gaussians[newGaussianIndex] = newGaussian;
+
+                    // Debug print: new gaussian created
+                    // debugPrintfEXT("New Gaussian[%u / %u]: pos=(%f,%f), cov=(%f,%f,%f,%f), binMask=0x%x\n",
+                    //     newGaussianIndex,
+                    //     pushConstants.numElements * 2,
+                    //     newGaussian.position.x, newGaussian.position.y,
+                    //     newGaussian.covariance[0][0], newGaussian.covariance[0][1],
+                    //     newGaussian.covariance[1][0], newGaussian.covariance[1][1],
+                    //     newGaussian.binMask
+                    // );
+
+                } else {
+                    // Error: too many additional gaussians
+                    // debugPrintfEXT("Error: Too many additional gaussians created! Index: %u\n", newGaussianIndex);
+                }
+
 
             } else {
                 inputBuffer.gaussians[idx].binMask = 1 << binIndex;
             }
             
         }
+    }
+
+    barrier();
+
+    if (idx == 0) {
+        // Initialize the number of additional gaussians to zero
+        outputBuffer.numberAdditionalGaussians = min(outputBuffer.numberAdditionalGaussians, pushConstants.numElements);
+        debugPrintfEXT("Total number of additional gaussians: %u\n", outputBuffer.numberAdditionalGaussians);
     }
 } 
