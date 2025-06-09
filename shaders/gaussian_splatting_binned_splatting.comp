@@ -23,7 +23,7 @@ layout(scalar, binding = 2) buffer OutputBuffer {
 
 
 // Output image
-layout(binding = 3, rgba8) uniform writeonly image2D outputImage;
+layout(binding = 3, rgba8) uniform image2D outputImage;
 
 layout(push_constant) uniform PushConstants {
     uint numElements;
