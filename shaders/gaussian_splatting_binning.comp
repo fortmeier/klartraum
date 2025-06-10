@@ -76,12 +76,6 @@ void main() {
     uint idx = gl_GlobalInvocationID.x;
     uint numberGridElements = pushConstants.gridSize * pushConstants.gridSize;
 
-    if (idx == 0) {
-        // Initialize the number of additional gaussians to zero
-        outputBuffer2.numberTotalGaussians = 0;
-    }
-
-    //return;
     if (idx >= pushConstants.numElements) return;
 
     barrier();
@@ -127,7 +121,7 @@ void main() {
 
     barrier();
 
-    if (idx == 0) {
+    if (gl_WorkGroupID.x == 0) {
         // Initialize the number of additional gaussians to zero
         outputBuffer2.numberTotalGaussians = min(outputBuffer2.numberTotalGaussians, pushConstants.numElements * 2);
         // debugPrintfEXT("Total number of gaussians: %u\n", outputBuffer2.numberTotalGaussians);

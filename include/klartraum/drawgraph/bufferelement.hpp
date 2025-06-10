@@ -44,7 +44,11 @@ public:
         }
     };
 
-    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
+        if (recordToZero) {
+            buffers[pathId]._recordZero(commandBuffer);
+        }
+    };
 
     virtual const char* getType() const {
         return "BufferElement";
@@ -64,6 +68,10 @@ public:
         }
     }
 
+    void setRecordToZero(bool _setToZero) {
+        recordToZero = _setToZero;
+    }
+
     virtual VkBuffer& getVkBuffer(uint32_t pathId) {
         return buffers[pathId].getBuffer();
     };
@@ -73,6 +81,7 @@ private:
     uint32_t numberPaths = 0;
     uint32_t numberElements = 0;
     std::vector<BufferType> buffers;
+    bool recordToZero = false;
 
 };
 
