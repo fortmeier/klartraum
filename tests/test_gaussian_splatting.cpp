@@ -202,13 +202,13 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
 
     auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
     auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
-    auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->zero();
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    totalGaussian2DCounts->zero();
 
 
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
-    sort2DGaussians->addScratchBufferElement(additionalGaussian2DCounts);
+    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts);
 
     auto& drawgraph = DrawGraph(vulkanKernel, 1);
     drawgraph.compileFrom(sort2DGaussians);
@@ -291,13 +291,13 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     // that are in more than one bin
 
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size()*2);
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Create a buffer that holds the number of elements after duplication
-    auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->zero();
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    totalGaussian2DCounts->zero();
 
     ProjectionPushConstants pushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
@@ -306,9 +306,15 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         512.0f                          // screenHeight
     };
 
+    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size() * 2);
+    binnedGaussians2D->zero();
+    binnedGaussians2D->setName("BinnedGaussians2D");
+
+
     auto bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setInput(bufferElement, 0);
-    bin->setInput(additionalGaussian2DCounts, 1);
+    bin->setInput(binnedGaussians2D, 1);
+    bin->setInput(totalGaussian2DCounts, 2);
     bin->setGroupCountX(gaussians2D.size() / 128 + 1);
     bin->setPushConstants({pushConstants});
 
@@ -317,17 +323,19 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
 
     drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
-    std::vector<uint32_t> finalAdditionalGaussiansCount(1);
-    additionalGaussian2DCounts->getBuffer(0).memcopyTo(finalAdditionalGaussiansCount);
+    std::vector<uint32_t> finalGaussiansCount(1);
+    totalGaussian2DCounts->getBuffer(0).memcopyTo(finalGaussiansCount);
 
-    std::vector<Gaussian2D> finalGaussians2D(gaussians2D.size() + finalAdditionalGaussiansCount[0]);
-    bufferElement->getBuffer(0).memcopyTo(finalGaussians2D);
+    std::vector<Gaussian2D> finalGaussians2D(gaussians2D.size() * 2);
+    binnedGaussians2D->getBuffer(0).memcopyTo(finalGaussians2D);
 
+    // TODO PROBLEM: order of gaussians is not deterministic, better to
+    // merge the test with the sorting step
     EXPECT_EQ(finalGaussians2D[0].binMask, 0b0000000000000001);
-    EXPECT_EQ(finalGaussians2D[1].binMask, 0b0000000000001000);
-    EXPECT_EQ(finalGaussians2D[2].binMask, 0b0001000000000000);
-    EXPECT_EQ(finalGaussians2D[3].binMask, 0b1000000000000000);
-    EXPECT_EQ(finalGaussians2D[4].binMask, 0b0000000000000010);
+    EXPECT_EQ(finalGaussians2D[1].binMask, 0b0000000000000010);
+    EXPECT_EQ(finalGaussians2D[2].binMask, 0b0000000000001000);
+    EXPECT_EQ(finalGaussians2D[3].binMask, 0b0001000000000000);
+    EXPECT_EQ(finalGaussians2D[4].binMask, 0b1000000000000000);
 
    
     return;
@@ -398,8 +406,8 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Create a buffer that holds the number of elements after duplication
-    auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->zero();
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    totalGaussian2DCounts->zero();
 
     ProjectionPushConstants pushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
@@ -408,9 +416,15 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
         512.0f                          // screenHeight
     };
 
+    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size() * 2);
+    binnedGaussians2D->zero();
+    binnedGaussians2D->setName("BinnedGaussians2D");
+
+
     auto bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setInput(bufferElement, 0);
-    bin->setInput(additionalGaussian2DCounts, 1);
+    bin->setInput(binnedGaussians2D, 1);
+    bin->setInput(totalGaussian2DCounts, 2);
     bin->setGroupCountX(gaussians2D.size() / 128 + 1);
     bin->setPushConstants({pushConstants});
 
@@ -418,14 +432,14 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     // Buffer transformation that sorts by z (depth)
     std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
 
-    sort2DGaussians->setInput(bin, 0, 0);
+    sort2DGaussians->setInput(bin, 0, 1);
 
     auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
     auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
 
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
-    sort2DGaussians->addScratchBufferElement(additionalGaussian2DCounts);
+    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts);
 
     sort2DGaussians->setGroupCountX(gaussians2D.size() / 128 * 2 + 1);
 
@@ -457,7 +471,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     };
 
     computeBounds->setInput(sort2DGaussians, 0, 0); //bufferElement, 0);
-    computeBounds->setInput(bin, 1, 1); //additionalGaussian2DCounts, 1);
+    computeBounds->setInput(bin, 1, 2); //totalGaussian2DCounts, 1);
     computeBounds->setInput(scratchBinStartAndEnd, 2 ); //scratchBinStartAndEnd, 2);
     computeBounds->setGroupCountX(gaussians2D.size() * 2 / 256 + 1);
 
@@ -497,7 +511,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     }
     
     splat->setInput(computeBounds, 0, 0); // bufferElement, 0);
-    splat->setInput(computeBounds, 1, 1); // additionalGaussian2DCounts, 1);
+    splat->setInput(computeBounds, 1, 1); // totalGaussian2DCounts, 1);
     splat->setInput(computeBounds, 2, 2); // scratchBinStartAndEnd, 2);
     splat->setInput(imageViewSrc, 3); 
 
@@ -532,7 +546,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
 
     std::vector<uint32_t> finalAdditionalGaussiansCount(1);
-    additionalGaussian2DCounts->getBuffer(0).memcopyTo(finalAdditionalGaussiansCount);
+    totalGaussian2DCounts->getBuffer(0).memcopyTo(finalAdditionalGaussiansCount);
 
     std::vector<Gaussian2D> finalGaussians2D(gaussians2D.size() + finalAdditionalGaussiansCount[0]);
     bufferElement->getBuffer(0).memcopyTo(finalGaussians2D);

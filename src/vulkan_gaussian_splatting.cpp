@@ -56,14 +56,19 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup binning stage
     /////////////////////////////////////////////
 
-    auto additionalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    additionalGaussian2DCounts->zero();
-    additionalGaussian2DCounts->setName("AdditionalGaussian2DCounts");
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    totalGaussian2DCounts->zero();
+    totalGaussian2DCounts->setName("TotalGaussian2DCounts");
+
+    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, number_of_gaussians * 2);
+    binnedGaussians2D->zero();
+    binnedGaussians2D->setName("BinnedGaussians2D");
 
     bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setName("GaussianBinning");
     bin->setInput(project3Dto2D, 0);
-    bin->setInput(additionalGaussian2DCounts, 1);
+    bin->setInput(binnedGaussians2D, 1);
+    bin->setInput(totalGaussian2DCounts, 2);
     bin->setGroupCountX((number_of_gaussians*2) / 128 + 1);
     bin->setPushConstants({pushConstants});
 
@@ -72,7 +77,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
     sort2DGaussians->setName("GaussianSort");
 
-    sort2DGaussians->setInput(bin, 0, 0);
+    sort2DGaussians->setInput(bin, 0, 1);
 
     auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
     scratchBufferCounts->setName("ScratchBufferCounts");
@@ -81,7 +86,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
-    sort2DGaussians->addScratchBufferElement(additionalGaussian2DCounts);
+    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts);
 
     sort2DGaussians->setGroupCountX((number_of_gaussians*2) / 128 * 2 + 1);
 
@@ -114,7 +119,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     };
 
     computeBounds->setInput(sort2DGaussians, 0, 0); //bufferElement, 0);
-    computeBounds->setInput(bin, 1, 1); //additionalGaussian2DCounts, 1);
+    computeBounds->setInput(bin, 1, 2); //totalGaussian2DCounts, 1);
     computeBounds->setInput(scratchBinStartAndEnd, 2 ); //scratchBinStartAndEnd, 2);
     computeBounds->setGroupCountX((number_of_gaussians*2) / 256 + 1);
 
@@ -141,7 +146,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     }
     
     splat->setInput(computeBounds, 0, 0); // bufferElement, 0);
-    splat->setInput(computeBounds, 1, 1); // additionalGaussian2DCounts, 1);
+    splat->setInput(computeBounds, 1, 1); // totalGaussian2DCounts, 1);
     splat->setInput(computeBounds, 2, 2); // scratchBinStartAndEnd, 2);
     splat->setInput(imageViewSrc, 3); 
 

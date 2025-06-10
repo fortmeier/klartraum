@@ -110,6 +110,9 @@ void main()
 
     gaussian2d.color = gaussianIn[index].color;
 
+    gaussian2d.binMask = uint(-1); // set to a dummy value for now, should be set based on the binning logic in the next step
+
+    // BINNING CODE MUST BE MOVED HERE FOR OPTIMAL PERFORMANCE
     gaussian2dOut[index] = gaussian2d;
 
 }
