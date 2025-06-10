@@ -57,11 +57,12 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     /////////////////////////////////////////////
 
     auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
-    totalGaussian2DCounts->zero();
+    totalGaussian2DCounts->setRecordToZero(true);
     totalGaussian2DCounts->setName("TotalGaussian2DCounts");
 
     auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, number_of_gaussians * 2);
-    binnedGaussians2D->zero();
+    binnedGaussians2D->zero(); // nice if it is zero initially, but not necessary
+    binnedGaussians2D->setRecordToZero(false); // does not have to be reset
     binnedGaussians2D->setName("BinnedGaussians2D");
 
     bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
@@ -81,12 +82,14 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
     scratchBufferCounts->setName("ScratchBufferCounts");
+    scratchBufferCounts->setRecordToZero(true);
     auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
     scratchBufferOffsets->setName("ScratchBufferOffsets");
+    scratchBufferOffsets->setRecordToZero(true);
 
-    sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
-    sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
-    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts);
+    sort2DGaussians->addScratchBufferElement(scratchBufferCounts, true);
+    sort2DGaussians->addScratchBufferElement(scratchBufferOffsets, true);
+    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts, false);
 
     sort2DGaussians->setGroupCountX((number_of_gaussians*2) / 128 * 2 + 1);
 
@@ -106,7 +109,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     /////////////////////////////////////////////
     auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16*2);
     scratchBinStartAndEnd->setName("ScratchBinStartAndEnd");
-    scratchBinStartAndEnd->zero();
+    scratchBinStartAndEnd->setRecordToZero(true);
 
     computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
     computeBounds->setName("GaussianComputeBounds");

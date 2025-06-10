@@ -131,9 +131,11 @@ public:
         }
 
         if constexpr (std::is_void<P>::value) {
+            recordScratchToZero(commandBuffer, pathId);
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
         } else {
             for (const auto& pushConstant : pushConstants) {
+                recordScratchToZero(commandBuffer, pathId);
                 vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
                 vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
                 VkMemoryBarrier memoryBarrier{};
@@ -192,9 +194,9 @@ public:
         }
     }
 
-    void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement) {
+    void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement, bool recordSetToZero = true) {
         otherInputs.push_back(bufferElement);
-        //outputBuffers[pathId].addScratchBuffer(size);
+        otherInputsSetToZero.push_back(recordSetToZero);
     }
 
 
@@ -236,6 +238,7 @@ private:
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
     std::vector<std::shared_ptr<BufferElementInterface>> otherInputs;
+    std::vector<bool> otherInputsSetToZero; // whether to record the scratch buffers to zero
     /*
 
     */
@@ -450,6 +453,16 @@ private:
         vkDestroyShaderModule(device, computeShaderModule, nullptr);        
     }
 
+    void recordScratchToZero(VkCommandBuffer commandBuffer, uint32_t pathId) {
+        for (size_t i = 0; i < otherInputs.size(); i++) {
+            auto& scratch = otherInputs[i];
+            if (otherInputsSetToZero[i]) {
+                VkBuffer scratchBuffer = scratch->getVkBuffer(pathId);
+                size_t memsize = scratch->getBufferMemSize();
+                vkCmdFillBuffer(commandBuffer, scratchBuffer, 0, memsize, 0);
+            }
+        }
+    }
 };
 
 } // namespace klartraum
