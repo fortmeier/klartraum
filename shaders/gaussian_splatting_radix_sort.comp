@@ -56,17 +56,6 @@ void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= inputBuffer2.numberTotalGaussians) return;
 
-    // first, reset the counts and offsets for each bin
-
-    if (idx == 0) {
-        // debugPrintfEXT("Radix sort pass: %u\n", pushConstants.pass);
-        for (uint i = 0; i < pushConstants.numBins; i++) {
-            countBuffer.counts[i] = 0;
-            offsetBuffer.offsets[i] = 0;
-        }
-    }
-
-    barrier();
 
     // get the value to sort (use z here)
     uint value = floatBitsToUint(inputBuffer.gaussians[idx].z);
