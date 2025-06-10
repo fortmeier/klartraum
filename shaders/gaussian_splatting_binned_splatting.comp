@@ -14,7 +14,7 @@ layout(scalar, binding = 0) buffer GaussianBuffer {
 } gaussianBuffer;
 
 layout(scalar, binding = 1) buffer InputBuffer2 {
-    uint numberAdditionalGaussians;
+    uint numberTotalGaussians;
 } inputBuffer2;
 
 layout(scalar, binding = 2) buffer OutputBuffer {

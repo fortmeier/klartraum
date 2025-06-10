@@ -12,7 +12,7 @@ layout(scalar, binding = 0) buffer InputBuffer {
 } inputBuffer;
 
 layout(scalar, binding = 1) buffer InputBuffer2 {
-    uint numberAdditionalGaussians;
+    uint numberTotalGaussians;
 } inputBuffer2;
 
 layout(scalar, binding = 2) buffer OutputBuffer {
@@ -45,10 +45,10 @@ void main() {
 
 
     // discard all threads that are not in the range of the input buffer
-    if (idx >= pushConstants.numElements + inputBuffer2.numberAdditionalGaussians) return;
+    if (idx >= inputBuffer2.numberTotalGaussians) return;
 
 
-    if (idx == pushConstants.numElements + inputBuffer2.numberAdditionalGaussians - 1) {
+    if (idx == inputBuffer2.numberTotalGaussians - 1) {
         // last element: store the end index of the whole sequence
         uint binMask = inputBuffer.gaussians[idx].binMask;
         uint logBinMask = uint(log2(binMask));
