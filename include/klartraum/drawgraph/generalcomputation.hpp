@@ -123,12 +123,14 @@ public:
         }
 
         if constexpr (std::is_void<P>::value) {
+            recordScratchToZero(commandBuffer);
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
         } else {
             if(pushConstants.empty()) {
                 throw std::runtime_error("push constants are empty!");
             }
             for (const auto& pushConstant : pushConstants) {
+                recordScratchToZero(commandBuffer);
                 vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
                 vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
                 VkMemoryBarrier memoryBarrier{};
@@ -185,6 +187,8 @@ private:
 
     // inputs that are also outputs of the shader
     std::map<int, DrawGraphElementPtr> inputOutputs;
+
+    bool setToZero = false; // whether to set the scratch buffers to zero before dispatching
 
 
     const std::string shaderPath;
@@ -355,6 +359,21 @@ private:
         }
     
         vkDestroyShaderModule(device, computeShaderModule, nullptr);        
+    }
+    
+    void recordScratchToZero(VkCommandBuffer commandBuffer) {
+        if (setToZero) {
+            // TODO implement this
+            throw std::runtime_error("setToZero is not implemented yet");
+            // for (size_t i = 0; i < otherInputs.size(); i++) {
+            //     auto& scratch = otherInputs[i];
+            //     if (otherInputsSetToZero[i]) {
+            //         VkBuffer scratchBuffer = scratch->getVkBuffer(pathId);
+            //         size_t memsize = scratch->getBufferMemSize();
+            //         vkCmdFillBuffer(commandBuffer, scratchBuffer, 0, memsize, 0);
+            //     }
+            // }
+        }
     }
 };
 

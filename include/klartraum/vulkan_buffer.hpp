@@ -18,7 +18,7 @@ public:
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.size = sizeof(T) * size;
-        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT ;
+        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     
         if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
@@ -79,6 +79,11 @@ public:
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
         memset(mappedData, 0, sizeof(T) * size);
         vkUnmapMemory(device, vertexBufferMemory);
+    }
+
+    void _recordZero(VkCommandBuffer commandBuffer) {
+        auto& device = vulkanKernel.getDevice();
+        vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, 0);
     }
 
     VkBuffer& getBuffer() {

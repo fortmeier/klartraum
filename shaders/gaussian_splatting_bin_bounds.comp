@@ -32,18 +32,6 @@ void main() {
 
     uint numGridElements = pushConstants.gridSize * pushConstants.gridSize;
 
-    // initialize the start and end indices of the grid element sequences
-    // to zero -> if start and end the same, the sequence for this bin is empty
-    if (idx == 0) {
-        for (uint i = 0; i < numGridElements; i++) {
-            outputBuffer.startAndEnd[i].start = 0;
-            outputBuffer.startAndEnd[i].end = 0;
-        }
-    }
-
-    barrier();
-
-
     // discard all threads that are not in the range of the input buffer
     if (idx >= inputBuffer2.numberTotalGaussians) return;
 
