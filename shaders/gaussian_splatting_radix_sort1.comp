@@ -1,0 +1,58 @@
+#version 450
+
+#include "gaussian_splatting_types.glsl"
+
+#extension GL_EXT_debug_printf : enable
+
+
+layout(local_size_x = 1) in;
+
+#extension GL_EXT_scalar_block_layout : enable
+
+layout(scalar, binding = 0) buffer InputBuffer {
+    Gaussian2D gaussians[];
+} inputBuffer;
+
+layout(scalar, binding = 2) buffer OutputBuffer {
+    Gaussian2D gaussians[];
+} outputBuffer;
+
+layout(scalar, binding = 3) buffer CountBuffer {
+    uint counts[];
+} countBuffer;
+
+layout(scalar, binding = 4) buffer OffsetBuffer {
+    uint offsets[];
+} offsetBuffer;
+
+layout(scalar, binding = 5) buffer InputBuffer2 {
+    uint numberTotalGaussians;
+} inputBuffer2;
+
+layout(push_constant) uniform PushConstants {
+    uint pass;
+    uint numElements;
+    uint numBins;
+
+} pushConstants;
+
+bool debug = true;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx > 0) return;
+
+    uint accumulatedOffset = 0;
+    for (uint i = 0; i < pushConstants.numBins; i++) {
+        offsetBuffer.offsets[i] = accumulatedOffset;
+        uint count = countBuffer.counts[i];
+        if (debug) {
+            debugPrintfEXT("Bin %u: count = %u, offset = %u\n", i, count, accumulatedOffset);
+        }
+        accumulatedOffset += count;
+
+        // reset the count so it can be used for the next step
+        countBuffer.counts[i] = 0;
+    }
+
+}
