@@ -36,6 +36,8 @@ layout(push_constant) uniform PushConstants {
 
 } pushConstants;
 
+bool debug = true;
+
 // Helper function to get the bin at a specific position
 // this uses 16 bins (= 4 bits of the float value for each pass)
 uint getBin(uint value, uint binMask, uint pass) {
@@ -56,6 +58,13 @@ void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= inputBuffer2.numberTotalGaussians) return;
 
+    if (idx == 0) {
+        if (debug) {
+            debugPrintfEXT("Radix sort pass: %u\n", pushConstants.pass);
+            debugPrintfEXT("Initial Number of elements: %u\n", pushConstants.numElements);
+            debugPrintfEXT("Number of elements: %u\n", inputBuffer2.numberTotalGaussians);
+        }
+    }
 
     // get the value to sort (use z here)
     uint value = floatBitsToUint(inputBuffer.gaussians[idx].z);
@@ -67,37 +76,4 @@ void main() {
     // count the occurrences of this bin
     atomicAdd(countBuffer.counts[bin], 1);
 
-
-    // wait for all threads to finish counting
-    barrier();
-
-    // accumulate the counts for each bin
-    // this is done in the first element only
-    if (idx == 0) {
-        uint accumulatedOffset = 0;
-        for (uint i = 0; i < pushConstants.numBins; i++) {
-            offsetBuffer.offsets[i] = accumulatedOffset;
-            uint count = countBuffer.counts[i];
-            accumulatedOffset += count;
-
-            // reset the count so it can be used for the next step
-            countBuffer.counts[i] = 0;
-        }
-    }
-
-    barrier();
-
-    // Calculate the offset for this element while incrementing the count
-    // for the bin this element is in
-    uint adder = atomicAdd(countBuffer.counts[bin], 1);
-    uint finalPos = offsetBuffer.offsets[bin] + adder;
-
-    // note: this copies the element to the output buffer
-    // but maybe it is better to just sort indices and then copy the elements in a second pass
-    outputBuffer.gaussians[finalPos] = inputBuffer.gaussians[idx];
-    barrier();
-    // copy back to input buffer
-    // this could be circumvented by somehow flipping the input and output buffers
-    inputBuffer.gaussians[idx] = outputBuffer.gaussians[idx];
- 
 }

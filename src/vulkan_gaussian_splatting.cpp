@@ -75,7 +75,14 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     // setup sorting stage
     /////////////////////////////////////////////
-    sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
+    std::vector<std::string> shaders = {
+        "shaders/gaussian_splatting_radix_sort0.comp.spv",
+        "shaders/gaussian_splatting_radix_sort1.comp.spv",
+        "shaders/gaussian_splatting_radix_sort2.comp.spv",
+        "shaders/gaussian_splatting_radix_sort3.comp.spv",
+        };
+    sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, shaders);
+
     sort2DGaussians->setName("GaussianSort");
 
     sort2DGaussians->setInput(bin, 0, 1);
@@ -91,7 +98,10 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets, true);
     sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts, false);
 
-    sort2DGaussians->setGroupCountX((number_of_gaussians*2) / 128 * 2 + 1);
+    int sortGroupCountX = (number_of_gaussians*2) / 256 + 1;
+    sortGroupCountX = std::max(sortGroupCountX, 16); // Ensure at least 16 groups so sorting has at least 16 groups for scatter
+
+    sort2DGaussians->setGroupCountX(sortGroupCountX);
 
 
     uint32_t numElements = (uint32_t)((number_of_gaussians));
