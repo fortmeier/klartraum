@@ -121,9 +121,12 @@ void main() {
 
     barrier();
 
-    if (gl_WorkGroupID.x == 0) {
+    // THIS DOES ALSO NOT WORK
+    // BUT CAN BE MADE WORKING SINCE IT CAN BE DONE
+    // IN EACH WORKGROUP
+    if (gl_LocalInvocationID.x == 0) {
         // Initialize the number of additional gaussians to zero
-        outputBuffer2.numberTotalGaussians = min(outputBuffer2.numberTotalGaussians, pushConstants.numElements * 2);
+        atomicMin(outputBuffer2.numberTotalGaussians, pushConstants.numElements * 2);
         // debugPrintfEXT("Total number of gaussians: %u\n", outputBuffer2.numberTotalGaussians);
     }
 } 
