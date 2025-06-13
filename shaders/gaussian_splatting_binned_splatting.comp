@@ -92,6 +92,7 @@ void main() {
         if (debug) {
             debugPrintfEXT("pixelCoord: (%d, %d)\n", pixelCoord.x, pixelCoord.y);
             debugPrintfEXT("start: %u, end: %u\n", start, end);
+            debugPrintfEXT("Total number of gaussians: %u\n", inputBuffer2.numberTotalGaussians);
         }
         for (uint i = start; i < end; i++) {
             Gaussian2D gaussian = gaussianBuffer.gaussians[i];
@@ -110,7 +111,7 @@ void main() {
     }
 
     vec4 imageInput = imageLoad(outputImage, pixelCoord);
-    vec4 outputColor = imageInput + backgroundColor * backgroundColor.w + finalColor * (1.0 - accum_opacity);
+    vec4 outputColor = imageInput + backgroundColor * backgroundColor.w * float(debug) + finalColor * (1.0 - accum_opacity);
     outputColor = clamp(outputColor, vec4(0.0), vec4(1.0));
 
     //debugPrintfEXT("pixelCoord: (%d, %d), finalColor: (%f, %f, %f, %f)\n", pixelCoord.x, pixelCoord.y, finalColor.r, finalColor.g, finalColor.b, finalColor.a);
