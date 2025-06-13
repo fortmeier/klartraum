@@ -289,6 +289,10 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
         1, &barrierBack);
 }
 
+double sigmoid(double x) {
+    return 1.0 / (1.0 + std::exp(-x));
+}
+
 
 void VulkanGaussianSplatting::loadSPZModel(std::string path)
 {
@@ -302,6 +306,7 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path)
         spz::UnpackedGaussian gaussian = packed.unpack(i);
         Gaussian3D gaussian3D;
         memcpy(&gaussian3D, &gaussian, sizeof(spz::UnpackedGaussian));
+        gaussian3D.alpha = sigmoid(gaussian.alpha); // inverse logistic back to alpha
         gaussians3DData.push_back(gaussian3D);
     }
 

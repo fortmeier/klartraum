@@ -15,6 +15,7 @@ struct Gaussian2D {
     uint binMask; // bitmask for which bins this gaussian is in, only one bit should be set
     mat2 covariance; // covariance matrix for the gaussian
     vec3 color; // color of the gaussian
+    float alpha;
 };
 
 struct StartAndEnd {
