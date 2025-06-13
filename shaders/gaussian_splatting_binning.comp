@@ -5,7 +5,7 @@
 layout(local_size_x = 128) in;
 
 #extension GL_EXT_scalar_block_layout : enable
-// #extension GL_EXT_debug_printf : enable
+#extension GL_EXT_debug_printf : enable
 
 layout(scalar, binding = 0) readonly buffer InputBuffer {
     Gaussian2D gaussians[];
@@ -72,6 +72,8 @@ bool overlapsWithBin(Gaussian2D gaussian, uint binIndex) {
              gaussianMax.y < binMin.y || gaussianMin.y > binMax.y);
 }
 
+bool debug = false;
+
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     uint numberGridElements = pushConstants.gridSize * pushConstants.gridSize;
@@ -82,6 +84,17 @@ void main() {
 
     // Get the gaussian
     Gaussian2D gaussian = inputBuffer.gaussians[idx];
+
+    // Debug print: gaussian index, position, covariance, and binMask before assignment
+    // if (debug) {
+    //     debugPrintfEXT("Gaussian[%u]: pos=(%f,%f), cov=(%f,%f,%f,%f), binMask=0x%x\n",
+    //         idx,
+    //         gaussian.position.x, gaussian.position.y,
+    //         gaussian.covariance[0][0], gaussian.covariance[0][1],
+    //         gaussian.covariance[1][0], gaussian.covariance[1][1],
+    //         gaussian.binMask
+    //     );
+    // }
     
     uint numberOverlappingBins = 0;
     // Find all bins this gaussian overlaps with
@@ -112,7 +125,9 @@ void main() {
 
             } else {
                 // Error: too many additional gaussians
-                // debugPrintfEXT("Error: Too many additional gaussians created! Index: %u\n", newGaussianIndex);
+                if (debug) {
+                    debugPrintfEXT("Error: Too many additional gaussians created! Index: %u\n", newGaussianIndex);
+                }
             }
 
             
