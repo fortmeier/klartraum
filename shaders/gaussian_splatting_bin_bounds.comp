@@ -25,12 +25,17 @@ layout(push_constant) uniform PushConstants {
     uint gridSize;
 } pushConstants;
 
+bool debug = false;
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
 
 
     uint numGridElements = pushConstants.gridSize * pushConstants.gridSize;
+
+    if (idx == 0 && debug) {
+        debugPrintfEXT("Number of gaussians: %u\n", inputBuffer2.numberTotalGaussians);
+    }
 
     // discard all threads that are not in the range of the input buffer
     if (idx >= inputBuffer2.numberTotalGaussians) return;
@@ -41,6 +46,9 @@ void main() {
         uint binMask = inputBuffer.gaussians[idx].binMask;
         uint logBinMask = uint(log2(binMask));
         outputBuffer.startAndEnd[logBinMask].end = idx + 1;
+        if (debug) {
+            debugPrintfEXT("outputBuffer.startAndEnd[logBinMask].end = %u\n", outputBuffer.startAndEnd[logBinMask].end);
+        }
         return;
     } else {
         // all other elements: store the start and end indices
@@ -52,9 +60,11 @@ void main() {
         uint logBinMask = uint(log2(binMask));
         uint logBinMaskNext = uint(log2(binMaskNext));
 
-        // debugPrintfEXT("Bounds idx: %u m0: %u m1: %u logm0: %u logm1: %u\n", idx, binMask, binMaskNext, logBinMask, logBinMaskNext);
 
         if (binMask != binMaskNext) {
+            if (debug) {
+                debugPrintfEXT("Bounds idx: %u m0: %u m1: %u logm0: %u logm1: %u\n", idx, binMask, binMaskNext, logBinMask, logBinMaskNext);
+            }
             outputBuffer.startAndEnd[logBinMask].end = idx + 1;
             outputBuffer.startAndEnd[logBinMaskNext].start = idx + 1;
         }

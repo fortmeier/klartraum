@@ -29,6 +29,8 @@ layout(push_constant) uniform PushConstants {
 
 #extension GL_EXT_debug_printf : enable
 
+bool debug = false;
+
 // DANGER: AI GENERATED CODE
 mat3 quatToMat3(vec4 q) {
     float x = q.x, y = q.y, z = q.z, w = q.w;
@@ -99,6 +101,30 @@ void main()
     vec3 p = gaussianIn[index].position;
 
     vec4 position = ubo.proj * ubo.view * ubo.model * vec4(p, 1.0);
+
+    if(debug && index == 0) {
+        debugPrintfEXT("ubo.proj:\n[%f %f %f %f]\n[%f %f %f %f]\n[%f %f %f %f]\n[%f %f %f %f]\n",
+            ubo.proj[0][0], ubo.proj[0][1], ubo.proj[0][2], ubo.proj[0][3],
+            ubo.proj[1][0], ubo.proj[1][1], ubo.proj[1][2], ubo.proj[1][3],
+            ubo.proj[2][0], ubo.proj[2][1], ubo.proj[2][2], ubo.proj[2][3],
+            ubo.proj[3][0], ubo.proj[3][1], ubo.proj[3][2], ubo.proj[3][3]
+        );
+
+        debugPrintfEXT("ubo.view:\n[%f %f %f %f]\n[%f %f %f %f]\n[%f %f %f %f]\n[%f %f %f %f]\n",
+            ubo.view[0][0], ubo.view[0][1], ubo.view[0][2], ubo.view[0][3],
+            ubo.view[1][0], ubo.view[1][1], ubo.view[1][2], ubo.view[1][3],
+            ubo.view[2][0], ubo.view[2][1], ubo.view[2][2], ubo.view[2][3],
+            ubo.view[3][0], ubo.view[3][1], ubo.view[3][2], ubo.view[3][3]
+        );
+
+        debugPrintfEXT("ubo.model:\n[%f %f %f %f]\n[%f %f %f %f]\n[%f %f %f %f]\n[%f %f %f %f]\n",
+            ubo.model[0][0], ubo.model[0][1], ubo.model[0][2], ubo.model[0][3],
+            ubo.model[1][0], ubo.model[1][1], ubo.model[1][2], ubo.model[1][3],
+            ubo.model[2][0], ubo.model[2][1], ubo.model[2][2], ubo.model[2][3],
+            ubo.model[3][0], ubo.model[3][1], ubo.model[3][2], ubo.model[3][3]
+        );
+    }
+
     vec2 norm_pos = position.xy / position.w;
     vec3 u = position.xyz / position.w;
     Gaussian2D gaussian2d;
@@ -115,5 +141,9 @@ void main()
 
     // BINNING CODE MUST BE MOVED HERE FOR OPTIMAL PERFORMANCE
     gaussian2dOut[index] = gaussian2d;
+
+    if (debug) {
+       debugPrintfEXT("Index: %u, Position.z: %f\n", index, position.z);
+    }
 
 }
