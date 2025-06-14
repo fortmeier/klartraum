@@ -61,8 +61,10 @@ bool overlapsWithBin(Gaussian2D gaussian, uint binIndex) {
     // Calculate gaussian bounds using covariance matrix
     // For simplicity, we'll use the diagonal elements of the covariance matrix
     // as a measure of the gaussian's spread
-    float spreadX = sqrt(gaussian.covariance[0][0]);
-    float spreadY = sqrt(gaussian.covariance[1][1]);
+    //THIS SHOULD BE WORKED OUT PROPERLY
+    mat2 covariance = inverse(gaussian.covarianceInv);
+    float spreadX = sqrt(covariance[0][0]) * 2.0; // Multiply by 2 for a better spread
+    float spreadY = sqrt(covariance[1][1]) * 2.0; // Multiply by 2 for a better spread
     
     vec2 gaussianMin = gaussian.position - vec2(spreadX, spreadY);
     vec2 gaussianMax = gaussian.position + vec2(spreadX, spreadY);
@@ -90,8 +92,8 @@ void main() {
     //     debugPrintfEXT("Gaussian[%u]: pos=(%f,%f), cov=(%f,%f,%f,%f), binMask=0x%x\n",
     //         idx,
     //         gaussian.position.x, gaussian.position.y,
-    //         gaussian.covariance[0][0], gaussian.covariance[0][1],
-    //         gaussian.covariance[1][0], gaussian.covariance[1][1],
+    //         gaussian.covarianceInv[0][0], gaussian.covarianceInv[0][1],
+    //         gaussian.covarianceInv[1][0], gaussian.covarianceInv[1][1],
     //         gaussian.binMask
     //     );
     // }
