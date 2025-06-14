@@ -132,7 +132,7 @@ void main()
     gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
     gaussian2d.z = position.z;
 
-    gaussian2d.covariance = calculateCovarianceMatrix2D(gaussianIn[index], u);
+    gaussian2d.covarianceInv = inverse(calculateCovarianceMatrix2D(gaussianIn[index], u) / position.w);
 
     gaussian2d.color = gaussianIn[index].color;
     gaussian2d.alpha = gaussianIn[index].alpha;

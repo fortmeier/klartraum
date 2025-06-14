@@ -34,9 +34,8 @@ layout(push_constant) uniform PushConstants {
     float screenHeight;
 } pushConstants;
 
-float evaluateGaussian(vec2 x, vec2 mu, mat2 sigma) {
+float evaluateGaussian(vec2 x, vec2 mu, mat2 sigmaInv) {
     vec2 diff = (x - mu);
-    mat2 sigmaInv = inverse(sigma);
     float distance = dot(diff, (sigmaInv * diff));
     return exp(-0.5 * distance);
 }
@@ -76,7 +75,7 @@ void main() {
         Gaussian2D gaussian = gaussianBuffer.gaussians[i];
         
         // Evaluate Gaussian at this pixel
-        float a_i = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covariance) * gaussian.alpha;
+        float a_i = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covarianceInv) * gaussian.alpha;
 
         // += c_i * a_i * opacity     
         finalColor += vec4(gaussian.color * a_i * accum_opacity, 0);
@@ -99,8 +98,8 @@ void main() {
             if (debug) {
                 debugPrintfEXT("gaussian[%u]: pos=(%f, %f), cov=(%f, %f, %f, %f), pixelCoord=(%d, %d)\n", 
                     i, gaussian.position.x, gaussian.position.y, 
-                    gaussian.covariance[0][0], gaussian.covariance[0][1], 
-                    gaussian.covariance[1][0], gaussian.covariance[1][1],
+                    gaussian.covarianceInv[0][0], gaussian.covarianceInv[0][1], 
+                    gaussian.covarianceInv[1][0], gaussian.covarianceInv[1][1],
                     pixelCoord.x, pixelCoord.y);
             }
         }
