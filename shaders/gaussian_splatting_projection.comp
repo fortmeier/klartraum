@@ -132,9 +132,17 @@ void main()
     gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
     gaussian2d.z = position.z;
 
-    gaussian2d.covarianceInv = inverse(calculateCovarianceMatrix2D(gaussianIn[index], u) / position.w);
+    mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index], u);
+    covariance /= position.w;
 
-    gaussian2d.color = gaussianIn[index].color;
+    // it is not mentioned in the original Gaussian Splatting paper, 
+    // but they add a small value to the diagonal of the covariance matrix
+    // so that each gaussian is at least a pixel wide
+    // https://github.com/graphdeco-inria/diff-gaussian-rasterization/blob/59f5f77e3ddbac3ed9db93ec2cfe99ed6c5d121d/cuda_rasterizer/forward.cu#L109
+    covariance[0][0] += 0.3;
+    covariance[1][1] += 0.3;
+
+    gaussian2d.covarianceInv = inverse(covariance);
     gaussian2d.alpha = gaussianIn[index].alpha;
 
     gaussian2d.binMask = uint(-1); // set to a dummy value for now, should be set based on the binning logic in the next step
