@@ -163,7 +163,7 @@ public:
         if(inputs.size() == 0) {
             throw std::runtime_error("no input!");
         }
-        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
         if (imageViewSrc == nullptr) {
             throw std::runtime_error("input is not an ImageViewSrc!");
         }
@@ -174,7 +174,7 @@ public:
         if(inputs.size() == 0) {
             throw std::runtime_error("no input!");
         }
-        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(inputs[0]).get();
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>((getInputElement(0))).get();
         if (imageViewSrc == nullptr) {
             throw std::runtime_error("input is not an ImageViewSrc!");
         }
