@@ -59,7 +59,7 @@ public:
         colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     
-        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
         colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     
         VkAttachmentReference colorAttachmentRef{};
@@ -132,7 +132,32 @@ public:
         // auto& camera = vulkanKernel->getCamera();
         // auto& vertices = getVertices(type);
 
+        auto& image = getImage(pathId);
+
+        VkImageMemoryBarrier barrierBack = {};
+        barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrierBack.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrierBack.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrierBack.image = image;
+        barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrierBack.subresourceRange.baseMipLevel = 0;
+        barrierBack.subresourceRange.levelCount = 1;
+        barrierBack.subresourceRange.baseArrayLayer = 0;
+        barrierBack.subresourceRange.layerCount = 1;
         
+        barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrierBack);        
        
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
