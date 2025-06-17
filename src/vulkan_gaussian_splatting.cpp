@@ -301,9 +301,18 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path)
     
     gaussians3DData.clear();
     gaussians3DData.reserve(packed.numPoints);
-    for (int i = 70000; i < 70020; /*packed.numPoints*/ i++) {
+    number_of_gaussians = 256 * 256;
+
+    float clipBounds = 1.5f;
+
     //for (int i = 0; i < packed.numPoints; i++) {
+    for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
         spz::UnpackedGaussian gaussian = packed.unpack(i);
+        if (gaussian.position[0] < -clipBounds || gaussian.position[0] > clipBounds ||
+            gaussian.position[1] < -clipBounds || gaussian.position[1] > clipBounds ||
+            gaussian.position[2] < -clipBounds || gaussian.position[2] > clipBounds) {
+            continue; // Skip gaussians outside the clipping bounds
+        }
         Gaussian3D gaussian3D;
         memcpy(&gaussian3D, &gaussian, sizeof(spz::UnpackedGaussian));
 
@@ -319,8 +328,9 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path)
         gaussians3DData.push_back(gaussian3D);
     }
 
-    // number_of_gaussians = (uint32_t)packed.numPoints;
-    number_of_gaussians = 20;
+    number_of_gaussians = (uint32_t)gaussians3DData.size();
+
+    std::cout << "Loaded " << number_of_gaussians << " gaussians from SPZ file: " << path << std::endl;
 
 
 }
