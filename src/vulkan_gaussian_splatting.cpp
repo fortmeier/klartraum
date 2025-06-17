@@ -306,7 +306,16 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path)
         spz::UnpackedGaussian gaussian = packed.unpack(i);
         Gaussian3D gaussian3D;
         memcpy(&gaussian3D, &gaussian, sizeof(spz::UnpackedGaussian));
+
+        // use activation functions as done in original implementation and described in the paper
         gaussian3D.alpha = sigmoid(gaussian.alpha); // inverse logistic back to alpha
+        gaussian3D.color[0] = sigmoid(gaussian.color[0]);
+        gaussian3D.color[1] = sigmoid(gaussian.color[1]);
+        gaussian3D.color[2] = sigmoid(gaussian.color[2]);
+
+        gaussian3D.scale[0] = std::exp(gaussian.scale[0]);
+        gaussian3D.scale[1] = std::exp(gaussian.scale[1]);
+        gaussian3D.scale[2] = std::exp(gaussian.scale[2]);
         gaussians3DData.push_back(gaussian3D);
     }
 
