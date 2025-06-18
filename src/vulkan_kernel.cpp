@@ -655,10 +655,9 @@ uint32_t VulkanKernel::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
 std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
     // NOTE, might be better interface to not give the semaphore, but only the index and get the semaphore separtately
 
-
-    vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-
-    vkResetFences(device, 1, &inFlightFences[currentFrame]);
+    VkFence fence = inFlightFences[currentFrame];
+    vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &fence);
 
     uint32_t imageIndex;
     vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphoresPerFrame[currentFrame], VK_NULL_HANDLE, &imageIndex);
