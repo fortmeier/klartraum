@@ -191,7 +191,7 @@ class VulkanKernel {
     std::vector<VkFence> inFlightFences;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerFrame;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerImage;
-    std::vector<VkSemaphore> renderFinishedSemaphores;  
+    std::vector<VkSemaphore> renderEndSemaphores;
 
     void createSyncObjects();
 
