@@ -21,12 +21,14 @@ int main() {
     auto& vulkanKernel = core.getVulkanKernel();
     
     auto& cameraUBO = renderpass->getCameraUBO();
-    std::string spzFile = "data/hornedlizard.spz";
+    std::string spzFile = "./3rdparty/spz/samples/hornedlizard.spz";
     std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(vulkanKernel, renderpass, cameraUBO, spzFile);
     
     core.add(splatting);
 
-    std::shared_ptr<klartraum::InterfaceCamera> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
+    std::shared_ptr<klartraum::InterfaceCameraOrbit> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
+    cameraOrbit->setAzimuth(-31.0);
+    cameraOrbit->setElevation(-0.5);
     core.setInterfaceCamera(cameraOrbit);
     core.setCameraUBO(cameraUBO);
 
