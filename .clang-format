@@ -10,3 +10,16 @@ AccessModifierOffset: -4
 NamespaceIndentation: None
 FixNamespaceComments: false
 PointerAlignment: Left
+
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '^<([a-zA-Z0-9_]+)>$'
+    Priority:        1
+    Name:            std_libs
+  - Regex:           '^<.*>$'
+    Priority:        2
+    Name:            non_std_libs
+  - Regex:           '^".*"'
+    Priority:        3
+    Name:            local
+SortIncludes:       true
