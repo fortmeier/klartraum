@@ -143,6 +143,8 @@ void main()
     covariance[1][1] += 0.3;
 
     gaussian2d.covarianceInv = inverse(covariance);
+
+    gaussian2d.color = gaussianIn[index].color;
     gaussian2d.alpha = gaussianIn[index].alpha;
 
     gaussian2d.binMask = uint(-1); // set to a dummy value for now, should be set based on the binning logic in the next step
