@@ -72,7 +72,22 @@ int main() {
 }
 ```
 # Build
-## Prerequisites
-THIS SECTIONS NEEDS A REWORK!
+Currently, Klartraum can only be build on Windows with Visual Studio 2022 on the x64 architecture
 
+```bash
+git clone https://github.com/fortmeier/klartraum.git
+git submodule update --init --recursive
 
+mkdir build
+cd build
+
+cmake ..
+cmake --build . --target klartraum
+
+cd ..
+# on Windows
+.\build\Debug\klartraum.exe
+
+# on Linux
+# t.b.d.
+```
