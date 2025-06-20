@@ -292,9 +292,11 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path) {
 
     float clipBounds = 1.5f;
 
+    spz::CoordinateConverter defaultCoordinateConverter;
+
     // for (int i = 0; i < packed.numPoints; i++) {
     for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
-        spz::UnpackedGaussian gaussian = packed.unpack(i);
+        spz::UnpackedGaussian gaussian = packed.unpack(i, defaultCoordinateConverter);
         if (gaussian.position[0] < -clipBounds || gaussian.position[0] > clipBounds ||
             gaussian.position[1] < -clipBounds || gaussian.position[1] > clipBounds ||
             gaussian.position[2] < -clipBounds || gaussian.position[2] > clipBounds) {
