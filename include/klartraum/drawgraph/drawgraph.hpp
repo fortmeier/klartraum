@@ -3,9 +3,9 @@
 
 #include <iostream>
 #include <map>
+#include <queue>
 #include <set>
 #include <vector>
-#include <queue>
 
 #include "klartraum/drawgraph/drawgraphelement.hpp"
 
@@ -19,11 +19,9 @@ public:
     std::vector<VkPipelineStageFlags> waitStages; //{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
 };
 
-
 class DrawGraph {
 public:
-    DrawGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : vulkanKernel(vulkanKernel), numberPaths(numberPaths) 
-    {
+    DrawGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : vulkanKernel(vulkanKernel), numberPaths(numberPaths) {
         auto& device = vulkanKernel.getDevice();
 
         all_path_submit_infos.resize(numberPaths);
@@ -35,12 +33,10 @@ public:
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         poolInfo.queueFamilyIndex = vulkanKernel.getQueueFamilyIndices().graphicsAndComputeFamily.value();
-    
+
         if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
-        }    
-
-  
+        }
     }
 
     virtual ~DrawGraph() {
@@ -51,19 +47,19 @@ public:
         clearOutputs();
 
         // destroy the semaphores
-        for(auto& semaphores: allRenderFinishedSemaphores) {
-            for(auto& semaphore_list: semaphores) {
-                for(auto& semaphore: semaphore_list.second) {
+        for (auto& semaphores : allRenderFinishedSemaphores) {
+            for (auto& semaphore_list : semaphores) {
+                for (auto& semaphore : semaphore_list.second) {
                     vkDestroySemaphore(device, semaphore.second, nullptr);
                 }
             }
         }
 
-        for(auto& semaphores: graphFinishedSemaphores) {
+        for (auto& semaphores : graphFinishedSemaphores) {
             vkDestroySemaphore(device, semaphores, nullptr);
         }
 
-        for(auto& buffer: commandBuffers) {
+        for (auto& buffer : commandBuffers) {
             vkFreeCommandBuffers(device, commandPool, 1, &buffer);
         }
         // destroy the command pool
@@ -72,7 +68,7 @@ public:
 
     void compileFrom(DrawGraphElementPtr element) {
         auto& device = vulkanKernel.getDevice();
-        
+
         computeOrder(element);
 
         updateOutputs();
@@ -81,7 +77,7 @@ public:
 
         createGraphFinishedSemaphores();
 
-        for(auto& element : ordered_elements) {
+        for (auto& element : ordered_elements) {
             element->_setup(vulkanKernel, numberPaths);
         }
 
@@ -93,15 +89,15 @@ public:
         allocInfo.commandPool = commandPool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = (uint32_t)(commandBuffers.size());
-    
+
         if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
-        for(uint32_t pathId = 0; pathId < numberPaths; pathId++) {
-            for(size_t i = 0; i < ordered_elements.size(); i++) {
+        for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
+            for (size_t i = 0; i < ordered_elements.size(); i++) {
                 auto& element = ordered_elements[i];
-                VkCommandBuffer& commandBuffer = commandBuffers[i * numberPaths + pathId];                
+                VkCommandBuffer& commandBuffer = commandBuffers[i * numberPaths + pathId];
                 recordCommandBuffer(commandBuffer, element, pathId);
                 // for now, all command buffers will be submitted to the same queue without any synchronization
                 // this is okay since we sorted the elements in the graph before and the queue is
@@ -118,13 +114,12 @@ public:
         }
     }
 
-
     /*
-    * Submit the graph to the graphics queue
-    *
-    * The submit infos will have to be prepared before by calling compile_from
-    */
-   VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId, VkFence fence = VK_NULL_HANDLE) {
+     * Submit the graph to the graphics queue
+     *
+     * The submit infos will have to be prepared before by calling compile_from
+     */
+    VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId, VkFence fence = VK_NULL_HANDLE) {
         auto& submit_infos = all_path_submit_infos[pathId];
 
         // the following seems not to work if there are multiple paths in the graph
@@ -145,11 +140,10 @@ public:
 
     void submitAndWait(VkQueue graphicsQueue, uint32_t pathId) {
         auto& device = vulkanKernel.getDevice();
-    
-        
+
         VkFenceCreateInfo fenceInfo{};
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    
+
         VkFence fence;
         if (vkCreateFence(device, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to create fence!");
@@ -161,7 +155,7 @@ public:
             throw std::runtime_error("failed to wait for fence!");
         }
 
-        vkDestroyFence(device, fence, nullptr);        
+        vkDestroyFence(device, fence, nullptr);
         return;
     }
 
@@ -182,11 +176,10 @@ private:
 
     typedef std::map<DrawGraphElementPtr, VkSemaphore> SemaphoreMap;
     typedef std::map<DrawGraphElementPtr, SemaphoreMap> SemaphoreMapMap;
-    
+
     std::vector<SemaphoreMapMap> allRenderFinishedSemaphores;
 
     std::vector<VkSemaphore> graphFinishedSemaphores;
-
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, DrawGraphElementPtr element, uint32_t pathId) {
         // reset the command buffer before recording
@@ -194,49 +187,48 @@ private:
 
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = 0; // Optional
+        beginInfo.flags = 0;                  // Optional
         beginInfo.pInheritanceInfo = nullptr; // Optional
-    
+
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
             throw std::runtime_error("failed to begin recording command buffer!");
         }
-        
+
         // record the command buffer
         element->_record(commandBuffer, pathId);
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
             throw std::runtime_error("failed to record command buffer!");
-        }        
+        }
     }
 
     void getSubmitInfoForElement(SubmitInfoWrapper& submitInfoWrapper, uint32_t pathId, DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
-        
+
         auto& submitInfo = submitInfoWrapper.submitInfo;
         auto& waitSemaphores = submitInfoWrapper.waitSemaphores;
         auto& waitStages = submitInfoWrapper.waitStages;
         auto& signalSemaphores = submitInfoWrapper.signalSemaphores;
-        
-        if(element->renderWaitSemaphores.find(pathId) != element->renderWaitSemaphores.end()) {
+
+        if (element->renderWaitSemaphores.find(pathId) != element->renderWaitSemaphores.end()) {
             waitSemaphores.push_back(element->renderWaitSemaphores[pathId]);
             waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         }
-        
-       
+
         // for the element, we want to find the semaphores that connect the
         // element to its inputs (given that the element has inputs)
         // for that we have to first get the SemphoreMapMap for the pathId
         // and then find the SemaphoreMap for the element, which
         // contains the semaphore for the connection between the element and its input element
         auto& renderFinishedSemaphores = allRenderFinishedSemaphores[pathId];
-        for(auto& input : element->getInputs()) {
+        for (auto& input : element->getInputs()) {
             auto& inputElement = input.second;
 
             auto input_output_map_iter = renderFinishedSemaphores.find(inputElement);
-            if(input_output_map_iter != renderFinishedSemaphores.end()) {
+            if (input_output_map_iter != renderFinishedSemaphores.end()) {
                 // would be better if it would be a map
                 // now find the element in the output of the input element
                 auto element_iter = renderFinishedSemaphores[inputElement].find(element);
-                if(element_iter != renderFinishedSemaphores[inputElement].end()) {
+                if (element_iter != renderFinishedSemaphores[inputElement].end()) {
                     // Only push back if the semaphore is not already in waitSemaphores
                     if (std::find(waitSemaphores.begin(), waitSemaphores.end(), element_iter->second) == waitSemaphores.end()) {
                         waitSemaphores.push_back(element_iter->second);
@@ -247,12 +239,12 @@ private:
                 }
             }
         }
-        
+
         auto input_output_map_iter = renderFinishedSemaphores.find(element);
-        if(input_output_map_iter != renderFinishedSemaphores.end()) {
-            for(auto& outputElement : element->outputs) {
+        if (input_output_map_iter != renderFinishedSemaphores.end()) {
+            for (auto& outputElement : element->outputs) {
                 auto element_iter = renderFinishedSemaphores[element].find(outputElement);
-                if(element_iter != renderFinishedSemaphores[element].end()) {
+                if (element_iter != renderFinishedSemaphores[element].end()) {
                     // Only push back if the semaphore is not already in signalSemaphores
                     if (std::find(signalSemaphores.begin(), signalSemaphores.end(), element_iter->second) == signalSemaphores.end()) {
                         signalSemaphores.push_back(element_iter->second);
@@ -261,22 +253,21 @@ private:
                     throw std::runtime_error("failed to find the semaphore connecting element to the output element!");
                 }
             }
-        }        
+        }
 
         // if it does not have any inputs, we can just use the graph finish semaphore
-        if(element->outputs.size() == 0)
-        {
+        if (element->outputs.size() == 0) {
             signalSemaphores.push_back(graphFinishedSemaphores[pathId]);
         }
-        
+
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = pCommandBuffer;
-       
+
         submitInfo.waitSemaphoreCount = (uint32_t)waitSemaphores.size();
         submitInfo.pWaitSemaphores = waitSemaphores.data();
         submitInfo.pWaitDstStageMask = waitStages.data();
-    
+
         submitInfo.signalSemaphoreCount = (uint32_t)signalSemaphores.size();
         submitInfo.pSignalSemaphores = signalSemaphores.data();
     }
@@ -288,21 +279,21 @@ private:
         // create the render finished semaphores
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    
+
         for (uint32_t i = 0; i < numberPaths; i++) {
             // get the render finished semaphores for this path
             auto& renderFinishedSemaphores = allRenderFinishedSemaphores[i];
             // create mulitple semaphores for each element in the path
             // (one for each output of the element)
-            for(auto& element : ordered_elements) {
-                for(auto& output_element : element->outputs) {
+            for (auto& element : ordered_elements) {
+                for (auto& output_element : element->outputs) {
                     VkSemaphore* finishSemaphore = &renderFinishedSemaphores[element][output_element];
                     if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, finishSemaphore) != VK_SUCCESS) {
                         throw std::runtime_error("failed to create render finished semaphore!");
                     }
                 }
             }
-        }        
+        }
     }
 
     void createGraphFinishedSemaphores() {
@@ -314,25 +305,25 @@ private:
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
         graphFinishedSemaphores.resize(numberPaths);
-    
+
         for (uint32_t i = 0; i < numberPaths; i++) {
             VkSemaphore* graphFinishedSemaphore = &graphFinishedSemaphores[i];
             if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, graphFinishedSemaphore) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create graph finished semaphore!");
             }
-        }        
+        }
     }
 
     void updateOutputs() {
         // first, clear the outputs of all elements
         // to make sure that we have a clean slate
-        for(auto& element : ordered_elements) {
+        for (auto& element : ordered_elements) {
             element->outputs.clear();
         }
 
         // now, update the outputs of all elements
-        for(auto& element : ordered_elements) {
-            for(auto& input : element->getInputs()) {
+        for (auto& element : ordered_elements) {
+            for (auto& input : element->getInputs()) {
                 auto& inputElement = input.second;
                 // Only add if element is not already in outputs
                 if (std::find(inputElement->outputs.begin(), inputElement->outputs.end(), element) == inputElement->outputs.end()) {
@@ -343,7 +334,7 @@ private:
     }
 
     void clearOutputs() {
-        for(auto& element : ordered_elements) {
+        for (auto& element : ordered_elements) {
             element->outputs.clear();
         }
     }
@@ -351,10 +342,10 @@ private:
     typedef std::map<DrawGraphElementPtr, std::vector<DrawGraphElementPtr>> EdgeList;
 
     void fill_edges(EdgeList& edges, EdgeList& incoming, DrawGraphElementPtr element) {
-        for(auto& input : element->getInputs()) {
+        for (auto& input : element->getInputs()) {
             // check if input already in graph
             auto it = find(edges[element].begin(), edges[element].end(), input.second);
-            if(it == edges[element].end()) {
+            if (it == edges[element].end()) {
                 // if not, add it
                 edges[element].push_back(input.second);
                 incoming[input.second].push_back(element);
@@ -377,39 +368,38 @@ private:
         EdgeList incoming_edges;
         fill_edges(edges, incoming_edges, element);
 
-        while (!S.empty())
-        {
+        while (!S.empty()) {
             // remove a node n from S
             auto n = S.front();
             S.pop();
 
             L.push_back(n);
-            for(auto input : n->getInputs()) {
+            for (auto input : n->getInputs()) {
                 // note the convention that N and M are iterators
                 auto m = input.second;
                 // first check if the input node is still in the graph
                 auto M = find(edges[n].begin(), edges[n].end(), m);
-                if(M != edges[n].end()) {
+                if (M != edges[n].end()) {
                     // if yes, remove edge N->M from the graph
                     edges[n].erase(M);
                     auto N = find(incoming_edges[m].begin(), incoming_edges[m].end(), n);
                     incoming_edges[m].erase(N);
-                    
+
                     // if m has no other incoming edges then
                     // insert m into S
-                    if(incoming_edges[m].empty()) {
+                    if (incoming_edges[m].empty()) {
                         S.push(m);
                     }
                 }
             }
         }
         size_t sum_edges = 0;
-        for(auto& element : edges) {
+        for (auto& element : edges) {
             sum_edges += element.second.size();
         }
 
         size_t sum_incoming_edges = 0;
-        for(auto& element : incoming_edges) {
+        for (auto& element : incoming_edges) {
             sum_incoming_edges += element.second.size();
         }
 
@@ -418,8 +408,7 @@ private:
         }
 
         std::reverse(L.begin(), L.end());
-
-    }        
+    }
 };
 
 } // namespace klartraum
