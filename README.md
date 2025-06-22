@@ -1,5 +1,5 @@
 # klartraum
-Klartraum is a real-time neural rendering and inference engine build on top of Vulkan.
+Klartraum (German for lucid dream) is a real-time neural rendering and inference engine build on top of Vulkan.
 
 # idea
 The general idea is to provide an execution environment for pretrained deep learning algorithms that runs on a multitude of hardware, given that Vulkan 1.3 is available. Thus, it enables a wide range of embedded devices that span from single-board computers as Raspberry Pies to Virtual Reality headsets to use algorithms as
