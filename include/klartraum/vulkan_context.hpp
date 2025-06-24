@@ -1,5 +1,5 @@
-#ifndef VULKAN_KERNEL_HPP
-#define VULKAN_KERNEL_HPP
+#ifndef VULKAN_CONTEXT_HPP
+#define VULKAN_CONTEXT_HPP
 
 #include <vector>
 #include <queue>
@@ -210,4 +210,4 @@ class VulkanContext {
 
 } // namespace klartraum
 
-#endif // VULKAN_KERNEL_HPP
+#endif // VULKAN_CONTEXT_HPP
