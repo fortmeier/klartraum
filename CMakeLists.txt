@@ -82,7 +82,7 @@ add_executable(
   klartraum_tests
   tests/test_main.cpp
   tests/test_vulkan_buffers.cpp
-  tests/test_drawgraph.cpp
+  tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
   tests/test_gaussian_splatting.cpp
   ${SRC}

@@ -2,7 +2,7 @@
 
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
-#include "klartraum/drawgraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 using namespace klartraum;
@@ -31,7 +31,7 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);    
 
     /*
-    STEP 1: create the drawgraph elements
+    STEP 1: create the computegraph elements
     */
    
     std::shared_ptr<CameraUboType> cameraUBO = std::make_shared<CameraUboType>();
@@ -41,18 +41,18 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(vulkanKernel, imageViewSrc, cameraUBO, spzFile);
 
     /*
-    STEP 2: create the drawgraph backend and compile the drawgraph
+    STEP 2: create the computegraph backend and compile the computegraph
     */
-    auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(splatting);
+    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    computegraph.compileFrom(splatting);
 
     /*
-    STEP 3: submit the drawgraph and compare the output
+    STEP 3: submit the computegraph and compare the output
     */
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;   
     for(int i = 0; i < 1; i++) {
         auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
-        finishSemaphore = drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
+        finishSemaphore = computegraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
         vulkanKernel.endRender(imageIndex, finishSemaphore);
     }
 
@@ -112,7 +112,7 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     });
 
     /*
-    STEP 1: cerate the drawgraph elements
+    STEP 1: cerate the computegraph elements
     */
 
     auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanKernel, gaussians3D.size());
@@ -131,15 +131,15 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     project3Dto2D->setInput(bufferElement);
 
     /*
-    STEP 2: create the drawgraph backend and compile the drawgraph
+    STEP 2: create the computegraph backend and compile the computegraph
     */
-    auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(project3Dto2D);
+    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    computegraph.compileFrom(project3Dto2D);
 
     /*
-    STEP 3: submit the drawgraph and compare the output
+    STEP 3: submit the computegraph and compare the output
     */
-    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     // check the output buffer
     std::vector<Gaussian2D> gaussians2D(gaussians3D.size());
@@ -210,10 +210,10 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
     sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts);
 
-    auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(sort2DGaussians);
+    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    computegraph.compileFrom(sort2DGaussians);
 
-    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     // Read back and check sorted order (should be descending by z)
     std::vector<Gaussian2D> sortedGaussians2D(gaussians2D.size());
@@ -318,10 +318,10 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     bin->setGroupCountX(gaussians2D.size() / 128 + 1);
     bin->setPushConstants({pushConstants});
 
-    auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(bin);
+    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    computegraph.compileFrom(bin);
 
-    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     std::vector<uint32_t> finalGaussiansCount(1);
     totalGaussian2DCounts->getBuffer(0).memcopyTo(finalGaussiansCount);
@@ -533,14 +533,14 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     renderpass->setInput(camera, 1);    
 
 
-    auto& drawgraph = DrawGraph(vulkanKernel, 3);
-    drawgraph.compileFrom(renderpass);
+    auto& computegraph = ComputeGraph(vulkanKernel, 3);
+    computegraph.compileFrom(renderpass);
 
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;
 
     for(int i = 0; i < 1; i++) {
         auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
-        finishSemaphore = drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
+        finishSemaphore = computegraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
         vulkanKernel.endRender(imageIndex, finishSemaphore);
     }
 

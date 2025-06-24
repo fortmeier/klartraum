@@ -4,7 +4,7 @@
 
 #include "load-spz.h"
 
-#include "klartraum/drawgraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 
@@ -169,8 +169,8 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     splat->setPushConstants(splatPushConstants);
 
     // this is the last element in the splatting pipeline
-    // it will be used as the output of the drawgraphgroup
-    // so that the drawgraph compilation traversal can
+    // it will be used as the output of the computegraphgroup
+    // so that the computegraph compilation traversal can
     // traverse from this element back through all the elements of the gaussian splatting pipeline
     outputElements[0] = splat;
 }
@@ -180,7 +180,7 @@ VulkanGaussianSplatting::~VulkanGaussianSplatting() {
     }
 }
 
-void VulkanGaussianSplatting::checkInput(DrawGraphElementPtr input, int index) {
+void VulkanGaussianSplatting::checkInput(ComputeGraphElementPtr input, int index) {
     ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
     if (index == 0 && imageViewSrc == nullptr) {
         throw std::runtime_error("input is not an ImageViewSrc!");
