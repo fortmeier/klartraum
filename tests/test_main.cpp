@@ -7,7 +7,7 @@
 TEST(KlartraumGlfwFrontend, smoke) {
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
     

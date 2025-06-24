@@ -22,7 +22,7 @@ public:
 
 
 
-    KlartraumCore& getKlartraumCore();
+    KlartraumEngine& getKlartraumEngine();
 
 private:
     void initialize();
@@ -38,7 +38,7 @@ private:
     bool leftButtonDown = false;
     bool rightButtonDown = false;
 
-    std::unique_ptr<KlartraumCore> klartraumCore;
+    std::unique_ptr<KlartraumEngine> klartraumEngine;
 
 };
 

@@ -9,7 +9,7 @@ TEST(VulkanOperator, simple_add) {
     klartraum::GlfwFrontend frontend;
 
     
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 
@@ -45,7 +45,7 @@ TEST(VulkanOperator, simple_matmul) {
     klartraum::GlfwFrontend frontend;
 
     
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 

@@ -20,7 +20,7 @@ using namespace klartraum;
 TEST(BufferTransformation, create) {
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 
@@ -62,7 +62,7 @@ TEST(BufferTransformation, create) {
 TEST(BufferTransformation, create_with_ubo) {
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 
@@ -112,7 +112,7 @@ TEST(BufferTransformation, create_with_ubo) {
 TEST(BufferTransformation, create_with_ubo_multiple_paths) {
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 
