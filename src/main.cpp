@@ -22,7 +22,7 @@ int main() {
     
     auto& cameraUBO = renderpass->getCameraUBO();
     std::string spzFile = "./3rdparty/spz/samples/hornedlizard.spz";
-    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(vulkanContext, renderpass, cameraUBO, spzFile);
+    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(renderpass, cameraUBO, spzFile);
     
     core.add(splatting);
 
