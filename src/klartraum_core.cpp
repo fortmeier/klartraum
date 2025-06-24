@@ -21,7 +21,7 @@ KlartraumCore::~KlartraumCore() {
 void KlartraumCore::step() {
 
     // start frame rendering
-    auto [imageIndex, semaphore] = vulkanKernel.beginRender();
+    auto [imageIndex, semaphore] = vulkanContext.beginRender();
 
     // process event queue,
     // this currently only updates the camera
@@ -37,7 +37,7 @@ void KlartraumCore::step() {
         cameraUBO->update(imageIndex);
     }
 
-    auto& graphicsQueue = vulkanKernel.getGraphicsQueue();
+    auto& graphicsQueue = vulkanContext.getGraphicsQueue();
 
     VkSemaphore renderFinishedSemaphore;
     for(auto &computeGraph : computeGraphs) {
@@ -45,7 +45,7 @@ void KlartraumCore::step() {
     }
 
     // finish frame rendering
-    vulkanKernel.endRender(imageIndex, renderFinishedSemaphore);
+    vulkanContext.endRender(imageIndex, renderFinishedSemaphore);
  
 }
 
@@ -57,18 +57,18 @@ std::queue<std::unique_ptr<Event> >& KlartraumCore::getEventQueue()
 
 void KlartraumCore::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
 {
-    camera->initialize(vulkanKernel);
+    camera->initialize(vulkanContext);
     this->interfaceCamera = camera;
 }
 
-VulkanKernel& KlartraumCore::getVulkanKernel()
+VulkanContext& KlartraumCore::getVulkanContext()
 {
-    return vulkanKernel;
+    return vulkanContext;
 }
 
 void KlartraumCore::add(ComputeGraphElementPtr element)
 {
-    computeGraphs.emplace_back(vulkanKernel, 3);
+    computeGraphs.emplace_back(vulkanContext, 3);
     auto& computeGraph = computeGraphs.back();
     computeGraph.compileFrom(element);
 }
@@ -80,9 +80,9 @@ RenderPassPtr KlartraumCore::createRenderPass()
     std::vector<VkSemaphore> imageAvailableSemaphores;
 
     for (int i = 0; i < 3; i++) {
-        imageViews.push_back(vulkanKernel.getImageView(i));
-        images.push_back(vulkanKernel.getSwapChainImage(i));
-        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);
+        imageViews.push_back(vulkanContext.getImageView(i));
+        images.push_back(vulkanContext.getSwapChainImage(i));
+        imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);
     }
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
@@ -93,8 +93,8 @@ RenderPassPtr KlartraumCore::createRenderPass()
 
     auto camera = std::make_shared<CameraUboType>();
 
-    auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
-    auto swapChainExtent = vulkanKernel.getSwapChainExtent();
+    auto swapChainImageFormat = vulkanContext.getSwapChainImageFormat();
+    auto swapChainExtent = vulkanContext.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
     renderpass->setInput(imageViewSrc, 0);

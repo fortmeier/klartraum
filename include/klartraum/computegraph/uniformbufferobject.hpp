@@ -9,14 +9,14 @@
 
 namespace klartraum {
 
-class VulkanKernel;
+class VulkanContext;
 
 template<typename UniformBufferObjectType>
 class UniformBufferObjectNew : public ComputeGraphElement {
 public:
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths)
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths)
     {
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
         numberOfPaths = numberPaths;
         
         createDescriptorSetLayout();
@@ -30,8 +30,8 @@ public:
     {
         if(initialized)
         {
-            auto config = vulkanKernel->getConfig();
-            auto device = vulkanKernel->getDevice();
+            auto config = vulkanContext->getConfig();
+            auto device = vulkanContext->getDevice();
         
             for (size_t i = 0; i < numberOfPaths; i++) {
                 vkDestroyBuffer(device, uniformBuffers[i], nullptr);
@@ -65,11 +65,11 @@ public:
     UniformBufferObjectType ubo;
 
 private:
-    VulkanKernel* vulkanKernel = nullptr;
+    VulkanContext* vulkanContext = nullptr;
 
     void createDescriptorSetLayout()
     {
-        auto device = vulkanKernel->getDevice();
+        auto device = vulkanContext->getDevice();
 
         VkDescriptorSetLayoutBinding uboLayoutBinding{};
         uboLayoutBinding.binding = 0;
@@ -90,8 +90,8 @@ private:
 
     void createUniformBuffers()
     {
-        auto config = vulkanKernel->getConfig();
-        auto device = vulkanKernel->getDevice();
+        auto config = vulkanContext->getConfig();
+        auto device = vulkanContext->getDevice();
     
         VkDeviceSize bufferSize = sizeof(UniformBufferObjectType);
     
@@ -100,7 +100,7 @@ private:
         uniformBuffersMapped.resize(numberOfPaths);
     
         for (size_t i = 0; i < numberOfPaths; i++) {
-            vulkanKernel->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+            vulkanContext->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
     
             vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
         }
@@ -108,8 +108,8 @@ private:
 
     void createDescriptorPool()
     {
-        auto device = vulkanKernel->getDevice();
-        auto config = vulkanKernel->getConfig();
+        auto device = vulkanContext->getDevice();
+        auto config = vulkanContext->getConfig();
     
         VkDescriptorPoolSize poolSize{};
         poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -131,8 +131,8 @@ private:
     void createDescriptorSets()
 
     {
-        auto device = vulkanKernel->getDevice();
-        auto config = vulkanKernel->getConfig();
+        auto device = vulkanContext->getDevice();
+        auto config = vulkanContext->getConfig();
     
         std::vector<VkDescriptorSetLayout> layouts(numberOfPaths, descriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{};

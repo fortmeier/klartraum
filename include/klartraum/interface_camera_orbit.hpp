@@ -14,7 +14,7 @@ public:
 
     InterfaceCameraOrbit(UpDirection up = UpDirection::Z);
 
-    virtual void initialize(VulkanKernel& vulkanKernel) override;
+    virtual void initialize(VulkanContext& vulkanContext) override;
 
     virtual void update(CameraMVP& mvp);
     virtual void onEvent(Event& event);
@@ -38,7 +38,7 @@ public:
 
 
 private:
-    VulkanKernel* vulkanKernel;
+    VulkanContext* vulkanContext;
     double azimuth = 0.0;
     double elevation = 0.0;
     double distance = 2.0;
