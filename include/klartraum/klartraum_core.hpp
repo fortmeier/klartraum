@@ -34,7 +34,7 @@ public:
         this->cameraUBO = cameraUBO;
     }
 
-    VulkanKernel& getVulkanKernel();
+    VulkanContext& getVulkanContext();
 
     void add(ComputeGraphElementPtr element);
 
@@ -45,7 +45,7 @@ public:
     }
 
 private:
-    VulkanKernel vulkanKernel;
+    VulkanContext vulkanContext;
 
     std::shared_ptr<InterfaceCamera> interfaceCamera;
     std::shared_ptr<CameraUboType> cameraUBO;

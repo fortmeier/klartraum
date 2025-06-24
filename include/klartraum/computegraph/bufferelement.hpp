@@ -8,7 +8,7 @@ namespace klartraum {
 
 class BufferElementInterface : public ComputeGraphElement {
 public:
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) = 0;
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) = 0;
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
 
@@ -33,14 +33,14 @@ public:
 template<typename BufferType>
 class BufferElement : public TemplatedBufferElementInterface<BufferType> {
 public:
-    BufferElement(VulkanKernel& vulkanKernel, uint32_t numberElements):
-        vulkanKernel(vulkanKernel), numberElements(numberElements) {
+    BufferElement(VulkanContext& vulkanContext, uint32_t numberElements):
+        vulkanContext(vulkanContext), numberElements(numberElements) {
     }
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         buffers.reserve(numberPaths);
         for(uint32_t i = 0; i < numberPaths; i++) {
-            buffers.emplace_back(vulkanKernel, numberElements);
+            buffers.emplace_back(vulkanContext, numberElements);
         }
     };
 
@@ -77,7 +77,7 @@ public:
     };
 
 private:
-    VulkanKernel& vulkanKernel;
+    VulkanContext& vulkanContext;
     uint32_t numberPaths = 0;
     uint32_t numberElements = 0;
     std::vector<BufferType> buffers;
@@ -92,7 +92,7 @@ public:
     template<typename... Args>
     BufferElementSinglePath(Args&&... args) : buffer(std::forward<Args>(args)...) {}
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {};
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {};
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
 

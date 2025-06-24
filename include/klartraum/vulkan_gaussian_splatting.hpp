@@ -42,7 +42,7 @@ class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual publi
      */
 public:
     VulkanGaussianSplatting(
-        VulkanKernel& vulkanKernel,
+        VulkanContext& vulkanContext,
         std::shared_ptr<ImageViewSrc> imageViewSrc,
         std::shared_ptr<CameraUboType> cameraUBO,
         std::string path);
@@ -50,7 +50,7 @@ public:
 
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override;
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) override;
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override;
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override;
 
@@ -61,7 +61,7 @@ public:
 private:
     void loadSPZModel(std::string path);
 
-    VulkanKernel* vulkanKernel = nullptr;
+    VulkanContext* vulkanContext = nullptr;
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;

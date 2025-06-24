@@ -18,11 +18,11 @@ int main() {
     std::shared_ptr<klartraum::DrawBasics> axes = std::make_shared<klartraum::DrawBasics>(klartraum::DrawBasicsType::Axes);
     renderpass->addDrawComponent(axes);
 
-    auto& vulkanKernel = core.getVulkanKernel();
+    auto& vulkanContext = core.getVulkanContext();
     
     auto& cameraUBO = renderpass->getCameraUBO();
     std::string spzFile = "./3rdparty/spz/samples/hornedlizard.spz";
-    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(vulkanKernel, renderpass, cameraUBO, spzFile);
+    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(vulkanContext, renderpass, cameraUBO, spzFile);
     
     core.add(splatting);
 

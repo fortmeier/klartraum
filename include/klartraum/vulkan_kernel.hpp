@@ -41,9 +41,9 @@ struct SwapChainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;
 };
 
-class VulkanKernel {
+class VulkanContext {
     /*
-     * The VulkanKernel kernels responsibities are
+     * The VulkanContext kernels responsibities are
      * - create the Vulkan instance
      * - create the Vulkan device
      * - create the Vulkan swapchain
@@ -131,9 +131,9 @@ class VulkanKernel {
         SHUTDOWN
     } state = State::UNINITIALIZED;
     public:
-    VulkanKernel();
+    VulkanContext();
 
-    ~VulkanKernel();
+    ~VulkanContext();
     
     void initialize(VkSurfaceKHR& surface);
     void shutdown();

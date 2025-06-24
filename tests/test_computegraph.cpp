@@ -71,8 +71,8 @@ TEST(ComputeGraph, create) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
-    auto& device = vulkanKernel.getDevice();
+    auto& vulkanContext = core.getVulkanContext();
+    auto& device = vulkanContext.getDevice();
 
     /*
     STEP 1: create the computegraph elements
@@ -80,15 +80,15 @@ TEST(ComputeGraph, create) {
     std::vector<VkImageView> imageViews;
     std::vector<VkSemaphore> imageAvailableSemaphores;
     for (int i = 0; i < 3; i++) {
-        imageViews.push_back(vulkanKernel.getImageView(i));
+        imageViews.push_back(vulkanContext.getImageView(i));
     }
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
 
     auto camera = std::make_shared<CameraUboType>();
 
-    auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
-    auto swapChainExtent = vulkanKernel.getSwapChainExtent();
+    auto swapChainImageFormat = vulkanContext.getSwapChainImageFormat();
+    auto swapChainExtent = vulkanContext.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
     renderpass->setInput(imageViewSrc, 0);
@@ -112,10 +112,10 @@ TEST(ComputeGraph, create) {
     */
     
     // this traverses the computegraph and creates the vulkan objects
-    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    auto& computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(copy);
 
-    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
     return;
 }
@@ -124,8 +124,8 @@ TEST(ComputeGraph, trippleFramebuffer) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
-    auto& device = vulkanKernel.getDevice();
+    auto& vulkanContext = core.getVulkanContext();
+    auto& device = vulkanContext.getDevice();
 
     /*
     STEP 1: create the computegraph elements
@@ -135,8 +135,8 @@ TEST(ComputeGraph, trippleFramebuffer) {
     std::vector<VkSemaphore> imageAvailableSemaphores;
 
     for (int i = 0; i < 3; i++) {
-        imageViews.push_back(vulkanKernel.getImageView(i));
-        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);
+        imageViews.push_back(vulkanContext.getImageView(i));
+        imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);
     }
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews);
@@ -146,8 +146,8 @@ TEST(ComputeGraph, trippleFramebuffer) {
 
     auto camera = std::make_shared<CameraUboType>();
 
-    auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
-    auto swapChainExtent = vulkanKernel.getSwapChainExtent();
+    auto swapChainImageFormat = vulkanContext.getSwapChainImageFormat();
+    auto swapChainExtent = vulkanContext.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
 
     renderpass->setInput(imageViewSrc, 0);
@@ -161,16 +161,16 @@ TEST(ComputeGraph, trippleFramebuffer) {
     */
     
     // this traverses the computegraph and creates the vulkan objects
-    auto& computegraph = ComputeGraph(vulkanKernel, 3);
+    auto& computegraph = ComputeGraph(vulkanContext, 3);
 
     computegraph.compileFrom(renderpass);
 
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;
 
     for(int i = 0; i < 6; i++) {
-        auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
-        finishSemaphore = computegraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
-        vulkanKernel.endRender(imageIndex, finishSemaphore);
+        auto [imageIndex, imageAvailableSemaphore] = vulkanContext.beginRender();
+        finishSemaphore = computegraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex);
+        vulkanContext.endRender(imageIndex, finishSemaphore);
     }
 
     // finally wait for the queue to be completed
@@ -182,7 +182,7 @@ TEST(ComputeGraph, trippleFramebuffer) {
         throw std::runtime_error("failed to create fence!");
     }
 
-    if (vkQueueSubmit(vulkanKernel.getGraphicsQueue(), 0, nullptr, fence) != VK_SUCCESS) {
+    if (vkQueueSubmit(vulkanContext.getGraphicsQueue(), 0, nullptr, fence) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit the fence!");
     }
 

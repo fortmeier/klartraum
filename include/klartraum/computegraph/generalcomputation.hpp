@@ -14,24 +14,24 @@ namespace klartraum {
 template <typename P = void>
 class GeneralComputation : public ComputeGraphElement {
 public:
-    GeneralComputation(VulkanKernel &vulkanKernel, const std::string &shaderPath) :
+    GeneralComputation(VulkanContext &vulkanContext, const std::string &shaderPath) :
         shaderPath(shaderPath) 
     {
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
     }
 
     virtual ~GeneralComputation() {
         if(initialized) {
-            vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
-            vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
-            vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
-            vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+            vkDestroyPipelineLayout(vulkanContext->getDevice(), computePipelineLayout, nullptr);
+            vkDestroyPipeline(vulkanContext->getDevice(), computePipeline, nullptr);
+            vkDestroyDescriptorSetLayout(vulkanContext->getDevice(), computeDescriptorSetLayout, nullptr);
+            vkDestroyDescriptorPool(vulkanContext->getDevice(), descriptorPool, nullptr);
         }
     }
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         this->numberPaths = numberPaths;
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
 
         createDescriptorPool();
         createComputeDescriptorSetLayout();
@@ -183,7 +183,7 @@ private:
     VkPipelineLayout computePipelineLayout;
     VkPipeline computePipeline;
 
-    VulkanKernel* vulkanKernel;
+    VulkanContext* vulkanContext;
 
     // inputs that are also outputs of the shader
     std::map<int, ComputeGraphElementPtr> inputOutputs;
@@ -202,7 +202,7 @@ private:
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
     void createDescriptorPool() {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
         
         std::vector<VkDescriptorPoolSize> poolSizes(inputs.size());
         // Other inputs
@@ -225,7 +225,7 @@ private:
     }    
 
     void createComputeDescriptorSetLayout() {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
 
         std::vector<VkDescriptorSetLayoutBinding> layoutBindings(inputs.size());
     
@@ -251,7 +251,7 @@ private:
     }
 
     void createComputeDescriptorSets(uint32_t pathId) {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
 
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -319,11 +319,11 @@ private:
     }
 
     void createComputePipeline() {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
 
         auto computeShaderCode = readFile(shaderPath);
     
-        VkShaderModule computeShaderModule = createShaderModule(computeShaderCode, vulkanKernel->getDevice());
+        VkShaderModule computeShaderModule = createShaderModule(computeShaderCode, vulkanContext->getDevice());
         
         VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
         computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
