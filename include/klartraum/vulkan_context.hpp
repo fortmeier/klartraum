@@ -134,6 +134,14 @@ public:
     void initialize(VkSurfaceKHR& surface);
     void shutdown();
 
+    template<typename T, typename... Args>
+    std::shared_ptr<T> create(Args&&... args) {
+        if (state != State::INITIALIZED) {
+            throw std::runtime_error("VulkanContext is not initialized!");
+        }
+        return std::make_shared<T>(*this, std::forward<Args>(args)...);
+    }
+
     QueueFamilyIndices findQueueFamiliesPhysicalDevice();
 
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
