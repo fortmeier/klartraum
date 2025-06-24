@@ -27,7 +27,7 @@ A major design principle of Klartraum is that all operations shall be as prereco
 Klartraum also provides a minimal rendering engine that handles user input for interactive applications.
 Nonetheless, it is design in a way that the render graph can be used without the rendering engine,
 so that it can be used in headless applications an in combination with other rendering engines.
-(however, this is not yet implemented and will need an other implementation of the `VulkanKernel` class)
+(however, this is not yet implemented and will need an other implementation of the `VulkanContext` class)
 
 # example
 
@@ -44,19 +44,19 @@ int main() {
 
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
 
     klartraum::RenderPassPtr renderpass = core.createRenderPass();
 
     std::shared_ptr<klartraum::DrawBasics> axes = std::make_shared<klartraum::DrawBasics>(klartraum::DrawBasicsType::Axes);
     renderpass->addDrawComponent(axes);
 
-    auto& vulkanKernel = core.getVulkanKernel();
+    auto& vulkanContext = core.getVulkanContext();
 
     auto& cameraUBO = renderpass->getCameraUBO();
 
     std::string spzFile = "data/hornedlizard.spz";
-    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(vulkanKernel, renderpass, cameraUBO, spzFile);
+    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = std::make_shared<klartraum::VulkanGaussianSplatting>(vulkanContext, renderpass, cameraUBO, spzFile);
 
     core.add(splatting);
 

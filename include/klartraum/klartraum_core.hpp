@@ -7,7 +7,7 @@
 #include <memory>
 
 
-#include "klartraum/vulkan_kernel.hpp"
+#include "klartraum/vulkan_context.hpp"
 #include "klartraum/backend_config.hpp"
 #include "klartraum/draw_component.hpp"
 #include "klartraum/camera.hpp"

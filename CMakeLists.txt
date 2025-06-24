@@ -29,7 +29,7 @@ set(SRC
   src/glfw_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
-  src/vulkan_kernel.cpp
+  src/vulkan_context.cpp
   src/klartraum_core.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp

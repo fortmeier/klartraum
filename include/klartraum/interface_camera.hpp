@@ -3,7 +3,7 @@
 
 #include "klartraum/camera.hpp"
 #include "klartraum/events.hpp"
-#include "klartraum/vulkan_kernel.hpp"
+#include "klartraum/vulkan_context.hpp"
 
 namespace klartraum {
 

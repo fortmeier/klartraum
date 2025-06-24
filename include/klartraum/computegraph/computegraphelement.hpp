@@ -4,7 +4,7 @@
 #include <map>
 #include <memory>
 
-#include "klartraum/vulkan_kernel.hpp"
+#include "klartraum/vulkan_context.hpp"
 
 namespace klartraum {
 
