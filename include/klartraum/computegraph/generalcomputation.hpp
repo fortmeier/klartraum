@@ -5,14 +5,14 @@
 #include <string>
 #include <vector>
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/vulkan_helpers.hpp"
-#include "klartraum/drawgraph/bufferelement.hpp"
+#include "klartraum/computegraph/bufferelement.hpp"
 
 namespace klartraum {
 
 template <typename P = void>
-class GeneralComputation : public DrawGraphElement {
+class GeneralComputation : public ComputeGraphElement {
 public:
     GeneralComputation(VulkanKernel &vulkanKernel, const std::string &shaderPath) :
         shaderPath(shaderPath) 
@@ -92,7 +92,7 @@ public:
 
         // Add memory barriers for all ImageViewSrc inputs
         for (int i = 0; i < inputs.size(); i++) {
-            DrawGraphElementPtr input = getInputElement(i);
+            ComputeGraphElementPtr input = getInputElement(i);
             ImageViewSrc* imageElement = dynamic_cast<ImageViewSrc*>(input.get());
             if (imageElement) {
                 VkImageMemoryBarrier imageBarrier{};
@@ -150,7 +150,7 @@ public:
         }
     }
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         BufferElementInterface* bufferSrc = std::dynamic_pointer_cast<BufferElementInterface>(input).get();
         ImageViewSrc* imageSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
 
@@ -186,7 +186,7 @@ private:
     VulkanKernel* vulkanKernel;
 
     // inputs that are also outputs of the shader
-    std::map<int, DrawGraphElementPtr> inputOutputs;
+    std::map<int, ComputeGraphElementPtr> inputOutputs;
 
     bool setToZero = false; // whether to set the scratch buffers to zero before dispatching
 
@@ -207,7 +207,7 @@ private:
         std::vector<VkDescriptorPoolSize> poolSizes(inputs.size());
         // Other inputs
         for (size_t i = 0; i < inputs.size(); i++) {
-            DrawGraphElementPtr inputPtr = getInputElement(i);
+            ComputeGraphElementPtr inputPtr = getInputElement(i);
             bool isImage = dynamic_cast<ImageViewSrc*>(inputPtr.get()) != nullptr;
             poolSizes[i].type = isImage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             poolSizes[i].descriptorCount = numberPaths;
@@ -230,7 +230,7 @@ private:
         std::vector<VkDescriptorSetLayoutBinding> layoutBindings(inputs.size());
     
         for (int i = 0; i < inputs.size(); i++) {
-            DrawGraphElementPtr inputPtr = getInputElement(i);
+            ComputeGraphElementPtr inputPtr = getInputElement(i);
             bool isImage = dynamic_cast<ImageViewSrc*>(inputPtr.get()) != nullptr;
 
             layoutBindings[i].binding = i;
@@ -273,7 +273,7 @@ private:
 
         std::vector<VkWriteDescriptorSet> descriptorWrites{inputs.size()};
         for(int i = 0; i < inputs.size(); i++) {
-            DrawGraphElementPtr inputPtr = getInputElement(i);
+            ComputeGraphElementPtr inputPtr = getInputElement(i);
 
             // Cast input to BufferElement to access underlying buffer
             BufferElementInterface* bufferElement = dynamic_cast<BufferElementInterface*>(inputPtr.get());

@@ -5,14 +5,14 @@
 
 #include <vulkan/vulkan.h>
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 
 namespace klartraum {
 
 class VulkanKernel;
 
 template<typename UniformBufferObjectType>
-class UniformBufferObjectNew : public DrawGraphElement {
+class UniformBufferObjectNew : public ComputeGraphElement {
 public:
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths)
     {

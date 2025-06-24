@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "klartraum/vulkan_kernel.hpp"
-#include "klartraum/drawgraph/uniformbufferobject.hpp"
+#include "klartraum/computegraph/uniformbufferobject.hpp"
 #include "klartraum/camera.hpp"
 
 namespace klartraum {

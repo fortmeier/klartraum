@@ -1,16 +1,16 @@
-#ifndef KLARTRAUM_DRAWGRAPH_FRAMEBUFFERSRC_HPP
-#define KLARTRAUM_DRAWGRAPH_FRAMEBUFFERSRC_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPH_FRAMEBUFFERSRC_HPP
+#define KLARTRAUM_COMPUTEGRAPH_FRAMEBUFFERSRC_HPP
 
 #include <map>
 #include <vector>
 
 #include <vulkan/vulkan.h>
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 
 namespace klartraum {
 
-class ImageViewSrc : public virtual DrawGraphElement {
+class ImageViewSrc : public virtual ComputeGraphElement {
 public:
     ImageViewSrc() {};
 
@@ -54,7 +54,7 @@ private:
     std::vector<VkImage> images;
 };
 
-class ImageSrc : public DrawGraphElement {
+class ImageSrc : public ComputeGraphElement {
 public:
     ImageSrc(VkImage image) {
         images.push_back(image);
@@ -78,4 +78,4 @@ public:
 
 }
 
-#endif // KLARTRAUM_DRAWGRAPH_FRAMEBUFFERSRC_HPP
+#endif // KLARTRAUM_COMPUTEGRAPH_FRAMEBUFFERSRC_HPP

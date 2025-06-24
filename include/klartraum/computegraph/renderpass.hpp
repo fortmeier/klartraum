@@ -1,11 +1,11 @@
-#ifndef KLARTRAUM_DRAWGRAPH_RENDERPASS_HPP
-#define KLARTRAUM_DRAWGRAPH_RENDERPASS_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPH_RENDERPASS_HPP
+#define KLARTRAUM_COMPUTEGRAPH_RENDERPASS_HPP
 
 #include <map>
 #include <vector>
 #include <vulkan/vulkan.h>
-#include "klartraum/drawgraph/imageviewsrc.hpp"
-#include "klartraum/drawgraph/rendergraphelement.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/rendergraphelement.hpp"
 
 namespace klartraum {
 
@@ -26,7 +26,7 @@ public:
 
     };
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
         if (index == 0 && imageViewSrc == nullptr) {
             throw std::runtime_error("input is not an ImageViewSrc!");
@@ -104,7 +104,7 @@ public:
                 imageView
             }; 
     
-            // TODO create framebuffer with render pass drawgraph element
+            // TODO create framebuffer with render pass computegraph element
             // and create imageviewsrc instead of framebuffer src
     
             VkFramebufferCreateInfo framebufferInfo{};
@@ -222,4 +222,4 @@ typedef std::shared_ptr<RenderPass> RenderPassPtr;
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_DRAWGRAPH_RENDERPASS_HPP
+#endif // KLARTRAUM_COMPUTEGRAPH_RENDERPASS_HPP

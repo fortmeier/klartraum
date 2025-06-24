@@ -5,12 +5,12 @@
 
 #include "klartraum/glfw_frontend.hpp"
 
-#include "klartraum/drawgraph/drawgraph.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
 
-#include "klartraum/drawgraph/imageviewsrc.hpp"
-#include "klartraum/drawgraph/bufferelement.hpp"
-#include "klartraum/drawgraph/buffertransformation.hpp"
-#include "klartraum/drawgraph/uniformbufferobject.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/bufferelement.hpp"
+#include "klartraum/computegraph/buffertransformation.hpp"
+#include "klartraum/computegraph/uniformbufferobject.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 
 
@@ -34,19 +34,19 @@ TEST(BufferTransformation, create) {
     transform->setInput(bufferElement);
     
     /*
-    STEP 2: create the drawgraph backend and compile the drawgraph
+    STEP 2: create the computegraph backend and compile the computegraph
     */
    
-    // this traverses the drawgraph and creates the vulkan objects
-    auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(transform);
+    // this traverses the computegraph and creates the vulkan objects
+    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    computegraph.compileFrom(transform);
 
     bufferElement->getBuffer(0).memcopyFrom(data);
 
     /*
-    STEP 3: submit the drawgraph and compare the output
+    STEP 3: submit the computegraph and compare the output
     */
-    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     // check the output buffer
     std::vector<float> data_out(7, 0.0f);
@@ -67,7 +67,7 @@ TEST(BufferTransformation, create_with_ubo) {
     auto& device = vulkanKernel.getDevice();
 
     /*
-    STEP 1: cerate the drawgraph elements
+    STEP 1: cerate the computegraph elements
     */
 
     typedef VulkanBuffer<float> typeA;
@@ -84,19 +84,19 @@ TEST(BufferTransformation, create_with_ubo) {
     transform->getUbo()->ubo = 3.0f;
     
     /*
-    STEP 2: create the drawgraph backend and compile the drawgraph
+    STEP 2: create the computegraph backend and compile the computegraph
     */
    
-   // this traverses the drawgraph and creates the vulkan objects
-   auto& drawgraph = DrawGraph(vulkanKernel, 1);
-   drawgraph.compileFrom(transform);
+   // this traverses the computegraph and creates the vulkan objects
+   auto& computegraph = ComputeGraph(vulkanKernel, 1);
+   computegraph.compileFrom(transform);
 
    bufferElement->getBuffer(0).memcopyFrom(data);
 
     /*
-    STEP 3: submit the drawgraph and compare the output
+    STEP 3: submit the computegraph and compare the output
     */
-    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     // check the output buffer
     std::vector<float> data_out(7, 0.0f);
@@ -130,22 +130,22 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
     transform->getUbo()->ubo = 77.0f;
     
     /*
-    STEP 2: create the drawgraph backend and compile the drawgraph and copy the data to the buffer
+    STEP 2: create the computegraph backend and compile the computegraph and copy the data to the buffer
     */
    
-   // this traverses the drawgraph and creates the vulkan objects
-   auto& drawgraph = DrawGraph(vulkanKernel, 3);
-   drawgraph.compileFrom(transform);
+   // this traverses the computegraph and creates the vulkan objects
+   auto& computegraph = ComputeGraph(vulkanKernel, 3);
+   computegraph.compileFrom(transform);
    
    bufferElement->getBuffer(0).memcopyFrom(data);
    /*
-   STEP 3: submit the drawgraph and compare the output
+   STEP 3: submit the computegraph and compare the output
    */
   for(uint32_t pathId = 0; pathId < 3; pathId++) {
         transform->getUbo()->ubo = 1.0f * pathId;
         transform->getUbo()->update(pathId);
 
-        drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), pathId);
+        computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), pathId);
         
         // check the output buffer
         std::vector<float> data_out(7, 0.0f);

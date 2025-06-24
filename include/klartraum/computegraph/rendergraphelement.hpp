@@ -1,14 +1,14 @@
 #ifndef KLARTRAUM_RENDERGRAPHELEMENT_HPP
 #define KLARTRAUM_RENDERGRAPHELEMENT_HPP
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
-#include "klartraum/drawgraph/uniformbufferobject.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
+#include "klartraum/computegraph/uniformbufferobject.hpp"
 
 namespace klartraum {
 
 typedef UniformBufferObjectNew<CameraMVP> CameraUboType;
 
-class RenderGraphElement : public virtual DrawGraphElement {
+class RenderGraphElement : public virtual ComputeGraphElement {
 public:
     std::shared_ptr<CameraUboType> getCameraUBO() {
         for (auto& input : inputs) {

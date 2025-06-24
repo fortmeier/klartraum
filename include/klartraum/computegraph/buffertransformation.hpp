@@ -5,9 +5,9 @@
 
 #include <array>
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/vulkan_helpers.hpp"
-#include "klartraum/drawgraph/bufferelement.hpp"
+#include "klartraum/computegraph/bufferelement.hpp"
 
 namespace klartraum {
 
@@ -191,7 +191,7 @@ public:
         }
     };
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         BufferElementInterface* bufferSrc = std::dynamic_pointer_cast<BufferElementInterface>(input).get();
         if (bufferSrc == nullptr) {
             throw std::runtime_error("input is not a fitting BufferElementInterface!");
