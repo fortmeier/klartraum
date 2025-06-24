@@ -10,15 +10,15 @@
 namespace klartraum
 {
 
-KlartraumCore::KlartraumCore() {
+KlartraumEngine::KlartraumEngine() {
 
 }
 
-KlartraumCore::~KlartraumCore() {
+KlartraumEngine::~KlartraumEngine() {
 
 }
 
-void KlartraumCore::step() {
+void KlartraumEngine::step() {
 
     // start frame rendering
     auto [imageIndex, semaphore] = vulkanContext.beginRender();
@@ -49,31 +49,31 @@ void KlartraumCore::step() {
  
 }
 
-std::queue<std::unique_ptr<Event> >& KlartraumCore::getEventQueue()
+std::queue<std::unique_ptr<Event> >& KlartraumEngine::getEventQueue()
 {
     return eventQueue;
 }
 
 
-void KlartraumCore::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
+void KlartraumEngine::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera)
 {
     camera->initialize(vulkanContext);
     this->interfaceCamera = camera;
 }
 
-VulkanContext& KlartraumCore::getVulkanContext()
+VulkanContext& KlartraumEngine::getVulkanContext()
 {
     return vulkanContext;
 }
 
-void KlartraumCore::add(ComputeGraphElementPtr element)
+void KlartraumEngine::add(ComputeGraphElementPtr element)
 {
     computeGraphs.emplace_back(vulkanContext, 3);
     auto& computeGraph = computeGraphs.back();
     computeGraph.compileFrom(element);
 }
 
-RenderPassPtr KlartraumCore::createRenderPass()
+RenderPassPtr KlartraumEngine::createRenderPass()
 {
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;
