@@ -12,7 +12,7 @@ namespace klartraum {
 template <typename T>
 class VulkanBuffer {
 public:
-    VulkanBuffer(VulkanKernel& kernel, uint32_t size) : vulkanKernel(kernel), size(size) { //, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
+    VulkanBuffer(VulkanContext& kernel, uint32_t size) : vulkanContext(kernel), size(size) { //, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
         auto& device = kernel.getDevice();
 
         VkBufferCreateInfo bufferInfo{};
@@ -31,7 +31,7 @@ public:
         VkMemoryAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = vulkanKernel.findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        allocInfo.memoryTypeIndex = vulkanContext.findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     
         if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate vertex buffer memory!");
@@ -43,19 +43,19 @@ public:
         : size(other.size),
           vertexBuffer(other.vertexBuffer),
           vertexBufferMemory(other.vertexBufferMemory),
-          vulkanKernel(other.vulkanKernel) {
+          vulkanContext(other.vulkanContext) {
         other.vertexBuffer = VK_NULL_HANDLE;
         other.vertexBufferMemory = VK_NULL_HANDLE;
     }
 
     ~VulkanBuffer() {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
         vkDestroyBuffer(device, vertexBuffer, nullptr);
         vkFreeMemory(device, vertexBufferMemory, nullptr);
     }
 
     void memcopyFrom(const std::vector<T>& src) {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
         size_t dataSize = sizeof(T) * std::min((uint32_t)src.size(), (uint32_t)size);
@@ -64,7 +64,7 @@ public:
     }
 
     void memcopyTo(std::vector<T>& dst) {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
         size_t dataSize = sizeof(T) * std::min((uint32_t)dst.size(), (uint32_t)size);
@@ -74,7 +74,7 @@ public:
 
     void zero()
     {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
         memset(mappedData, 0, sizeof(T) * size);
@@ -82,7 +82,7 @@ public:
     }
 
     void _recordZero(VkCommandBuffer commandBuffer) {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
         vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, 0);
     }
 
@@ -103,7 +103,7 @@ private:
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
-    VulkanKernel& vulkanKernel;
+    VulkanContext& vulkanContext;
 
 
 };

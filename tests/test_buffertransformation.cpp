@@ -21,14 +21,14 @@ TEST(BufferTransformation, create) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
-    auto& device = vulkanKernel.getDevice();
+    auto& vulkanContext = core.getVulkanContext();
+    auto& device = vulkanContext.getDevice();
 
     typedef VulkanBuffer<float> typeA;
     typedef VulkanBuffer<float> typeR;
-    auto transform = std::make_shared<BufferTransformation<typeA, typeR>>(vulkanKernel, "shaders/operator_double.comp.spv");
+    auto transform = std::make_shared<BufferTransformation<typeA, typeR>>(vulkanContext, "shaders/operator_double.comp.spv");
     
-    auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
+    auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanContext, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
     
     transform->setInput(bufferElement);
@@ -38,7 +38,7 @@ TEST(BufferTransformation, create) {
     */
    
     // this traverses the computegraph and creates the vulkan objects
-    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    auto& computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(transform);
 
     bufferElement->getBuffer(0).memcopyFrom(data);
@@ -46,7 +46,7 @@ TEST(BufferTransformation, create) {
     /*
     STEP 3: submit the computegraph and compare the output
     */
-    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
     // check the output buffer
     std::vector<float> data_out(7, 0.0f);
@@ -63,8 +63,8 @@ TEST(BufferTransformation, create_with_ubo) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
-    auto& device = vulkanKernel.getDevice();
+    auto& vulkanContext = core.getVulkanContext();
+    auto& device = vulkanContext.getDevice();
 
     /*
     STEP 1: cerate the computegraph elements
@@ -74,9 +74,9 @@ TEST(BufferTransformation, create_with_ubo) {
     typedef VulkanBuffer<float> typeR;
     typedef UniformBufferObjectNew<float> typeU;
 
-    auto transform = std::make_shared<BufferTransformation<typeA, typeR, typeU>>(vulkanKernel, "shaders/operator_multiply_scalar.comp.spv");
+    auto transform = std::make_shared<BufferTransformation<typeA, typeR, typeU>>(vulkanContext, "shaders/operator_multiply_scalar.comp.spv");
     
-    auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
+    auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanContext, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
     
     transform->setInput(bufferElement);
@@ -88,7 +88,7 @@ TEST(BufferTransformation, create_with_ubo) {
     */
    
    // this traverses the computegraph and creates the vulkan objects
-   auto& computegraph = ComputeGraph(vulkanKernel, 1);
+   auto& computegraph = ComputeGraph(vulkanContext, 1);
    computegraph.compileFrom(transform);
 
    bufferElement->getBuffer(0).memcopyFrom(data);
@@ -96,7 +96,7 @@ TEST(BufferTransformation, create_with_ubo) {
     /*
     STEP 3: submit the computegraph and compare the output
     */
-    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
     // check the output buffer
     std::vector<float> data_out(7, 0.0f);
@@ -113,16 +113,16 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
-    auto& device = vulkanKernel.getDevice();
+    auto& vulkanContext = core.getVulkanContext();
+    auto& device = vulkanContext.getDevice();
 
     typedef VulkanBuffer<float> typeA;
     typedef VulkanBuffer<float> typeR;
     typedef UniformBufferObjectNew<float> typeU;
 
-    auto transform = std::make_shared<BufferTransformation<typeA, typeR, typeU>>(vulkanKernel, "shaders/operator_multiply_scalar.comp.spv");
+    auto transform = std::make_shared<BufferTransformation<typeA, typeR, typeU>>(vulkanContext, "shaders/operator_multiply_scalar.comp.spv");
     
-    auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanKernel, 7);
+    auto bufferElement = std::make_shared<BufferElement<typeA>>(vulkanContext, 7);
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
     
     transform->setInput(bufferElement);
@@ -134,7 +134,7 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
     */
    
    // this traverses the computegraph and creates the vulkan objects
-   auto& computegraph = ComputeGraph(vulkanKernel, 3);
+   auto& computegraph = ComputeGraph(vulkanContext, 3);
    computegraph.compileFrom(transform);
    
    bufferElement->getBuffer(0).memcopyFrom(data);
@@ -145,7 +145,7 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
         transform->getUbo()->ubo = 1.0f * pathId;
         transform->getUbo()->update(pathId);
 
-        computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), pathId);
+        computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), pathId);
         
         // check the output buffer
         std::vector<float> data_out(7, 0.0f);

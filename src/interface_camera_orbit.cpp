@@ -12,13 +12,13 @@ InterfaceCameraOrbit::InterfaceCameraOrbit(UpDirection up)
     setUpDirection(up);
 }
 
-void InterfaceCameraOrbit::initialize(VulkanKernel& vulkanKernel) {
-    this->vulkanKernel = &vulkanKernel;
+void InterfaceCameraOrbit::initialize(VulkanContext& vulkanContext) {
+    this->vulkanContext = &vulkanContext;
 }
 
 void InterfaceCameraOrbit::update(CameraMVP &mvp)
 {
-    auto swapChainExtent = vulkanKernel->getSwapChainExtent();
+    auto swapChainExtent = vulkanContext->getSwapChainExtent();
 
     static auto startTime = std::chrono::high_resolution_clock::now();
     auto currentTime = std::chrono::high_resolution_clock::now();
@@ -45,7 +45,7 @@ void InterfaceCameraOrbit::update(CameraMVP &mvp)
         break;
     }
     
-    mvp.proj = glm::perspective(glm::radians(45.0f), vulkanKernel->getSwapChainExtent().width / (float) swapChainExtent.height, 0.1f, 10.0f);
+    mvp.proj = glm::perspective(glm::radians(45.0f), vulkanContext->getSwapChainExtent().width / (float) swapChainExtent.height, 0.1f, 10.0f);
 
     // Vulkan has inverted Y coordinates compared to OpenGL
     mvp.proj[1][1] *= -1;

@@ -14,10 +14,10 @@ namespace klartraum {
 template <typename A, typename R, typename U = void, typename P = void>
 class BufferTransformation : public TemplatedBufferElementInterface<R> {
 public:
-    BufferTransformation(VulkanKernel &vulkanKernel, const std::string &shaderPath) :
+    BufferTransformation(VulkanContext &vulkanContext, const std::string &shaderPath) :
         shaderPaths({shaderPath}) 
     {
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
         
         if constexpr (!std::is_void<U>::value) {
             uboPtr = std::make_shared<U>();
@@ -27,10 +27,10 @@ public:
 
     }
 
-    BufferTransformation(VulkanKernel &vulkanKernel, const std::vector<std::string> &shaderPaths) :
+    BufferTransformation(VulkanContext &vulkanContext, const std::vector<std::string> &shaderPaths) :
         shaderPaths(shaderPaths) 
     {
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
         
         if constexpr (!std::is_void<U>::value) {
             uboPtr = std::make_shared<U>();
@@ -42,12 +42,12 @@ public:
 
     virtual ~BufferTransformation() {
         if (initialized) {
-            vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
+            vkDestroyPipelineLayout(vulkanContext->getDevice(), computePipelineLayout, nullptr);
             for(auto& computePipeline : computePipelines) {
-                vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
+                vkDestroyPipeline(vulkanContext->getDevice(), computePipeline, nullptr);
             }
-            vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
-            vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+            vkDestroyDescriptorSetLayout(vulkanContext->getDevice(), computeDescriptorSetLayout, nullptr);
+            vkDestroyDescriptorPool(vulkanContext->getDevice(), descriptorPool, nullptr);
 
             if constexpr (!std::is_void<U>::value) {
                 uboPtr.reset();
@@ -61,16 +61,16 @@ public:
         }
     }
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         this->numberPaths = numberPaths;
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
 
         if constexpr (!std::is_void<U>::value) {
-            uboPtr->_setup(vulkanKernel, numberPaths);
+            uboPtr->_setup(vulkanContext, numberPaths);
         }
 
         for (auto& other : otherInputs) {
-            other->_setup(vulkanKernel, numberPaths);
+            other->_setup(vulkanContext, numberPaths);
         }
 
         createDescriptorPool();
@@ -89,7 +89,7 @@ public:
         for(uint32_t i = 0; i < numberPaths; i++) {
             // Use custom output size if set, otherwise use input size
             uint32_t outputSize = customOutputSize > 0 ? customOutputSize : inputSize;
-            outputBuffers.emplace_back(vulkanKernel, outputSize);
+            outputBuffers.emplace_back(vulkanContext, outputSize);
             createComputeDescriptorSets(i);
             
             if constexpr (!std::is_void<U>::value) {
@@ -256,7 +256,7 @@ private:
     VkPipelineLayout computePipelineLayout;
     std::vector<VkPipeline> computePipelines;
 
-    VulkanKernel* vulkanKernel;
+    VulkanContext* vulkanContext;
 
     const std::vector<std::string> shaderPaths;
 
@@ -279,8 +279,8 @@ private:
 
     */
     void createDescriptorPool() {
-        auto& device = vulkanKernel->getDevice();
-        auto& config = vulkanKernel->getConfig();
+        auto& device = vulkanContext->getDevice();
+        auto& config = vulkanContext->getConfig();
 
         
         std::vector<VkDescriptorPoolSize> poolSizes(3 + otherInputs.size());
@@ -319,7 +319,7 @@ private:
 
     void createComputeDescriptorSetLayout()
     {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
 
         std::vector<VkDescriptorSetLayoutBinding> layoutBindings(3 + otherInputs.size());
     
@@ -365,8 +365,8 @@ private:
 
     void createComputeDescriptorSets(uint32_t pathId)
     {
-        auto& device = vulkanKernel->getDevice();
-        auto& config = vulkanKernel->getConfig();
+        auto& device = vulkanContext->getDevice();
+        auto& config = vulkanContext->getConfig();
 
         A& a = getInput(pathId);
         R& r = outputBuffers[pathId];
@@ -436,7 +436,7 @@ private:
 
     void createComputePipeline()
     {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
 
         std::vector<VkShaderModule> computeShaderModules(shaderPaths.size());
         std::vector<VkPipelineShaderStageCreateInfo> computeShaderStages(shaderPaths.size()); 
@@ -444,7 +444,7 @@ private:
         for (size_t i = 0; i < shaderPaths.size(); i++) {
             auto computeShaderCode = readFile(shaderPaths[i]);
 
-            computeShaderModules[i] = createShaderModule(computeShaderCode, vulkanKernel->getDevice());
+            computeShaderModules[i] = createShaderModule(computeShaderCode, vulkanContext->getDevice());
 
             computeShaderStages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             computeShaderStages[i].stage = VK_SHADER_STAGE_COMPUTE_BIT;

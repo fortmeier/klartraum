@@ -18,7 +18,7 @@ public:
     };
 
     ~RenderPass() {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
         for (auto framebuffer : framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
@@ -44,10 +44,10 @@ public:
         return "RenderPass";
     }
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
-        this->vulkanKernel = &vulkanKernel;
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+        this->vulkanContext = &vulkanContext;
         
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
 
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = swapChainImageFormat;
@@ -123,13 +123,13 @@ public:
 
         auto cameraUBO = getCameraUBO();
         for(auto& drawComponent : drawComponents) {
-            drawComponent->initialize(vulkanKernel, renderPass, cameraUBO);
+            drawComponent->initialize(vulkanContext, renderPass, cameraUBO);
         }
     };
 
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
-        // auto& camera = vulkanKernel->getCamera();
+        // auto& camera = vulkanContext->getCamera();
         // auto& vertices = getVertices(type);
 
         auto& image = getImage(pathId);
@@ -207,7 +207,7 @@ public:
     }
 
 private:
-    VulkanKernel* vulkanKernel = nullptr;
+    VulkanContext* vulkanContext = nullptr;
     VkRenderPass renderPass;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;

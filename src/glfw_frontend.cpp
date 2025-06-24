@@ -46,13 +46,13 @@ void GlfwFrontend::initialize() {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     
     // TODO window size should be configurable somewhere else
-    auto config = klartraumCore->getVulkanKernel().getConfig();
+    auto config = klartraumCore->getVulkanContext().getConfig();
     window = glfwCreateWindow(config.WIDTH, config.HEIGHT, "Klartraum Engine", nullptr, nullptr);
 
     // set GLFW event callbacks
     glfwSetScrollCallback(window, scroll_callback);
 
-    auto instance = klartraumCore->getVulkanKernel().getInstance();
+    auto instance = klartraumCore->getVulkanContext().getInstance();
 
     // cerate the window surface
     // (this needs to be done after the Vulkan instance is created)
@@ -60,7 +60,7 @@ void GlfwFrontend::initialize() {
         throw std::runtime_error("failed to create window surface!");
     }
 
-    klartraumCore->getVulkanKernel().initialize(surface);
+    klartraumCore->getVulkanContext().initialize(surface);
 }
 
 
@@ -77,12 +77,12 @@ void GlfwFrontend::loop() {
 }
 
 void GlfwFrontend::shutdown() {
-    auto& instance = klartraumCore->getVulkanKernel().getInstance();
-    auto& vulkanKernel = klartraumCore->getVulkanKernel();
+    auto& instance = klartraumCore->getVulkanContext().getInstance();
+    auto& vulkanContext = klartraumCore->getVulkanContext();
     
-    vulkanKernel.stopRender();
+    vulkanContext.stopRender();
     klartraumCore->clearComputeGraphs();
-    vulkanKernel.shutdown();
+    vulkanContext.shutdown();
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
 

@@ -21,8 +21,8 @@ public:
 
 class ComputeGraph {
 public:
-    ComputeGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : vulkanKernel(vulkanKernel), numberPaths(numberPaths) {
-        auto& device = vulkanKernel.getDevice();
+    ComputeGraph(VulkanContext& vulkanContext, uint32_t numberPaths) : vulkanContext(vulkanContext), numberPaths(numberPaths) {
+        auto& device = vulkanContext.getDevice();
 
         all_path_submit_infos.resize(numberPaths);
         all_path_submit_info_wrappers.resize(numberPaths);
@@ -32,7 +32,7 @@ public:
         VkCommandPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        poolInfo.queueFamilyIndex = vulkanKernel.getQueueFamilyIndices().graphicsAndComputeFamily.value();
+        poolInfo.queueFamilyIndex = vulkanContext.getQueueFamilyIndices().graphicsAndComputeFamily.value();
 
         if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
@@ -40,7 +40,7 @@ public:
     }
 
     virtual ~ComputeGraph() {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
 
         // clear the outputs of all elements
         // otherwise we will have dangling pointers in the graph
@@ -67,7 +67,7 @@ public:
     }
 
     void compileFrom(ComputeGraphElementPtr element) {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
 
         computeOrder(element);
 
@@ -78,7 +78,7 @@ public:
         createGraphFinishedSemaphores();
 
         for (auto& element : ordered_elements) {
-            element->_setup(vulkanKernel, numberPaths);
+            element->_setup(vulkanContext, numberPaths);
         }
 
         commandBuffers.resize(ordered_elements.size() * numberPaths);
@@ -139,7 +139,7 @@ public:
     }
 
     void submitAndWait(VkQueue graphicsQueue, uint32_t pathId) {
-        auto& device = vulkanKernel.getDevice();
+        auto& device = vulkanContext.getDevice();
 
         VkFenceCreateInfo fenceInfo{};
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -160,7 +160,7 @@ public:
     }
 
 private:
-    VulkanKernel& vulkanKernel;
+    VulkanContext& vulkanContext;
     uint32_t numberPaths;
 
     VkCommandPool commandPool;
@@ -273,8 +273,8 @@ private:
     }
 
     void createRenderFinishedSemaphores() {
-        auto& device = vulkanKernel.getDevice();
-        auto& config = vulkanKernel.getConfig();
+        auto& device = vulkanContext.getDevice();
+        auto& config = vulkanContext.getConfig();
 
         // create the render finished semaphores
         VkSemaphoreCreateInfo semaphoreInfo{};
@@ -297,8 +297,8 @@ private:
     }
 
     void createGraphFinishedSemaphores() {
-        auto& device = vulkanKernel.getDevice();
-        auto& config = vulkanKernel.getConfig();
+        auto& device = vulkanContext.getDevice();
+        auto& config = vulkanContext.getConfig();
 
         // create the render finished semaphores
         VkSemaphoreCreateInfo semaphoreInfo{};

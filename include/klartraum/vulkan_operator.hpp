@@ -17,9 +17,9 @@ public:
 template <typename A, typename B, typename R>
 class VulkanOperator : public VulkanOperationResult {
 public:
-    VulkanOperator(VulkanKernel &vulkanKernel, const std::string &shaderPath)
+    VulkanOperator(VulkanContext &vulkanContext, const std::string &shaderPath)
     {
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
         createDescriptorPool();
         createComputeDescriptorSetLayout();
         
@@ -29,10 +29,10 @@ public:
     }
 
     virtual ~VulkanOperator() {
-        vkDestroyPipelineLayout(vulkanKernel->getDevice(), computePipelineLayout, nullptr);
-        vkDestroyPipeline(vulkanKernel->getDevice(), computePipeline, nullptr);
-        vkDestroyDescriptorSetLayout(vulkanKernel->getDevice(), computeDescriptorSetLayout, nullptr);
-        vkDestroyDescriptorPool(vulkanKernel->getDevice(), descriptorPool, nullptr);
+        vkDestroyPipelineLayout(vulkanContext->getDevice(), computePipelineLayout, nullptr);
+        vkDestroyPipeline(vulkanContext->getDevice(), computePipeline, nullptr);
+        vkDestroyDescriptorSetLayout(vulkanContext->getDevice(), computeDescriptorSetLayout, nullptr);
+        vkDestroyDescriptorPool(vulkanContext->getDevice(), descriptorPool, nullptr);
     };
 
     VulkanOperationResult* operator()(A& a, B& b, R& result)
@@ -66,15 +66,15 @@ private:
     VkPipelineLayout computePipelineLayout;
     VkPipeline computePipeline;
 
-    VulkanKernel* vulkanKernel;
+    VulkanContext* vulkanContext;
 
     uint32_t groupCountX = 1;
     uint32_t groupCountY = 1;
     uint32_t groupCountZ = 1;
 
     void createDescriptorPool() {
-        auto& device = vulkanKernel->getDevice();
-        auto& config = vulkanKernel->getConfig();
+        auto& device = vulkanContext->getDevice();
+        auto& config = vulkanContext->getConfig();
     
         std::array<VkDescriptorPoolSize, 3> poolSizes{};
         // A
@@ -102,7 +102,7 @@ private:
 
     void createComputeDescriptorSetLayout()
     {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
 
         std::array<VkDescriptorSetLayoutBinding, 3> layoutBindings{};
     
@@ -139,8 +139,8 @@ private:
 
     void createComputeDescriptorSets(A& a, B& b, R& r)
     {
-        auto& device = vulkanKernel->getDevice();
-        auto& config = vulkanKernel->getConfig();
+        auto& device = vulkanContext->getDevice();
+        auto& config = vulkanContext->getConfig();
     
         //VkDescriptorSetLayout layout;
         VkDescriptorSetAllocateInfo allocInfo{};
@@ -201,11 +201,11 @@ private:
 
     void createComputePipeline(const std::string &shaderPath)
     {
-        auto& device = vulkanKernel->getDevice();
+        auto& device = vulkanContext->getDevice();
 
         auto computeShaderCode = readFile(shaderPath);
     
-        VkShaderModule computeShaderModule = createShaderModule(computeShaderCode, vulkanKernel->getDevice());
+        VkShaderModule computeShaderModule = createShaderModule(computeShaderCode, vulkanContext->getDevice());
         
         VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
         computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -219,7 +219,7 @@ private:
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 2;
     
-        VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, vulkanKernel->getCamera().getDescriptorSetLayout()};
+        VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, vulkanContext->getCamera().getDescriptorSetLayout()};
         pipelineLayoutInfo.pSetLayouts = combinedLayouts;
         
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {

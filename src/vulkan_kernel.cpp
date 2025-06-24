@@ -21,7 +21,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
     }
 }
 
-bool VulkanKernel::checkValidationLayerSupport() {
+bool VulkanContext::checkValidationLayerSupport() {
     uint32_t layerCount;
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 
@@ -44,7 +44,7 @@ bool VulkanKernel::checkValidationLayerSupport() {
     return true;
 }
 
-std::vector<const char*> VulkanKernel::getRequiredExtensions() {
+std::vector<const char*> VulkanContext::getRequiredExtensions() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions;
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -59,7 +59,7 @@ std::vector<const char*> VulkanKernel::getRequiredExtensions() {
     return extensions;
 }
 
-VKAPI_ATTR VkBool32 VKAPI_CALL VulkanKernel::debugCallback(
+VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -76,7 +76,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanKernel::debugCallback(
     return VK_FALSE;
 }
 
-SwapChainSupportDetails VulkanKernel::querySwapChainSupport(VkPhysicalDevice device) {
+SwapChainSupportDetails VulkanContext::querySwapChainSupport(VkPhysicalDevice device) {
     SwapChainSupportDetails details;
 
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
@@ -101,7 +101,7 @@ SwapChainSupportDetails VulkanKernel::querySwapChainSupport(VkPhysicalDevice dev
     return details;
 }
 
-void VulkanKernel::createInstance() {
+void VulkanContext::createInstance() {
 
     std::cout << "use validation layers: " << (enableValidationLayers ? "true" : "false") << std::endl;
     if (enableValidationLayers)
@@ -164,7 +164,7 @@ void VulkanKernel::createInstance() {
 
 }
 
-void VulkanKernel::setupDebugMessenger() {
+void VulkanContext::setupDebugMessenger() {
     if (!enableValidationLayers) return;
     VkDebugUtilsMessengerCreateInfoEXT createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -181,7 +181,7 @@ void VulkanKernel::setupDebugMessenger() {
     }
 }
 
-QueueFamilyIndices VulkanKernel::findQueueFamilies(VkPhysicalDevice device) {
+QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDevice device) {
     QueueFamilyIndices indices;
 
     uint32_t queueFamilyCount = 0;
@@ -213,7 +213,7 @@ QueueFamilyIndices VulkanKernel::findQueueFamilies(VkPhysicalDevice device) {
     return indices;
 }
 
-bool VulkanKernel::isDeviceSuitable(VkPhysicalDevice device) {
+bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device) {
     QueueFamilyIndices indices = findQueueFamilies(device);
 
     bool extensionsSupported = checkDeviceExtensionSupport(device);
@@ -227,7 +227,7 @@ bool VulkanKernel::isDeviceSuitable(VkPhysicalDevice device) {
     return indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
 
-VkSurfaceFormatKHR VulkanKernel::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+VkSurfaceFormatKHR VulkanContext::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
     for (const auto& availableFormat : availableFormats) {
         if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             return availableFormat;
@@ -237,7 +237,7 @@ VkSurfaceFormatKHR VulkanKernel::chooseSwapSurfaceFormat(const std::vector<VkSur
     return availableFormats[0];
 }
 
-VkPresentModeKHR VulkanKernel::chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+VkPresentModeKHR VulkanContext::chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
     for (const auto& availablePresentMode : availablePresentModes) {
         if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
             return availablePresentMode;
@@ -247,7 +247,7 @@ VkPresentModeKHR VulkanKernel::chooseSwapPresentMode(const std::vector<VkPresent
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D VulkanKernel::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+VkExtent2D VulkanContext::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return capabilities.currentExtent;
     }
@@ -268,7 +268,7 @@ VkExtent2D VulkanKernel::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabi
     }
 }
 
-void VulkanKernel::createSwapChain() {
+void VulkanContext::createSwapChain() {
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
@@ -324,7 +324,7 @@ void VulkanKernel::createSwapChain() {
 
 }
 
-void VulkanKernel::createImageViews() {
+void VulkanContext::createImageViews() {
     swapChainImageViews.resize(swapChainImages.size());
     for (size_t i = 0; i < swapChainImages.size(); i++) {
         VkImageViewCreateInfo createInfo{};
@@ -353,7 +353,7 @@ void VulkanKernel::createImageViews() {
 
 
 
-bool VulkanKernel::checkDeviceExtensionSupport(VkPhysicalDevice device) {
+bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device) {
     uint32_t extensionCount;
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
@@ -369,7 +369,7 @@ bool VulkanKernel::checkDeviceExtensionSupport(VkPhysicalDevice device) {
     return requiredExtensions.empty();
 }
 
-void VulkanKernel::pickPhysicalDevice() {
+void VulkanContext::pickPhysicalDevice() {
 
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
@@ -396,7 +396,7 @@ void VulkanKernel::pickPhysicalDevice() {
     }
 }
 
-void VulkanKernel::createLogicalDevice() {
+void VulkanContext::createLogicalDevice() {
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
@@ -442,15 +442,15 @@ void VulkanKernel::createLogicalDevice() {
 }
 
 
-VulkanKernel::VulkanKernel() {
+VulkanContext::VulkanContext() {
     createInstance();
     setupDebugMessenger();
     state = State::UNINITIALIZED;
 }
 
-void VulkanKernel::initialize(VkSurfaceKHR& surface) {
+void VulkanContext::initialize(VkSurfaceKHR& surface) {
     if(state != State::UNINITIALIZED) {
-        throw std::runtime_error("VulkanKernel already initialized!");
+        throw std::runtime_error("VulkanContext already initialized!");
     }
 
     this->surface = surface;
@@ -467,9 +467,9 @@ void VulkanKernel::initialize(VkSurfaceKHR& surface) {
 
 }
 
-void VulkanKernel::shutdown() {
+void VulkanContext::shutdown() {
     if (state != State::INITIALIZED) {
-        throw std::runtime_error("VulkanKernel not initialized!");
+        throw std::runtime_error("VulkanContext not initialized!");
     }
 
     stopRender();
@@ -506,36 +506,36 @@ void VulkanKernel::shutdown() {
 }
 
 
-VulkanKernel::~VulkanKernel() {
+VulkanContext::~VulkanContext() {
     if (state != State::SHUTDOWN) {
-        throw std::runtime_error("VulkanKernel not shut down!");
+        throw std::runtime_error("VulkanContext not shut down!");
     }
     vkDestroyInstance(instance, nullptr);
 }
 
-QueueFamilyIndices VulkanKernel::findQueueFamiliesPhysicalDevice() {
+QueueFamilyIndices VulkanContext::findQueueFamiliesPhysicalDevice() {
     return findQueueFamilies(physicalDevice);
 }
 
-VkInstance& VulkanKernel::getInstance() {
+VkInstance& VulkanContext::getInstance() {
     return instance;
 }
 
-VkDevice& VulkanKernel::getDevice() {
+VkDevice& VulkanContext::getDevice() {
     return device;
 }
 
-VkSwapchainKHR& VulkanKernel::getSwapChain()
+VkSwapchainKHR& VulkanContext::getSwapChain()
 {
     return swapChain;
 }
 
-VkQueue& VulkanKernel::getGraphicsQueue()
+VkQueue& VulkanContext::getGraphicsQueue()
 {
     return graphicsQueue;
 }
 
-VkImageView& VulkanKernel::getImageView(uint32_t imageIndex)
+VkImageView& VulkanContext::getImageView(uint32_t imageIndex)
 {
     if (imageIndex >= swapChainImageViews.size()) {
         throw std::runtime_error("Invalid image index!");
@@ -543,7 +543,7 @@ VkImageView& VulkanKernel::getImageView(uint32_t imageIndex)
     return swapChainImageViews[imageIndex];
 }
 
-VkImage& VulkanKernel::getSwapChainImage(uint32_t imageIndex)
+VkImage& VulkanContext::getSwapChainImage(uint32_t imageIndex)
 {
     if (imageIndex >= swapChainImages.size()) {
         throw std::runtime_error("Invalid image index!");
@@ -551,23 +551,23 @@ VkImage& VulkanKernel::getSwapChainImage(uint32_t imageIndex)
     return swapChainImages[imageIndex];
 }
 
-VkExtent2D& VulkanKernel::getSwapChainExtent()
+VkExtent2D& VulkanContext::getSwapChainExtent()
 {
     return swapChainExtent;
 }
 
-const VkFormat& VulkanKernel::getSwapChainImageFormat() const
+const VkFormat& VulkanContext::getSwapChainImageFormat() const
 {
     return swapChainImageFormat;
 }
 
-QueueFamilyIndices VulkanKernel::getQueueFamilyIndices() {
+QueueFamilyIndices VulkanContext::getQueueFamilyIndices() {
     QueueFamilyIndices queueFamilyIndices = findQueueFamiliesPhysicalDevice();
     return queueFamilyIndices;
 }
 
 
-void VulkanKernel::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+void VulkanContext::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
 
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -594,12 +594,12 @@ void VulkanKernel::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkM
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
-BackendConfig& VulkanKernel::getConfig()
+BackendConfig& VulkanContext::getConfig()
 {
     return config;
 }
 
-void VulkanKernel::createSyncObjects()
+void VulkanContext::createSyncObjects()
 {
     imageAvailableSemaphoresPerFrame.resize(config.MAX_FRAMES_IN_FLIGHT);
     imageAvailableSemaphoresPerImage.resize(swapChainImages.size());
@@ -637,7 +637,7 @@ void VulkanKernel::createSyncObjects()
     }
 }
 
-uint32_t VulkanKernel::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+uint32_t VulkanContext::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
 
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -650,7 +650,7 @@ uint32_t VulkanKernel::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
+std::tuple<uint32_t, VkSemaphore&> VulkanContext::beginRender() {
     // NOTE, might be better interface to not give the semaphore, but only the index and get the semaphore separtately
 
     VkFence fence = inFlightFences[currentFrame];
@@ -695,7 +695,7 @@ std::tuple<uint32_t, VkSemaphore&> VulkanKernel::beginRender() {
     return {imageIndex, imageAvailableSemaphoresPerImage[imageIndex]};
 }
 
-void VulkanKernel::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
+void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
 
     // create a submit info for signaling the inFlightFence
     VkSubmitInfo submitInfo{};
@@ -734,14 +734,14 @@ void VulkanKernel::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSem
     currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;
 }
 
-void VulkanKernel::stopRender() {
+void VulkanContext::stopRender() {
     // Wait for all frames to finish before shutting down
     for(uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
         vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);
     }
 }
 
-void VulkanKernel::createCommandPool() {
+void VulkanContext::createCommandPool() {
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;

@@ -47,7 +47,7 @@ public:
         renderWaitSemaphores[pathId] = semaphore;
     }
 
-    virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         initialized = true;
     };
 

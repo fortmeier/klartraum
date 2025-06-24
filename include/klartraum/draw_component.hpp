@@ -16,9 +16,9 @@ typedef UniformBufferObjectNew<CameraMVP> CameraUboType;
 
 class DrawComponent {
 public:
-    virtual void initialize(VulkanKernel& vulkanKernel, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO)
+    virtual void initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO)
     {
-        this->vulkanKernel = &vulkanKernel;
+        this->vulkanContext = &vulkanContext;
         this->renderPass = &renderPass;
         this->cameraUBO = cameraUBO;
     }
@@ -26,7 +26,7 @@ public:
     virtual void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) = 0;
 
 protected:
-    VulkanKernel* vulkanKernel = nullptr;
+    VulkanContext* vulkanContext = nullptr;
     VkRenderPass* renderPass = nullptr;
     std::shared_ptr<CameraUboType> cameraUBO;
 };

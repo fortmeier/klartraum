@@ -11,17 +11,17 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
-    auto& device = vulkanKernel.getDevice();
+    auto& vulkanContext = core.getVulkanContext();
+    auto& device = vulkanContext.getDevice();
     
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     for (int i = 0; i < 3; i++) {
-        imageViews.push_back(vulkanKernel.getImageView(i));
-        images.push_back(vulkanKernel.getSwapChainImage(i));
-        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);        
+        imageViews.push_back(vulkanContext.getImageView(i));
+        images.push_back(vulkanContext.getSwapChainImage(i));
+        imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);        
         
     }
 
@@ -38,12 +38,12 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     cameraUBO->ubo.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
    
     std::string spzFile = "data/hornedlizard.spz";
-    std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(vulkanKernel, imageViewSrc, cameraUBO, spzFile);
+    std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(vulkanContext, imageViewSrc, cameraUBO, spzFile);
 
     /*
     STEP 2: create the computegraph backend and compile the computegraph
     */
-    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    auto& computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(splatting);
 
     /*
@@ -51,13 +51,13 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     */
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;   
     for(int i = 0; i < 1; i++) {
-        auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
-        finishSemaphore = computegraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
-        vulkanKernel.endRender(imageIndex, finishSemaphore);
+        auto [imageIndex, imageAvailableSemaphore] = vulkanContext.beginRender();
+        finishSemaphore = computegraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex);
+        vulkanContext.endRender(imageIndex, finishSemaphore);
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    vkQueueWaitIdle(vulkanKernel.getGraphicsQueue());
+    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
     return;
     
 }
@@ -66,8 +66,8 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
-    auto& device = vulkanKernel.getDevice();
+    auto& vulkanContext = core.getVulkanContext();
+    auto& device = vulkanContext.getDevice();
 
     std::vector<Gaussian3D> gaussians3D;
     gaussians3D.push_back(Gaussian3D{
@@ -115,16 +115,16 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     STEP 1: cerate the computegraph elements
     */
 
-    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanKernel, gaussians3D.size());
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanContext, gaussians3D.size());
     auto& gaussian3DBuffer = bufferElement->getBuffer();
     gaussian3DBuffer.memcopyFrom(gaussians3D);
     
-    std::shared_ptr<GaussianProjection> project3Dto2D = std::make_shared<GaussianProjection>(vulkanKernel, "shaders/gaussian_splatting_projection.comp.spv");
+    std::shared_ptr<GaussianProjection> project3Dto2D = std::make_shared<GaussianProjection>(vulkanContext, "shaders/gaussian_splatting_projection.comp.spv");
 
     auto& cameraMVP = project3Dto2D->getUbo()->ubo;
     
     InterfaceCameraOrbit cameraOrbit;
-    cameraOrbit.initialize(vulkanKernel);
+    cameraOrbit.initialize(vulkanContext);
     cameraOrbit.setDistance(5.0f);
     cameraOrbit.update(cameraMVP);
 
@@ -133,13 +133,13 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
     /*
     STEP 2: create the computegraph backend and compile the computegraph
     */
-    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    auto& computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(project3Dto2D);
 
     /*
     STEP 3: submit the computegraph and compare the output
     */
-    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
     // check the output buffer
     std::vector<Gaussian2D> gaussians2D(gaussians3D.size());
@@ -165,7 +165,7 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
+    auto& vulkanContext = core.getVulkanContext();
 
     // Create a list of 2D gaussians with different depths (z values)
     std::vector<Gaussian2D> gaussians2D = {
@@ -180,12 +180,12 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     };
 
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanContext, gaussians2D.size());
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Buffer transformation that sorts by z (depth)
-    std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
+    std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, "shaders/gaussian_splatting_radix_sort.comp.spv");
 
     sort2DGaussians->setInput(bufferElement);
 
@@ -200,9 +200,9 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
 
     sort2DGaussians->setPushConstants(pushConstants);
 
-    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
-    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
-    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
+    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
     totalGaussian2DCounts->zero();
 
 
@@ -210,10 +210,10 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
     sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts);
 
-    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    auto& computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(sort2DGaussians);
 
-    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
     // Read back and check sorted order (should be descending by z)
     std::vector<Gaussian2D> sortedGaussians2D(gaussians2D.size());
@@ -241,7 +241,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
+    auto& vulkanContext = core.getVulkanContext();
 
     // Create a list of 2D gaussians with different positions and covariance matrices
     std::vector<Gaussian2D> gaussians2D = {
@@ -291,12 +291,12 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     // that are in more than one bin
 
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size());
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanContext, gaussians2D.size());
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Create a buffer that holds the number of elements after duplication
-    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
     totalGaussian2DCounts->zero();
 
     ProjectionPushConstants pushConstants = {
@@ -306,22 +306,22 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
         512.0f                          // screenHeight
     };
 
-    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size() * 2);
+    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, gaussians2D.size() * 2);
     binnedGaussians2D->zero();
     binnedGaussians2D->setName("BinnedGaussians2D");
 
 
-    auto bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    auto bin = std::make_shared<GaussianBinning>(vulkanContext, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setInput(bufferElement, 0);
     bin->setInput(binnedGaussians2D, 1);
     bin->setInput(totalGaussian2DCounts, 2);
     bin->setGroupCountX(gaussians2D.size() / 128 + 1);
     bin->setPushConstants({pushConstants});
 
-    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    auto& computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(bin);
 
-    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
     std::vector<uint32_t> finalGaussiansCount(1);
     totalGaussian2DCounts->getBuffer(0).memcopyTo(finalGaussiansCount);
@@ -347,7 +347,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
-    auto& vulkanKernel = core.getVulkanKernel();
+    auto& vulkanContext = core.getVulkanContext();
 
     // Create a list of 2D gaussians with different positions and covariance matrices
     std::vector<Gaussian2D> gaussians2D = {
@@ -401,12 +401,12 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     // that are in more than one bin
 
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size()*2);
+    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanContext, gaussians2D.size()*2);
     auto& gaussian2DBuffer = bufferElement->getBuffer();
     gaussian2DBuffer.memcopyFrom(gaussians2D);
 
     // Create a buffer that holds the number of elements after duplication
-    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
     totalGaussian2DCounts->zero();
 
     ProjectionPushConstants pushConstants = {
@@ -416,12 +416,12 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
         512.0f                          // screenHeight
     };
 
-    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, gaussians2D.size() * 2);
+    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, gaussians2D.size() * 2);
     binnedGaussians2D->zero();
     binnedGaussians2D->setName("BinnedGaussians2D");
 
 
-    auto bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    auto bin = std::make_shared<GaussianBinning>(vulkanContext, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setInput(bufferElement, 0);
     bin->setInput(binnedGaussians2D, 1);
     bin->setInput(totalGaussian2DCounts, 2);
@@ -430,12 +430,12 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
 
     // Buffer transformation that sorts by z (depth)
-    std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, "shaders/gaussian_splatting_radix_sort.comp.spv");
+    std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, "shaders/gaussian_splatting_radix_sort.comp.spv");
 
     sort2DGaussians->setInput(bin, 0, 1);
 
-    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
-    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
+    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
 
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
@@ -456,12 +456,12 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     sort2DGaussians->setPushConstants(sortPushConstants);
 
     // std::vector<uint32_t> binStartAndEnd(16*2);
-    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16*2);
+    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16*2);
     // auto& scratchBinStartAndEndBuffer = scratchBinStartAndEnd->getBuffer();
     // scratchBinStartAndEndBuffer.memcopyFrom(binStartAndEnd);
     scratchBinStartAndEnd->zero();
 
-    auto computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
+    auto computeBounds = std::make_shared<GaussianComputeBounds>(vulkanContext, "shaders/gaussian_splatting_bin_bounds.comp.spv");
 
     ProjectionPushConstants computeBoundsPushConstants = {
         (uint32_t)gaussians2D.size(),   // numElements
@@ -483,9 +483,9 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     for (int i = 0; i < 3; i++) {
-        imageViews.push_back(vulkanKernel.getImageView(i));
-        images.push_back(vulkanKernel.getSwapChainImage(i));
-        imageAvailableSemaphores.push_back(vulkanKernel.imageAvailableSemaphoresPerImage[i]);        
+        imageViews.push_back(vulkanContext.getImageView(i));
+        images.push_back(vulkanContext.getSwapChainImage(i));
+        imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);        
         
     }
 
@@ -494,7 +494,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
     imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
     imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);    
 
-    auto splat = std::make_shared<GaussianSplatting>(vulkanKernel, "shaders/gaussian_splatting_binned_splatting.comp.spv");
+    auto splat = std::make_shared<GaussianSplatting>(vulkanContext, "shaders/gaussian_splatting_binned_splatting.comp.spv");
 
     std::vector<SplatPushConstants> splatPushConstants;
     for(uint32_t y = 0; y < 4; y++) {
@@ -525,23 +525,23 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
 
     auto camera = std::make_shared<CameraUboType>();
     
-    auto swapChainImageFormat = vulkanKernel.getSwapChainImageFormat();
-    auto swapChainExtent = vulkanKernel.getSwapChainExtent();
+    auto swapChainImageFormat = vulkanContext.getSwapChainImageFormat();
+    auto swapChainExtent = vulkanContext.getSwapChainExtent();
     auto renderpass = std::make_shared<RenderPass>(swapChainImageFormat, swapChainExtent);
     
     renderpass->setInput(splat, 0, 3);
     renderpass->setInput(camera, 1);    
 
 
-    auto& computegraph = ComputeGraph(vulkanKernel, 3);
+    auto& computegraph = ComputeGraph(vulkanContext, 3);
     computegraph.compileFrom(renderpass);
 
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;
 
     for(int i = 0; i < 1; i++) {
-        auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
-        finishSemaphore = computegraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
-        vulkanKernel.endRender(imageIndex, finishSemaphore);
+        auto [imageIndex, imageAvailableSemaphore] = vulkanContext.beginRender();
+        finishSemaphore = computegraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex);
+        vulkanContext.endRender(imageIndex, finishSemaphore);
     }
 
 
@@ -566,7 +566,7 @@ TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) 
                   << ", end: " << binBounds[i * 2 + 1] << std::endl;
     }
 
-    vkQueueWaitIdle(vulkanKernel.getGraphicsQueue());
+    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
     
     return;
 }

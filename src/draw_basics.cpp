@@ -84,7 +84,7 @@ DrawBasics::DrawBasics(DrawBasicsType type) : type(type) {
 }
 
 DrawBasics::~DrawBasics() {
-    auto device = vulkanKernel->getDevice();
+    auto device = vulkanContext->getDevice();
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyBuffer(device, vertexBuffer, nullptr);
@@ -92,8 +92,8 @@ DrawBasics::~DrawBasics() {
 
 }
 
-void DrawBasics::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO) {
-    DrawComponent::initialize(vulkanKernel, renderPass, cameraUBO);
+void DrawBasics::initialize(VulkanContext &vulkanContext, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO) {
+    DrawComponent::initialize(vulkanContext, renderPass, cameraUBO);
 
     createGraphicsPipeline();
     createVertexBuffer();
@@ -101,8 +101,8 @@ void DrawBasics::initialize(VulkanKernel &vulkanKernel, VkRenderPass& renderPass
 }
 
 void DrawBasics::createGraphicsPipeline() {
-    auto device = vulkanKernel->getDevice();
-    auto swapChainExtent = vulkanKernel->getSwapChainExtent();
+    auto device = vulkanContext->getDevice();
+    auto swapChainExtent = vulkanContext->getSwapChainExtent();
 
     auto vertShaderCode = readFile("shaders/shader_draw_basics.vert.spv");
     auto fragShaderCode = readFile("shaders/shader.frag.spv");
@@ -252,7 +252,7 @@ void DrawBasics::createGraphicsPipeline() {
 }
 
 void DrawBasics::createVertexBuffer() {
-    auto& device = vulkanKernel->getDevice();
+    auto& device = vulkanContext->getDevice();
     auto& vertices = getVertices(type);
 
     VkBufferCreateInfo bufferInfo{};
@@ -271,7 +271,7 @@ void DrawBasics::createVertexBuffer() {
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = vulkanKernel->findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    allocInfo.memoryTypeIndex = vulkanContext->findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate vertex buffer memory!");
@@ -287,12 +287,12 @@ void DrawBasics::createVertexBuffer() {
 
 void DrawBasics::createSyncObjects()
 {
-    auto device = vulkanKernel->getDevice();
+    auto device = vulkanContext->getDevice();
 }
 
 void DrawBasics::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId)
 {
-    auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
+    auto& swapChainExtent = vulkanContext->getSwapChainExtent();
     auto& vertices = getVertices(type);
     
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);

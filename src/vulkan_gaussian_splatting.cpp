@@ -11,13 +11,13 @@
 namespace klartraum {
 
 VulkanGaussianSplatting::VulkanGaussianSplatting(
-    VulkanKernel& vulkanKernel,
+    VulkanContext& vulkanContext,
     std::shared_ptr<ImageViewSrc> _imageViewSrc,
     std::shared_ptr<CameraUboType> _cameraUBO,
     std::string path) {
     loadSPZModel(path);
 
-    this->vulkanKernel = &vulkanKernel;
+    this->vulkanContext = &vulkanContext;
     this->setInput(_imageViewSrc, 0);
     this->setInput(_cameraUBO, 1);
 
@@ -29,7 +29,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         throw std::runtime_error("input is not an ImageViewSrc!");
     }
 
-    gaussians3D = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanKernel, number_of_gaussians);
+    gaussians3D = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanContext, number_of_gaussians);
     gaussians3D->setName("Gaussians3D");
 
     gaussians3D->getBuffer().memcopyFrom(gaussians3DData);
@@ -44,7 +44,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         512.0f               // screenHeight
     };
 
-    project3Dto2D = std::make_unique<GaussianProjection>(vulkanKernel, "shaders/gaussian_splatting_projection.comp.spv");
+    project3Dto2D = std::make_unique<GaussianProjection>(vulkanContext, "shaders/gaussian_splatting_projection.comp.spv");
     project3Dto2D->setName("GaussianProjection");
     project3Dto2D->setInput(gaussians3D);
     project3Dto2D->setGroupCountX(number_of_gaussians / 128 + 1);
@@ -55,16 +55,16 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup binning stage
     /////////////////////////////////////////////
 
-    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 1);
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
     totalGaussian2DCounts->setRecordToZero(true);
     totalGaussian2DCounts->setName("TotalGaussian2DCounts");
 
-    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanKernel, number_of_gaussians * 2);
+    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, number_of_gaussians * 2);
     binnedGaussians2D->zero();                 // nice if it is zero initially, but not necessary
     binnedGaussians2D->setRecordToZero(false); // does not have to be reset
     binnedGaussians2D->setName("BinnedGaussians2D");
 
-    bin = std::make_shared<GaussianBinning>(vulkanKernel, "shaders/gaussian_splatting_binning.comp.spv");
+    bin = std::make_shared<GaussianBinning>(vulkanContext, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setName("GaussianBinning");
     bin->setInput(project3Dto2D, 0);
     bin->setInput(binnedGaussians2D, 1);
@@ -80,16 +80,16 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         "shaders/gaussian_splatting_radix_sort2.comp.spv",
         "shaders/gaussian_splatting_radix_sort3.comp.spv",
     };
-    sort2DGaussians = std::make_shared<GaussianSort>(vulkanKernel, shaders);
+    sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, shaders);
 
     sort2DGaussians->setName("GaussianSort");
 
     sort2DGaussians->setInput(bin, 0, 1);
 
-    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
     scratchBufferCounts->setName("ScratchBufferCounts");
     scratchBufferCounts->setRecordToZero(true);
-    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16);
+    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
     scratchBufferOffsets->setName("ScratchBufferOffsets");
     scratchBufferOffsets->setRecordToZero(true);
 
@@ -115,11 +115,11 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     // setup bounds computation stage
     /////////////////////////////////////////////
-    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanKernel, 16 * 2);
+    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16 * 2);
     scratchBinStartAndEnd->setName("ScratchBinStartAndEnd");
     scratchBinStartAndEnd->setRecordToZero(true);
 
-    computeBounds = std::make_shared<GaussianComputeBounds>(vulkanKernel, "shaders/gaussian_splatting_bin_bounds.comp.spv");
+    computeBounds = std::make_shared<GaussianComputeBounds>(vulkanContext, "shaders/gaussian_splatting_bin_bounds.comp.spv");
     computeBounds->setName("GaussianComputeBounds");
 
     ProjectionPushConstants computeBoundsPushConstants = {
@@ -138,7 +138,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     // setup splatting stage
     /////////////////////////////////////////////
-    splat = std::make_shared<GaussianSplatting>(vulkanKernel, "shaders/gaussian_splatting_binned_splatting.comp.spv");
+    splat = std::make_shared<GaussianSplatting>(vulkanContext, "shaders/gaussian_splatting_binned_splatting.comp.spv");
     splat->setName("GaussianSplatting");
 
     std::vector<SplatPushConstants> splatPushConstants;
@@ -176,7 +176,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 }
 
 VulkanGaussianSplatting::~VulkanGaussianSplatting() {
-    if (vulkanKernel != nullptr) {
+    if (vulkanContext != nullptr) {
     }
 }
 
@@ -194,16 +194,16 @@ void VulkanGaussianSplatting::checkInput(ComputeGraphElementPtr input, int index
     }
 }
 
-void VulkanGaussianSplatting::_setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) {
+void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
     numberOfPaths = numberPaths;
 }
 
 void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
-    auto& device = vulkanKernel->getDevice();
-    auto& swapChain = vulkanKernel->getSwapChain();
-    auto& graphicsQueue = vulkanKernel->getGraphicsQueue();
+    auto& device = vulkanContext->getDevice();
+    auto& swapChain = vulkanContext->getSwapChain();
+    auto& graphicsQueue = vulkanContext->getGraphicsQueue();
 
-    auto& swapChainExtent = vulkanKernel->getSwapChainExtent();
+    auto& swapChainExtent = vulkanContext->getSwapChainExtent();
 
     ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
     if (imageViewSrc == nullptr) {
