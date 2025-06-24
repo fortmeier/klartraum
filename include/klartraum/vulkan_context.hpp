@@ -1,14 +1,14 @@
 #ifndef VULKAN_CONTEXT_HPP
 #define VULKAN_CONTEXT_HPP
 
-#include <vector>
-#include <queue>
-#include <optional>
-#include <memory>
-#include <stdexcept>
-#include <iostream>
 #include <algorithm>
+#include <iostream>
+#include <memory>
+#include <optional>
+#include <queue>
 #include <set>
+#include <stdexcept>
+#include <vector>
 
 #include <vulkan/vulkan.h>
 
@@ -29,9 +29,7 @@ struct QueueFamilyIndices {
     }
 };
 
-
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocater, VkDebugUtilsMessengerEXT* pDebugMessenger);
-
 
 void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator);
 
@@ -49,15 +47,15 @@ class VulkanContext {
      * - create the Vulkan swapchain
      * - setup the debug messenger
      * - setup the layers and extensions
-     * 
+     *
      * Is should not deal with
      * - creating the Vulkan renderpasses, pipelines, framebuffers, etc.
-     * 
+     *
      * This is to be done in the computegraphs, which can be used standalone or via the
      * Klartraum core.
-     * 
-    */
-    private:
+     *
+     */
+private:
     const uint32_t WIDTH = 512;
     const uint32_t HEIGHT = 512;
 
@@ -66,20 +64,17 @@ class VulkanContext {
     std::vector<VkImage> swapChainImages;
 
     VkFormat swapChainImageFormat;
-    
 
     std::vector<VkImageView> swapChainImageViews;
 
     const std::vector<const char*> validationLayers = {
-		"VK_LAYER_KHRONOS_validation"
-	};
+        "VK_LAYER_KHRONOS_validation"};
 
     const std::vector<const char*> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
         VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
     };
-
 
 #ifdef NDEBUG
     const bool enableValidationLayers = false;
@@ -112,11 +107,11 @@ class VulkanContext {
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
 
     VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
-    
+
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
     void createSwapChain();
-    
+
     void createImageViews();
 
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
@@ -130,16 +125,14 @@ class VulkanContext {
         INITIALIZED,
         SHUTDOWN
     } state = State::UNINITIALIZED;
-    public:
+
+public:
     VulkanContext();
 
     ~VulkanContext();
-    
+
     void initialize(VkSurfaceKHR& surface);
     void shutdown();
-
-
-    
 
     QueueFamilyIndices findQueueFamiliesPhysicalDevice();
 
@@ -151,13 +144,9 @@ class VulkanContext {
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
-
     VkInstance instance;
 
     VkSurfaceKHR surface;
-
-
-
 
     std::vector<VkFramebuffer> swapChainFramebuffers;
     VkExtent2D swapChainExtent;
@@ -166,19 +155,16 @@ class VulkanContext {
 
     VkDevice& getDevice();
     VkSwapchainKHR& getSwapChain();
-    
-    VkQueue& getGraphicsQueue();
 
+    VkQueue& getGraphicsQueue();
 
     VkImageView& getImageView(uint32_t imageIndex);
 
     VkImage& getSwapChainImage(uint32_t imageIndex);
-    
+
     VkExtent2D& getSwapChainExtent();
 
     const VkFormat& getSwapChainImageFormat() const;
-
-    
 
     QueueFamilyIndices getQueueFamilyIndices();
 
@@ -205,7 +191,6 @@ class VulkanContext {
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
-
 };
 
 } // namespace klartraum
