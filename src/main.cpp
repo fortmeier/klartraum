@@ -11,7 +11,7 @@ int main() {
 
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
 
     klartraum::RenderPassPtr renderpass = core.createRenderPass();
 

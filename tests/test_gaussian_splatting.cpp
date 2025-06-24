@@ -10,7 +10,7 @@ using namespace klartraum;
 TEST(KlartraumVulkanGaussianSplatting, smoke) {
     GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
     
@@ -65,7 +65,7 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
 TEST(KlartraumVulkanGaussianSplatting, project) {
     GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 
@@ -164,7 +164,7 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
 TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
 
     // Create a list of 2D gaussians with different depths (z values)
@@ -240,7 +240,7 @@ TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
 TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
 
     // Create a list of 2D gaussians with different positions and covariance matrices
@@ -346,7 +346,7 @@ TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
 TEST(KlartraumVulkanGaussianSplatting, binAndSortAndBoundsAndRender2DGaussians) {
     GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
 
     // Create a list of 2D gaussians with different positions and covariance matrices

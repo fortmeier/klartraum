@@ -18,7 +18,7 @@ GlfwFrontend::GlfwFrontend() : old_mouse_x(0), old_mouse_y(0)
         throw std::runtime_error("Failed to initialize GLFW");
     }
 
-    klartraumCore = std::make_unique<KlartraumCore>();
+    klartraumEngine = std::make_unique<KlartraumEngine>();
 
     initialize();
 }
@@ -46,13 +46,13 @@ void GlfwFrontend::initialize() {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     
     // TODO window size should be configurable somewhere else
-    auto config = klartraumCore->getVulkanContext().getConfig();
+    auto config = klartraumEngine->getVulkanContext().getConfig();
     window = glfwCreateWindow(config.WIDTH, config.HEIGHT, "Klartraum Engine", nullptr, nullptr);
 
     // set GLFW event callbacks
     glfwSetScrollCallback(window, scroll_callback);
 
-    auto instance = klartraumCore->getVulkanContext().getInstance();
+    auto instance = klartraumEngine->getVulkanContext().getInstance();
 
     // cerate the window surface
     // (this needs to be done after the Vulkan instance is created)
@@ -60,7 +60,7 @@ void GlfwFrontend::initialize() {
         throw std::runtime_error("failed to create window surface!");
     }
 
-    klartraumCore->getVulkanContext().initialize(surface);
+    klartraumEngine->getVulkanContext().initialize(surface);
 }
 
 
@@ -71,17 +71,17 @@ void GlfwFrontend::loop() {
 
         processGLFWEvents();
 
-        klartraumCore->step();
+        klartraumEngine->step();
     }
 
 }
 
 void GlfwFrontend::shutdown() {
-    auto& instance = klartraumCore->getVulkanContext().getInstance();
-    auto& vulkanContext = klartraumCore->getVulkanContext();
+    auto& instance = klartraumEngine->getVulkanContext().getInstance();
+    auto& vulkanContext = klartraumEngine->getVulkanContext();
     
     vulkanContext.stopRender();
-    klartraumCore->clearComputeGraphs();
+    klartraumEngine->clearComputeGraphs();
     vulkanContext.shutdown();
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
@@ -92,7 +92,7 @@ void GlfwFrontend::shutdown() {
 
 
 void GlfwFrontend::processGLFWEvents() {
-    auto& eventQueue = klartraumCore->getEventQueue();
+    auto& eventQueue = klartraumEngine->getEventQueue();
 
     double xpos, ypos;
     glfwGetCursorPos(window, &xpos, &ypos);
@@ -127,9 +127,9 @@ void GlfwFrontend::processGLFWEvents() {
 
 }
 
-KlartraumCore& GlfwFrontend::getKlartraumCore()
+KlartraumEngine& GlfwFrontend::getKlartraumEngine()
 {
-    return *klartraumCore;
+    return *klartraumEngine;
 }
 
 } // namespace klartraum

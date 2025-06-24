@@ -70,7 +70,7 @@ class CopyOp : public ComputeGraphElement {
 TEST(ComputeGraph, create) {
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 
@@ -123,7 +123,7 @@ TEST(ComputeGraph, create) {
 TEST(ComputeGraph, trippleFramebuffer) {
     klartraum::GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumCore();
+    auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 

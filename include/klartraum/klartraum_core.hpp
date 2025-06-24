@@ -20,10 +20,10 @@
 
 namespace klartraum {
 
-class KlartraumCore {
+class KlartraumEngine {
 public:
-    KlartraumCore();
-    ~KlartraumCore();
+    KlartraumEngine();
+    ~KlartraumEngine();
 
     void step();
 
