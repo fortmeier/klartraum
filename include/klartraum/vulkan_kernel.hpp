@@ -53,7 +53,7 @@ class VulkanKernel {
      * Is should not deal with
      * - creating the Vulkan renderpasses, pipelines, framebuffers, etc.
      * 
-     * This is to be done in the drawgraphs, which can be used standalone or via the
+     * This is to be done in the computegraphs, which can be used standalone or via the
      * Klartraum core.
      * 
     */

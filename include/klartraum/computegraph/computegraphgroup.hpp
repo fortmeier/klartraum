@@ -1,26 +1,26 @@
 #ifndef KLARTRAUM_COMPUTEGRAPHGROUP_HPP
 #define KLARTRAUM_COMPUTEGRAPHGROUP_HPP
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 
 namespace klartraum {
 
-class DrawGraphGroup : public virtual DrawGraphElement {
+class ComputeGraphGroup : public virtual ComputeGraphElement {
 public:
 
     virtual const char* getType() const {
-        return "DrawGraphGroup";
+        return "ComputeGraphGroup";
     }
 
-    virtual std::map<int, DrawGraphElementPtr> getInputs() const {
+    virtual std::map<int, ComputeGraphElementPtr> getInputs() const {
         return outputElements;
     }
 
 protected:
     // this contains the graph elements that are the output of the group
-    // the drawgraph compilation traversal will use this to traverse from
+    // the computegraph compilation traversal will use this to traverse from
     // the successor elements back through all the elements of the group 
-    std::map<int, DrawGraphElementPtr> outputElements;
+    std::map<int, ComputeGraphElementPtr> outputElements;
 };
 
 } // namespace klartraum

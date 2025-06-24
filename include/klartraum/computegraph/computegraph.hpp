@@ -1,5 +1,5 @@
-#ifndef KLARTRAUM_DRAWGRAPH_HPP
-#define KLARTRAUM_DRAWGRAPH_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPH_HPP
+#define KLARTRAUM_COMPUTEGRAPH_HPP
 
 #include <iostream>
 #include <map>
@@ -7,7 +7,7 @@
 #include <set>
 #include <vector>
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 
 namespace klartraum {
 
@@ -19,9 +19,9 @@ public:
     std::vector<VkPipelineStageFlags> waitStages; //{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
 };
 
-class DrawGraph {
+class ComputeGraph {
 public:
-    DrawGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : vulkanKernel(vulkanKernel), numberPaths(numberPaths) {
+    ComputeGraph(VulkanKernel& vulkanKernel, uint32_t numberPaths) : vulkanKernel(vulkanKernel), numberPaths(numberPaths) {
         auto& device = vulkanKernel.getDevice();
 
         all_path_submit_infos.resize(numberPaths);
@@ -39,7 +39,7 @@ public:
         }
     }
 
-    virtual ~DrawGraph() {
+    virtual ~ComputeGraph() {
         auto& device = vulkanKernel.getDevice();
 
         // clear the outputs of all elements
@@ -66,7 +66,7 @@ public:
         vkDestroyCommandPool(device, commandPool, nullptr);
     }
 
-    void compileFrom(DrawGraphElementPtr element) {
+    void compileFrom(ComputeGraphElementPtr element) {
         auto& device = vulkanKernel.getDevice();
 
         computeOrder(element);
@@ -166,7 +166,7 @@ private:
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 
-    std::vector<DrawGraphElementPtr> ordered_elements;
+    std::vector<ComputeGraphElementPtr> ordered_elements;
 
     typedef std::vector<VkSubmitInfo> SubmitInfoList;
     typedef std::vector<SubmitInfoWrapper> SubmitInfoWrapperList;
@@ -174,14 +174,14 @@ private:
     std::vector<SubmitInfoList> all_path_submit_infos;
     std::vector<SubmitInfoWrapperList> all_path_submit_info_wrappers;
 
-    typedef std::map<DrawGraphElementPtr, VkSemaphore> SemaphoreMap;
-    typedef std::map<DrawGraphElementPtr, SemaphoreMap> SemaphoreMapMap;
+    typedef std::map<ComputeGraphElementPtr, VkSemaphore> SemaphoreMap;
+    typedef std::map<ComputeGraphElementPtr, SemaphoreMap> SemaphoreMapMap;
 
     std::vector<SemaphoreMapMap> allRenderFinishedSemaphores;
 
     std::vector<VkSemaphore> graphFinishedSemaphores;
 
-    void recordCommandBuffer(VkCommandBuffer commandBuffer, DrawGraphElementPtr element, uint32_t pathId) {
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, ComputeGraphElementPtr element, uint32_t pathId) {
         // reset the command buffer before recording
         vkResetCommandBuffer(commandBuffer, 0);
 
@@ -202,7 +202,7 @@ private:
         }
     }
 
-    void getSubmitInfoForElement(SubmitInfoWrapper& submitInfoWrapper, uint32_t pathId, DrawGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
+    void getSubmitInfoForElement(SubmitInfoWrapper& submitInfoWrapper, uint32_t pathId, ComputeGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
 
         auto& submitInfo = submitInfoWrapper.submitInfo;
         auto& waitSemaphores = submitInfoWrapper.waitSemaphores;
@@ -339,9 +339,9 @@ private:
         }
     }
 
-    typedef std::map<DrawGraphElementPtr, std::vector<DrawGraphElementPtr>> EdgeList;
+    typedef std::map<ComputeGraphElementPtr, std::vector<ComputeGraphElementPtr>> EdgeList;
 
-    void fill_edges(EdgeList& edges, EdgeList& incoming, DrawGraphElementPtr element) {
+    void fill_edges(EdgeList& edges, EdgeList& incoming, ComputeGraphElementPtr element) {
         for (auto& input : element->getInputs()) {
             // check if input already in graph
             auto it = find(edges[element].begin(), edges[element].end(), input.second);
@@ -355,13 +355,13 @@ private:
         }
     }
 
-    void computeOrder(DrawGraphElementPtr element) {
+    void computeOrder(ComputeGraphElementPtr element) {
         // Use Kahn's algorithm to find the execution order
 
         auto& L = ordered_elements;
         L.clear();
 
-        std::queue<DrawGraphElementPtr> S;
+        std::queue<ComputeGraphElementPtr> S;
         S.push(element);
 
         EdgeList edges;
@@ -413,4 +413,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_DRAWGRAPH_HPP
+#endif // KLARTRAUM_COMPUTEGRAPH_HPP

@@ -5,8 +5,8 @@
 
 #include <glm/glm.hpp>
 
-#include "klartraum/drawgraph/buffertransformation.hpp"
-#include "klartraum/drawgraph/generalcomputation.hpp"
+#include "klartraum/computegraph/buffertransformation.hpp"
+#include "klartraum/computegraph/generalcomputation.hpp"
 
 #include "klartraum/draw_component.hpp" // for CameraUboType, TODO: remove this dependency
 

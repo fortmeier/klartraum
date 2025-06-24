@@ -1,12 +1,12 @@
 #ifndef KLARTRAUM_BUFFERELEMENT_HPP
 #define KLARTRAUM_BUFFERELEMENT_HPP
 
-#include "klartraum/drawgraph/drawgraphelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 
 namespace klartraum {
 
 
-class BufferElementInterface : public DrawGraphElement {
+class BufferElementInterface : public ComputeGraphElement {
 public:
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) = 0;
 

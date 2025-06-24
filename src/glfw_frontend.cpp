@@ -81,7 +81,7 @@ void GlfwFrontend::shutdown() {
     auto& vulkanKernel = klartraumCore->getVulkanKernel();
     
     vulkanKernel.stopRender();
-    klartraumCore->clearDrawGraphs();
+    klartraumCore->clearComputeGraphs();
     vulkanKernel.shutdown();
 
     vkDestroySurfaceKHR(instance, surface, nullptr);

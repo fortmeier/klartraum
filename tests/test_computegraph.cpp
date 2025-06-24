@@ -5,20 +5,20 @@
 
 #include "klartraum/glfw_frontend.hpp"
 
-#include "klartraum/drawgraph/drawgraph.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
 
-#include "klartraum/drawgraph/imageviewsrc.hpp"
-#include "klartraum/drawgraph/renderpass.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/draw_basics.hpp"
 
 using namespace klartraum;
 
-class BlurOp : public DrawGraphElement {
+class BlurOp : public ComputeGraphElement {
     virtual const char* getType() const {
         return "BlurOp";
     }
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         // accept everything
     }
 
@@ -26,12 +26,12 @@ class BlurOp : public DrawGraphElement {
 
 };
 
-class NoiseOp : public DrawGraphElement {
+class NoiseOp : public ComputeGraphElement {
     virtual const char* getType() const {
         return "NoiseOp";
     }
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         // accept everything
     }
 
@@ -39,12 +39,12 @@ class NoiseOp : public DrawGraphElement {
 
 };
 
-class AddOp : public DrawGraphElement {
+class AddOp : public ComputeGraphElement {
     virtual const char* getType() const {
         return "AddOp";
     }
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         // accept everything
     }
 
@@ -52,12 +52,12 @@ class AddOp : public DrawGraphElement {
 
 };
 
-class CopyOp : public DrawGraphElement {
+class CopyOp : public ComputeGraphElement {
     virtual const char* getType() const {
         return "CopyOp";
     }
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         // accept everything
     }
 
@@ -67,7 +67,7 @@ class CopyOp : public DrawGraphElement {
 
 
 
-TEST(DrawGraph, create) {
+TEST(ComputeGraph, create) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
@@ -75,7 +75,7 @@ TEST(DrawGraph, create) {
     auto& device = vulkanKernel.getDevice();
 
     /*
-    STEP 1: create the drawgraph elements
+    STEP 1: create the computegraph elements
     */
     std::vector<VkImageView> imageViews;
     std::vector<VkSemaphore> imageAvailableSemaphores;
@@ -108,19 +108,19 @@ TEST(DrawGraph, create) {
 
     
     /*
-    STEP 2: create the drawgraph backend
+    STEP 2: create the computegraph backend
     */
     
-    // this traverses the drawgraph and creates the vulkan objects
-    auto& drawgraph = DrawGraph(vulkanKernel, 1);
-    drawgraph.compileFrom(copy);
+    // this traverses the computegraph and creates the vulkan objects
+    auto& computegraph = ComputeGraph(vulkanKernel, 1);
+    computegraph.compileFrom(copy);
 
-    drawgraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
+    computegraph.submitAndWait(vulkanKernel.getGraphicsQueue(), 0);
 
     return;
 }
 
-TEST(DrawGraph, trippleFramebuffer) {
+TEST(ComputeGraph, trippleFramebuffer) {
     klartraum::GlfwFrontend frontend;
 
     auto& core = frontend.getKlartraumCore();
@@ -128,7 +128,7 @@ TEST(DrawGraph, trippleFramebuffer) {
     auto& device = vulkanKernel.getDevice();
 
     /*
-    STEP 1: create the drawgraph elements
+    STEP 1: create the computegraph elements
     */
 
     std::vector<VkImageView> imageViews;
@@ -157,19 +157,19 @@ TEST(DrawGraph, trippleFramebuffer) {
     renderpass->addDrawComponent(axes);
 
     /*
-    STEP 2: create the drawgraph backend
+    STEP 2: create the computegraph backend
     */
     
-    // this traverses the drawgraph and creates the vulkan objects
-    auto& drawgraph = DrawGraph(vulkanKernel, 3);
+    // this traverses the computegraph and creates the vulkan objects
+    auto& computegraph = ComputeGraph(vulkanKernel, 3);
 
-    drawgraph.compileFrom(renderpass);
+    computegraph.compileFrom(renderpass);
 
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;
 
     for(int i = 0; i < 6; i++) {
         auto [imageIndex, imageAvailableSemaphore] = vulkanKernel.beginRender();
-        finishSemaphore = drawgraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
+        finishSemaphore = computegraph.submitTo(vulkanKernel.getGraphicsQueue(), imageIndex);
         vulkanKernel.endRender(imageIndex, finishSemaphore);
     }
 

@@ -14,8 +14,8 @@
 #include "klartraum/interface_camera.hpp"
 #include "klartraum/events.hpp"
 
-#include "klartraum/drawgraph/drawgraph.hpp"
-#include "klartraum/drawgraph/renderpass.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/renderpass.hpp"
 
 
 namespace klartraum {
@@ -36,12 +36,12 @@ public:
 
     VulkanKernel& getVulkanKernel();
 
-    void add(DrawGraphElementPtr element);
+    void add(ComputeGraphElementPtr element);
 
     RenderPassPtr createRenderPass();
 
-    void clearDrawGraphs() {
-        drawGraphs.clear();
+    void clearComputeGraphs() {
+        computeGraphs.clear();
     }
 
 private:
@@ -52,7 +52,7 @@ private:
 
     std::queue<std::unique_ptr<Event> > eventQueue;
 
-    std::vector<DrawGraph> drawGraphs;
+    std::vector<ComputeGraph> computeGraphs;
 
 };
 

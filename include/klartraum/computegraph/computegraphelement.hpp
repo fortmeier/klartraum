@@ -1,5 +1,5 @@
-#ifndef KLARTRAUM_DRAWGRAPHELEMENT_HPP
-#define KLARTRAUM_DRAWGRAPHELEMENT_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPHELEMENT_HPP
+#define KLARTRAUM_COMPUTEGRAPHELEMENT_HPP
 
 #include <map>
 #include <memory>
@@ -8,17 +8,17 @@
 
 namespace klartraum {
 
-class DrawGraphElement;
+class ComputeGraphElement;
 
-typedef std::shared_ptr<DrawGraphElement> DrawGraphElementPtr;
+typedef std::shared_ptr<ComputeGraphElement> ComputeGraphElementPtr;
 
-class DrawGraph;
+class ComputeGraph;
 
-class DrawGraphElement {
+class ComputeGraphElement {
 public:
-    friend class DrawGraph;
+    friend class ComputeGraph;
 
-    void setInput(DrawGraphElementPtr input, int index = 0, int slot = -1) {
+    void setInput(ComputeGraphElementPtr input, int index = 0, int slot = -1) {
         if(slot == -1) {
             checkInput(input, index);
         } else {
@@ -28,11 +28,11 @@ public:
         srcOutputSlots[index] = slot;
     }
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         throw std::runtime_error("checkInput not implemented for this element");
     }
 
-    DrawGraphElementPtr getInputElement(int index = 0) {
+    ComputeGraphElementPtr getInputElement(int index = 0) {
         // if a slot is set, we need to get the element from
         // the inputs of the input element
         if (srcOutputSlots[index] != -1) {
@@ -53,7 +53,7 @@ public:
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
         if (!initialized) {
-            throw std::runtime_error("DrawGraphElement not initialized");
+            throw std::runtime_error("ComputeGraphElement not initialized");
         }
     }
 
@@ -63,7 +63,7 @@ public:
         return name.c_str();
     }
     
-    virtual std::map<int, DrawGraphElementPtr> getInputs() const {
+    virtual std::map<int, ComputeGraphElementPtr> getInputs() const {
         return inputs;
     }
 
@@ -72,7 +72,7 @@ public:
     }
 
 protected:
-    std::map<int, DrawGraphElementPtr> inputs; //TODO: really should be private
+    std::map<int, ComputeGraphElementPtr> inputs; //TODO: really should be private
     std::map<int, VkSemaphore> renderWaitSemaphores; //TODO: really should be private
     std::map<int, int> srcOutputSlots; //TODO: really should be private
     
@@ -81,10 +81,10 @@ protected:
     std::string name;
 
 private:
-    // these are updated by the DrawGraph, do not set them manually
+    // these are updated by the ComputeGraph, do not set them manually
     // it is important to reset them before destroying the graph
     // otherwise we will have dangling pointers in the graph
-    std::vector<DrawGraphElementPtr> outputs;
+    std::vector<ComputeGraphElementPtr> outputs;
 
 };
 
@@ -92,4 +92,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_DRAWGRAPHELEMENT_HPP
+#endif // KLARTRAUM_COMPUTEGRAPHELEMENT_HPP

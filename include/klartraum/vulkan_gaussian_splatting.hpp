@@ -6,10 +6,10 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
-#include "klartraum/drawgraph/buffertransformation.hpp"
-#include "klartraum/drawgraph/drawgraphgroup.hpp"
-#include "klartraum/drawgraph/imageviewsrc.hpp"
-#include "klartraum/drawgraph/rendergraphelement.hpp"
+#include "klartraum/computegraph/buffertransformation.hpp"
+#include "klartraum/computegraph/computegraphgroup.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/rendergraphelement.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
 
@@ -20,7 +20,7 @@ enum class GaussianSplattingRenderingType {
     // GaussianSplatting, not implemented yet
 };
 
-class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual public DrawGraphGroup {
+class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual public ComputeGraphGroup {
     /**
      * @brief
      *
@@ -48,7 +48,7 @@ public:
         std::string path);
     ~VulkanGaussianSplatting();
 
-    virtual void checkInput(DrawGraphElementPtr input, int index = 0) override;
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override;
 
     virtual void _setup(VulkanKernel& vulkanKernel, uint32_t numberPaths) override;
 

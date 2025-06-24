@@ -3,9 +3,9 @@
 
 #include "klartraum/klartraum_core.hpp"
 
-#include "klartraum/drawgraph/drawgraph.hpp"
-#include "klartraum/drawgraph/imageviewsrc.hpp"
-#include "klartraum/drawgraph/renderpass.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/renderpass.hpp"
 
 namespace klartraum
 {
@@ -40,8 +40,8 @@ void KlartraumCore::step() {
     auto& graphicsQueue = vulkanKernel.getGraphicsQueue();
 
     VkSemaphore renderFinishedSemaphore;
-    for(auto &drawGraph : drawGraphs) {
-        renderFinishedSemaphore = drawGraph.submitTo(graphicsQueue, imageIndex);
+    for(auto &computeGraph : computeGraphs) {
+        renderFinishedSemaphore = computeGraph.submitTo(graphicsQueue, imageIndex);
     }
 
     // finish frame rendering
@@ -66,11 +66,11 @@ VulkanKernel& KlartraumCore::getVulkanKernel()
     return vulkanKernel;
 }
 
-void KlartraumCore::add(DrawGraphElementPtr element)
+void KlartraumCore::add(ComputeGraphElementPtr element)
 {
-    drawGraphs.emplace_back(vulkanKernel, 3);
-    auto& drawGraph = drawGraphs.back();
-    drawGraph.compileFrom(element);
+    computeGraphs.emplace_back(vulkanKernel, 3);
+    auto& computeGraph = computeGraphs.back();
+    computeGraph.compileFrom(element);
 }
 
 RenderPassPtr KlartraumCore::createRenderPass()
