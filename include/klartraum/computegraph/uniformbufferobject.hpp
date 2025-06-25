@@ -11,8 +11,15 @@ namespace klartraum {
 
 class VulkanContext;
 
+class UniformBufferObjectInterface : public ComputeGraphElement {
+public:
+    virtual size_t getBufferMemSize() const = 0;
+
+    virtual VkBuffer& getVkBuffer(uint32_t pathId) = 0;
+};
+
 template<typename UniformBufferObjectType>
-class UniformBufferObjectNew : public ComputeGraphElement {
+class UniformBufferObjectNew : public UniformBufferObjectInterface {
 public:
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths)
     {
@@ -63,6 +70,16 @@ public:
     }
 
     UniformBufferObjectType ubo;
+
+    virtual size_t getBufferMemSize() const override
+    {
+        return sizeof(UniformBufferObjectType);
+    }
+
+    virtual VkBuffer& getVkBuffer(uint32_t pathId) override
+    {
+        return uniformBuffers[pathId];
+    }
 
 private:
     VulkanContext* vulkanContext = nullptr;
