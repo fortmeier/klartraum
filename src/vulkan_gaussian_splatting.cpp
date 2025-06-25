@@ -34,8 +34,13 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     gaussians3D->getBuffer().memcopyFrom(gaussians3DData);
 
+    gaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, number_of_gaussians * 2);
+    gaussians2D->setName("Gaussians2D");
+
     // setup projection stage
     /////////////////////////////////////////////
+
+    auto dynamicNumberOf2DGaussians = vulkanContext.create<BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>>(1);
 
     ProjectionPushConstants pushConstants = {
         number_of_gaussians, // numElements
@@ -44,13 +49,13 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         512.0f               // screenHeight
     };
 
-    project3Dto2D = std::make_unique<GaussianProjection>(vulkanContext, "shaders/gaussian_splatting_projection.comp.spv");
+    project3Dto2D = vulkanContext.create<GaussianProjection>("shaders/gaussian_splatting_projection.comp.spv");
     project3Dto2D->setName("GaussianProjection");
-    project3Dto2D->setInput(gaussians3D);
+    project3Dto2D->setInput(gaussians3D, 0);
+    project3Dto2D->setInput(_cameraUBO, 1);
+    project3Dto2D->setInput(gaussians2D, 2);
     project3Dto2D->setGroupCountX(number_of_gaussians / 128 + 1);
     project3Dto2D->setPushConstants({pushConstants});
-    project3Dto2D->setCustomOutputSize(number_of_gaussians * 2);
-    project3Dto2D->setUbo(std::dynamic_pointer_cast<CameraUboType>(getInputElement(1)));
 
     // setup binning stage
     /////////////////////////////////////////////
@@ -59,16 +64,18 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     totalGaussian2DCounts->setRecordToZero(true);
     totalGaussian2DCounts->setName("TotalGaussian2DCounts");
 
-    auto binnedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, number_of_gaussians * 2);
+    auto binnedGaussians2D = vulkanContext.create<BufferElement<Gaussian2DBuffer>>(number_of_gaussians * 2);
     binnedGaussians2D->zero();                 // nice if it is zero initially, but not necessary
     binnedGaussians2D->setRecordToZero(false); // does not have to be reset
     binnedGaussians2D->setName("BinnedGaussians2D");
 
     bin = std::make_shared<GaussianBinning>(vulkanContext, "shaders/gaussian_splatting_binning.comp.spv");
     bin->setName("GaussianBinning");
-    bin->setInput(project3Dto2D, 0);
+    bin->setInput(project3Dto2D, 0, 2);
     bin->setInput(binnedGaussians2D, 1);
     bin->setInput(totalGaussian2DCounts, 2);
+    bin->setInput(dynamicNumberOf2DGaussians, 3);
+
     bin->setGroupCountX((number_of_gaussians * 2) / 128 + 1);
     bin->setPushConstants({pushConstants});
 

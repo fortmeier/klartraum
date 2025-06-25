@@ -42,7 +42,7 @@ struct ProjectionPushConstants {
   float screenHeight;
 };
 
-typedef BufferTransformation<Gaussian3DBuffer, Gaussian2DBuffer, CameraUboType, ProjectionPushConstants> GaussianProjection;
+typedef GeneralComputation<ProjectionPushConstants> GaussianProjection;
 
 struct SplatPushConstants {
   uint32_t numElements;

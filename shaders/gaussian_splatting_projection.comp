@@ -10,15 +10,17 @@ layout(scalar, set = 0, binding = 0) readonly buffer GaussiansSSBOIn {
    Gaussian gaussianIn[ ];
 };
 
-layout (scalar, set = 0, binding = 2) buffer outputGaussians {
-    Gaussian2D gaussian2dOut[ ];
-};
 
-layout(set = 1, binding = 0) uniform UniformBufferObject {
+layout(set = 0, binding = 1) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
 } ubo;
+
+layout (scalar, set = 0, binding = 2) buffer outputGaussians {
+    Gaussian2D gaussian2dOut[ ];
+};
+
 
 layout(push_constant) uniform PushConstants {
     uint numElements;

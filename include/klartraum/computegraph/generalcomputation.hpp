@@ -153,10 +153,10 @@ public:
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         BufferElementInterface* bufferSrc = std::dynamic_pointer_cast<BufferElementInterface>(input).get();
         ImageViewSrc* imageSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
+        UniformBufferObjectInterface* uboSrc = std::dynamic_pointer_cast<UniformBufferObjectInterface>(input).get();
 
-
-        if (bufferSrc == nullptr && imageSrc == nullptr) {
-            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc!");
+        if (bufferSrc == nullptr && imageSrc == nullptr && uboSrc == nullptr) {
+            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc or UniformBufferObjectNew!");
         }
     }
 
@@ -201,6 +201,17 @@ private:
 
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
 
+    static VkDescriptorType getDescriptorType(const ComputeGraphElementPtr& input) {
+        if (dynamic_cast<ImageViewSrc*>(input.get())) {
+            return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        } else if (dynamic_cast<BufferElementInterface*>(input.get())) {
+            return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        } else if (dynamic_cast<UniformBufferObjectInterface*>(input.get())) {
+            return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        }
+        return VK_DESCRIPTOR_TYPE_MAX_ENUM; // Invalid type
+    }
+
     void createDescriptorPool() {
         auto& device = vulkanContext->getDevice();
         
@@ -208,8 +219,7 @@ private:
         // Other inputs
         for (size_t i = 0; i < inputs.size(); i++) {
             ComputeGraphElementPtr inputPtr = getInputElement(i);
-            bool isImage = dynamic_cast<ImageViewSrc*>(inputPtr.get()) != nullptr;
-            poolSizes[i].type = isImage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            poolSizes[i].type = getDescriptorType(inputPtr);
             poolSizes[i].descriptorCount = numberPaths;
         }
         
@@ -231,11 +241,17 @@ private:
     
         for (int i = 0; i < inputs.size(); i++) {
             ComputeGraphElementPtr inputPtr = getInputElement(i);
-            bool isImage = dynamic_cast<ImageViewSrc*>(inputPtr.get()) != nullptr;
+
+            VkDescriptorType descriptorType = getDescriptorType(inputPtr);
+
+
+            if (descriptorType == VK_DESCRIPTOR_TYPE_MAX_ENUM) {
+                throw std::runtime_error("Input type not supported for descriptor set layout");
+            }
 
             layoutBindings[i].binding = i;
             layoutBindings[i].descriptorCount = 1;
-            layoutBindings[i].descriptorType = isImage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            layoutBindings[i].descriptorType = descriptorType;
             layoutBindings[i].pImmutableSamplers = nullptr;
             layoutBindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         }
@@ -278,6 +294,7 @@ private:
             // Cast input to BufferElement to access underlying buffer
             BufferElementInterface* bufferElement = dynamic_cast<BufferElementInterface*>(inputPtr.get());
             ImageViewSrc* imageElement = dynamic_cast<ImageViewSrc*>(inputPtr.get());
+            UniformBufferObjectInterface* uboElement = dynamic_cast<UniformBufferObjectInterface*>(inputPtr.get());
 
             
             if (imageElement) {
@@ -307,6 +324,21 @@ private:
                 descriptorWrites[i].dstBinding = i;
                 descriptorWrites[i].dstArrayElement = 0;
                 descriptorWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                descriptorWrites[i].descriptorCount = 1;
+                descriptorWrites[i].pBufferInfo = &inputBufferInfo;
+            } else if (uboElement) {
+                bufferInfos.emplace_back();
+                VkDescriptorBufferInfo& inputBufferInfo = bufferInfos.back();
+
+                inputBufferInfo.buffer = uboElement->getVkBuffer(pathId);
+                inputBufferInfo.offset = 0;
+                inputBufferInfo.range = uboElement->getBufferMemSize();
+
+                descriptorWrites[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[i].dstSet = computeDescriptorSets[pathId];
+                descriptorWrites[i].dstBinding = i;
+                descriptorWrites[i].dstArrayElement = 0;
+                descriptorWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
                 descriptorWrites[i].descriptorCount = 1;
                 descriptorWrites[i].pBufferInfo = &inputBufferInfo;
             }
