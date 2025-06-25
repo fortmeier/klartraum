@@ -19,6 +19,10 @@ layout(scalar, binding = 2) buffer OutputBuffer2 {
     uint numberTotalGaussians;
 } outputBuffer2;
 
+layout (scalar, binding = 3) buffer outputDispatchIndirect {
+    DispatchIndirectCommand xyz;
+} dispatchIndirectCommand;
+
 
 layout(push_constant) uniform PushConstants {
     uint numElements;
@@ -144,6 +148,13 @@ void main() {
     if (gl_LocalInvocationID.x == 0) {
         // Initialize the number of additional gaussians to zero
         atomicMin(outputBuffer2.numberTotalGaussians, pushConstants.numElements * 2);
+
+        // compute the number of workgroups needed for the consecutive dispatches
+        atomicMax(dispatchIndirectCommand.xyz.x, outputBuffer2.numberTotalGaussians / 128 + 1);
+
+        dispatchIndirectCommand.xyz.y = 1;
+        dispatchIndirectCommand.xyz.z = 1;
+
         // debugPrintfEXT("Total number of gaussians: %u\n", outputBuffer2.numberTotalGaussians);
     }
 } 

@@ -72,6 +72,7 @@ private:
     uint32_t numberOfPaths = 0;
 
     std::shared_ptr<BufferElementSinglePath<Gaussian3DBuffer>> gaussians3D;
+    std::shared_ptr<BufferElement<Gaussian2DBuffer>> gaussians2D;
 
     std::shared_ptr<GaussianProjection> project3Dto2D;
     std::shared_ptr<GaussianSort> sort2DGaussians;
