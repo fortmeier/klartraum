@@ -11,6 +11,8 @@
 
 namespace klartraum {
 
+using DispatchIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
+
 template <typename P = void>
 class GeneralComputation : public ComputeGraphElement {
 public:
@@ -80,6 +82,10 @@ public:
         return groupCountZ;
     }
 
+    void setDynamicGroupDispatchParams(const std::shared_ptr<DispatchIndirectCommandBufferElement>& params) {
+        this->dynamicGroupDispatchParams = params;
+    }
+
     void setPushConstants(const std::vector<P>& pushConstants) {
         if constexpr (!std::is_void<P>::value) {
             this->pushConstants = pushConstants;
@@ -124,7 +130,7 @@ public:
 
         if constexpr (std::is_void<P>::value) {
             recordScratchToZero(commandBuffer);
-            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+            dispatch(commandBuffer, pathId);
         } else {
             if(pushConstants.empty()) {
                 throw std::runtime_error("push constants are empty!");
@@ -132,7 +138,7 @@ public:
             for (const auto& pushConstant : pushConstants) {
                 recordScratchToZero(commandBuffer);
                 vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
-                vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+                dispatch(commandBuffer, pathId);
                 VkMemoryBarrier memoryBarrier{};
                 memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
                 memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -200,6 +206,7 @@ private:
     uint32_t numberPaths = 1;
 
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
+    std::shared_ptr<DispatchIndirectCommandBufferElement> dynamicGroupDispatchParams;
 
     static VkDescriptorType getDescriptorType(const ComputeGraphElementPtr& input) {
         if (dynamic_cast<ImageViewSrc*>(input.get())) {
@@ -405,6 +412,18 @@ private:
             //         vkCmdFillBuffer(commandBuffer, scratchBuffer, 0, memsize, 0);
             //     }
             // }
+        }
+    }
+
+    void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId)
+    {
+        if (dynamicGroupDispatchParams == nullptr)
+        {
+            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+        }
+        else
+        {
+            vkCmdDispatchIndirect(commandBuffer, dynamicGroupDispatchParams->getVkBuffer(pathId), 0);
         }
     }
 };

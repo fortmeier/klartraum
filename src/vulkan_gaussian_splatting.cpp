@@ -40,7 +40,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup projection stage
     /////////////////////////////////////////////
 
-    auto dynamicNumberOf2DGaussians = vulkanContext.create<BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>>(1);
+    auto flags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    auto dynamicNumberOf2DGaussiansThreads = vulkanContext.create<BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>>(1, flags);
 
     ProjectionPushConstants pushConstants = {
         number_of_gaussians, // numElements
@@ -74,7 +76,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     bin->setInput(project3Dto2D, 0, 2);
     bin->setInput(binnedGaussians2D, 1);
     bin->setInput(totalGaussian2DCounts, 2);
-    bin->setInput(dynamicNumberOf2DGaussians, 3);
+    bin->setInput(dynamicNumberOf2DGaussiansThreads, 3);
 
     bin->setGroupCountX((number_of_gaussians * 2) / 128 + 1);
     bin->setPushConstants({pushConstants});
@@ -104,10 +106,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets, true);
     sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts, false);
 
-    int sortGroupCountX = (number_of_gaussians * 2) / 256 + 1;
-    sortGroupCountX = std::max(sortGroupCountX, 16); // Ensure at least 16 groups so sorting has at least 16 groups for scatter
-
-    sort2DGaussians->setGroupCountX(sortGroupCountX);
+    sort2DGaussians->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
 
     uint32_t numElements = (uint32_t)((number_of_gaussians));
     uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
@@ -139,7 +138,8 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     computeBounds->setInput(sort2DGaussians, 0, 0);    // bufferElement, 0);
     computeBounds->setInput(bin, 1, 2);                // totalGaussian2DCounts, 1);
     computeBounds->setInput(scratchBinStartAndEnd, 2); // scratchBinStartAndEnd, 2);
-    computeBounds->setGroupCountX((number_of_gaussians * 2) / 256 + 1);
+    computeBounds->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
+
 
     computeBounds->setPushConstants({computeBoundsPushConstants});
 

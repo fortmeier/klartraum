@@ -8,8 +8,12 @@
 #include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 #include "klartraum/computegraph/bufferelement.hpp"
+#include "klartraum/vulkan_buffer.hpp"
 
 namespace klartraum {
+
+using DispatchIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
+
 
 template <typename A, typename R, typename U = void, typename P = void>
 class BufferTransformation : public TemplatedBufferElementInterface<R> {
@@ -132,6 +136,10 @@ public:
         return groupCountZ;
     }
 
+    void setDynamicGroupDispatchParams(const std::shared_ptr<DispatchIndirectCommandBufferElement>& params) {
+        this->dynamicGroupDispatchParams = params;
+    }
+
     void bind(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline) {
         if constexpr (std::is_void<U>::value) {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
@@ -144,12 +152,26 @@ public:
     }
 
     void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline) {
-        vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+        if (dynamicGroupDispatchParams == nullptr)
+        {
+            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+        }
+        else
+        {
+            vkCmdDispatchIndirect(commandBuffer, dynamicGroupDispatchParams->getVkBuffer(pathId), 0);
+        }
     }
 
     void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, P pushConstant) {
         vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
-        vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+        if (dynamicGroupDispatchParams == nullptr)
+        {
+            vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
+        }
+        else
+        {
+            vkCmdDispatchIndirect(commandBuffer, dynamicGroupDispatchParams->getVkBuffer(0), 0);
+        }
         VkMemoryBarrier memoryBarrier{};
         memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -272,6 +294,9 @@ private:
     std::conditional_t<!std::is_void<U>::value, std::shared_ptr<U>, void*> uboPtr = nullptr;
 
     std::conditional_t<!std::is_void<P>::value, std::vector<P>, void*> pushConstants;
+
+    std::shared_ptr<DispatchIndirectCommandBufferElement> dynamicGroupDispatchParams;
+
 
     std::vector<std::shared_ptr<BufferElementInterface>> otherInputs;
     std::vector<bool> otherInputsSetToZero; // whether to record the scratch buffers to zero
