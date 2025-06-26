@@ -37,10 +37,22 @@ public:
         vulkanContext(vulkanContext), numberElements(numberElements) {
     }
 
+    BufferElement(VulkanContext& vulkanContext, uint32_t numberElements, VkBufferUsageFlags flags):
+        vulkanContext(vulkanContext), numberElements(numberElements), bufferUsageFlags(flags) {
+    }
+
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         buffers.reserve(numberPaths);
         for(uint32_t i = 0; i < numberPaths; i++) {
-            buffers.emplace_back(vulkanContext, numberElements);
+            if (bufferUsageFlags == VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM)
+            {
+                buffers.emplace_back(vulkanContext, numberElements);
+            }
+            else
+            {
+                buffers.emplace_back(vulkanContext, numberElements, bufferUsageFlags);
+            }
+            
         }
     };
 
@@ -82,6 +94,7 @@ private:
     uint32_t numberElements = 0;
     std::vector<BufferType> buffers;
     bool recordToZero = false;
+    VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM;
 
 };
 
