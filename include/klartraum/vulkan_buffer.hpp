@@ -12,13 +12,13 @@ namespace klartraum {
 template <typename T>
 class VulkanBuffer {
 public:
-    VulkanBuffer(VulkanContext& kernel, uint32_t size) : vulkanContext(kernel), size(size) { //, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
+    VulkanBuffer(VulkanContext& kernel, uint32_t size, VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : vulkanContext(kernel), size(size) {
         auto& device = kernel.getDevice();
 
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.size = sizeof(T) * size;
-        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.usage = usage;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     
         if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
