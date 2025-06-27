@@ -1,0 +1,54 @@
+#version 450
+
+#include "gaussian_splatting_radix_sort_include.glsl"
+
+layout(local_size_x = 128) in;
+
+shared uint sharedHistogram[16]; // 16 bins * 128 threads
+
+void main() {
+
+    // if (idx == 0) {
+    //     if (debug) {
+    //         debugPrintfEXT("Radix sort pass: %u\n", pushConstants.pass);
+    //         debugPrintfEXT("Initial Number of elements: %u\n", pushConstants.numElements);
+    //         debugPrintfEXT("Number of elements: %u\n", inputBuffer2.numberTotalGaussians);
+    //     }
+    // }
+
+    uint binIdx = gl_LocalInvocationIndex.x;
+
+    if (binIdx < 16) {
+        sharedHistogram[binIdx] = 0;
+    }
+
+    barrier();
+
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= inputBuffer2.numberTotalGaussians) return;
+
+    // get the value to sort (use z here)
+    uint value = floatBitsToUint(inputBuffer.gaussians[idx].z);
+    uint binMask = inputBuffer.gaussians[idx].binMask;
+    
+    // get the bin of the current value for the current pass
+    uint bin = getBin(value, binMask, pushConstants.pass);
+
+    // count the occurrences of this bin
+    uint uadsd = atomicAdd(sharedHistogram[bin], 1);
+    debugPrintfEXT("uadsd value: %u, bin value: %u\n", uadsd, bin);
+
+    barrier();
+
+    // now we need to write the histogram to the global memory
+    if (binIdx < 16) {
+        uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;
+        inputBuffer3.histogram[globalBinIdx] = sharedHistogram[binIdx];
+        if (true) {
+            //debugPrintfEXT("binIdx: %u, bin value: %u\n", binIdx, sharedHistogram[binIdx]);
+            debugPrintfEXT("bin %u\n", bin);
+        }
+
+    }
+
+}

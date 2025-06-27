@@ -1,0 +1,25 @@
+#version 450
+
+#include "gaussian_splatting_radix_sort_include.glsl"
+
+layout(local_size_x = 1) in;
+
+void main() {
+    uint binIdx = gl_WorkGroupID.x;
+
+    if (binIdx >= 16) {
+        return;
+    }
+
+    uint totalNumberHistograms = inputBuffer2.numberTotalGaussians / 128 + 1;
+
+    for (uint idx = 1; idx < totalNumberHistograms; idx++) {
+        uint globalBinIdx = idx * 16 + binIdx;
+        debugPrintfEXT("histogram[%u] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx]);
+        debugPrintfEXT("histogram[%u-16] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx - 16]);
+        inputBuffer3.histogram[globalBinIdx] += inputBuffer3.histogram[globalBinIdx - 16];
+    }
+
+        // uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;
+        // inputBuffer3.histogram[globalBinIdx] = sharedHistogram[binIdx];
+}

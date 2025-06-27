@@ -88,12 +88,18 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         "shaders/gaussian_splatting_radix_sort1.comp.spv",
         "shaders/gaussian_splatting_radix_sort2.comp.spv",
         "shaders/gaussian_splatting_radix_sort3.comp.spv",
+        "shaders/gaussian_splatting_radix_sort_histogram.comp.spv",
+        "shaders/gaussian_splatting_radix_sort_hist_prefix_sum.comp.spv",
     };
     sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, shaders);
 
     sort2DGaussians->setName("GaussianSort");
 
     sort2DGaussians->setInput(bin, 0, 1);
+
+    auto scratchBufferHistograms = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16 * ((number_of_gaussians * 2) / 128 + 1));
+    scratchBufferHistograms->setName("ScratchBufferHistograms");
+    scratchBufferHistograms->setRecordToZero(true);
 
     auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
     scratchBufferCounts->setName("ScratchBufferCounts");
@@ -105,6 +111,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts, true);
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets, true);
     sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts, false);
+    sort2DGaussians->addScratchBufferElement(scratchBufferHistograms, true);
 
     sort2DGaussians->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
 
