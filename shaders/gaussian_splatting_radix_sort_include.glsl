@@ -24,6 +24,10 @@ layout(scalar, binding = 5) buffer InputBuffer2 {
     uint numberTotalGaussians;
 } inputBuffer2;
 
+layout(scalar, binding = 6) buffer InputBuffer3 {
+    uint histogram[];
+} inputBuffer3;
+
 layout(push_constant) uniform PushConstants {
     uint pass;
     uint numElements;
