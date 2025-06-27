@@ -24,7 +24,7 @@ struct StartAndEnd {
 };
 
 struct DispatchIndirectCommand {
-    uint    x;
-    uint    y;
-    uint    z;
+    uint x;
+    uint y;
+    uint z;
 };
