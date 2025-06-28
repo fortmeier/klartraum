@@ -135,8 +135,9 @@ void main()
     gaussian2d.z = position.z;
 
     mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index], u);
-    covariance /= position.w;
+    // covariance /= position.w;
 
+    covariance *= 512.0 * 512.0; // scale to pixel space
     // it is not mentioned in the original Gaussian Splatting paper, 
     // but they add a small value to the diagonal of the covariance matrix
     // so that each gaussian is at least a pixel wide

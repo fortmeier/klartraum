@@ -67,9 +67,11 @@ bool overlapsWithBin(Gaussian2D gaussian, uint binIndex) {
     // as a measure of the gaussian's spread
     //THIS SHOULD BE WORKED OUT PROPERLY
     mat2 covariance = inverse(gaussian.covarianceInv);
-    float spreadX = sqrt(covariance[0][0]) * 2.0; // Multiply by 2 for a better spread
-    float spreadY = sqrt(covariance[1][1]) * 2.0; // Multiply by 2 for a better spread
-    
+    float stdDevX = sqrt(covariance[0][0]);
+    float stdDevY = sqrt(covariance[1][1]);
+    float spreadX = stdDevX * 2.5; // Use 2.5 standard deviations for overlap check
+    float spreadY = stdDevY * 2.5; // Use 2.5 standard deviations for overlap check
+
     vec2 gaussianMin = gaussian.position - vec2(spreadX, spreadY);
     vec2 gaussianMax = gaussian.position + vec2(spreadX, spreadY);
 
