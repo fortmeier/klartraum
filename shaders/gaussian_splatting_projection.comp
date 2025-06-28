@@ -135,8 +135,9 @@ void main()
     gaussian2d.z = position.z;
 
     mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index], u);
-    covariance /= position.w;
+    // covariance /= position.w;
 
+    covariance *= 512.0 * 512.0; // scale to pixel space
     // Screen-space dilation: a small isotropic variance keeps every Gaussian
     // at least about a pixel wide.
     covariance[0][0] += 0.3;
