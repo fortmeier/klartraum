@@ -336,4 +336,55 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path) {
     std::cout << "Loaded " << number_of_gaussians << " gaussians from SPZ file: " << path << std::endl;
 }
 
+void VulkanGaussianSplatting::loadPLYModel(std::string path) {
+
+    spz::UnpackOptions unpackOptions;
+    spz::GaussianCloud cloud = spz::loadSplatFromPly("input/bonsai/point_cloud/iteration_7000/point_cloud.ply", unpackOptions);
+
+    gaussians3DData.clear();
+    gaussians3DData.reserve(cloud.numPoints);
+    number_of_gaussians = 256 * 256;
+
+    float clipBounds = 1.5f;
+
+    spz::CoordinateConverter defaultCoordinateConverter;
+
+    for (int i = 0; i < cloud.numPoints; i++) {
+    //for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
+        Gaussian3D gaussian3D;
+        // use activation functions as done in original implementation and described in the paper
+        // position
+        gaussian3D.position[0] = cloud.positions[i * 3 + 0];
+        gaussian3D.position[1] = cloud.positions[i * 3 + 1];
+        gaussian3D.position[2] = cloud.positions[i * 3 + 2];
+
+        // rotation
+        gaussian3D.rotation[0] = cloud.rotations[i * 4 + 0];
+        gaussian3D.rotation[1] = cloud.rotations[i * 4 + 1];
+        gaussian3D.rotation[2] = cloud.rotations[i * 4 + 2];
+        gaussian3D.rotation[3] = cloud.rotations[i * 4 + 3];
+
+        // alpha, color, scale
+        gaussian3D.alpha = sigmoid(cloud.alphas[i]); // inverse logistic back to alpha
+        gaussian3D.color[0] = 0.5 + 0.282095 * cloud.colors[i*3+0];
+        gaussian3D.color[1] = 0.5 + 0.282095 * cloud.colors[i*3+1];
+        gaussian3D.color[2] = 0.5 + 0.282095 * cloud.colors[i*3+2];
+        
+        gaussian3D.scale[0] = std::exp(cloud.scales[i*3+0]);
+        gaussian3D.scale[1] = std::exp(cloud.scales[i*3+1]);
+        gaussian3D.scale[2] = std::exp(cloud.scales[i*3+2]);
+
+
+        if (cloud.positions[i*3+0] < -clipBounds || cloud.positions[i*3+0] > clipBounds ||
+            cloud.positions[i*3+1] < -clipBounds || cloud.positions[i*3+1] > clipBounds ||
+            cloud.positions[i*3+2] < -clipBounds || cloud.positions[i*3+2] > clipBounds) {
+            continue; // Skip gaussians outside the clipping bounds
+        }
+        gaussians3DData.push_back(gaussian3D);
+    }
+
+    number_of_gaussians = (uint32_t)gaussians3DData.size();
+
+    std::cout << "Loaded " << number_of_gaussians << " gaussians from PLY file: " << path << std::endl;
+}
 } // namespace klartraum

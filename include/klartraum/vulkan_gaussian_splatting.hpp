@@ -60,6 +60,7 @@ public:
 
 private:
     void loadSPZModel(std::string path);
+    void loadPLYModel(std::string path);
 
     VulkanContext* vulkanContext = nullptr;
 
