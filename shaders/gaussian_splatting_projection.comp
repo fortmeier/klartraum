@@ -50,7 +50,7 @@ mat3 quatToMat3(vec4 q) {
     
 }
 
-mat2 calculateCovarianceMatrix2D(Gaussian gaussian, vec3 u) {
+mat2 calculateCovarianceMatrix2D(Gaussian gaussian) {
     mat3 S = mat3(
         gaussian.scale.x, 0.0, 0.0,
         0.0, gaussian.scale.y, 0.0,
@@ -58,29 +58,56 @@ mat2 calculateCovarianceMatrix2D(Gaussian gaussian, vec3 u) {
     );
 
     mat3 R = quatToMat3(gaussian.rotation);
-    
-    mat3 cov3dInObjectSpace = R * S * transpose(S) * transpose(R);
 
-    mat4 W4 = ubo.model * ubo.view;
-    mat3 W = mat3(
-        W4[0][0], W4[0][1], W4[0][2],
-        W4[1][0], W4[1][1], W4[1][2],
-        W4[2][0], W4[2][1], W4[2][2]
-    );
+    mat3 M = S * R;
+
+    mat3 cov3dInObjectSpace = transpose(M) * M;
+
+    // compute camera space position t
+    vec4 t4 = ubo.model * ubo.view * vec4(gaussian.position, 1.0);
+    vec3 t = t4.xyz;
 
 
-    float u0 = u[0];
-    float u1 = u[1];
-    float u2 = u[2];
+    // Compute tanFovX from camera parameters
+    // Assuming projection matrix is perspective and symmetric
+    // proj[0][0] = focalX, proj[1][1] = focalY
+    float focalX = ubo.proj[0][0];
+    float focalY = ubo.proj[1][1];
+    float tanFovX = 1.0 / focalX;
+    float tanFovY = 1.0 / focalY;
 
-    float l = length(u);
+    // compute the jacobian as done by
+    // https://github.com/graphdeco-inria/diff-gaussian-rasterization/blob/59f5f77e3ddbac3ed9db93ec2cfe99ed6c5d121d/cuda_rasterizer/forward.cu#L89
+
+    // to clamp the projected position to a reasonable range on the screen
+    // first, project to normalized device coordinates
+    // then, clamp to a range that is slightly larger than the screen size
+    // then project back to world coordinates
+    const float limx = 1.3f * tanFovX;
+    const float limy = 1.3f * tanFovY;
+    const float txtz = t.x / t.z;
+    const float tytz = t.y / t.z;
+    t.x = min(limx, max(-limx, txtz)) * t.z;
+
+    // note that y axis is inverted in Vulkan clip space
+    // so we need to change max and min
+    t.y = max(limy, min(-limy, tytz)) * t.z;
 
     mat3 J = mat3(
-        1.0 / u2, 0.0, -u0 / (u2 * u2),
-        0.0, 1.0 / u2, -u1 / (u2 * u2),
-        u0 / l, u1 / l, u2 / l);
+        focalX / t.z, 0.0f, -(focalX * t.x) / (t.z * t.z),
+        0.0f, focalY / t.z, -(focalY * t.y) / (t.z * t.z),
+        0, 0, 0);
+    
+    mat4 W4 = ubo.model * ubo.view;
+    mat3 W = mat3(
+        W4[0][0], W4[1][0], W4[2][0],
+        W4[0][1], W4[1][1], W4[2][1],
+        W4[0][2], W4[1][2], W4[2][2]
+    );
 
-    mat3 cov3dInCameraSpace = J * W * cov3dInObjectSpace * transpose(W) * transpose(J); 
+    mat3 T = W * J;
+
+    mat3 cov3dInCameraSpace = transpose(T) * transpose(cov3dInObjectSpace) * T; 
 
     mat2 cov2d = mat2(
         cov3dInCameraSpace[0][0], cov3dInCameraSpace[0][1],
@@ -134,7 +161,7 @@ void main()
     gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
     gaussian2d.z = position.z;
 
-    mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index], u);
+    mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index]);
     // covariance /= position.w;
 
     covariance *= 512.0 * 512.0; // scale to pixel space
