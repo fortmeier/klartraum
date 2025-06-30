@@ -117,7 +117,48 @@ mat2 calculateCovarianceMatrix2D(Gaussian gaussian) {
     return cov2d;
 }
 
-    
+float computeSphericalHarmonicsColor(float base, float coeffs[15], vec3 direction) {
+
+    float x = direction.x;
+    float y = direction.y;
+    float z = direction.z;
+
+    float x2 = x * x;
+    float y2 = y * y;
+    float z2 = z * z;
+
+    float sh[16];
+
+    // Band 0
+    sh[0] = 0.282095; // Y(0, 0)
+
+    // Band 1
+    sh[1] = -0.488603 * y;       // Y(1, -1)
+    sh[2] = -0.488603 * z;       // Y(1,  0)
+    sh[3] = -0.488603 * x;       // Y(1,  1)
+
+    // Band 2
+    sh[4] = 1.092548 * x * y;                 // Y(2, -2)
+    sh[5] = -1.092548 * y * z;                // Y(2, -1)
+    sh[6] = 0.315392 * (2.0 * z2 - x2 - y2);  // Y(2,  0)
+    sh[7] = -1.092548 * x * z;                // Y(2,  1)
+    sh[8] = 0.546274 * (x2 - y2);             // Y(2,  2)
+
+    // Band 3
+    sh[9]  = -0.590044 * y * (3.0 * x2 - y2);                   // Y(3, -3)
+    sh[10] = 2.890611 * x * y * z;                              // Y(3, -2)
+    sh[11] = -0.457046 * y * (4.0 * z2 - x2 - y2);              // Y(3, -1)
+    sh[12] = 0.373176 * z * (2.0 * z2 - 3.0 * x2 - 3.0 * y2);   // Y(3,  0)
+    sh[13] = -0.457046 * x * (4.0 * z2 - x2 - y2);              // Y(3,  1)
+    sh[14] = 1.445306 * z * (x2 - y2);                          // Y(3,  2)
+    sh[15] = -0.590044 * x * (x2 - 3.0 * y2);                   // Y(3,  3)
+
+    float value = 0.5 + base * sh[0]; 
+    for (int i = 0; i < 15; i++) {
+        value += coeffs[i] * sh[i+1]; // Just sum them up for now, replace with actual SH computation
+    }
+    return value;
+}
 
 void main()
 {
@@ -174,7 +215,14 @@ void main()
 
     gaussian2d.covarianceInv = inverse(covariance);
 
-    gaussian2d.color = gaussianIn[index].color;
+    vec3 dir = normalize((ubo.model * ubo.view * vec4(gaussianIn[index].position, 1.0)).xyz);
+
+    gaussian2d.color = vec3(
+        computeSphericalHarmonicsColor(gaussianIn[index].color.r, gaussianIn[index].shR, dir),
+        computeSphericalHarmonicsColor(gaussianIn[index].color.g, gaussianIn[index].shG, dir),
+        computeSphericalHarmonicsColor(gaussianIn[index].color.b, gaussianIn[index].shB, dir)
+    );
+
     gaussian2d.alpha = gaussianIn[index].alpha;
 
     gaussian2d.binMask = uint(-1); // set to a dummy value for now, should be set based on the binning logic in the next step
