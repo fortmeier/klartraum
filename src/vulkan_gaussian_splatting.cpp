@@ -308,8 +308,8 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path) {
 
     spz::CoordinateConverter defaultCoordinateConverter;
 
-    // for (int i = 0; i < packed.numPoints; i++) {
-    for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
+    for (int i = 0; i < packed.numPoints; i++) {
+    //for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
         spz::UnpackedGaussian gaussian = packed.unpack(i, defaultCoordinateConverter);
         if (gaussian.position[0] < -clipBounds || gaussian.position[0] > clipBounds ||
             gaussian.position[1] < -clipBounds || gaussian.position[1] > clipBounds ||
@@ -321,9 +321,12 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path) {
 
         // use activation functions as done in original implementation and described in the paper
         gaussian3D.alpha = sigmoid(gaussian.alpha); // inverse logistic back to alpha
-        gaussian3D.color[0] = 0.5 + 0.282095 * gaussian.color[0];
-        gaussian3D.color[1] = 0.5 + 0.282095 * gaussian.color[1];
-        gaussian3D.color[2] = 0.5 + 0.282095 * gaussian.color[2];
+
+        // color is sh0 encoding, if we want to skip the spherical harmonics, we can use the following:
+        // gaussian3D.color[0] = 0.5 + 0.282095 * gaussian.color[0];
+        // gaussian3D.color[1] = 0.5 + 0.282095 * gaussian.color[1];
+        // gaussian3D.color[2] = 0.5 + 0.282095 * gaussian.color[2];
+
 
         gaussian3D.scale[0] = std::exp(gaussian.scale[0]);
         gaussian3D.scale[1] = std::exp(gaussian.scale[1]);
