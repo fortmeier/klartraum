@@ -21,7 +21,7 @@ int main() {
     auto& vulkanContext = engine.getVulkanContext();
     
     auto& cameraUBO = renderpass->getCameraUBO();
-    std::string spzFile = "./3rdparty/spz/samples/hornedlizard.spz";
+    std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
     std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(renderpass, cameraUBO, spzFile);
     
     engine.add(splatting);
