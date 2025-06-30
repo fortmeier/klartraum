@@ -50,44 +50,50 @@ mat3 quatToMat3(vec4 q) {
     
 }
 
-mat2 calculateCovarianceMatrix2D(Gaussian gaussian, vec3 u) {
-    mat3 S = mat3(
-        gaussian.scale.x, 0.0, 0.0,
-        0.0, gaussian.scale.y, 0.0,
-        0.0, 0.0, gaussian.scale.z
-    );
+// Projected 2D covariance of a 3D Gaussian, in NDC units (Kerbl et al. 2023, Sec. 4;
+// Zwicker et al., EWA Splatting 2002). The caller scales the entries to pixels.
+mat2 calculateCovarianceMatrix2D(Gaussian gaussian) {
+    // 3D covariance Sigma = R S S^T R^T (Kerbl Eq. 6). quatToMat3 fills the mat3
+    // constructor column by column with the rows of the rotation matrix, so it
+    // returns R^T; transposing it yields R.
+    mat3 R = transpose(quatToMat3(gaussian.rotation));
+    mat3 RS = R * mat3(gaussian.scale.x, 0.0, 0.0,
+                       0.0, gaussian.scale.y, 0.0,
+                       0.0, 0.0, gaussian.scale.z);
+    mat3 Sigma = RS * transpose(RS);
 
-    mat3 R = quatToMat3(gaussian.rotation);
-    
-    mat3 cov3dInObjectSpace = R * S * transpose(S) * transpose(R);
+    // Viewing transformation W and the camera-space mean t.
+    mat4 modelView = ubo.model * ubo.view;
+    mat3 W = mat3(modelView);
+    vec3 t = (modelView * vec4(gaussian.position, 1.0)).xyz;
 
-    mat4 W4 = ubo.model * ubo.view;
-    mat3 W = mat3(
-        W4[0][0], W4[0][1], W4[0][2],
-        W4[1][0], W4[1][1], W4[1][2],
-        W4[2][0], W4[2][1], W4[2][2]
-    );
+    // Signed focal terms; proj[1][1] is negative due to Vulkan's Y-flip, and the
+    // sign carries through to the Jacobian's off-diagonal term.
+    float fx = ubo.proj[0][0];
+    float fy = ubo.proj[1][1];
 
+    // The camera looks down -z (clip w = -t.z), so ndc = (-fx * t.x / t.z, -fy * t.y / t.z).
+    // The affine approximation is evaluated at the mean, with the projected x/y
+    // limited to a [-1.3, 1.3] NDC guard band (keeping the depth) so Gaussians far
+    // outside the view do not get an exploding Jacobian.
+    float limX = 1.3 / abs(fx);
+    float limY = 1.3 / abs(fy);
+    float tx = clamp(t.x / t.z, -limX, limX);
+    float ty = clamp(t.y / t.z, -limY, limY);
 
-    float u0 = u[0];
-    float u1 = u[1];
-    float u2 = u[2];
-
-    float l = length(u);
-
+    // Jacobian of the NDC x/y w.r.t. camera-space position (local affine
+    // approximation of Zwicker et al.); the third row is zero, so only the upper-left
+    // 2x2 block of the result is meaningful.
     mat3 J = mat3(
-        1.0 / u2, 0.0, -u0 / (u2 * u2),
-        0.0, 1.0 / u2, -u1 / (u2 * u2),
-        u0 / l, u1 / l, u2 / l);
-
-    mat3 cov3dInCameraSpace = J * W * cov3dInObjectSpace * transpose(W) * transpose(J); 
-
-    mat2 cov2d = mat2(
-        cov3dInCameraSpace[0][0], cov3dInCameraSpace[0][1],
-        cov3dInCameraSpace[1][0], cov3dInCameraSpace[1][1]
+        -fx / t.z,      0.0,            0.0,
+        0.0,            -fy / t.z,      0.0,
+        fx * tx / t.z,  fy * ty / t.z,  0.0
     );
 
-    return cov2d;
+    // Sigma' = J W Sigma W^T J^T (Kerbl Eq. 5), keeping its 2x2 image-plane part.
+    mat3 T = J * W;
+    mat3 cov = T * Sigma * transpose(T);
+    return mat2(cov);
 }
 
     
@@ -134,7 +140,7 @@ void main()
     gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
     gaussian2d.z = position.z;
 
-    mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index], u);
+    mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index]);
     // covariance /= position.w;
 
     covariance *= 512.0 * 512.0; // scale to pixel space
