@@ -1,0 +1,53 @@
+#version 450
+
+#include "gaussian_splatting_radix_sort_include.glsl"
+
+// process 64 local histogram groups of 128 elements each
+layout(local_size_x = 64) in;
+
+//shared uint localIndex[16];
+
+
+void main() {
+
+    /* This shader scatters the elements of the input buffer into the output buffer
+     * based on the histograms and their prefix sum computed in the previous shader.
+     */
+
+    //uint binIdx = gl_LocalInvocationID.x % 16;
+
+    uint histIdx = gl_WorkGroupID.x * 64 + gl_LocalInvocationID.x;
+
+    if (histIdx >= inputBuffer2.numberTotalGaussians / 128 + 1) {
+        return; // No more histograms to process
+    }
+
+
+    uint localIndex[16];
+    for (uint binIdx = 0; binIdx < 16; binIdx++) {
+        uint globalBinIdx = histIdx * 16 + binIdx;
+        localIndex[binIdx] = offsetBuffer.offsets[binIdx] + inputBuffer3.histogram[globalBinIdx]; // Initialize local index for each bin
+    }
+
+
+
+    //  // Initialize local index for each bin
+
+    uint startIdx = histIdx * 128;
+    uint endIdx = startIdx + 128;
+
+    for (uint idx = startIdx; idx < endIdx; idx++) {
+        if (idx >= inputBuffer2.numberTotalGaussians) break;
+        Gaussian2D gaussian = getInputGaussian(idx);
+        // get the value to sort (use z here)
+        uint value = floatBitsToUint(gaussian.z);
+        uint binMask = gaussian.binMask;
+
+        // get the bin of the current value for the current pass
+        uint binIdx = getBin(value, binMask, pushConstants.pass);
+
+        setOutputGaussian(localIndex[binIdx], gaussian);
+        localIndex[binIdx] += 1;
+    }
+
+}

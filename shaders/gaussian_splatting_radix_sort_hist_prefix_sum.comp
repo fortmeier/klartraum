@@ -2,22 +2,42 @@
 
 #include "gaussian_splatting_radix_sort_include.glsl"
 
-layout(local_size_x = 1) in;
+layout(local_size_x = 16) in;
+
+shared uint cumSum[16];
 
 void main() {
-    uint binIdx = gl_WorkGroupID.x;
+    uint binIdx = gl_LocalInvocationID.x;
 
-    if (binIdx >= 16) {
+    cumSum[binIdx] = 0;
+
+    if (gl_WorkGroupID.x > 0) {
         return;
     }
 
     uint totalNumberHistograms = inputBuffer2.numberTotalGaussians / 128 + 1;
 
-    for (uint idx = 1; idx < totalNumberHistograms; idx++) {
+    uint oldValue = 0;
+    for (uint idx = 0; idx < totalNumberHistograms; idx++) {
         uint globalBinIdx = idx * 16 + binIdx;
-        debugPrintfEXT("histogram[%u] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx]);
-        debugPrintfEXT("histogram[%u-16] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx - 16]);
-        inputBuffer3.histogram[globalBinIdx] += inputBuffer3.histogram[globalBinIdx - 16];
+        uint newValue = inputBuffer3.histogram[globalBinIdx];
+
+        // debugPrintfEXT("histogram[%u] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx]);
+        // debugPrintfEXT("histogram[%u-16] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx - 16]);
+        inputBuffer3.histogram[globalBinIdx] = oldValue;
+        oldValue += newValue;
+    }
+
+    cumSum[binIdx] = oldValue;
+
+    barrier();
+
+    offsetBuffer.offsets[0] = 0;
+
+    if (gl_LocalInvocationID.x == 0) {
+        for (uint i = 1; i < 16; i++) {
+            offsetBuffer.offsets[i] = offsetBuffer.offsets[i-1] + cumSum[i-1];
+        }
     }
 
         // uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;

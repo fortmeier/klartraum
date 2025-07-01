@@ -84,11 +84,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup sorting stage
     /////////////////////////////////////////////
     std::vector<std::string> shaders = {
-        "shaders/gaussian_splatting_radix_sort0.comp.spv",
-        "shaders/gaussian_splatting_radix_sort1.comp.spv",
-        "shaders/gaussian_splatting_radix_sort2.comp.spv",
         "shaders/gaussian_splatting_radix_sort_histogram.comp.spv",
         "shaders/gaussian_splatting_radix_sort_hist_prefix_sum.comp.spv",
+        "shaders/gaussian_splatting_radix_sort_hist_scatter.comp.spv"
     };
     sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, shaders);
 
