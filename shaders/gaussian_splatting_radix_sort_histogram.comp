@@ -7,6 +7,13 @@ layout(local_size_x = 128) in;
 shared uint sharedHistogram[16]; // 16 bins * 128 threads
 
 void main() {
+    /* This shader computes local histograms of the number of elements in each bin
+     * which are then written into a consective array in global memory.
+     * The shader following on this histogram creation will then perform a
+     * prefix sum to compute the offsets for each bin for the final sorting pass,
+     * i.e., the placement of each element in the sorted array while preserving
+     * the original order of elements in the same bin.
+     */
 
     // if (idx == 0) {
     //     if (debug) {
@@ -27,26 +34,28 @@ void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= inputBuffer2.numberTotalGaussians) return;
 
+    Gaussian2D gaussian = getInputGaussian(idx);
     // get the value to sort (use z here)
-    uint value = floatBitsToUint(inputBuffer.gaussians[idx].z);
-    uint binMask = inputBuffer.gaussians[idx].binMask;
-    
+    uint value = floatBitsToUint(gaussian.z);
+    uint binMask = gaussian.binMask;
+
     // get the bin of the current value for the current pass
     uint bin = getBin(value, binMask, pushConstants.pass);
 
     // count the occurrences of this bin
     uint uadsd = atomicAdd(sharedHistogram[bin], 1);
-    debugPrintfEXT("uadsd value: %u, bin value: %u\n", uadsd, bin);
+    //debugPrintfEXT("uadsd value: %u, bin value: %u\n", uadsd, bin);
 
     barrier();
+    memoryBarrier();
 
     // now we need to write the histogram to the global memory
     if (binIdx < 16) {
         uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;
         inputBuffer3.histogram[globalBinIdx] = sharedHistogram[binIdx];
-        if (true) {
-            //debugPrintfEXT("binIdx: %u, bin value: %u\n", binIdx, sharedHistogram[binIdx]);
-            debugPrintfEXT("bin %u\n", bin);
+        if (true && gl_WorkGroupID.x == 0) {
+            debugPrintfEXT("globalBinIdx: %u, binIdx: %u, bin value: %u\n", globalBinIdx, binIdx, sharedHistogram[binIdx]);
+            //debugPrintfEXT("bin %u\n", bin);
         }
 
     }
