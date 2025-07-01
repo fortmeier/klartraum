@@ -87,7 +87,6 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         "shaders/gaussian_splatting_radix_sort0.comp.spv",
         "shaders/gaussian_splatting_radix_sort1.comp.spv",
         "shaders/gaussian_splatting_radix_sort2.comp.spv",
-        "shaders/gaussian_splatting_radix_sort3.comp.spv",
         "shaders/gaussian_splatting_radix_sort_histogram.comp.spv",
         "shaders/gaussian_splatting_radix_sort_hist_prefix_sum.comp.spv",
     };

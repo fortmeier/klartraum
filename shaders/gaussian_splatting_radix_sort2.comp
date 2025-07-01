@@ -46,9 +46,10 @@ void main() {
             debugPrintfEXT("Processing bin %u in idx %u\n", bin, idx);
         }
 
+        Gaussian2D gaussian = getInputGaussian(idx);
         // get the value to sort (use z here)
-        uint value = floatBitsToUint(inputBuffer.gaussians[idx].z);
-        uint binMask = inputBuffer.gaussians[idx].binMask;
+        uint value = floatBitsToUint(gaussian.z);
+        uint binMask = gaussian.binMask;
 
         // get the bin of the current value for the current pass
         uint element_bin = getBin(value, binMask, pushConstants.pass);
@@ -77,7 +78,7 @@ void main() {
                 if (isInBin[i]) {
                     uint outputPos = localCopyStart + currentOutputIdx;
                     uint inputPos = step_idx * gl_WorkGroupSize.x + i;
-                    outputBuffer.gaussians[outputPos] = inputBuffer.gaussians[inputPos];
+                    setOutputGaussian(outputPos, getInputGaussian(inputPos));
                     if (debug) {
                         debugPrintfEXT("bin %u: outputPos %u, offset %u\n", bin, outputPos, inputPos);
                     }
