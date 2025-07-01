@@ -52,3 +52,19 @@ uint getBin(uint value, uint binMask, uint pass) {
     // and mask it to get the last 4 bits
     return (switched >> (pass * 4)) & 0xF;
 }
+
+Gaussian2D getInputGaussian(uint idx) {
+    if (pushConstants.pass % 2 == 0) {
+        return inputBuffer.gaussians[idx];
+    } else {
+        return outputBuffer.gaussians[idx];
+    }
+}
+
+void setOutputGaussian(uint idx, Gaussian2D gaussian) {
+    if (pushConstants.pass % 2 == 0) {
+        outputBuffer.gaussians[idx] = gaussian;
+    } else {
+        inputBuffer.gaussians[idx] = gaussian;
+    }
+}
