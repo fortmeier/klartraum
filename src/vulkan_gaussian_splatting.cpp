@@ -51,7 +51,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         512.0f               // screenHeight
     };
 
-    project3Dto2D = vulkanContext.create<GaussianProjection>("shaders/gaussian_splatting_projection.comp.spv");
+    project3Dto2D = vulkanContext.create<GaussianProjection>("shaders/gsplat/gsplat_projection.comp.spv");
     project3Dto2D->setName("GaussianProjection");
     project3Dto2D->setInput(gaussians3D, 0);
     project3Dto2D->setInput(_cameraUBO, 1);
@@ -71,7 +71,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     binnedGaussians2D->setRecordToZero(false); // does not have to be reset
     binnedGaussians2D->setName("BinnedGaussians2D");
 
-    bin = std::make_shared<GaussianBinning>(vulkanContext, "shaders/gaussian_splatting_binning.comp.spv");
+    bin = std::make_shared<GaussianBinning>(vulkanContext, "shaders/gsplat/gsplat_binning.comp.spv");
     bin->setName("GaussianBinning");
     bin->setInput(project3Dto2D, 0, 2);
     bin->setInput(binnedGaussians2D, 1);
@@ -84,9 +84,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup sorting stage
     /////////////////////////////////////////////
     std::vector<std::string> shaders = {
-        "shaders/gaussian_splatting_radix_sort_histogram.comp.spv",
-        "shaders/gaussian_splatting_radix_sort_hist_prefix_sum.comp.spv",
-        "shaders/gaussian_splatting_radix_sort_hist_scatter.comp.spv"
+        "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
+        "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
+        "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"
     };
     sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, shaders);
 
@@ -129,7 +129,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     scratchBinStartAndEnd->setName("ScratchBinStartAndEnd");
     scratchBinStartAndEnd->setRecordToZero(true);
 
-    computeBounds = std::make_shared<GaussianComputeBounds>(vulkanContext, "shaders/gaussian_splatting_bin_bounds.comp.spv");
+    computeBounds = std::make_shared<GaussianComputeBounds>(vulkanContext, "shaders/gsplat/gsplat_bin_bounds.comp.spv");
     computeBounds->setName("GaussianComputeBounds");
 
     ProjectionPushConstants computeBoundsPushConstants = {
@@ -149,7 +149,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     // setup splatting stage
     /////////////////////////////////////////////
-    splat = std::make_shared<GaussianSplatting>(vulkanContext, "shaders/gaussian_splatting_binned_splatting.comp.spv");
+    splat = std::make_shared<GaussianSplatting>(vulkanContext, "shaders/gsplat/gsplat_binned_splatting.comp.spv");
     splat->setName("GaussianSplatting");
 
     std::vector<SplatPushConstants> splatPushConstants;

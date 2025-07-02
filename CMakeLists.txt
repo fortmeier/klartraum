@@ -44,11 +44,14 @@ target_link_libraries(klartraum glfw zlibstatic ${Vulkan_LIBRARIES} ${Python3_LI
 
 find_program(GLSLC glslc REQUIRED)
 
-file(GLOB_RECURSE GLSL_SOURCE_FILES "${PROJECT_SOURCE_DIR}/shaders/*.vert" "${PROJECT_SOURCE_DIR}/shaders/*.frag" "${PROJECT_SOURCE_DIR}/shaders/*.comp")
+set(SHADER_BASE_DIR "${PROJECT_SOURCE_DIR}/shaders")
+
+file(GLOB_RECURSE GLSL_SOURCE_FILES "${SHADER_BASE_DIR}/*.vert" "${SHADER_BASE_DIR}/*.frag" "${SHADER_BASE_DIR}/*.comp")
 
 foreach(GLSL ${GLSL_SOURCE_FILES})
-  get_filename_component(FILE_NAME ${GLSL} NAME)
-  set(SPIRV "${PROJECT_SOURCE_DIR}/shaders/${FILE_NAME}.spv")
+  file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
+  
+  set(SPIRV "${SHADER_BASE_DIR}/${FILE_NAME}.spv")
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${GLSLC} -o ${SPIRV} ${GLSL}

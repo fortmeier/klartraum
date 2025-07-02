@@ -1,4 +1,4 @@
-#include "gaussian_splatting_types.glsl"
+#include "gsplat_types.glsl"
 
 #extension GL_EXT_debug_printf : enable
 

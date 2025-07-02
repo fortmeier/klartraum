@@ -1,6 +1,6 @@
 #version 450
 
-#include "gaussian_splatting_radix_sort_include.glsl"
+#include "gsplat_radix_sort_include.glsl"
 
 layout(local_size_x = 16) in;
 
