@@ -5,16 +5,11 @@
 // process 64 local histogram groups of 128 elements each
 layout(local_size_x = 64) in;
 
-//shared uint localIndex[16];
-
-
 void main() {
 
     /* This shader scatters the elements of the input buffer into the output buffer
      * based on the histograms and their prefix sum computed in the previous shader.
      */
-
-    //uint binIdx = gl_LocalInvocationID.x % 16;
 
     uint histIdx = gl_WorkGroupID.x * 64 + gl_LocalInvocationID.x;
 
@@ -28,10 +23,6 @@ void main() {
         uint globalBinIdx = histIdx * 16 + binIdx;
         localIndex[binIdx] = offsetBuffer.offsets[binIdx] + inputBuffer3.histogram[globalBinIdx]; // Initialize local index for each bin
     }
-
-
-
-    //  // Initialize local index for each bin
 
     uint startIdx = histIdx * 128;
     uint endIdx = startIdx + 128;

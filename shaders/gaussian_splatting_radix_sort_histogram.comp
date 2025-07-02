@@ -15,14 +15,6 @@ void main() {
      * the original order of elements in the same bin.
      */
 
-    // if (idx == 0) {
-    //     if (debug) {
-    //         debugPrintfEXT("Radix sort pass: %u\n", pushConstants.pass);
-    //         debugPrintfEXT("Initial Number of elements: %u\n", pushConstants.numElements);
-    //         debugPrintfEXT("Number of elements: %u\n", inputBuffer2.numberTotalGaussians);
-    //     }
-    // }
-
     uint binIdx = gl_LocalInvocationIndex.x;
 
     if (binIdx < 16) {
@@ -53,10 +45,6 @@ void main() {
     if (binIdx < 16) {
         uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;
         inputBuffer3.histogram[globalBinIdx] = sharedHistogram[binIdx];
-        if (true && gl_WorkGroupID.x == 0) {
-            debugPrintfEXT("globalBinIdx: %u, binIdx: %u, bin value: %u\n", globalBinIdx, binIdx, sharedHistogram[binIdx]);
-            //debugPrintfEXT("bin %u\n", bin);
-        }
 
     }
 
