@@ -4,12 +4,23 @@
 
 layout(local_size_x = 16) in;
 
-shared uint cumSum[16];
+shared uint cumulativeSum[16];
 
 void main() {
+    /* This shader computes the prefix sum of the histogram bins.
+     * It takes the local histograms computed in the previous shader
+     * and computes the cumulative sum for each bin.
+     * The result is stored in a shared buffer which is then used
+     * to compute the offsets for scattering elements into their
+     * final positions.
+     * Note that the total offset of each bin is stored in the
+     * offsetBuffer.offsets array and has to be used in the next shader
+     * to scatter the elements to the right positions in the output buffer.
+     */
+
     uint binIdx = gl_LocalInvocationID.x;
 
-    cumSum[binIdx] = 0;
+    cumulativeSum[binIdx] = 0;
 
     if (gl_WorkGroupID.x > 0) {
         return;
@@ -22,13 +33,11 @@ void main() {
         uint globalBinIdx = idx * 16 + binIdx;
         uint newValue = inputBuffer3.histogram[globalBinIdx];
 
-        // debugPrintfEXT("histogram[%u] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx]);
-        // debugPrintfEXT("histogram[%u-16] = %u\n", globalBinIdx, inputBuffer3.histogram[globalBinIdx - 16]);
         inputBuffer3.histogram[globalBinIdx] = oldValue;
         oldValue += newValue;
     }
 
-    cumSum[binIdx] = oldValue;
+    cumulativeSum[binIdx] = oldValue;
 
     barrier();
 
@@ -36,10 +45,7 @@ void main() {
 
     if (gl_LocalInvocationID.x == 0) {
         for (uint i = 1; i < 16; i++) {
-            offsetBuffer.offsets[i] = offsetBuffer.offsets[i-1] + cumSum[i-1];
+            offsetBuffer.offsets[i] = offsetBuffer.offsets[i-1] + cumulativeSum[i-1];
         }
     }
-
-        // uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;
-        // inputBuffer3.histogram[globalBinIdx] = sharedHistogram[binIdx];
 }
