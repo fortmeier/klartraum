@@ -1,6 +1,6 @@
 #version 450
 
-#include "gaussian_splatting_types.glsl"
+#include "gsplat_types.glsl"
 
 layout(local_size_x = 128) in;
 
