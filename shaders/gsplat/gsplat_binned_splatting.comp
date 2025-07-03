@@ -2,7 +2,7 @@
 
 #include "gsplat_types.glsl"
 
-layout(local_size_x = 16, local_size_y = 16) in;
+layout(local_size_x = 8, local_size_y = 8) in;
 
 
 #extension GL_EXT_scalar_block_layout : enable
@@ -21,6 +21,7 @@ layout(scalar, binding = 2) buffer OutputBuffer {
     StartAndEnd startAndEnd[];
 } inputBuffer3;
 
+shared Gaussian2D sharedGaussians[8*8]; // Shared memory for gaussians in the workgroup
 
 // Output image
 layout(binding = 3, rgba8) uniform image2D outputImage;
@@ -56,8 +57,13 @@ void main() {
     }
 
 
-    uint start = inputBuffer3.startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX].start;
-    uint end = inputBuffer3.startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX].end;
+    const StartAndEnd range = inputBuffer3.startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX];
+    const uint start = range.start;
+    const uint end = range.end;
+
+    const uint stepsize = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+
+    const uint preend = end - end % stepsize;
 
     float bufferFullWarning = inputBuffer2.numberTotalGaussians >= pushConstants.numElements * 2 ? 1.0 : 0.0;
     vec4 backgroundColor = vec4(
@@ -71,7 +77,31 @@ void main() {
     // Accumulate contributions from all Gaussians in this bin
     float accum_opacity = 1.0;
 
-    for (uint i = start; i < end; i++) {
+    for (uint i = start; i < preend; i+= stepsize) {
+        // Load Gaussian from shared memory if available
+        sharedGaussians[gl_LocalInvocationIndex] = gaussianBuffer.gaussians[i + gl_LocalInvocationIndex];
+
+        // Wait for all threads in the workgroup to load their Gaussians
+        barrier();
+
+        // Process the Gaussians in shared memory
+        for (uint j = 0; j < stepsize; j++) {
+            Gaussian2D gaussian = sharedGaussians[j];
+
+            // Evaluate Gaussian at this pixel
+            float a_j = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covarianceInv) * gaussian.alpha;
+
+            // += c_i * a_i * opacity     
+            finalColor += vec4(gaussian.color * a_j * accum_opacity, 0);
+            accum_opacity *= (1.0 - a_j);
+        }
+
+        if (accum_opacity <= 1.0 - 0.9999) {
+            break; // Early exit if opacity is very low
+        }
+    }
+
+    for (uint i = preend; i < end; i++) {
         Gaussian2D gaussian = gaussianBuffer.gaussians[i];
         
         // Evaluate Gaussian at this pixel

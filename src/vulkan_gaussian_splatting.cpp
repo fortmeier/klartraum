@@ -171,7 +171,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     splat->setInput(computeBounds, 2, 2); // scratchBinStartAndEnd, 2);
     splat->setInput(imageViewSrc, 3);
 
-    uint32_t groupsPerBin = (512 / 16) / 4; // = 8 groups per bin with 16 threads each
+    uint32_t groupsPerBin = (512 / 8) / 4; // = 16 groups per bin with 16 threads each
 
     splat->setGroupCountX(groupsPerBin);
     splat->setGroupCountY(groupsPerBin);
