@@ -116,34 +116,10 @@ void main() {
         }
     }
 
-
-    if (gl_GlobalInvocationID.x == 0 && gl_GlobalInvocationID.y == 0) {
-        if (debug) {
-            debugPrintfEXT("pixelCoord: (%d, %d)\n", pixelCoord.x, pixelCoord.y);
-            debugPrintfEXT("start: %u, end: %u\n", start, end);
-            debugPrintfEXT("Total number of gaussians: %u\n", inputBuffer2.numberTotalGaussians);
-        }
-        for (uint i = start; i < end; i++) {
-            Gaussian2D gaussian = gaussianBuffer.gaussians[i];
-            if (debug) {
-                debugPrintfEXT("gaussian[%u]: pos=(%f, %f), cov=(%f, %f, %f, %f), pixelCoord=(%d, %d)\n", 
-                    i, gaussian.position.x, gaussian.position.y, 
-                    gaussian.covarianceInv[0][0], gaussian.covarianceInv[0][1], 
-                    gaussian.covarianceInv[1][0], gaussian.covarianceInv[1][1],
-                    pixelCoord.x, pixelCoord.y);
-            }
-        }
-        if (debug) {
-            debugPrintfEXT("finalColor: (%f, %f, %f, %f), bin: (%u, %u), start: %u, end: %u\n",
-                finalColor.r, finalColor.g, finalColor.b, finalColor.a, pushConstants.binIndexX, pushConstants.binIndexY, start, end);
-        }
-    }
-
     vec4 imageInput = imageLoad(outputImage, pixelCoord);
     vec4 outputColor = imageInput + backgroundColor * backgroundColor.w * float(debug) + finalColor * (1.0 - accum_opacity);
     outputColor = clamp(outputColor, vec4(0.0), vec4(1.0));
 
-    //debugPrintfEXT("pixelCoord: (%d, %d), finalColor: (%f, %f, %f, %f)\n", pixelCoord.x, pixelCoord.y, finalColor.r, finalColor.g, finalColor.b, finalColor.a);
     // Write final color to output image
     imageStore(outputImage, pixelCoord, outputColor);
 } 
