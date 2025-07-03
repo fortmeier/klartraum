@@ -2,7 +2,9 @@
 
 #include "gsplat_types.glsl"
 
-layout(local_size_x = 8, local_size_y = 8) in;
+#define WORKGROUP_SIZE_SQRT 8
+#define WORKGROUP_SIZE (WORKGROUP_SIZE_SQRT * WORKGROUP_SIZE_SQRT)
+layout(local_size_x = WORKGROUP_SIZE_SQRT, local_size_y = WORKGROUP_SIZE_SQRT) in;
 
 
 #extension GL_EXT_scalar_block_layout : enable
@@ -22,7 +24,7 @@ layout(scalar, binding = 2) buffer OutputBuffer {
     StartAndEnd startAndEnd[];
 };
 
-shared Gaussian2D sharedGaussians[8*8]; // Shared memory for gaussians in the workgroup
+shared Gaussian2D sharedGaussians[WORKGROUP_SIZE]; // Shared memory for gaussians in the workgroup
 
 // Output image
 layout(binding = 3, rgba8) uniform image2D outputImage;
@@ -66,15 +68,8 @@ void main() {
 
     const uint preend = end - end % stepsize;
 
-    float bufferFullWarning = numberTotalGaussians >= pushConstants.numElements * 2 ? 1.0 : 0.0;
-    vec4 backgroundColor = vec4(
-        pushConstants.binIndexX / float(pushConstants.gridSize),
-        pushConstants.binIndexY / float(pushConstants.gridSize), 
-        bufferFullWarning, 0.5);
     vec4 finalColor = vec4(0.0, 0.0, 0.0, 1.0);
 
-
-    
     // Accumulate contributions from all Gaussians in this bin
     float accum_opacity = 1.0;
 
@@ -102,6 +97,7 @@ void main() {
         }
     }
 
+    // tail loop for remaining Gaussians, might be optimized further
     for (uint i = preend; i < end; i++) {
         Gaussian2D gaussian = gaussians[i];
         
@@ -118,7 +114,7 @@ void main() {
     }
 
     vec4 imageInput = imageLoad(outputImage, pixelCoord);
-    vec4 outputColor = imageInput + backgroundColor * backgroundColor.w * float(debug) + finalColor * (1.0 - accum_opacity);
+    vec4 outputColor = imageInput + finalColor * (1.0 - accum_opacity);
     outputColor = clamp(outputColor, vec4(0.0), vec4(1.0));
 
     // Write final color to output image
