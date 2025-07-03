@@ -11,15 +11,16 @@ layout(local_size_x = 8, local_size_y = 8) in;
 // Original Gaussian2D data
 layout(scalar, binding = 0) buffer GaussianBuffer {
     Gaussian2D gaussians[];
-} gaussianBuffer;
+};
 
 layout(scalar, binding = 1) buffer InputBuffer2 {
     uint numberTotalGaussians;
-} inputBuffer2;
+};
 
+// Start and end indices for each bin
 layout(scalar, binding = 2) buffer OutputBuffer {
     StartAndEnd startAndEnd[];
-} inputBuffer3;
+};
 
 shared Gaussian2D sharedGaussians[8*8]; // Shared memory for gaussians in the workgroup
 
@@ -57,7 +58,7 @@ void main() {
     }
 
 
-    const StartAndEnd range = inputBuffer3.startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX];
+    const StartAndEnd range = startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX];
     const uint start = range.start;
     const uint end = range.end;
 
@@ -65,7 +66,7 @@ void main() {
 
     const uint preend = end - end % stepsize;
 
-    float bufferFullWarning = inputBuffer2.numberTotalGaussians >= pushConstants.numElements * 2 ? 1.0 : 0.0;
+    float bufferFullWarning = numberTotalGaussians >= pushConstants.numElements * 2 ? 1.0 : 0.0;
     vec4 backgroundColor = vec4(
         pushConstants.binIndexX / float(pushConstants.gridSize),
         pushConstants.binIndexY / float(pushConstants.gridSize), 
@@ -79,7 +80,7 @@ void main() {
 
     for (uint i = start; i < preend; i+= stepsize) {
         // Load Gaussian from shared memory if available
-        sharedGaussians[gl_LocalInvocationIndex] = gaussianBuffer.gaussians[i + gl_LocalInvocationIndex];
+        sharedGaussians[gl_LocalInvocationIndex] = gaussians[i + gl_LocalInvocationIndex];
 
         // Wait for all threads in the workgroup to load their Gaussians
         barrier();
@@ -102,7 +103,7 @@ void main() {
     }
 
     for (uint i = preend; i < end; i++) {
-        Gaussian2D gaussian = gaussianBuffer.gaussians[i];
+        Gaussian2D gaussian = gaussians[i];
         
         // Evaluate Gaussian at this pixel
         float a_i = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covarianceInv) * gaussian.alpha;
