@@ -53,11 +53,13 @@ void main() {
     binOffset.x = int(pushConstants.binIndexX * gl_WorkGroupSize.x * gl_NumWorkGroups.x);
     binOffset.y = int(pushConstants.binIndexY * gl_WorkGroupSize.y * gl_NumWorkGroups.y);
 
-    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy) + binOffset;
+    const ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy) + binOffset;
     if (pixelCoord.x >= int(pushConstants.screenWidth) || 
         pixelCoord.y >= int(pushConstants.screenHeight)) {
         return;
     }
+    const vec2 pixelCoordF = vec2(pixelCoord);
+
 
 
     const StartAndEnd range = startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX];
@@ -85,7 +87,7 @@ void main() {
             Gaussian2D gaussian = sharedGaussians[j];
 
             // Evaluate Gaussian at this pixel
-            float a_j = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covarianceInv) * gaussian.alpha;
+            float a_j = evaluateGaussian(pixelCoordF, gaussian.position, gaussian.covarianceInv) * gaussian.alpha;
 
             // += c_i * a_i * opacity     
             finalColor += vec4(gaussian.color * a_j * accum_opacity, 0);
