@@ -66,9 +66,9 @@ void main() {
     const uint start = range.start;
     const uint end = range.end;
 
-    const uint stepsize = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+    const uint stepsize = WORKGROUP_SIZE;
 
-    const uint preend = end - end % stepsize;
+    const uint preend = start + ((end - start) / stepsize) * stepsize;
 
     vec4 finalColor = vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -93,6 +93,7 @@ void main() {
             finalColor += vec4(gaussian.color * a_j * accum_opacity, 0);
             accum_opacity *= (1.0 - a_j);
         }
+        barrier(); // Ensure all threads have finished processing before the next iteration
 
         if (accum_opacity <= 1.0 - 0.9999) {
             break; // Early exit if opacity is very low
