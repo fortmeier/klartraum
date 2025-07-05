@@ -7,12 +7,67 @@ set(CMAKE_GENERATOR_PLATFORM x64)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+# macOS and Apple Silicon (M4) support
+if(APPLE)
+    message(STATUS "Building for macOS")
+    
+    # Detect Apple Silicon (ARM64)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        message(STATUS "Detected Apple Silicon (ARM64) architecture")
+        set(CMAKE_OSX_ARCHITECTURES "arm64")
+    endif()
+
+    # Set minimum macOS deployment target
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
+    
+    # Enable modern Objective-C runtime
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fobjc-arc")
+    
+    # Optimization flags for Apple Silicon
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mcpu=apple-m1")
+    endif()
+endif()
+
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
 add_subdirectory(3rdparty/glfw)
 
 find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIRS})
+
+# macOS Vulkan support via MoltenVK
+if(APPLE)
+    # Try to find MoltenVK
+    find_library(MOLTENVK_LIBRARY MoltenVK PATHS
+        /usr/local/lib
+        /opt/homebrew/lib
+        $ENV{VULKAN_SDK}/lib
+        $ENV{VULKAN_SDK}/MoltenVK/dylib/macOS
+    )
+    
+    if(MOLTENVK_LIBRARY)
+        message(STATUS "Found MoltenVK: ${MOLTENVK_LIBRARY}")
+        list(APPEND Vulkan_LIBRARIES ${MOLTENVK_LIBRARY})
+    else()
+        message(WARNING "MoltenVK not found. Please install Vulkan SDK for macOS.")
+    endif()
+    
+    # macOS system frameworks required for graphics applications
+    find_library(COCOA_LIBRARY Cocoa REQUIRED)
+    find_library(IOKIT_LIBRARY IOKit REQUIRED)
+    find_library(COREVIDEO_LIBRARY CoreVideo REQUIRED)
+    find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
+    find_library(METAL_LIBRARY Metal REQUIRED)
+    
+    set(MACOS_FRAMEWORKS
+        ${COCOA_LIBRARY}
+        ${IOKIT_LIBRARY}
+        ${COREVIDEO_LIBRARY}
+        ${QUARTZCORE_LIBRARY}
+        ${METAL_LIBRARY}
+    )
+endif()
 
 set(ZLIB_BUILD_EXAMPLES OFF)
 add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/zlib)
@@ -38,7 +93,18 @@ set(SRC
 
 add_executable(klartraum src/main.cpp ${SRC})
 
-target_link_libraries(klartraum glfw zlibstatic ${Vulkan_LIBRARIES} ${Python3_LIBRARIES})
+set(LIBRARIES 
+    ${Vulkan_LIBRARIES}
+    glfw
+    zlibstatic
+    glm::glm
+)
+
+if(APPLE)
+  list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
+endif()
+
+target_link_libraries(klartraum ${LIBRARIES})
 
 
 
@@ -69,10 +135,18 @@ add_custom_target(
 add_dependencies(klartraum Shaders)
 
 
+# Add GLM (OpenGL Mathematics) - header-only library
+include(FetchContent)
+FetchContent_Declare(
+  glm
+  GIT_REPOSITORY https://github.com/g-truc/glm.git
+  GIT_TAG 1.0.1
+)
+FetchContent_MakeAvailable(glm)
+
 # Add Google Test
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-include(FetchContent)
 FetchContent_Declare(
   googletest
   URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz
@@ -96,9 +170,7 @@ add_dependencies(klartraum_tests Shaders)
 target_link_libraries(
   klartraum_tests
   gtest_main
-  glfw
-  zlibstatic
-  ${Vulkan_LIBRARIES}
+  ${LIBRARIES}
   )
 
 include(GoogleTest)
