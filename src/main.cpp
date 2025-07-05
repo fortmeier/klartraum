@@ -1,4 +1,5 @@
 #include <iostream>
+#include <filesystem>
 
 #include "klartraum/glfw_frontend.hpp"
 
@@ -20,7 +21,7 @@ int main() {
 
     auto& vulkanContext = engine.getVulkanContext();
     
-    auto& cameraUBO = renderpass->getCameraUBO();
+    auto cameraUBO = renderpass->getCameraUBO();
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
     std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(renderpass, cameraUBO, spzFile);
     
