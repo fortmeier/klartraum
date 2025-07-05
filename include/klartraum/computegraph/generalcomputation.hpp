@@ -174,13 +174,13 @@ public:
         return "GeneralComputation";
     }    
 
-    BufferElementInterface& getOutputBuffer(uint32_t pathId = 0) {
-        return outputBuffers[pathId];
-    }
+    // BufferElementInterface& getOutputBuffer(uint32_t pathId = 0) {
+    //     return this->outputBuffers[pathId];
+    // }
 
-    void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement) {
-        otherInputs.push_back(bufferElement);
-    }
+    // void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement) {
+    //     this->otherInputs.push_back(bufferElement);
+    // }
 
 private:
     VkDescriptorPool descriptorPool;

@@ -38,7 +38,7 @@ TEST(BufferTransformation, create) {
     */
    
     // this traverses the computegraph and creates the vulkan objects
-    auto& computegraph = ComputeGraph(vulkanContext, 1);
+    auto computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(transform);
 
     bufferElement->getBuffer(0).memcopyFrom(data);
@@ -88,7 +88,7 @@ TEST(BufferTransformation, create_with_ubo) {
     */
    
    // this traverses the computegraph and creates the vulkan objects
-   auto& computegraph = ComputeGraph(vulkanContext, 1);
+   auto computegraph = ComputeGraph(vulkanContext, 1);
    computegraph.compileFrom(transform);
 
    bufferElement->getBuffer(0).memcopyFrom(data);
@@ -134,7 +134,7 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
     */
    
    // this traverses the computegraph and creates the vulkan objects
-   auto& computegraph = ComputeGraph(vulkanContext, 3);
+   auto computegraph = ComputeGraph(vulkanContext, 3);
    computegraph.compileFrom(transform);
    
    bufferElement->getBuffer(0).memcopyFrom(data);

@@ -45,7 +45,7 @@ public:
     }
 
     virtual ~BufferTransformation() {
-        if (initialized) {
+        if (this->initialized) {
             vkDestroyPipelineLayout(vulkanContext->getDevice(), computePipelineLayout, nullptr);
             for(auto& computePipeline : computePipelines) {
                 vkDestroyPipeline(vulkanContext->getDevice(), computePipeline, nullptr);
@@ -100,7 +100,7 @@ public:
                 uboPtr->update(i);
             }
         }
-        initialized = true;
+        this->initialized = true;
 
     };
 
@@ -188,7 +188,7 @@ public:
     }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
-        if (!initialized) {
+        if (!this->initialized) {
             throw std::runtime_error("BufferTransformation not initialized");
         }
 
@@ -222,7 +222,7 @@ public:
 
     A& getInput(uint32_t pathId = 0) {
         // TODO why inputs[0], and not inputs[pathId]?
-        auto bufferPtr = dynamic_cast<TemplatedBufferElementInterface<A>*>(getInputElement(0).get());
+        auto bufferPtr = dynamic_cast<TemplatedBufferElementInterface<A>*>(this->getInputElement(0).get());
         if (bufferPtr == nullptr) {
             throw std::runtime_error("input is not a fitting BufferElement!");
         }

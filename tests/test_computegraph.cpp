@@ -112,7 +112,7 @@ TEST(ComputeGraph, create) {
     */
     
     // this traverses the computegraph and creates the vulkan objects
-    auto& computegraph = ComputeGraph(vulkanContext, 1);
+    auto computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(copy);
 
     computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
@@ -161,7 +161,7 @@ TEST(ComputeGraph, trippleFramebuffer) {
     */
     
     // this traverses the computegraph and creates the vulkan objects
-    auto& computegraph = ComputeGraph(vulkanContext, 3);
+    auto computegraph = ComputeGraph(vulkanContext, 3);
 
     computegraph.compileFrom(renderpass);
 
