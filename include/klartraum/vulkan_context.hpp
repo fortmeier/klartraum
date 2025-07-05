@@ -74,6 +74,9 @@ private:
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
         VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
+#ifdef __APPLE__
+        "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
+#endif
     };
 
 #ifdef NDEBUG

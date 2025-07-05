@@ -54,7 +54,12 @@ std::vector<const char*> VulkanContext::getRequiredExtensions() {
     if (enableValidationLayers) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
-    // extensions.push_back(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME);
+    
+    // macOS/MoltenVK specific extensions
+#ifdef __APPLE__
+    extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+#endif
 
     return extensions;
 }
@@ -126,6 +131,13 @@ void VulkanContext::createInstance() {
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
+
+    // macOS/MoltenVK specific flags
+#ifdef __APPLE__
+    createInfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#else
+    createInfo.flags = 0;
+#endif
 
     std::vector<VkValidationFeatureEnableEXT>  validation_feature_enables = {};
     if (enableValidationLayers && enableGPUPrintf)
