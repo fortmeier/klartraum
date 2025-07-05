@@ -43,7 +43,7 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     /*
     STEP 2: create the computegraph backend and compile the computegraph
     */
-    auto& computegraph = ComputeGraph(vulkanContext, 1);
+    auto computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(splatting);
 
     /*
