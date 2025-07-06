@@ -24,6 +24,7 @@ public:
 
     KlartraumEngine& getKlartraumEngine();
 
+    void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 private:
     void initialize();
     void shutdown();
