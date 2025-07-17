@@ -4,13 +4,13 @@
 
 #extension GL_EXT_scalar_block_layout : enable
 
-layout(scalar, binding = 0) buffer InputBuffer {
-    Gaussian2D gaussians[];
-} inputBuffer;
+layout(scalar, binding = 0) buffer BufferA {
+    Gaussian2D gaussiansA[];
+};
 
-layout(scalar, binding = 2) buffer OutputBuffer {
-    Gaussian2D gaussians[];
-} outputBuffer;
+layout(scalar, binding = 2) buffer BufferB {
+    Gaussian2D gaussiansB[];
+};
 
 layout(scalar, binding = 3) buffer CountBuffer {
     uint counts[];
@@ -55,16 +55,16 @@ uint getBin(uint value, uint binMask, uint pass) {
 
 Gaussian2D getInputGaussian(uint idx) {
     if (pushConstants.pass % 2 == 0) {
-        return inputBuffer.gaussians[idx];
+        return gaussiansA[idx];
     } else {
-        return outputBuffer.gaussians[idx];
+        return gaussiansB[idx];
     }
 }
 
 void setOutputGaussian(uint idx, Gaussian2D gaussian) {
     if (pushConstants.pass % 2 == 0) {
-        outputBuffer.gaussians[idx] = gaussian;
+        gaussiansB[idx] = gaussian;
     } else {
-        inputBuffer.gaussians[idx] = gaussian;
+        gaussiansA[idx] = gaussian;
     }
 }
