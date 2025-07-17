@@ -85,7 +85,7 @@ set(SRC
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp
-  src/klartraum_core.cpp
+  src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
   ${SPZ_SRC}
