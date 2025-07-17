@@ -14,6 +14,19 @@ typedef std::shared_ptr<ComputeGraphElement> ComputeGraphElementPtr;
 
 class ComputeGraph;
 
+/**
+ * @brief Sets the input element for this ComputeGraphElement at the specified index.
+ * 
+ * If slot is used, this indicates that the input is not given by input directly,
+ * but rather by the slot element of the given element.
+ * 
+ * If slot is specified, retrieves the input element from the provided input's slot and checks its validity.
+ * Updates the internal input and source output slot mappings.
+ * 
+ * @param input The ComputeGraphElementPtr to set as input.
+ * @param index The index at which to set the input (default is 0).
+ * @param slot The slot of the input element to use (default is -1, meaning no slot).
+ */
 class ComputeGraphElement {
 public:
     friend class ComputeGraph;
