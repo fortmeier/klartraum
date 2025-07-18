@@ -12,7 +12,7 @@
 
 namespace klartraum {
 
-typedef UniformBufferObjectNew<CameraMVP> CameraUboType;
+typedef UniformBufferObject<CameraMVP> CameraUboType;
 
 class DrawComponent {
 public:

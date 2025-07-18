@@ -72,7 +72,7 @@ TEST(BufferTransformation, create_with_ubo) {
 
     typedef VulkanBuffer<float> typeA;
     typedef VulkanBuffer<float> typeR;
-    typedef UniformBufferObjectNew<float> typeU;
+    typedef UniformBufferObject<float> typeU;
 
     auto transform = std::make_shared<BufferTransformation<typeA, typeR, typeU>>(vulkanContext, "shaders/operator_multiply_scalar.comp.spv");
     
@@ -118,7 +118,7 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
 
     typedef VulkanBuffer<float> typeA;
     typedef VulkanBuffer<float> typeR;
-    typedef UniformBufferObjectNew<float> typeU;
+    typedef UniformBufferObject<float> typeU;
 
     auto transform = std::make_shared<BufferTransformation<typeA, typeR, typeU>>(vulkanContext, "shaders/operator_multiply_scalar.comp.spv");
     

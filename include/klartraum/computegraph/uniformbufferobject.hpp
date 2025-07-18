@@ -19,7 +19,7 @@ public:
 };
 
 template<typename UniformBufferObjectType>
-class UniformBufferObjectNew : public UniformBufferObjectInterface {
+class UniformBufferObject : public UniformBufferObjectInterface {
 public:
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths)
     {
@@ -33,7 +33,7 @@ public:
         initialized = true;
     }
 
-    virtual ~UniformBufferObjectNew()
+    virtual ~UniformBufferObject()
     {
         if(initialized)
         {
@@ -51,7 +51,7 @@ public:
     }
 
     virtual const char* getType() const {
-        return "UniformBufferObjectNew";
+        return "UniformBufferObject";
     }    
 
     VkDescriptorSetLayout& getDescriptorSetLayout()

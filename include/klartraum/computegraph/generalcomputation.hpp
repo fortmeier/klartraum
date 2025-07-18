@@ -162,7 +162,7 @@ public:
         UniformBufferObjectInterface* uboSrc = std::dynamic_pointer_cast<UniformBufferObjectInterface>(input).get();
 
         if (bufferSrc == nullptr && imageSrc == nullptr && uboSrc == nullptr) {
-            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc or UniformBufferObjectNew!");
+            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc or UniformBufferObject!");
         }
     }
 
