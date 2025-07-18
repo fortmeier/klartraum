@@ -24,15 +24,19 @@ void InterfaceCameraOrbit::update(CameraMVP &mvp)
     auto currentTime = std::chrono::high_resolution_clock::now();
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
+    updatePosition(time);
 
     mvp.model = glm::mat4(1.0f); //glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
     switch (up)
     {
     case UpDirection::Y:
-        mvp.view = glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
+        mvp.view = 
+                glm::lookAt(glm::vec3(distance, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
                 glm::rotate(glm::mat4(1.0f), (float)elevation, glm::vec3(0.0f, 0.0f, 1.0f)) *    
-                glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 1.0f, 0.0f));
+                glm::rotate(glm::mat4(1.0f), (float)azimuth, glm::vec3(0.0f, 1.0f, 0.0f))
+                * glm::translate(glm::mat4(1.0f), position)
+                ;
         break;
 
     case UpDirection::Z:
@@ -49,10 +53,53 @@ void InterfaceCameraOrbit::update(CameraMVP &mvp)
 
     // Vulkan has inverted Y coordinates compared to OpenGL
     mvp.proj[1][1] *= -1;
-
-
 }
 
+void InterfaceCameraOrbit::updatePosition(float deltaTime)
+{
+    float moveSpeed = 0.01f * distance;
+    glm::vec3 forward, right, upVec;
+
+    switch (up) {
+    case UpDirection::Y:
+        forward = glm::vec3(
+            -cos(azimuth) * cos(elevation),
+            -sin(azimuth) * cos(elevation),
+            sin(elevation)
+        );
+        upVec = glm::vec3(0.0f, 1.0f, 0.0f);
+        right = glm::normalize(glm::cross(forward, upVec));
+        break;
+    case UpDirection::Z:
+        forward = glm::vec3(
+            -cos(azimuth) * cos(elevation),
+            sin(elevation),
+            -sin(azimuth) * cos(elevation)
+        );
+        upVec = glm::vec3(0.0f, 0.0f, 1.0f);
+        right = glm::normalize(glm::cross(forward, upVec));
+        break;
+    default:
+        forward = glm::vec3(0.0f, 0.0f, 0.0f);
+        right = glm::vec3(0.0f, 0.0f, 0.0f);
+        upVec = glm::vec3(0.0f, 1.0f, 0.0f);
+        break;
+    }
+
+    if (pressedKeys[EventKey::Key::W]) {
+        position += forward * moveSpeed;
+    }
+    if (pressedKeys[EventKey::Key::S]) {
+        position -= forward * moveSpeed;
+    }
+    if (pressedKeys[EventKey::Key::A]) {
+        position += right * moveSpeed;
+    }
+    if (pressedKeys[EventKey::Key::D]) {
+        position -= right * moveSpeed;
+    }
+
+}
 
 void InterfaceCameraOrbit::onEvent(Event &event)
 {
@@ -90,6 +137,26 @@ void InterfaceCameraOrbit::onEvent(Event &event)
     {
         distance += e->y / 10.0;
         distance = glm::clamp(distance, 0.1, 10000.0);
+    }
+    else if(EventKey *e = dynamic_cast<EventKey *>(&event))
+    {
+        if(e->key == EventKey::Key::Escape)
+        {
+            // Handle escape key press
+            exit(0);
+        }
+        else if (e->key == EventKey::Key::Space)
+        {
+            // Reset camera position and orientation
+            azimuth = 0.0;
+            elevation = 0.0;
+            distance = 2.0;
+            position = glm::vec3(0.0f);
+        }
+        else
+        {
+            pressedKeys[e->key] = (e->action == EventKey::Action::Press);
+        }
     }
 
 }
