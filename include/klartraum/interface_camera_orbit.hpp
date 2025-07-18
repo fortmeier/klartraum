@@ -1,6 +1,8 @@
 #ifndef KLARTRAUM_INTERFACE_CAMERA_ORBIT_HPP
 #define KLARTRAUM_INTERFACE_CAMERA_ORBIT_HPP
 
+#include <unordered_map>
+
 #include "klartraum/interface_camera.hpp"
 
 namespace klartraum {
@@ -19,6 +21,8 @@ public:
     virtual void update(CameraMVP& mvp);
     virtual void onEvent(Event& event);
 
+    void updatePosition(float deltaTime);
+
 
     void setUpDirection(UpDirection up) {
         this->up = up;
@@ -36,6 +40,10 @@ public:
         this->elevation = elevation;
     }
 
+    void setPosition(const glm::vec3& position) {
+        this->position = position;
+    }
+
 
 private:
     VulkanContext* vulkanContext;
@@ -43,9 +51,13 @@ private:
     double elevation = 0.0;
     double distance = 2.0;
 
+    glm::vec3 position = glm::vec3(0.0f);
+
     bool leftButtonDown = false;
 
     UpDirection up = UpDirection::Z;
+
+    std::unordered_map<EventKey::Key, bool> pressedKeys;
 };
 
 } // namespace klartraum
