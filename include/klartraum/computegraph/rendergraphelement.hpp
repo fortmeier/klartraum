@@ -6,7 +6,7 @@
 
 namespace klartraum {
 
-typedef UniformBufferObjectNew<CameraMVP> CameraUboType;
+typedef UniformBufferObject<CameraMVP> CameraUboType;
 
 class RenderGraphElement : public virtual ComputeGraphElement {
 public:
