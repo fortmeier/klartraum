@@ -80,7 +80,7 @@ set(SPZ_SRC
   3rdparty/spz/src/cc/splat-types.cc
 )
 
-set(SRC 
+set(KLARTRAUM_LIB_SRC 
   src/glfw_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
@@ -91,7 +91,8 @@ set(SRC
   ${SPZ_SRC}
   )
 
-add_executable(klartraum src/main.cpp ${SRC})
+# Create Klartraum library
+add_library(klartraum_lib STATIC ${KLARTRAUM_LIB_SRC})
 
 set(LIBRARIES 
     ${Vulkan_LIBRARIES}
@@ -104,7 +105,10 @@ if(APPLE)
   list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
 endif()
 
-target_link_libraries(klartraum ${LIBRARIES})
+target_link_libraries(klartraum_lib ${LIBRARIES})
+
+# Add examples
+add_subdirectory(examples)
 
 
 
@@ -132,7 +136,7 @@ add_custom_target(
   DEPENDS ${SPIRV_BINARY_FILES} ${GLSL_SOURCE_FILES}
 )
 
-add_dependencies(klartraum Shaders)
+add_dependencies(klartraum_lib Shaders)
 
 
 # Add GLM (OpenGL Mathematics) - header-only library
@@ -162,7 +166,6 @@ add_executable(
   tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
   tests/test_gaussian_splatting.cpp
-  ${SRC}
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -170,7 +173,7 @@ add_dependencies(klartraum_tests Shaders)
 target_link_libraries(
   klartraum_tests
   gtest_main
-  ${LIBRARIES}
+  klartraum_lib
   )
 
 include(GoogleTest)
