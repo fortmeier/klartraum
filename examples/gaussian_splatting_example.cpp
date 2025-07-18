@@ -28,8 +28,10 @@ int main() {
     engine.add(splatting);
 
     std::shared_ptr<klartraum::InterfaceCameraOrbit> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
-    cameraOrbit->setAzimuth(-31.0);
+    cameraOrbit->setAzimuth(0.9);
     cameraOrbit->setElevation(-0.5);
+    cameraOrbit->setPosition({-0.5, 0.0, 0.5});
+    cameraOrbit->setDistance(1.0);
     engine.setInterfaceCamera(cameraOrbit);
     engine.setCameraUBO(cameraUBO);
 
