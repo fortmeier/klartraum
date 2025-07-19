@@ -43,6 +43,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     auto flags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     auto dynamicNumberOf2DGaussiansThreads = vulkanContext.create<BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>>(1, flags);
+    dynamicNumberOf2DGaussiansThreads->setName("DynamicNumberOf2DGaussiansThreads");
 
     ProjectionPushConstants pushConstants = {
         number_of_gaussians, // numElements
