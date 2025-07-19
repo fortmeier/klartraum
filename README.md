@@ -1,6 +1,10 @@
 # klartraum
 Klartraum (German for lucid dream) is a real-time neural rendering and inference engine built on top of Vulkan.
 
+![Gaussian Splatting Example (with example splat from spz library)](./screenshot_racoonfamily.png)
+
+*Gaussian Splatting rendered with klartraum (example splat from [niantics spz library](https://github.com/nianticlabs/spz/blob/cc5671d716740e02d57816d4a4a38d164926e695/samples/racoonfamily.spz))*
+
 # idea
 The general idea of Klartraum is to provide an execution environment for pretrained deep learning algorithms that run on a multitude of hardware, given that Vulkan 1.3 is available. Thus, its goal is to enable a wide range of embedded devices that span from single-board computers like Raspberry Pis to Virtual Reality headsets to use algorithms such as
 * Gaussian splatting (implemented)
