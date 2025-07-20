@@ -180,10 +180,17 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     splat->setInput(computeBounds, 2, 2); // scratchBinStartAndEnd, 2);
     splat->setInput(imageViewSrc, 3);
 
-    uint32_t groupsPerBin = (512 / 8) / 4; // = 16 groups per bin with 16 threads each
 
-    splat->setGroupCountX(groupsPerBin);
-    splat->setGroupCountY(groupsPerBin);
+    // each bin computes several workgroups, each processing 8x8 pixels
+    // where each pixel is processed by a single thread
+    const uint32_t threadsPerBinX = 8;
+    const uint32_t threadsPerBinY = 8;
+
+    const uint32_t groupsPerBinX = (screenWidth / threadsPerBinX) / gridSize;
+    const uint32_t groupsPerBinY = (screenHeight / threadsPerBinY) / gridSize;
+
+    splat->setGroupCountX(groupsPerBinX);
+    splat->setGroupCountY(groupsPerBinY);
     splat->setGroupCountZ(1);
 
     splat->setPushConstants(splatPushConstants);
