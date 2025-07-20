@@ -17,6 +17,14 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     std::string path) {
     loadSPZModel(path);
 
+    const float screenWidth = 512.0f;
+    const float screenHeight = 512.0f;
+
+    const uint32_t gridSize = 4; // 4x4 grid for binning
+    const uint32_t numBins = gridSize * gridSize; // number of bins in the grid
+    const uint32_t threadsPerGroup = 128; // number of threads per workgroup
+    const uint32_t maxGaussiansModifier = 2; // arbitrary number, currently 2x the number of initial 3D gaussians
+
     this->vulkanContext = &vulkanContext;
     this->setInput(_imageViewSrc, 0);
     this->setInput(_cameraUBO, 1);
@@ -34,7 +42,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     gaussians3D->getBuffer().memcopyFrom(gaussians3DData);
 
-    gaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, number_of_gaussians * 2);
+    gaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
     gaussians2D->setName("Gaussians2D");
 
     // setup projection stage
@@ -47,9 +55,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     ProjectionPushConstants pushConstants = {
         number_of_gaussians, // numElements
-        4,                   // gridSize (4x4)
-        512.0f,              // screenWidth
-        512.0f               // screenHeight
+        gridSize,             // gridSize (4x4)
+        screenWidth,         // screenWidth
+        screenHeight         // screenHeight
     };
 
     project3Dto2D = vulkanContext.create<GaussianProjection>("shaders/gsplat/gsplat_projection.comp.spv");
@@ -57,7 +65,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     project3Dto2D->setInput(gaussians3D, 0);
     project3Dto2D->setInput(_cameraUBO, 1);
     project3Dto2D->setInput(gaussians2D, 2);
-    project3Dto2D->setGroupCountX(number_of_gaussians / 128 + 1);
+    project3Dto2D->setGroupCountX(number_of_gaussians / threadsPerGroup + 1);
     project3Dto2D->setPushConstants({pushConstants});
 
     // setup binning stage
@@ -67,7 +75,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     totalGaussian2DCounts->setRecordToZero(true);
     totalGaussian2DCounts->setName("TotalGaussian2DCounts");
 
-    auto binnedGaussians2D = vulkanContext.create<BufferElement<Gaussian2DBuffer>>(number_of_gaussians * 2);
+    auto binnedGaussians2D = vulkanContext.create<BufferElement<Gaussian2DBuffer>>(number_of_gaussians * maxGaussiansModifier);
     binnedGaussians2D->zero();                 // nice if it is zero initially, but not necessary
     binnedGaussians2D->setRecordToZero(false); // does not have to be reset
     binnedGaussians2D->setName("BinnedGaussians2D");
@@ -79,7 +87,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     bin->setInput(totalGaussian2DCounts, 2);
     bin->setInput(dynamicNumberOf2DGaussiansThreads, 3);
 
-    bin->setGroupCountX((number_of_gaussians * 2) / 128 + 1);
+    bin->setGroupCountX((number_of_gaussians * maxGaussiansModifier) / threadsPerGroup + 1);
     bin->setPushConstants({pushConstants});
 
     // setup sorting stage
@@ -95,14 +103,14 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     sort2DGaussians->setInput(bin, 0, 1);
 
-    auto scratchBufferHistograms = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16 * ((number_of_gaussians * 2) / 128 + 1));
+    auto scratchBufferHistograms = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * ((number_of_gaussians * maxGaussiansModifier) / threadsPerGroup + 1));
     scratchBufferHistograms->setName("ScratchBufferHistograms");
     scratchBufferHistograms->setRecordToZero(true);
 
-    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
+    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
     scratchBufferCounts->setName("ScratchBufferCounts");
     scratchBufferCounts->setRecordToZero(true);
-    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
+    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
     scratchBufferOffsets->setName("ScratchBufferOffsets");
     scratchBufferOffsets->setRecordToZero(true);
 
@@ -115,7 +123,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     uint32_t numElements = (uint32_t)((number_of_gaussians));
     uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
-    uint32_t numBins = 16;       // Number of bins for sorting = 2 ^ numBitsPerPass
+    //uint32_t numBins = numBins;       // Number of bins for sorting = 2 ^ numBitsPerPass
     uint32_t passes = 32 + 16;   // 32 bits for depth, 16 bits for binning
     std::vector<SortPushConstants> sortPushConstants;
     for (uint32_t i = 0; i < passes / numBitsPerPass; i++) {
@@ -126,7 +134,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     // setup bounds computation stage
     /////////////////////////////////////////////
-    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16 * 2);
+    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * 2);
     scratchBinStartAndEnd->setName("ScratchBinStartAndEnd");
     scratchBinStartAndEnd->setRecordToZero(true);
 
@@ -135,9 +143,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
 
     ProjectionPushConstants computeBoundsPushConstants = {
         (uint32_t)((number_of_gaussians)), // numElements
-        4,                                 // gridSize (4x4)
-        512.0f,                            // screenWidth
-        512.0f                             // screenHeight
+        gridSize,                          // gridSize (4x4)
+        screenWidth,                       // screenWidth
+        screenHeight                       // screenHeight
     };
 
     computeBounds->setInput(sort2DGaussians, 0, 0);    // bufferElement, 0);
@@ -154,15 +162,15 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     splat->setName("GaussianSplatting");
 
     std::vector<SplatPushConstants> splatPushConstants;
-    for (uint32_t y = 0; y < 4; y++) {
-        for (uint32_t x = 0; x < 4; x++) {
+    for (uint32_t y = 0; y < gridSize; y++) {
+        for (uint32_t x = 0; x < gridSize; x++) {
             splatPushConstants.push_back({
-                (uint32_t)(number_of_gaussians * 2), // numElements
-                4,                                   // gridSize (4x4)
-                x,                                   // gridX
-                y,                                   // gridY
-                512.0f,                              // screenWidth
-                512.0f                               // screenHeight
+                (uint32_t)(number_of_gaussians * maxGaussiansModifier), // max. numElements
+                gridSize,                             // gridSize (4x4)
+                x,                                    // gridX
+                y,                                    // gridY
+                screenWidth,                          // screenWidth
+                screenHeight                           // screenHeight
             });
         }
     }
