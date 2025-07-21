@@ -28,6 +28,15 @@ layout(scalar, binding = 6) buffer InputBuffer3 {
     uint histogram[];
 } inputBuffer3;
 
+layout(scalar, binding = 7) buffer InputBufferIndexA {
+    uint inputBufferIndexA[];
+};
+
+layout(scalar, binding = 8) buffer InputBufferIndexB {
+    uint inputBufferIndexB[];
+};
+
+
 layout(push_constant) uniform PushConstants {
     uint pass;
     uint numElements;
@@ -53,18 +62,36 @@ uint getBin(uint value, uint binMask, uint pass) {
     return (switched >> (pass * 4)) & 0xF;
 }
 
+
+// idea: depending on the pass, read/write either from the buffers directly, (pass 0 and 11)
+// or alternatively from index buffers
+// this way, the other shaders do not have to change
+
 Gaussian2D getInputGaussian(uint idx) {
+    if (pushConstants.pass == 0) {
+        inputBufferIndexA[idx] = idx;
+    }
+
     if (pushConstants.pass % 2 == 0) {
-        return gaussiansA[idx];
+        return gaussiansA[inputBufferIndexA[idx]];
     } else {
-        return gaussiansB[idx];
+        return gaussiansA[inputBufferIndexB[idx]];
     }
 }
 
-void setOutputGaussian(uint idx, Gaussian2D gaussian) {
+void setOutputGaussian(uint idxNew, uint idxOld) {
     if (pushConstants.pass % 2 == 0) {
-        gaussiansB[idx] = gaussian;
+        inputBufferIndexB[idxNew] = inputBufferIndexA[idxOld];
     } else {
-        gaussiansA[idx] = gaussian;
+        inputBufferIndexA[idxNew] = inputBufferIndexB[idxOld];
+    }
+
+    if (pushConstants.pass == 11) {
+        // for the last pass, we need to write the final output to the output buffer
+        // this is done by writing to the B buffer
+        // (one might expect to write again to the A buffer, since 11 % 2 == 1,
+        // but that would require to read and write from the same buffer in the last pass,
+        // which will give wrong results)
+        gaussiansB[idxNew] = gaussiansA[inputBufferIndexA[idxNew]];
     }
 }
