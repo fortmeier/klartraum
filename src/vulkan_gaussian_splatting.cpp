@@ -114,10 +114,20 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     scratchBufferOffsets->setName("ScratchBufferOffsets");
     scratchBufferOffsets->setRecordToZero(true);
 
+    auto scratchBufferIndexA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
+    scratchBufferIndexA->setName("ScratchBufferIndexA");
+    scratchBufferIndexA->setRecordToZero(true);
+
+    auto scratchBufferIndexB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
+    scratchBufferIndexB->setName("ScratchBufferIndexB");
+    scratchBufferIndexB->setRecordToZero(true);
+
     sort2DGaussians->addScratchBufferElement(scratchBufferCounts, true);
     sort2DGaussians->addScratchBufferElement(scratchBufferOffsets, true);
     sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts, false);
     sort2DGaussians->addScratchBufferElement(scratchBufferHistograms, true);
+    sort2DGaussians->addScratchBufferElement(scratchBufferIndexA, false);
+    sort2DGaussians->addScratchBufferElement(scratchBufferIndexB, false);
 
     sort2DGaussians->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
 
@@ -148,7 +158,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         screenHeight                       // screenHeight
     };
 
-    computeBounds->setInput(sort2DGaussians, 0, 0);    // bufferElement, 0);
+    computeBounds->setInput(sort2DGaussians, 0);       // bufferElement, 0);
     computeBounds->setInput(bin, 1, 2);                // totalGaussian2DCounts, 1);
     computeBounds->setInput(scratchBinStartAndEnd, 2); // scratchBinStartAndEnd, 2);
     computeBounds->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
