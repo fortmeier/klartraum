@@ -196,8 +196,8 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     const uint32_t threadsPerBinX = 8;
     const uint32_t threadsPerBinY = 8;
 
-    const uint32_t groupsPerBinX = (screenWidth / threadsPerBinX) / gridSize;
-    const uint32_t groupsPerBinY = (screenHeight / threadsPerBinY) / gridSize;
+    const uint32_t groupsPerBinX = uint32_t((screenWidth / threadsPerBinX) / gridSize);
+    const uint32_t groupsPerBinY = uint32_t((screenHeight / threadsPerBinY) / gridSize);
 
     splat->setGroupCountX(groupsPerBinX);
     splat->setGroupCountY(groupsPerBinY);
@@ -315,8 +315,8 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
         1, &barrierBack);
 }
 
-double sigmoid(double x) {
-    return 1.0 / (1.0 + std::exp(-x));
+float sigmoid(float x) {
+    return 1.0f / (1.0f + std::exp(-x));
 }
 
 void VulkanGaussianSplatting::loadSPZModel(std::string path) {
@@ -394,9 +394,9 @@ void VulkanGaussianSplatting::loadPLYModel(std::string path) {
 
         // alpha, color, scale
         gaussian3D.alpha = sigmoid(cloud.alphas[i]); // inverse logistic back to alpha
-        gaussian3D.color[0] = 0.5 + 0.282095 * cloud.colors[i*3+0];
-        gaussian3D.color[1] = 0.5 + 0.282095 * cloud.colors[i*3+1];
-        gaussian3D.color[2] = 0.5 + 0.282095 * cloud.colors[i*3+2];
+        gaussian3D.color[0] = 0.5f + 0.282095f * cloud.colors[i*3+0];
+        gaussian3D.color[1] = 0.5f + 0.282095f * cloud.colors[i*3+1];
+        gaussian3D.color[2] = 0.5f + 0.282095f * cloud.colors[i*3+2];
         
         gaussian3D.scale[0] = std::exp(cloud.scales[i*3+0]);
         gaussian3D.scale[1] = std::exp(cloud.scales[i*3+1]);
