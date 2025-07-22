@@ -327,18 +327,20 @@ void VulkanGaussianSplatting::loadSPZModel(std::string path) {
     gaussians3DData.reserve(packed.numPoints);
     number_of_gaussians = 256 * 256;
 
-    float clipBounds = 1.5f;
+    // float clipBoundsX = 300.0f;
+    // float clipBoundsY = 300.0f;
+    // float clipBoundsZ = 300.0f;
 
     spz::CoordinateConverter defaultCoordinateConverter;
 
     for (int i = 0; i < packed.numPoints; i++) {
     //for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
         spz::UnpackedGaussian gaussian = packed.unpack(i, defaultCoordinateConverter);
-        if (gaussian.position[0] < -clipBounds || gaussian.position[0] > clipBounds ||
-            gaussian.position[1] < -clipBounds || gaussian.position[1] > clipBounds ||
-            gaussian.position[2] < -clipBounds || gaussian.position[2] > clipBounds) {
-            continue; // Skip gaussians outside the clipping bounds
-        }
+        // if (gaussian.position[0] < -clipBoundsX || gaussian.position[0] > clipBoundsX ||
+        //     gaussian.position[1] < -clipBoundsY || gaussian.position[1] > clipBoundsY ||
+        //     gaussian.position[2] < -clipBoundsZ || gaussian.position[2] > clipBoundsZ) {
+        //     continue; // Skip gaussians outside the clipping bounds
+        // }
         Gaussian3D gaussian3D;
         memcpy(&gaussian3D, &gaussian, sizeof(spz::UnpackedGaussian));
 
