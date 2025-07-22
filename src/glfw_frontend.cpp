@@ -52,7 +52,7 @@ void GlfwFrontend::initialize() {
     
     // TODO window size should be configurable somewhere else
     auto config = klartraumEngine->getVulkanContext().getConfig();
-    window = glfwCreateWindow(config.WIDTH, config.HEIGHT, "Klartraum Engine", nullptr, nullptr);
+    window = glfwCreateWindow(config.WIDTH, config.HEIGHT, config.ENGINE_VERSION, nullptr, nullptr);
 
     glfwSetWindowUserPointer(window, this);
 
