@@ -515,7 +515,7 @@ private:
         }
 
         computePipelines.resize(computeShaderStages.size());
-        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, computeShaderStages.size(), pipelineInfos.data(), nullptr, computePipelines.data()) != VK_SUCCESS) {
+        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, (uint32_t)computeShaderStages.size(), pipelineInfos.data(), nullptr, computePipelines.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline!");
         }
 
