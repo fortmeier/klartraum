@@ -6,6 +6,15 @@
 
 #include "klartraum/vulkan_context.hpp"
 
+
+namespace klartraum {
+
+class ComputeGraphElement;
+
+typedef std::shared_ptr<ComputeGraphElement> ComputeGraphElementPtr;
+
+class ComputeGraph;
+
 /**
  * @brief Abstract base class representing an element in a compute graph.
  * 
@@ -22,15 +31,6 @@
  * 
  * @see ComputeGraph which is used to compile a compute graph from these elements.
  */
-namespace klartraum {
-
-class ComputeGraphElement;
-
-typedef std::shared_ptr<ComputeGraphElement> ComputeGraphElementPtr;
-
-class ComputeGraph;
-
-
 class ComputeGraphElement {
 public:
     friend class ComputeGraph;
