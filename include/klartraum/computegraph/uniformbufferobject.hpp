@@ -21,7 +21,7 @@ public:
 template<typename UniformBufferObjectType>
 class UniformBufferObject : public UniformBufferObjectInterface {
 public:
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths)
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override
     {
         this->vulkanContext = &vulkanContext;
         numberOfPaths = numberPaths;
@@ -119,7 +119,10 @@ private:
         for (size_t i = 0; i < numberOfPaths; i++) {
             vulkanContext->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
     
-            vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+            VkResult result = vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+            if (result != VK_SUCCESS) {
+                throw std::runtime_error("failed to map uniform buffer memory!");
+            }
         }
     }
 
