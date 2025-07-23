@@ -65,7 +65,7 @@ public:
         }
     }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
         this->numberPaths = numberPaths;
         this->vulkanContext = &vulkanContext;
 
@@ -162,8 +162,10 @@ public:
         }
     }
 
-    void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, P pushConstant) {
-        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
+    template<typename PushConstantType = P>
+    typename std::enable_if<!std::is_void<PushConstantType>::value, void>::type
+    dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, const PushConstantType& pushConstant) {
+        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstantType), &pushConstant);
         if (dynamicGroupDispatchParams == nullptr)
         {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
@@ -187,7 +189,7 @@ public:
         );
     }
 
-    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
         if (!this->initialized) {
             throw std::runtime_error("BufferTransformation not initialized");
         }
@@ -213,7 +215,7 @@ public:
         }
     };
 
-    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
         BufferElementInterface* bufferSrc = std::dynamic_pointer_cast<BufferElementInterface>(input).get();
         if (bufferSrc == nullptr) {
             throw std::runtime_error("input is not a fitting BufferElementInterface!");
@@ -230,7 +232,7 @@ public:
         return bufferPtr->getBuffer(pathId);
     }
 
-    virtual const char* getType() const {
+    virtual const char* getType() const override {
         return "BufferTransformation";
     }    
 
