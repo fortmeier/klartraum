@@ -188,13 +188,12 @@ public:
     std::vector<VkFence> inFlightFences;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerFrame;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerImage;
-    std::vector<VkSemaphore> renderEndSemaphores;
 
     void createSyncObjects();
 
     uint32_t currentFrame = 0;
 
-    std::tuple<uint32_t, VkSemaphore&> beginRender();
+    std::tuple<uint32_t, VkFence&> beginRender();
     void endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore);
     void stopRender();
 

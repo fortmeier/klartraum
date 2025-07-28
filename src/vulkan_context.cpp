@@ -494,11 +494,6 @@ void VulkanContext::shutdown() {
         vkDestroyFence(device, inFlightFences[i], nullptr);
     }
     
-    for (size_t i = 0; i < getConfig().MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        vkDestroySemaphore(device, renderEndSemaphores[i], nullptr);
-    }
-    
     for (size_t i = 0; i < swapChainImageViews.size(); i++) {
         vkDestroySemaphore(device, imageAvailableSemaphoresPerImage[i], nullptr);
     }
@@ -640,13 +635,6 @@ void VulkanContext::createSyncObjects()
         }
     }
 
-    renderEndSemaphores.resize(getConfig().MAX_FRAMES_IN_FLIGHT);
-
-    for (size_t i = 0; i < getConfig().MAX_FRAMES_IN_FLIGHT; i++) {
-        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderEndSemaphores[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create semaphores!");
-        }
-    }
 }
 
 uint32_t VulkanContext::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -662,10 +650,8 @@ uint32_t VulkanContext::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-std::tuple<uint32_t, VkSemaphore&> VulkanContext::beginRender() {
-    // NOTE, might be better interface to not give the semaphore, but only the index and get the semaphore separtately
-
-    VkFence fence = inFlightFences[currentFrame];
+std::tuple<uint32_t, VkFence&> VulkanContext::beginRender() {
+    VkFence& fence = inFlightFences[currentFrame];
     const uint64_t one_second = 1000'000'000; // 1 second timeout
     VkResult waitResult = VK_TIMEOUT;
     while (waitResult == VK_TIMEOUT) {
@@ -703,33 +689,16 @@ std::tuple<uint32_t, VkSemaphore&> VulkanContext::beginRender() {
         throw std::runtime_error("image available delegate semaphore failed to submit!");
     }
 
-    // TODO imageAvailableSemaphores should be returned;
-    return {imageIndex, imageAvailableSemaphoresPerImage[imageIndex]};
+    return {imageIndex, fence};
 }
 
 void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
-
-    // create a submit info for signaling the inFlightFence
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &renderFinishedSemaphore;
-    static VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-    submitInfo.pWaitDstStageMask = waitStages;
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &renderEndSemaphores[currentFrame];
-    submitInfo.commandBufferCount = 0;
-    submitInfo.pCommandBuffers = nullptr;
-
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
-        throw std::runtime_error("failed to submit inFlightFence");
-    }
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderEndSemaphores[currentFrame];
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
 
     VkSwapchainKHR swapChains[] = {swapChain};
     presentInfo.swapchainCount = 1;
