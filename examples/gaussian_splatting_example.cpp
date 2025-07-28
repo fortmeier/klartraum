@@ -27,7 +27,20 @@ int main() {
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
     std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(renderpass, cameraUBO, spzFile);
     
-    engine.add(splatting);
+    // this adds a second renderpass
+    // to test if this fixes the swapchain issue
+    auto swapChainImageFormat = vulkanContext.getSwapChainImageFormat();
+    auto swapChainExtent = vulkanContext.getSwapChainExtent();
+    auto renderpass2 = std::make_shared<klartraum::RenderPass>(swapChainImageFormat, swapChainExtent);
+
+    renderpass2->setInput(splatting, 0, 0);
+
+    auto camera = std::make_shared<klartraum::CameraUboType>();
+
+    renderpass2->setInput(camera, 1);
+    renderpass2->loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; // Clear the render pass
+
+    engine.add(renderpass2);
 
     std::shared_ptr<klartraum::InterfaceCameraOrbit> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
     cameraOrbit->setAzimuth(0.9);
