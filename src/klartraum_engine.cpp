@@ -77,15 +77,17 @@ RenderPassPtr KlartraumEngine::createRenderPass()
 {
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;
+    std::vector<VkExtent2D> imageExtents;
     std::vector<VkSemaphore> imageAvailableSemaphores;
 
     for (int i = 0; i < 3; i++) {
         imageViews.push_back(vulkanContext.getImageView(i));
         images.push_back(vulkanContext.getSwapChainImage(i));
+        imageExtents.push_back(vulkanContext.getSwapChainExtent());
         imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);
     }
 
-    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images, imageExtents);
 
     imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
     imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);

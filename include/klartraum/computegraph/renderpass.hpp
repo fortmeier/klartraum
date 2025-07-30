@@ -206,6 +206,17 @@ public:
         return imageViewSrc->getImage(pathId);
     }
 
+    VkExtent2D& getImageExtent(uint32_t pathId) override {
+        if(inputs.size() == 0) {
+            throw std::runtime_error("no input!");
+        }
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>((getInputElement(0))).get();
+        if (imageViewSrc == nullptr) {
+            throw std::runtime_error("input is not an ImageViewSrc!");
+        }
+        return imageViewSrc->getImageExtent(pathId);
+    }
+
 private:
     VulkanContext* vulkanContext = nullptr;
     VkRenderPass renderPass;
