@@ -27,6 +27,12 @@ public:
         this->imageViews = imageViews;
     };
 
+    ImageViewSrc(std::vector<VkImageView> imageViews, std::vector<VkImage> images, std::vector<VkExtent2D> imageExtents) {
+        this->images = images;
+        this->imageViews = imageViews;
+        this->imageExtents = imageExtents;
+    };
+
     virtual const char* getType() const {
         return "ImageViewSrc";
     }
@@ -48,10 +54,18 @@ public:
         }
         return images[pathId];
     }
+
+    virtual VkExtent2D& getImageExtent(uint32_t pathId) {
+        if (pathId >= imageExtents.size()) {
+            throw std::runtime_error("pathId out of range!");
+        }
+        return imageExtents[pathId];
+    }
     
 private:
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;
+    std::vector<VkExtent2D> imageExtents;
 };
 
 class ImageSrc : public ComputeGraphElement {

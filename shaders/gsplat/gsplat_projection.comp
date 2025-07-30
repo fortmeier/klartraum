@@ -199,7 +199,10 @@ void main()
     vec3 u = position.xyz / position.w;
     Gaussian2D gaussian2d;
 
-    gaussian2d.position = vec2((norm_pos.x+1.0)*256.0, (norm_pos.y+1.0)*256.0);
+    float screenWidthHalf = pushConstants.screenWidth * 0.5;
+    float screenHeightHalf = pushConstants.screenHeight * 0.5;
+
+    gaussian2d.position = vec2((norm_pos.x+1.0)*screenWidthHalf, (norm_pos.y+1.0)*screenHeightHalf);
     gaussian2d.z = position.z;
 
     mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index]);
