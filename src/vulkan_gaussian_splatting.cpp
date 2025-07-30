@@ -17,13 +17,13 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     std::string path) {
     loadSPZModel(path);
 
-    const float screenWidth = 512.0f;
-    const float screenHeight = 512.0f;
 
     const uint32_t gridSize = 4; // 4x4 grid for binning
     const uint32_t numBins = gridSize * gridSize; // number of bins in the grid
     const uint32_t threadsPerGroup = 128; // number of threads per workgroup
     const uint32_t maxGaussiansModifier = 2; // arbitrary number, currently 2x the number of initial 3D gaussians
+
+    assert(number_of_gaussians > 0, "number_of_gaussians must be greater than 0");
 
     this->vulkanContext = &vulkanContext;
     this->setInput(_imageViewSrc, 0);
@@ -36,6 +36,14 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     if (imageViewSrc == nullptr) {
         throw std::runtime_error("input is not an ImageViewSrc!");
     }
+
+    VkExtent2D imageExtent = imageViewSrc->getImageExtent(0);
+    if (imageExtent.width == 0 || imageExtent.height == 0) {
+        throw std::runtime_error("ImageViewSrc has invalid image extent!");
+    }
+
+    const float screenWidth = static_cast<float>(imageExtent.width);
+    const float screenHeight = static_cast<float>(imageExtent.height);
 
     gaussians3D = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanContext, number_of_gaussians);
     gaussians3D->setName("Gaussians3D");
