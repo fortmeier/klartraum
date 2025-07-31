@@ -110,8 +110,9 @@ void main() {
     // for all other overlapping bins, create a new gaussian and put it at
     // the end of the list
     for (uint binIndex = 0; binIndex < numberGridElements; binIndex++) {
-        if (gaussian.z < 1.0f) {
-            // cull gaussians with z < 1.0f, i.e. that are behind the view plane
+        if (gaussian.z < 0.0f || gaussian.z > 1.0f) {
+            // cull gaussians not with normalize device coordinates in z-direction
+            // i.e., that are not within the near and far plane
             continue;
         }
         if (overlapsWithBin(gaussian, binIndex)) {
