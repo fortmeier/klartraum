@@ -203,7 +203,7 @@ void main()
     float screenHeightHalf = pushConstants.screenHeight * 0.5;
 
     gaussian2d.position = vec2((norm_pos.x+1.0)*screenWidthHalf, (norm_pos.y+1.0)*screenHeightHalf);
-    gaussian2d.z = position.z;
+    gaussian2d.z = u.z;
 
     mat2 covariance = calculateCovarianceMatrix2D(gaussianIn[index]);
     // covariance /= position.w;
