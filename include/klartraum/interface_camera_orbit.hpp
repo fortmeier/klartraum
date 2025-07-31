@@ -44,6 +44,22 @@ public:
         this->position = position;
     }
 
+    void setNearPlane(float nearPlane) {
+        this->nearPlane = nearPlane;
+    }
+
+    void setFarPlane(float farPlane) {
+        this->farPlane = farPlane;
+    }
+
+    float getNearPlane() const {
+        return nearPlane;
+    }
+
+    float getFarPlane() const {
+        return farPlane;
+    }
+
 
 private:
     VulkanContext* vulkanContext;
@@ -52,6 +68,9 @@ private:
     double distance = 2.0;
 
     glm::vec3 position = glm::vec3(0.0f);
+
+    float nearPlane = 0.1f;
+    float farPlane = 1000.0f;
 
     bool leftButtonDown = false;
 
