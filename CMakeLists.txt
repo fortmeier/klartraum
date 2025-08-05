@@ -120,6 +120,25 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# Add Protobuf for ONNX support
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  protobuf
+  GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
+  GIT_TAG v25.1
+  SOURCE_SUBDIR cmake
+)
+FetchContent_MakeAvailable(protobuf)
+
+# Build protobuf after making it available
+
+add_subdirectory(${protobuf_SOURCE_DIR} ${protobuf_BINARY_DIR})
+
+
+
 # Add Google Test
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
