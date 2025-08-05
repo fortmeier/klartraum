@@ -80,33 +80,6 @@ set(SPZ_SRC
   3rdparty/spz/src/cc/splat-types.cc
 )
 
-set(KLARTRAUM_LIB_SRC 
-  src/glfw_frontend.cpp
-  src/vulkan_gaussian_splatting.cpp
-  src/vulkan_helpers.cpp
-  src/vulkan_context.cpp
-  src/klartraum_engine.cpp
-  src/interface_camera_orbit.cpp
-  src/draw_basics.cpp
-  ${SPZ_SRC}
-  )
-
-# Create Klartraum library
-add_library(klartraum_lib STATIC ${KLARTRAUM_LIB_SRC})
-
-set(LIBRARIES 
-    ${Vulkan_LIBRARIES}
-    glfw
-    zlibstatic
-    glm::glm
-)
-
-if(APPLE)
-  list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
-endif()
-
-target_link_libraries(klartraum_lib ${LIBRARIES})
-
 # Add examples
 add_subdirectory(examples)
 
@@ -136,11 +109,10 @@ add_custom_target(
   DEPENDS ${SPIRV_BINARY_FILES} ${GLSL_SOURCE_FILES}
 )
 
-add_dependencies(klartraum_lib Shaders)
-
+# Add dependencies using FetchContent
+include(FetchContent)
 
 # Add GLM (OpenGL Mathematics) - header-only library
-include(FetchContent)
 FetchContent_Declare(
   glm
   GIT_REPOSITORY https://github.com/g-truc/glm.git
@@ -169,6 +141,37 @@ add_executable(
 )
 
 add_dependencies(klartraum_tests Shaders)
+
+
+set(KLARTRAUM_LIB_SRC 
+  src/glfw_frontend.cpp
+  src/vulkan_gaussian_splatting.cpp
+  src/vulkan_helpers.cpp
+  src/vulkan_context.cpp
+  src/klartraum_engine.cpp
+  src/interface_camera_orbit.cpp
+  src/draw_basics.cpp
+  ${SPZ_SRC}
+  )
+
+# Create Klartraum library
+add_library(klartraum_lib STATIC ${KLARTRAUM_LIB_SRC})
+
+set(LIBRARIES 
+    ${Vulkan_LIBRARIES}
+    glfw
+    zlibstatic
+    glm::glm
+    protobuf::libprotobuf
+)
+
+if(APPLE)
+  list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
+endif()
+
+target_link_libraries(klartraum_lib ${LIBRARIES})
+
+add_dependencies(klartraum_lib Shaders)
 
 target_link_libraries(
   klartraum_tests
