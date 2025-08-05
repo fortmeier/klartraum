@@ -124,6 +124,7 @@ FetchContent_MakeAvailable(glm)
 set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
   protobuf
@@ -136,6 +137,47 @@ FetchContent_MakeAvailable(protobuf)
 # Build protobuf after making it available
 
 add_subdirectory(${protobuf_SOURCE_DIR} ${protobuf_BINARY_DIR})
+
+# find protoc
+find_program(protobuf_PROTOC_EXE 
+    NAMES protoc protoc.exe
+    PATHS build/_deps/protobuf-build/Debug
+)
+
+# ONNX Protobuf Generation
+set(ONNX_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(ONNX_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# Create generated directory
+file(MAKE_DIRECTORY ${ONNX_GENERATED_DIR})
+
+# Copy ONNX proto files to project (you'll need to copy them manually first)
+# Expected files: onnx.proto, onnx-data.proto, onnx-operators.proto
+set(ONNX_PROTO_FILES
+    "${ONNX_PROTO_DIR}/onnx.proto"
+)
+
+# Generate C++ files from proto files
+set(ONNX_GENERATED_SOURCES)
+foreach(proto_file ${ONNX_PROTO_FILES})
+    get_filename_component(proto_name ${proto_file} NAME_WE)
+    set(generated_cpp "${ONNX_GENERATED_DIR}/${proto_name}.pb.cc")
+    set(generated_h "${ONNX_GENERATED_DIR}/${proto_name}.pb.h")
+    
+    add_custom_command(
+        OUTPUT ${generated_cpp} ${generated_h}
+        COMMAND ${protobuf_PROTOC_EXE} --cpp_out=${ONNX_GENERATED_DIR} --proto_path=${ONNX_PROTO_DIR} ${proto_file}
+        DEPENDS ${proto_file}
+        COMMENT "Generating C++ code from ${proto_file}"
+    )
+    
+    list(APPEND ONNX_GENERATED_SOURCES ${generated_cpp} ${generated_h})
+endforeach()
+
+# Create ONNX library with generated sources
+add_library(onnx_proto STATIC ${ONNX_GENERATED_SOURCES})
+target_link_libraries(onnx_proto protobuf::libprotobuf)
+target_include_directories(onnx_proto PUBLIC ${ONNX_GENERATED_DIR})
 
 
 
@@ -182,6 +224,7 @@ set(LIBRARIES
     zlibstatic
     glm::glm
     protobuf::libprotobuf
+    onnx_proto
 )
 
 if(APPLE)
@@ -190,7 +233,7 @@ endif()
 
 target_link_libraries(klartraum_lib ${LIBRARIES})
 
-add_dependencies(klartraum_lib Shaders)
+add_dependencies(klartraum_lib Shaders onnx_proto)
 
 target_link_libraries(
   klartraum_tests
