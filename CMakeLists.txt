@@ -212,6 +212,7 @@ set(KLARTRAUM_LIB_SRC
   src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
+  src/onnx_network.cpp
   ${SPZ_SRC}
   )
 
