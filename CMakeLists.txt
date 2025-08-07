@@ -199,6 +199,7 @@ add_executable(
   tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
   tests/test_gaussian_splatting.cpp
+  tests/test_onnx_network.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
