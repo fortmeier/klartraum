@@ -55,8 +55,6 @@ public:
         const std::string& modelPath);
     ~OnnxNetwork();
 
-    // Load ONNX model from file
-    bool loadModel(const std::string& modelPath);
 
     // Print detailed model information
     void printModelInfo() const;
@@ -72,12 +70,19 @@ public:
     }
 
 private:
+    // Load ONNX model from file
+    bool loadModel(const std::string& modelPath);
+
+    // Model parsing and graph creation
+    void createComputeGraph();
+    
     // ONNX model data
     std::unique_ptr<onnx::ModelProto> model;
     std::string modelPath;
 
     // Vulkan resources
     VulkanContext* vulkanContext = nullptr;
+    std::vector<ComputeGraphElementPtr> graphElements;
     uint32_t numberOfPaths = 0;
 
 };

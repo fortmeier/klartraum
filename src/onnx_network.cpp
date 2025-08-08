@@ -1,11 +1,11 @@
-
-
 #include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 
 #include "klartraum/onnx_network.hpp"
+#include "klartraum/computegraph/tensorelement.hpp"
+
 #include "onnx.pb.h"
 
 namespace klartraum {
@@ -16,6 +16,7 @@ OnnxNetwork::OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelP
     std::cout << "OnnxNetwork: Initializing with model: " << modelPath << std::endl;
 
     loadModel(modelPath);
+    createComputeGraph();
 }
 
 OnnxNetwork::~OnnxNetwork() {
@@ -164,6 +165,76 @@ void OnnxNetwork::printModelInfo() const {
             std::cout << "  ... and " << (graph.node_size() - nodes_to_show) << " more nodes" << std::endl;
         }
     }
+}
+
+void OnnxNetwork::createComputeGraph() {
+    std::cout << "OnnxNetwork: Creating compute graph from ONNX model" << std::endl;
+
+    if (!model) {
+        std::cerr << "OnnxNetwork: Error - No model loaded for compute graph creation" << std::endl;
+        return;
+    }
+
+    if (!model->has_graph()) {
+        std::cerr << "OnnxNetwork: Error - Model has no graph" << std::endl;
+        return;
+    }
+
+    const onnx::GraphProto& graph = model->graph();
+
+    std::cout << "OnnxNetwork: Analyzing " << graph.node_size() << " operations for compute graph creation" << std::endl;
+
+    // TODO: Implement actual compute graph creation
+    // This would involve:
+    // 1. Parse ONNX operations and convert to Vulkan compute operations
+    // 2. Create buffer allocations for tensors
+    // 3. Set up compute pipeline stages
+    // 4. Handle data dependencies between operations
+
+    // create input buffer tensors
+    for (int i = 0; i < graph.input_size(); ++i) {
+        const onnx::ValueInfoProto& input = graph.input(i);
+        if (input.has_type() && input.type().has_tensor_type()) {
+            std::vector<uint32_t> inputShape;
+            auto inputTensor = vulkanContext->create<BufferElement<VulkanBuffer<uint32_t>>>(1);
+            
+            const onnx::TypeProto::Tensor& tensor_type = input.type().tensor_type();
+            if (tensor_type.has_elem_type()) {
+                std::cout << " (type: " << tensor_type.elem_type() << ")";
+            }
+            if (tensor_type.has_shape()) {
+                std::cout << " shape: [";
+                for (int j = 0; j < tensor_type.shape().dim_size(); ++j) {
+                    const auto& dim = tensor_type.shape().dim(j);
+                    if (dim.has_dim_value()) {
+                        std::cout << dim.dim_value();
+                        inputShape.push_back(dim.dim_value());
+                    } else if (dim.has_dim_param()) {
+                        // set dim = 1 for dynamic dimensions
+                        // TODO this is a placeholder, should handle dynamic dimensions properly
+                        inputShape.push_back(1); 
+                        std::cout << dim.dim_param();
+                    } else {
+                        std::cout << "?";
+                    }
+                    std::cout << " ";
+                }
+                std::cout << "]";
+            }
+            std::cout << std::endl;
+            size_t tensorSize = 1; // Calculate based on input shape
+            for (const auto& dim : inputShape) {
+                tensorSize *= dim;
+            }
+            if (inputShape.size() == 4) {
+                auto tensorElement = vulkanContext->create<TensorElement<uint32_t>>(inputShape);
+                graphElements.push_back(tensorElement);
+            }
+            std::cout << " - size: " << tensorSize << " elements" << std::endl;
+        }
+    }
+
+    std::cout << "OnnxNetwork: Compute graph creation completed (stub implementation)" << std::endl;
 }
 
 // ComputeGraphGroup interface implementation
