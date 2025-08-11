@@ -37,7 +37,6 @@ public:
 
     // maybe order of arguments should be changed to index, input, slot
     // or index should be a template parameter
-    [[deprecated("Consider using template version setInput<index>(input, slot) for better type safety and clarity")]]
     void setInput(ComputeGraphElementPtr input, int index = 0, int slot = -1) {
         if(slot == -1) {
             checkInput(input, index);

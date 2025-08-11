@@ -20,6 +20,29 @@ T prod(const std::vector<T>& vec) {
     return result;
 }
 
+/**
+ * @brief Untemplated interface for tensor elements
+ *
+ */
+class TensorElementInterface : public ComputeGraphElement {
+public:
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) = 0;
+
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
+
+    virtual const char* getType() const {
+        return "TensorElement";
+    }
+
+    //virtual size_t getBufferMemSize() const = 0;
+
+    virtual VkBuffer& getDataVkBuffer(uint32_t pathId) = 0;
+
+    virtual VkBuffer& getDimensionsVkBuffer(uint32_t pathId) = 0;
+
+private:
+
+};
 
 /**
  * @brief TensorElement represents a tensor with separate dimension and data buffers
@@ -32,7 +55,7 @@ T prod(const std::vector<T>& vec) {
  * for different rendering/compute contexts.
  */
 template <typename DataType>
-class TensorElement : public ComputeGraphElement {
+class TensorElement : public TensorElementInterface {
 public:
     /**
      * @brief Construct a TensorElement with specified dimensions
@@ -151,14 +174,14 @@ public:
     /**
      * @brief Get the Vulkan buffer handle for data buffer
      */
-    VkBuffer& getDataVkBuffer(uint32_t pathId) {
+    virtual VkBuffer& getDataVkBuffer(uint32_t pathId) override{
         return getDataBuffer(pathId).getBuffer();
     }
 
     /**
      * @brief Get the Vulkan buffer handle for dimensions buffer
      */
-    VkBuffer& getDimensionsVkBuffer(uint32_t pathId) {
+    virtual VkBuffer& getDimensionsVkBuffer(uint32_t pathId) override {
         return getDimensionsBuffer(pathId).getBuffer();
     }
 

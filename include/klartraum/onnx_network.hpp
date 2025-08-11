@@ -82,7 +82,8 @@ private:
 
     // Vulkan resources
     VulkanContext* vulkanContext = nullptr;
-    std::vector<ComputeGraphElementPtr> graphElements;
+    std::map<std::string, ComputeGraphElementPtr> graphInputElements;
+    std::vector<ComputeGraphElementPtr> graphOperationElements;
     uint32_t numberOfPaths = 0;
 
 };
