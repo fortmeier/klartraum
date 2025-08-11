@@ -4,8 +4,8 @@
 #include <iostream>
 
 #include "klartraum/onnx_network.hpp"
+#include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
-
 #include "onnx.pb.h"
 
 namespace klartraum {
@@ -167,6 +167,18 @@ void OnnxNetwork::printModelInfo() const {
     }
 }
 
+struct TensorOpPushConstants {
+    uint32_t batch_a;
+    uint32_t depth_a;
+    uint32_t height_a;
+    uint32_t width_a;
+
+    uint32_t batch_b;
+    uint32_t depth_b;
+    uint32_t height_b;
+    uint32_t width_b;
+};
+
 void OnnxNetwork::createComputeGraph() {
     std::cout << "OnnxNetwork: Creating compute graph from ONNX model" << std::endl;
 
@@ -196,8 +208,8 @@ void OnnxNetwork::createComputeGraph() {
         const onnx::ValueInfoProto& input = graph.input(i);
         if (input.has_type() && input.type().has_tensor_type()) {
             std::vector<uint32_t> inputShape;
-            auto inputTensor = vulkanContext->create<BufferElement<VulkanBuffer<uint32_t>>>(1);
-            
+            // auto inputTensor = vulkanContext->create<BufferElement<VulkanBuffer<uint32_t>>>(1);
+
             const onnx::TypeProto::Tensor& tensor_type = input.type().tensor_type();
             if (tensor_type.has_elem_type()) {
                 std::cout << " (type: " << tensor_type.elem_type() << ")";
@@ -212,7 +224,7 @@ void OnnxNetwork::createComputeGraph() {
                     } else if (dim.has_dim_param()) {
                         // set dim = 1 for dynamic dimensions
                         // TODO this is a placeholder, should handle dynamic dimensions properly
-                        inputShape.push_back(1); 
+                        inputShape.push_back(1);
                         std::cout << dim.dim_param();
                     } else {
                         std::cout << "?";
@@ -227,14 +239,64 @@ void OnnxNetwork::createComputeGraph() {
                 tensorSize *= dim;
             }
             if (inputShape.size() == 4) {
-                auto tensorElement = vulkanContext->create<TensorElement<uint32_t>>(inputShape);
-                graphElements.push_back(tensorElement);
+                onnx::TensorProto::DataType dataType = static_cast<onnx::TensorProto::DataType>(tensor_type.elem_type());
+                std::cout << "Data type: " << dataType << " ";
+                if (dataType == onnx::TensorProto::FLOAT) {
+                    auto tensorElement = vulkanContext->create<TensorElement<float>>(inputShape);
+                    graphInputElements[input.name()] = tensorElement;
+                } else if (dataType == onnx::TensorProto::DOUBLE) {
+                    auto tensorElement = vulkanContext->create<TensorElement<double>>(inputShape);
+                    graphInputElements[input.name()] = tensorElement;
+                } else if (dataType == onnx::TensorProto::INT32) {
+                    auto tensorElement = vulkanContext->create<TensorElement<int32_t>>(inputShape);
+                    graphInputElements[input.name()] = tensorElement;
+                } else if (dataType == onnx::TensorProto::INT64) {
+                    auto tensorElement = vulkanContext->create<TensorElement<int64_t>>(inputShape);
+                    graphInputElements[input.name()] = tensorElement;
+                } else {
+                    throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
+                }
+                std::cout << " - size: " << tensorSize << " elements" << std::endl;
             }
-            std::cout << " - size: " << tensorSize << " elements" << std::endl;
         }
     }
 
-    std::cout << "OnnxNetwork: Compute graph creation completed (stub implementation)" << std::endl;
+    // create all operations
+    for (int i = 0; i < graph.node_size(); i++) {
+        const onnx::NodeProto& node = graph.node(i);
+        // Create a compute operation for each node
+        std::string operationType = node.op_type();
+        std::string shaderFilename;
+        if (operationType == "Conv") {
+            shaderFilename = "shaders/onnx/conv.comp.spv"; // Example shader for convolution
+        } else if (operationType == "Relu") {
+            shaderFilename = "shaders/onnx/relu.comp.spv"; // Example shader for ReLU
+        } else {
+            throw std::runtime_error("Unsupported operation type: " + operationType);
+        }
+        TensorOpPushConstants pushConstants;
+        pushConstants.depth_a = 1;
+        pushConstants.height_a = 1;
+        pushConstants.width_a = 1;
+        pushConstants.depth_b = 1;
+        pushConstants.height_b = 1;
+        pushConstants.width_b = 1;
+
+        auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
+        operation->setPushConstants({pushConstants});
+
+        // Get inputs for this operation
+        std::vector<std::string> inputNames;
+        for (int j = 0; j < node.input_size(); ++j) {
+            auto input = graphInputElements[node.input(j)];
+            if (!input) {
+                throw std::runtime_error("Input tensor is null for operation input " + std::to_string(j));
+            }
+            operation->setInput(input, j);
+        }
+
+        graphOperationElements.push_back(operation);
+    }
 }
 
 // ComputeGraphGroup interface implementation
