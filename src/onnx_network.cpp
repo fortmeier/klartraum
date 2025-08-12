@@ -179,6 +179,89 @@ struct TensorOpPushConstants {
     uint32_t width_b;
 };
 
+std::shared_ptr<TensorElementInterface> createTensorWithType(VulkanContext* vulkanContext, const onnx::TensorProto::DataType dataType, std::vector<uint32_t> inputShape) {
+    if (dataType == onnx::TensorProto::FLOAT) {
+        return vulkanContext->create<TensorElement<float>>(inputShape);
+    } else if (dataType == onnx::TensorProto::DOUBLE) {
+        return vulkanContext->create<TensorElement<double>>(inputShape);
+    } else if (dataType == onnx::TensorProto::INT32) {
+        return vulkanContext->create<TensorElement<int32_t>>(inputShape);
+    } else if (dataType == onnx::TensorProto::INT64) {
+        return vulkanContext->create<TensorElement<int64_t>>(inputShape);
+    }
+
+    throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
+
+}
+
+ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
+    auto output = node.output();
+    auto x = output.size();
+    // Create a compute operation for each node
+    std::string operationType = node.op_type();
+    std::cout << "Creating operation for node: " << node.name() << " of type: " << operationType << std::endl;
+    std::string shaderFilename;
+    if (operationType == "Conv") {
+        shaderFilename = "shaders/onnx/conv.comp.spv"; // Example shader for convolution
+    } else if (operationType == "Relu") {
+        shaderFilename = "shaders/onnx/relu.comp.spv"; // Example shader for ReLU
+    } else if (operationType == "Constant") {
+        shaderFilename = "shaders/onnx/constant.comp.spv"; // Example shader for Constant
+    } else if (operationType == "Reshape") {
+        shaderFilename = "shaders/onnx/reshape.comp.spv"; // Example shader for Reshape
+    } else if (operationType == "Transpose") {
+        shaderFilename = "shaders/onnx/transpose.comp.spv"; // Example shader for Transpose
+    } else {
+        throw std::runtime_error("Unsupported operation type: " + operationType);
+    }
+    TensorOpPushConstants pushConstants;
+    pushConstants.depth_a = 1;
+    pushConstants.height_a = 1;
+    pushConstants.width_a = 1;
+    pushConstants.depth_b = 1;
+    pushConstants.height_b = 1;
+    pushConstants.width_b = 1;
+
+    auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
+    operation->setPushConstants({pushConstants});
+
+    return operation;
+}
+
+std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(VulkanContext* vulkanContext, const onnx::NodeProto& node, std::map<std::string, onnx::TensorProto::DataType>& name2Type) {
+    auto output = node.output();
+    auto x = output.size();
+    // Create a compute operation for each node
+    std::string operationType = node.op_type();
+    std::map<std::string, ComputeGraphElementPtr> outputs;
+
+    if (operationType == "Conv") {
+        std::string input0Name = node.input(0);
+        auto input0 = name2Type.at(input0Name);
+        auto dataType = input0;
+
+        std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
+        std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        outputs[node.name()] = output;
+        name2Type[node.output(0)] = dataType; // Store the output type for this operation
+    } else if (operationType == "Relu" || true) {
+        std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
+        std::string input0Name = node.input(0);
+        auto input0 = name2Type.at(input0Name);
+        auto dataType = input0;
+
+        std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        outputs[node.name()] = output;
+        name2Type[node.output(0)] = dataType; // Store the output type for this operation
+    } else {
+        throw std::runtime_error("Unsupported operation type: " + operationType);
+    }
+
+
+    return outputs;
+}
+
+
 void OnnxNetwork::createComputeGraph() {
     std::cout << "OnnxNetwork: Creating compute graph from ONNX model" << std::endl;
 
