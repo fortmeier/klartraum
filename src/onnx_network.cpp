@@ -242,16 +242,25 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
 
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
-        outputs[node.name()] = output;
+        outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
-    } else if (operationType == "Relu" || true) {
+    } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
         std::string input0Name = node.input(0);
         auto input0 = name2Type.at(input0Name);
         auto dataType = input0;
 
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
-        outputs[node.name()] = output;
+        outputs[node.output(0)] = output;
+        name2Type[node.output(0)] = dataType; // Store the output type for this operation
+    } else if (operationType == "Constant") {
+        std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
+
+        // TODO deterimine dynamically
+        auto dataType = onnx::TensorProto::FLOAT;
+
+        std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
     } else {
         throw std::runtime_error("Unsupported operation type: " + operationType);
@@ -286,14 +295,36 @@ void OnnxNetwork::createComputeGraph() {
     // 3. Set up compute pipeline stages
     // 4. Handle data dependencies between operations
 
-    // create input buffer tensors
+    std::vector<const onnx::ValueInfoProto*> infos;
     for (int i = 0; i < graph.input_size(); ++i) {
-        const onnx::ValueInfoProto& input = graph.input(i);
-        if (input.has_type() && input.type().has_tensor_type()) {
+        infos.push_back(&graph.input(i));
+    }
+
+    for (int i = 0; i < graph.output_size(); ++i) {
+        infos.push_back(&graph.output(i));
+    }
+
+    for (int i = 0; i < graph.value_info_size(); ++i) {
+        infos.push_back(&graph.value_info(i));
+    }
+
+    // Print all tensor names
+    std::cout << "All tensor names in the graph:" << std::endl;
+    for (const auto* info : infos) {
+        std::cout << "  - " << info->name() << std::endl;
+    }
+    std::cout << std::endl;
+
+    std::map<std::string, const onnx::ValueInfoProto*> name2Value;
+    std::map<std::string, onnx::TensorProto::DataType> name2Type;
+    // create input buffer tensors
+    for (const auto& input : infos) {
+        name2Value[input->name()] = input;
+        if (input->has_type() && input->type().has_tensor_type()) {
             std::vector<uint32_t> inputShape;
             // auto inputTensor = vulkanContext->create<BufferElement<VulkanBuffer<uint32_t>>>(1);
 
-            const onnx::TypeProto::Tensor& tensor_type = input.type().tensor_type();
+            const onnx::TypeProto::Tensor& tensor_type = input->type().tensor_type();
             if (tensor_type.has_elem_type()) {
                 std::cout << " (type: " << tensor_type.elem_type() << ")";
             }
@@ -321,64 +352,119 @@ void OnnxNetwork::createComputeGraph() {
             for (const auto& dim : inputShape) {
                 tensorSize *= dim;
             }
-            if (inputShape.size() == 4) {
+            if (true) { // inputShape.size() == 4) {
                 onnx::TensorProto::DataType dataType = static_cast<onnx::TensorProto::DataType>(tensor_type.elem_type());
                 std::cout << "Data type: " << dataType << " ";
-                if (dataType == onnx::TensorProto::FLOAT) {
-                    auto tensorElement = vulkanContext->create<TensorElement<float>>(inputShape);
-                    graphInputElements[input.name()] = tensorElement;
-                } else if (dataType == onnx::TensorProto::DOUBLE) {
-                    auto tensorElement = vulkanContext->create<TensorElement<double>>(inputShape);
-                    graphInputElements[input.name()] = tensorElement;
-                } else if (dataType == onnx::TensorProto::INT32) {
-                    auto tensorElement = vulkanContext->create<TensorElement<int32_t>>(inputShape);
-                    graphInputElements[input.name()] = tensorElement;
-                } else if (dataType == onnx::TensorProto::INT64) {
-                    auto tensorElement = vulkanContext->create<TensorElement<int64_t>>(inputShape);
-                    graphInputElements[input.name()] = tensorElement;
-                } else {
-                    throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
-                }
+                name2Type[input->name()] = dataType;
+                graphDataElements[input->name()] = createTensorWithType(vulkanContext, dataType, inputShape);
                 std::cout << " - size: " << tensorSize << " elements" << std::endl;
+            }
+            else {
+                std::cout << "Unsupported input shape size: " << inputShape.size() << std::endl;
+                throw std::runtime_error("Unsupported input shape size for tensor: " + input->name());
             }
         }
     }
 
+    // // create all initializers
+    // for (int i = 0; i < graph.initializer_size(); ++i) {
+    //     const auto& init = graph.initializer(i);
+    //     std::string name = init.name();
+    //     std::cout << "Creating initializer tensor: " << name << std::endl;
+    //     std::vector<uint32_t> initShape;
+    //     for (int j = 0; j < init.dims_size(); j++)
+    //     {
+    //         initShape.push_back(init.dims(j));
+    //     }
+    //     const auto& dataType = static_cast<onnx::TensorProto::DataType>(init.data_type());
+
+    //     graphDataElements[name] = createTensorWithType(vulkanContext, dataType, initShape);
+    // }
+
+    // to create operations, first go through all nodes and create their operation elements
     // create all operations
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
-        // Create a compute operation for each node
-        std::string operationType = node.op_type();
-        std::string shaderFilename;
-        if (operationType == "Conv") {
-            shaderFilename = "shaders/onnx/conv.comp.spv"; // Example shader for convolution
-        } else if (operationType == "Relu") {
-            shaderFilename = "shaders/onnx/relu.comp.spv"; // Example shader for ReLU
-        } else {
-            throw std::runtime_error("Unsupported operation type: " + operationType);
+        auto name = node.name();
+        std::cout << "Creating operation for node: " << name << std::endl;
+        auto operation = createTensorOperation(vulkanContext, node);
+        graphOperationElements[i] = operation;
+        for (int j = 0; j < node.attribute_size(); j++) {
+            const auto& attr = node.attribute(j);
+            std::cout << " - Attribute " << j << ": " << attr.name() << " = " << attr.f() << std::endl;
         }
-        TensorOpPushConstants pushConstants;
-        pushConstants.depth_a = 1;
-        pushConstants.height_a = 1;
-        pushConstants.width_a = 1;
-        pushConstants.depth_b = 1;
-        pushConstants.height_b = 1;
-        pushConstants.width_b = 1;
 
-        auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
-        operation->setPushConstants({pushConstants});
+    }
+
+    // create all operation outputs
+    for (int i = 0; i < graph.node_size(); i++) {
+        const onnx::NodeProto& node = graph.node(i);
+        std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2Type);
+        std::cout << " - Created operation outputs for node: " << node.name() << std::endl;
+        for (const auto& [name, output] : outputs) {
+            std::cout << "   - Output " << name << ": " << output << std::endl;
+            graphDataElements[name] = output;
+        }
+    }
+
+    // finally, connect all operation inputs 
+    for (int i = 0; i < graph.node_size(); i++) {
+        const onnx::NodeProto& node = graph.node(i);
+        
+        std::string name = node.name();
+
+        ComputeGraphElementPtr operation = graphOperationElements[i];
+
+        std::string op_type=node.op_type();
+        std::cout << "connecting operation: " << name <<  "[" << op_type << "]" << std::endl;
 
         // Get inputs for this operation
         std::vector<std::string> inputNames;
-        for (int j = 0; j < node.input_size(); ++j) {
-            auto input = graphInputElements[node.input(j)];
-            if (!input) {
+        int startIndex = 0;
+        for (int j = 0; j < node.input_size(); j++) {
+            auto index = node.input(j);
+            auto input = graphDataElements[index];
+            if (input == nullptr) {
                 throw std::runtime_error("Input tensor is null for operation input " + std::to_string(j));
             }
             operation->setInput(input, j);
+            std::cout << " - Input " << j << ": " << index << " -> " << input << std::endl;
+            startIndex=j+1;
         }
+        
+        for (int j = 0; j < node.output_size(); j++) {
+            auto index = node.output(j);
+            auto output = graphDataElements[index];
+            if (output == nullptr) {
+                throw std::runtime_error("Output tensor is null for operation output " + std::to_string(j));
+            }
+            std::cout << " - Output " << j + startIndex<< ": " << index << " -> " << output << std::endl;
+            operation->setInput(output, j + startIndex);
+        }
+    }
 
-        graphOperationElements.push_back(operation);
+    // get all output names
+    std::vector<std::string> outputNames;
+    for (int i = 0; i < graph.output_size(); ++i) {
+        auto output = graph.output(i);
+        auto name = output.name();
+        outputNames.push_back(name);
+    }
+
+    // all nodes that have outputs will be added the outputs elements of
+    // the compute graph group
+    uint32_t outputElementIndex = 0;
+    for (int i = 0; i < graph.node_size(); i++) {
+        const onnx::NodeProto& node = graph.node(i);
+        for (int j = 0; j < node.output_size(); j++) {
+            auto outputName = node.output(j);
+            // check if outputName is in output names
+            if (std::find(outputNames.begin(), outputNames.end(), outputName) != outputNames.end()) {
+                std::cout << " - Found output name: " << outputName << std::endl;
+                outputElements[outputElementIndex] = graphOperationElements.at(i);
+                outputElementIndex++;
+            }
+        }
     }
 }
 
