@@ -1,0 +1,88 @@
+// WARNING: This file contains AI-generated code
+// This compute shader was automatically generated and may require
+// manual review and optimization for production use.
+
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint batch_a;
+    uint depth_a;
+    uint height_a;
+    uint width_a;
+    uint batch_b;
+    uint depth_b;
+    uint height_b;
+    uint width_b;
+} pc;
+
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
+    float input_data[];
+};
+
+layout(set = 0, binding = 1) restrict readonly buffer WeightBuffer {
+    float weight_data[];
+};
+
+layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer {
+    float bias_data[];
+};
+
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer {
+    float output_data[];
+};
+
+// Basic 2D convolution implementation
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint z = gl_GlobalInvocationID.z;
+    
+    // Check bounds
+    if (x >= pc.width_b || y >= pc.height_b) {
+        return;
+    }
+    
+    // Simplified convolution - assumes 3x3 kernel, stride 1, padding 1
+    uint kernel_size = 3;
+    uint padding = 1;
+    uint stride = 1;
+    
+    uint input_channels = pc.depth_a;
+    uint output_channels = pc.depth_b;
+    
+    for (uint out_c = 0; out_c < output_channels; ++out_c) {
+        float sum = 0.0;
+        
+        // Convolution operation
+        for (uint in_c = 0; in_c < input_channels; ++in_c) {
+            for (uint ky = 0; ky < kernel_size; ++ky) {
+                for (uint kx = 0; kx < kernel_size; ++kx) {
+                    int input_y = int(y * stride + ky) - int(padding);
+                    int input_x = int(x * stride + kx) - int(padding);
+                    
+                    // Check bounds with padding
+                    if (input_y >= 0 && input_y < int(pc.height_a) && 
+                        input_x >= 0 && input_x < int(pc.width_a)) {
+                        
+                        uint input_idx = in_c * pc.height_a * pc.width_a + 
+                                       uint(input_y) * pc.width_a + uint(input_x);
+                        uint weight_idx = out_c * input_channels * kernel_size * kernel_size +
+                                        in_c * kernel_size * kernel_size + 
+                                        ky * kernel_size + kx;
+                        
+                        sum += input_data[input_idx] * weight_data[weight_idx];
+                    }
+                }
+            }
+        }
+        
+        // Add bias
+        sum += bias_data[out_c];
+        
+        // Write output
+        uint output_idx = out_c * pc.height_b * pc.width_b + y * pc.width_b + x;
+        output_data[output_idx] = sum;
+    }
+}
