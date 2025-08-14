@@ -120,10 +120,9 @@ public:
         dataBuffers.reserve(numberPaths);
 
         // Create dimensions buffer (always 4 elements: width, height, depth, batch)
-        dimensionBuffer = std::make_unique<VulkanBuffer<uint32_t>>(vulkanContext, 4, dimUsageFlags);
+        dimensionBuffer = std::make_unique<VulkanBuffer<uint32_t>>(vulkanContext, dimensions.size(), dimUsageFlags);
         // Initialize dimensions buffer with the tensor dimensions
-        dimData = {dimensions[0], dimensions[1], dimensions[2], dimensions[3]};
-        dimensionBuffer->memcopyFrom(dimData);
+        dimensionBuffer->memcopyFrom(dimensions);
 
         // Create buffers for each path
         for (uint32_t i = 0; i < numberPaths; ++i) {
@@ -193,6 +192,14 @@ public:
     const std::vector<uint32_t>& getDimensions() const { return dimensions; }
 
     /**
+     * @brief Set the dimension data and update the dimensions buffer
+     */
+    void setDimensions(const std::vector<uint32_t>& newDimensions) {
+        validateDimensions(newDimensions);
+        dimensions = newDimensions;
+    }
+
+    /**
      * @brief Get number of data elements
      */
     uint32_t getDataElementCount() const { return dataElements; }
@@ -250,21 +257,6 @@ public:
         this->recordDimensionsToZero = recordDimensionsToZero;
     }
 
-    /**
-     * @brief Get the dimension data used for the dimensions buffer
-     */
-    const std::vector<uint32_t>& getDimData() const {
-        return dimData;
-    }
-
-    /**
-     * @brief Set the dimension data and update the dimensions buffer
-     */
-    void setDimData(const std::vector<uint32_t>& newDimData) {
-        validateDimensions(newDimData);
-        dimData = newDimData;
-    }
-
     // overrides for BufferElementInterface
     virtual size_t getBufferMemSize() const override {
         return dataBuffers[0].getBufferMemSize();
@@ -277,7 +269,7 @@ public:
 
 private:
     VulkanContext& vulkanContext;
-    std::vector<uint32_t> dimensions; // [width, height, depth, batch]
+    std::vector<uint32_t> dimensions;
     uint32_t dataElements;
     uint32_t numberOfPaths = 0;
 
@@ -294,9 +286,6 @@ private:
     // Recording control flags
     bool recordDataToZero = false;
     bool recordDimensionsToZero = false;
-
-    // Dimension data for the buffer (always 4 elements: width, height, depth, batch)
-    std::vector<uint32_t> dimData;
 
     void validateDimensions(const std::vector<uint32_t>& dims) {
         // if (dims.size() != 4) {
