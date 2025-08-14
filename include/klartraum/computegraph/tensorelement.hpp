@@ -24,11 +24,11 @@ T prod(const std::vector<T>& vec) {
  * @brief Untemplated interface for tensor elements
  *
  */
-class TensorElementInterface : public ComputeGraphElement {
+class TensorElementInterface : public BufferElementInterface {
 public:
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) = 0;
+    // virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) = 0;
 
-    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
+    // virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
 
     virtual const char* getType() const {
         return "TensorElement";
@@ -75,21 +75,22 @@ public:
         uint32_t height,
         uint32_t width,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : vulkanContext(vulkanContext),
-                                                                                                                    dimensions({width, height, depth, batch}),
-                                                                                                                    dataElements(batch * depth * height * width),
-                                                                                                                    dataUsageFlags(dataUsageFlags),
-                                                                                                                    dimUsageFlags(dimUsageFlags) {
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) 
+        : TensorElementInterface(),
+          vulkanContext(vulkanContext),
+          dimensions({width, height, depth, batch}),
+          dataElements(batch * depth * height * width),
+          dataUsageFlags(dataUsageFlags),
+          dimUsageFlags(dimUsageFlags) {
 
         validateDimensions(dimensions);
     }
 
     /**
-     * @brief Construct a TensorElement from a dimensions vector
+     * @brief Construct a TensorElement with size of a dimensions vector
      *
      * @param vulkanContext The Vulkan context for buffer creation
      * @param dimensions Vector containing [width, height, depth, batch]
-     * @param dataElements Total number of data elements
      * @param dataUsageFlags Vulkan usage flags for the data buffer
      * @param dimUsageFlags Vulkan usage flags for the dimensions buffer
      */
@@ -98,7 +99,8 @@ public:
         const std::vector<uint32_t>& dimensions,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-        : vulkanContext(vulkanContext),
+        : TensorElementInterface(),
+          vulkanContext(vulkanContext),
           dimensions(dimensions),
           dataElements(prod(dimensions)),
           dataUsageFlags(dataUsageFlags),
@@ -120,7 +122,7 @@ public:
         // Create dimensions buffer (always 4 elements: width, height, depth, batch)
         dimensionBuffer = std::make_unique<VulkanBuffer<uint32_t>>(vulkanContext, 4, dimUsageFlags);
         // Initialize dimensions buffer with the tensor dimensions
-        std::vector<uint32_t> dimData = {dimensions[0], dimensions[1], dimensions[2], dimensions[3]};
+        dimData = {dimensions[0], dimensions[1], dimensions[2], dimensions[3]};
         dimensionBuffer->memcopyFrom(dimData);
 
         // Create buffers for each path
@@ -248,6 +250,31 @@ public:
         this->recordDimensionsToZero = recordDimensionsToZero;
     }
 
+    /**
+     * @brief Get the dimension data used for the dimensions buffer
+     */
+    const std::vector<uint32_t>& getDimData() const {
+        return dimData;
+    }
+
+    /**
+     * @brief Set the dimension data and update the dimensions buffer
+     */
+    void setDimData(const std::vector<uint32_t>& newDimData) {
+        validateDimensions(newDimData);
+        dimData = newDimData;
+    }
+
+    // overrides for BufferElementInterface
+    virtual size_t getBufferMemSize() const override {
+        return dataBuffers[0].getBufferMemSize();
+    }
+
+    virtual VkBuffer& getVkBuffer(uint32_t pathId) override {
+        return getDataVkBuffer(pathId);
+    }
+
+
 private:
     VulkanContext& vulkanContext;
     std::vector<uint32_t> dimensions; // [width, height, depth, batch]
@@ -268,10 +295,13 @@ private:
     bool recordDataToZero = false;
     bool recordDimensionsToZero = false;
 
+    // Dimension data for the buffer (always 4 elements: width, height, depth, batch)
+    std::vector<uint32_t> dimData;
+
     void validateDimensions(const std::vector<uint32_t>& dims) {
-        if (dims.size() != 4) {
-            throw std::runtime_error("TensorElement: Dimensions must contain exactly 4 values [width, height, depth, batch]");
-        }
+        // if (dims.size() != 4) {
+        //     throw std::runtime_error("TensorElement: Dimensions must contain exactly 4 values [width, height, depth, batch]");
+        // }
 
         for (size_t i = 0; i < dims.size(); ++i) {
             if (dims[i] == 0) {
