@@ -1,10 +1,12 @@
+#include "klartraum/onnx_network.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 
-#include "klartraum/onnx_network.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/computegraph/noop.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "onnx.pb.h"
 
@@ -191,29 +193,9 @@ std::shared_ptr<TensorElementInterface> createTensorWithType(VulkanContext* vulk
     }
 
     throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
-
 }
 
-ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
-    auto output = node.output();
-    auto x = output.size();
-    // Create a compute operation for each node
-    std::string operationType = node.op_type();
-    std::cout << "Creating operation for node: " << node.name() << " of type: " << operationType << std::endl;
-    std::string shaderFilename;
-    if (operationType == "Conv") {
-        shaderFilename = "shaders/onnx/conv.comp.spv"; // Example shader for convolution
-    } else if (operationType == "Relu") {
-        shaderFilename = "shaders/onnx/relu.comp.spv"; // Example shader for ReLU
-    } else if (operationType == "Constant") {
-        shaderFilename = "shaders/onnx/constant.comp.spv"; // Example shader for Constant
-    } else if (operationType == "Reshape") {
-        shaderFilename = "shaders/onnx/reshape.comp.spv"; // Example shader for Reshape
-    } else if (operationType == "Transpose") {
-        shaderFilename = "shaders/onnx/transpose.comp.spv"; // Example shader for Transpose
-    } else {
-        throw std::runtime_error("Unsupported operation type: " + operationType);
-    }
+ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
     TensorOpPushConstants pushConstants;
     pushConstants.depth_a = 1;
     pushConstants.height_a = 1;
@@ -222,8 +204,95 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
     pushConstants.height_b = 1;
     pushConstants.width_b = 1;
 
+    std::string shaderFilename = "shaders/onnx/conv.comp.spv";
+
     auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
+
+    return operation;
+}
+
+ComputeGraphElementPtr createRelu(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
+    TensorOpPushConstants pushConstants;
+    pushConstants.depth_a = 1;
+    pushConstants.height_a = 1;
+    pushConstants.width_a = 1;
+    pushConstants.depth_b = 1;
+    pushConstants.height_b = 1;
+    pushConstants.width_b = 1;
+
+    std::string shaderFilename = "shaders/onnx/relu.comp.spv";
+
+    auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
+    operation->setPushConstants({pushConstants});
+
+    return operation;
+}
+
+ComputeGraphElementPtr createConstant(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
+    // Constant operations don't perform computation - they just provide constant data
+    // Use NoOp to pass the constant data through without any GPU operations
+    auto operation = vulkanContext->create<NoOp>();
+
+    return operation;
+}
+
+ComputeGraphElementPtr createReshape(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
+    TensorOpPushConstants pushConstants;
+    pushConstants.depth_a = 1;
+    pushConstants.height_a = 1;
+    pushConstants.width_a = 1;
+    pushConstants.depth_b = 1;
+    pushConstants.height_b = 1;
+    pushConstants.width_b = 1;
+
+    std::string shaderFilename = "shaders/onnx/reshape.comp.spv";
+
+    auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
+    operation->setPushConstants({pushConstants});
+
+    return operation;
+}
+
+ComputeGraphElementPtr createTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
+    TensorOpPushConstants pushConstants;
+    pushConstants.depth_a = 1;
+    pushConstants.height_a = 1;
+    pushConstants.width_a = 1;
+    pushConstants.depth_b = 1;
+    pushConstants.height_b = 1;
+    pushConstants.width_b = 1;
+
+    std::string shaderFilename = "shaders/onnx/transpose.comp.spv";
+
+    auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
+    operation->setPushConstants({pushConstants});
+
+    return operation;
+}
+
+ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node) {
+    auto output = node.output();
+    auto x = output.size();
+    // Create a compute operation for each node
+    std::string operationType = node.op_type();
+    std::cout << "Creating operation for node: " << node.name() << " of type: " << operationType << std::endl;
+
+    ComputeGraphElementPtr operation;
+
+    if (operationType == "Conv") {
+        operation = createConv(vulkanContext, node);
+    } else if (operationType == "Relu") {
+        operation = createRelu(vulkanContext, node);
+    } else if (operationType == "Constant") {
+        operation = createConstant(vulkanContext, node);
+    } else if (operationType == "Reshape") {
+        operation = createReshape(vulkanContext, node);
+    } else if (operationType == "Transpose") {
+        operation = createTranspose(vulkanContext, node);
+    } else {
+        throw std::runtime_error("Unsupported operation type: " + operationType);
+    }
 
     return operation;
 }
@@ -242,7 +311,7 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
 
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
-        output->setName(node.output(0)); 
+        output->setName(node.output(0));
         outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
     } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
@@ -252,7 +321,7 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         auto dataType = input0;
 
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
-        output->setName(node.output(0)); 
+        output->setName(node.output(0));
         outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
     } else if (operationType == "Constant") {
@@ -262,17 +331,15 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         auto dataType = onnx::TensorProto::FLOAT;
 
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
-        output->setName(node.output(0)); 
+        output->setName(node.output(0));
         outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
     } else {
         throw std::runtime_error("Unsupported operation type: " + operationType);
     }
 
-
     return outputs;
 }
-
 
 void OnnxNetwork::createComputeGraph() {
     std::cout << "OnnxNetwork: Creating compute graph from ONNX model" << std::endl;
@@ -320,8 +387,13 @@ void OnnxNetwork::createComputeGraph() {
 
     std::map<std::string, const onnx::ValueInfoProto*> name2Value;
     std::map<std::string, onnx::TensorProto::DataType> name2Type;
+    std::map<std::string, std::pair<ComputeGraphElementPtr, int>> outputName2GraphElementAndSlot;
+
+    std::cout << "Creating input tensors:" << std::endl;
+
     // create input buffer tensors
     for (const auto& input : infos) {
+        std::cout << "Creating input tensor: " << input->name() << std::endl;
         name2Value[input->name()] = input;
         if (input->has_type() && input->type().has_tensor_type()) {
             std::vector<uint32_t> inputShape;
@@ -363,10 +435,8 @@ void OnnxNetwork::createComputeGraph() {
                 tensor->setName(input->name());
                 graphDataElements[input->name()] = tensor;
 
-
                 std::cout << " - size: " << tensorSize << " elements" << std::endl;
-            }
-            else {
+            } else {
                 std::cout << "Unsupported input shape size: " << inputShape.size() << std::endl;
                 throw std::runtime_error("Unsupported input shape size for tensor: " + input->name());
             }
@@ -399,14 +469,11 @@ void OnnxNetwork::createComputeGraph() {
         operation->setName(operationName);
         graphOperationElements[i] = operation;
 
-
-
         // TODO attributes need to be handled also
         for (int j = 0; j < node.attribute_size(); j++) {
             const auto& attr = node.attribute(j);
             std::cout << " - Attribute " << j << ": " << attr.name() << " = " << attr.f() << std::endl;
         }
-
     }
 
     // create all operation outputs
@@ -414,40 +481,48 @@ void OnnxNetwork::createComputeGraph() {
         const onnx::NodeProto& node = graph.node(i);
         std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2Type);
         std::cout << " - Created operation outputs for node: " << node.name() << std::endl;
+        // TODO WARNING BUG? ARE MAPS ALWAYS INSERTION ORDERD???
+        int slot = 0;
         for (const auto& [name, output] : outputs) {
             std::cout << "   - Output " << name << ": " << output << std::endl;
             graphDataElements[name] = output;
+            outputName2GraphElementAndSlot[name] = std::make_pair(graphOperationElements[i], slot);
+            slot++;
         }
     }
 
-    // finally, connect all operation inputs 
+    // finally, connect all operation inputs
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
-        
+
         std::string name = node.name();
 
         ComputeGraphElementPtr operation = graphOperationElements[i];
 
-        std::string op_type=node.op_type();
-        std::cout << "connecting operation (" << i << "): \"" << name <<  "\" [" << op_type << "]" << std::endl;
+        std::string op_type = node.op_type();
+        std::cout << "connecting operation (" << i << "): \"" << name << "\" [" << op_type << "]" << std::endl;
 
         // Get inputs for this operation
         std::vector<std::string> inputNames;
         int startIndex = 0;
         for (int j = 0; j < node.input_size(); j++) {
             auto index = node.input(j);
-            auto input = graphDataElements[index];
-            if (input == nullptr) {
-                throw std::runtime_error("Input tensor is null for operation input " + std::to_string(j));
+            if (outputName2GraphElementAndSlot.find(index) == outputName2GraphElementAndSlot.end()) {
+                // inde
+                // we have a direct input, so no compute node but a tensor/buffer
+                operation->setInput(graphDataElements.at(index), j);
+                std::cout << " - Input from Data: \"" << index << "\" -> \"" << graphDataElements.at(index)->getName() << "\"" << std::endl;
+            } else {
+                auto [input, slot] = outputName2GraphElementAndSlot.at(index);
+                operation->setInput(input, j, slot);
+                std::cout << " - Input from Node " << j << ": \"" << index << "\" -> \"" << input->getName() << "\"" << std::endl;
             }
-            operation->setInput(input, j);
-            std::cout << " - Input " << j << ": \"" << index << "\" -> \"" << input->getName() << "\"" << std::endl;
-            startIndex=j+1;
+            startIndex = j + 1;
         }
-        
+
         for (int j = 0; j < node.output_size(); j++) {
             auto index = node.output(j);
-            auto output = graphDataElements[index];
+            auto output = graphDataElements.at(index);
             if (output == nullptr) {
                 throw std::runtime_error("Output tensor is null for operation output " + std::to_string(j));
             }
