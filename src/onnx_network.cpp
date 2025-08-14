@@ -242,6 +242,7 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
 
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        output->setName(node.output(0)); 
         outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
     } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
@@ -251,6 +252,7 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         auto dataType = input0;
 
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        output->setName(node.output(0)); 
         outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
     } else if (operationType == "Constant") {
@@ -260,6 +262,7 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         auto dataType = onnx::TensorProto::FLOAT;
 
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        output->setName(node.output(0)); 
         outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation
     } else {
@@ -356,7 +359,11 @@ void OnnxNetwork::createComputeGraph() {
                 onnx::TensorProto::DataType dataType = static_cast<onnx::TensorProto::DataType>(tensor_type.elem_type());
                 std::cout << "Data type: " << dataType << " ";
                 name2Type[input->name()] = dataType;
-                graphDataElements[input->name()] = createTensorWithType(vulkanContext, dataType, inputShape);
+                auto tensor = createTensorWithType(vulkanContext, dataType, inputShape);
+                tensor->setName(input->name());
+                graphDataElements[input->name()] = tensor;
+
+
                 std::cout << " - size: " << tensorSize << " elements" << std::endl;
             }
             else {
@@ -388,7 +395,13 @@ void OnnxNetwork::createComputeGraph() {
         auto name = node.name();
         std::cout << "Creating operation for node: " << name << std::endl;
         auto operation = createTensorOperation(vulkanContext, node);
+        std::string operationName = node.op_type() + "_" + std::to_string(i) + "_" + name;
+        operation->setName(operationName);
         graphOperationElements[i] = operation;
+
+
+
+        // TODO attributes need to be handled also
         for (int j = 0; j < node.attribute_size(); j++) {
             const auto& attr = node.attribute(j);
             std::cout << " - Attribute " << j << ": " << attr.name() << " = " << attr.f() << std::endl;
@@ -416,7 +429,7 @@ void OnnxNetwork::createComputeGraph() {
         ComputeGraphElementPtr operation = graphOperationElements[i];
 
         std::string op_type=node.op_type();
-        std::cout << "connecting operation: " << name <<  "[" << op_type << "]" << std::endl;
+        std::cout << "connecting operation (" << i << "): \"" << name <<  "\" [" << op_type << "]" << std::endl;
 
         // Get inputs for this operation
         std::vector<std::string> inputNames;
@@ -428,7 +441,7 @@ void OnnxNetwork::createComputeGraph() {
                 throw std::runtime_error("Input tensor is null for operation input " + std::to_string(j));
             }
             operation->setInput(input, j);
-            std::cout << " - Input " << j << ": " << index << " -> " << input << std::endl;
+            std::cout << " - Input " << j << ": \"" << index << "\" -> \"" << input->getName() << "\"" << std::endl;
             startIndex=j+1;
         }
         
@@ -438,7 +451,7 @@ void OnnxNetwork::createComputeGraph() {
             if (output == nullptr) {
                 throw std::runtime_error("Output tensor is null for operation output " + std::to_string(j));
             }
-            std::cout << " - Output " << j + startIndex<< ": " << index << " -> " << output << std::endl;
+            std::cout << " - Output " << j << ": \"" << index << "\" -> \"" << output->getName() << "\"" << std::endl;
             operation->setInput(output, j + startIndex);
         }
     }
@@ -454,6 +467,7 @@ void OnnxNetwork::createComputeGraph() {
     // all nodes that have outputs will be added the outputs elements of
     // the compute graph group
     uint32_t outputElementIndex = 0;
+    std::cout << "Output elements: " << std::endl;
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
         for (int j = 0; j < node.output_size(); j++) {
@@ -462,6 +476,7 @@ void OnnxNetwork::createComputeGraph() {
             if (std::find(outputNames.begin(), outputNames.end(), outputName) != outputNames.end()) {
                 std::cout << " - Found output name: " << outputName << std::endl;
                 outputElements[outputElementIndex] = graphOperationElements.at(i);
+                std::cout << " - connected output " << outputName << " to operation " << i << std::endl;
                 outputElementIndex++;
             }
         }
