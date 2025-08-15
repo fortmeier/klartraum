@@ -7,14 +7,17 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(push_constant) uniform PushConstants {
-    uint batch_a;
-    uint depth_a;
-    uint height_a;
-    uint width_a;
-    uint batch_b;
-    uint depth_b;
-    uint height_b;
-    uint width_b;
+    // operation attributes
+    uint dilations[2];
+    uint groups[1];
+    uint kernel_shape[2];
+    uint pads[2];
+    uint strides[2];
+    
+    // tensor input sizes
+    uint dimInput[4];      // [N, C, H, W]
+    uint dimWeights[4];    // [output_channels, input_channels/groups, kH, kW]
+    uint dimBias[1];       // [output_channels]
 } pc;
 
 layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
@@ -33,56 +36,107 @@ layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer {
     float output_data[];
 };
 
+// Helper function to calculate tensor index for NCHW layout
+uint getTensorIndex4D(uint n, uint c, uint h, uint w, uint N, uint C, uint H, uint W) {
+    return n * (C * H * W) + c * (H * W) + h * W + w;
+}
+
+// Helper function to calculate weight index for [out_channels, in_channels/groups, kH, kW]
+uint getWeightIndex4D(uint out_c, uint in_c, uint kh, uint kw, uint OUT_C, uint IN_C, uint KH, uint KW) {
+    return out_c * (IN_C * KH * KW) + in_c * (KH * KW) + kh * KW + kw;
+}
+
 // Basic 2D convolution implementation
 void main() {
-    uint x = gl_GlobalInvocationID.x;
-    uint y = gl_GlobalInvocationID.y;
-    uint z = gl_GlobalInvocationID.z;
+    // uint gx = gl_GlobalInvocationID.x;
+    // uint gy = gl_GlobalInvocationID.y;
+    // uint gz = gl_GlobalInvocationID.z;
     
-    // Check bounds
-    if (x >= pc.width_b || y >= pc.height_b) {
-        return;
-    }
+    // // Extract tensor dimensions from push constants
+    // uint input_N = pc.dimInput[0];    // batch size
+    // uint input_C = pc.dimInput[1];    // input channels
+    // uint input_H = pc.dimInput[2];    // input height
+    // uint input_W = pc.dimInput[3];    // input width
     
-    // Simplified convolution - assumes 3x3 kernel, stride 1, padding 1
-    uint kernel_size = 3;
-    uint padding = 1;
-    uint stride = 1;
+    // uint weight_OUT_C = pc.dimWeights[0];  // output channels
+    // uint weight_IN_C = pc.dimWeights[1];   // input channels / groups
+    // uint weight_KH = pc.dimWeights[2];     // kernel height
+    // uint weight_KW = pc.dimWeights[3];     // kernel width
     
-    uint input_channels = pc.depth_a;
-    uint output_channels = pc.depth_b;
+    // // Extract convolution parameters
+    // uint kernel_h = pc.kernel_shape[0];
+    // uint kernel_w = pc.kernel_shape[1];
+    // uint pad_top = pc.pads[0];
+    // uint pad_left = pc.pads[1];
+    // uint stride_h = pc.strides[0];
+    // uint stride_w = pc.strides[1];
+    // uint dilation_h = pc.dilations[0];
+    // uint dilation_w = pc.dilations[1];
+    // uint groups = pc.groups[0];
     
-    for (uint out_c = 0; out_c < output_channels; ++out_c) {
-        float sum = 0.0;
+    // // Calculate output dimensions
+    // uint output_H = (input_H + 2 * pad_top - dilation_h * (kernel_h - 1) - 1) / stride_h + 1;
+    // uint output_W = (input_W + 2 * pad_left - dilation_w * (kernel_w - 1) - 1) / stride_w + 1;
+    
+    // // Current thread processes output position (gx, gy) for channel gz
+    // if (gx >= output_W || gy >= output_H || gz >= weight_OUT_C) {
+    //     return; // Out of bounds
+    // }
+    
+    // // For each batch (assuming batch size = 1 for now)
+    // uint batch = 0;
+    // uint out_channel = gz;
+    // uint out_y = gy;
+    // uint out_x = gx;
+    
+    // float sum = 0.0;
+    
+    // // Calculate input channels per group
+    // uint in_channels_per_group = input_C / groups;
+    // uint group_id = out_channel / (weight_OUT_C / groups);
+    // uint group_start_channel = group_id * in_channels_per_group;
+    
+    // // Convolution computation
+    // for (uint in_c = 0; in_c < in_channels_per_group; ++in_c) {
+    //     uint actual_in_c = group_start_channel + in_c;
         
-        // Convolution operation
-        for (uint in_c = 0; in_c < input_channels; ++in_c) {
-            for (uint ky = 0; ky < kernel_size; ++ky) {
-                for (uint kx = 0; kx < kernel_size; ++kx) {
-                    int input_y = int(y * stride + ky) - int(padding);
-                    int input_x = int(x * stride + kx) - int(padding);
+    //     for (uint kh = 0; kh < kernel_h; ++kh) {
+    //         for (uint kw = 0; kw < kernel_w; ++kw) {
+    //             // Calculate input position with padding and dilation
+    //             int input_y = int(out_y * stride_h + kh * dilation_h) - int(pad_top);
+    //             int input_x = int(out_x * stride_w + kw * dilation_w) - int(pad_left);
+                
+    //             // Check bounds
+    //             if (input_y >= 0 && input_y < int(input_H) && 
+    //                 input_x >= 0 && input_x < int(input_W)) {
                     
-                    // Check bounds with padding
-                    if (input_y >= 0 && input_y < int(pc.height_a) && 
-                        input_x >= 0 && input_x < int(pc.width_a)) {
-                        
-                        uint input_idx = in_c * pc.height_a * pc.width_a + 
-                                       uint(input_y) * pc.width_a + uint(input_x);
-                        uint weight_idx = out_c * input_channels * kernel_size * kernel_size +
-                                        in_c * kernel_size * kernel_size + 
-                                        ky * kernel_size + kx;
-                        
-                        sum += input_data[input_idx] * weight_data[weight_idx];
-                    }
-                }
-            }
-        }
-        
-        // Add bias
-        sum += bias_data[out_c];
-        
-        // Write output
-        uint output_idx = out_c * pc.height_b * pc.width_b + y * pc.width_b + x;
-        output_data[output_idx] = sum;
-    }
+    //                 // Get input value
+    //                 uint input_idx = getTensorIndex4D(batch, actual_in_c, uint(input_y), uint(input_x),
+    //                                                 input_N, input_C, input_H, input_W);
+                    
+    //                 // Get weight value
+    //                 uint weight_idx = getWeightIndex4D(out_channel, in_c, kh, kw,
+    //                                                  weight_OUT_C, weight_IN_C, weight_KH, weight_KW);
+                    
+    //                 // Bounds checking for buffer access
+    //                 if (input_idx < input_data.length() && weight_idx < weight_data.length()) {
+    //                     sum += input_data[input_idx] * weight_data[weight_idx];
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    
+    // // Add bias if available
+    // if (pc.dimBias[0] > 0 && out_channel < bias_data.length()) {
+    //     sum += bias_data[out_channel];
+    // }
+    
+    // // Write output
+    // uint output_idx = getTensorIndex4D(batch, out_channel, out_y, out_x,
+    //                                  input_N, weight_OUT_C, output_H, output_W);
+    
+    // if (output_idx < output_data.length()) {
+    //     output_data[output_idx] = sum;
+    // }
 }

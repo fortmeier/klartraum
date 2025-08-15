@@ -7,14 +7,8 @@
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform PushConstants {
-    uint batch_a;
-    uint depth_a;
-    uint height_a;
-    uint width_a;
-    uint batch_b;
-    uint depth_b;
-    uint height_b;
-    uint width_b;
+    uint dimInput[4];   // [batch, channels, height, width]
+    uint dimShape[6];   // shape tensor dimensions (usually 1D with up to 6 elements)
 } pc;
 
 layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
@@ -30,18 +24,23 @@ layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer {
 };
 
 void main() {
-    uint index = gl_GlobalInvocationID.x;
-    uint total_elements = pc.batch_a * pc.depth_a * pc.height_a * pc.width_a;
+    // uint index = gl_GlobalInvocationID.x;
+    // uint total_input_elements = pc.dimInput[0] * pc.dimInput[1] * pc.dimInput[2] * pc.dimInput[3];
     
-    if (index >= total_elements) {
-        return;
-    }
+    // if (index >= total_input_elements) {
+    //     return;
+    // }
     
-    // Reshape is just a memory layout change - data stays the same
-    // The total number of elements must be preserved
-    uint output_elements = pc.batch_b * pc.depth_b * pc.height_b * pc.width_b;
+    // // Reshape is just a memory layout change - data stays the same
+    // // The total number of elements must be preserved
+    // // Note: The actual reshape logic would need to read the shape values from shape_data[]
+    // // and calculate the new tensor dimensions dynamically
     
-    if (index < output_elements) {
-        output_data[index] = input_data[index];
-    }
+    // // For now, we perform a simple copy operation
+    // // In a complete implementation, you would:
+    // // 1. Read the target shape from shape_data[]
+    // // 2. Calculate the new indexing based on the target dimensions
+    // // 3. Remap indices accordingly
+    
+    // output_data[index] = input_data[index];
 }
