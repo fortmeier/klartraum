@@ -40,6 +40,16 @@ public:
 
     virtual VkBuffer& getDimensionsVkBuffer(uint32_t pathId) = 0;
 
+    /**
+     * @brief Get tensor dimensions
+     */
+    virtual const std::vector<uint32_t>& getDimensions() const = 0;
+
+    /**
+     * @brief Set the dimension data and update the dimensions buffer
+     */
+    virtual void setDimensions(const std::vector<uint32_t>& newDimensions) = 0;
+
 private:
 
 };
@@ -189,12 +199,12 @@ public:
     /**
      * @brief Get tensor dimensions
      */
-    const std::vector<uint32_t>& getDimensions() const { return dimensions; }
+    const std::vector<uint32_t>& getDimensions() const override { return dimensions; }
 
     /**
      * @brief Set the dimension data and update the dimensions buffer
      */
-    void setDimensions(const std::vector<uint32_t>& newDimensions) {
+    void setDimensions(const std::vector<uint32_t>& newDimensions) override {
         validateDimensions(newDimensions);
         dimensions = newDimensions;
     }
