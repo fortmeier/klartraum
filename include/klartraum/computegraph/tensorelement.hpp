@@ -6,8 +6,9 @@
 #include <stdexcept>
 #include <vector>
 
-#include "klartraum/computegraph/computegraphelement.hpp"
+#include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/vulkan_buffer.hpp"
+
 
 namespace klartraum {
 
@@ -38,7 +39,7 @@ public:
 
     virtual VkBuffer& getDataVkBuffer(uint32_t pathId) = 0;
 
-    virtual VkBuffer& getDimensionsVkBuffer(uint32_t pathId) = 0;
+    virtual VkBuffer& getDimensionsVkBuffer() = 0;
 
     /**
      * @brief Get tensor dimensions
@@ -165,7 +166,7 @@ public:
     /**
      * @brief Get the data buffer for a specific path
      */
-    VulkanBuffer<DataType>& getDataBuffer(uint32_t pathId) {
+    virtual VulkanBuffer<DataType>& getDataBuffer(uint32_t pathId) {
         if (pathId >= numberOfPaths) {
             throw std::runtime_error("TensorElement: Invalid pathId for data buffer access");
         }
@@ -173,12 +174,9 @@ public:
     }
 
     /**
-     * @brief Get the dimensions buffer for a specific path
+     * @brief Get the dimensions buffer
      */
-    VulkanBuffer<uint32_t>& getDimensionsBuffer(uint32_t pathId) {
-        if (pathId >= numberOfPaths) {
-            throw std::runtime_error("TensorElement: Invalid pathId for dimensions buffer access");
-        }
+    virtual VulkanBuffer<uint32_t>& getDimensionsBuffer() {
         return *dimensionBuffer;
     }
 
@@ -192,8 +190,8 @@ public:
     /**
      * @brief Get the Vulkan buffer handle for dimensions buffer
      */
-    virtual VkBuffer& getDimensionsVkBuffer(uint32_t pathId) override {
-        return getDimensionsBuffer(pathId).getBuffer();
+    virtual VkBuffer& getDimensionsVkBuffer() override {
+        return getDimensionsBuffer().getBuffer();
     }
 
     /**
@@ -248,18 +246,6 @@ public:
     }
 
     /**
-     * @brief Copy data from the data buffer for a specific path
-     */
-    void getData(uint32_t pathId, std::vector<DataType>& data) {
-        if (pathId >= numberOfPaths) {
-            throw std::runtime_error("TensorElement: Invalid pathId for data getting");
-        }
-
-        data.resize(dataElements);
-        dataBuffers[pathId].memcopyTo(data);
-    }
-
-    /**
      * @brief Set whether to zero buffers during recording
      */
     void setRecordToZero(bool recordDataToZero, bool recordDimensionsToZero = false) {
@@ -308,6 +294,94 @@ private:
             }
         }
     }
+};
+
+/**
+ * @brief TensorElementSinglePath represents a tensor with a single buffer
+ *
+ * This class is designed for constant/fixed tensors (weights, biases, initializers)
+ * that don't change during execution and therefore only need a single buffer
+ * instead of multiple buffers for different paths.
+ *
+ */
+template <typename DataType>
+class TensorElementSinglePath : public TensorElement<DataType> {
+public:
+    /**
+     * @brief Construct a TensorElementSinglePath with specified dimensions
+     *
+     * @param vulkanContext The Vulkan context for buffer creation
+     * @param batch Tensor batch dimension
+     * @param depth Tensor depth dimension
+     * @param height Tensor height dimension
+     * @param width Tensor width dimension
+     * @param dataUsageFlags Vulkan usage flags for the data buffer
+     * @param dimUsageFlags Vulkan usage flags for the dimensions buffer
+     */
+    TensorElementSinglePath(
+        VulkanContext& vulkanContext,
+        uint32_t batch,
+        uint32_t depth,
+        uint32_t height,
+        uint32_t width,
+        VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+        : TensorElement<DataType>(vulkanContext, batch, depth, height, width, dataUsageFlags, dimUsageFlags) {
+        
+        }
+
+    /**
+     * @brief Construct a TensorElementSinglePath with specified dimensions
+     *
+     * @param vulkanContext The Vulkan context for buffer creation
+     * @param dimensions Vector containing tensor dimensions
+     * @param dataUsageFlags Vulkan usage flags for the data buffer
+     * @param dimUsageFlags Vulkan usage flags for the dimensions buffer
+     */
+    TensorElementSinglePath(
+        VulkanContext& vulkanContext,
+        const std::vector<uint32_t>& dimensions,
+        VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+        : TensorElement<DataType>(vulkanContext, dimensions, dataUsageFlags, dimUsageFlags) {
+        
+        }
+
+    virtual ~TensorElementSinglePath() = default;
+
+    // Override setup to use single buffers instead of creating multiple paths
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+        TensorElement<DataType>::_setup(vulkanContext, 1);
+    }
+
+    virtual const char* getType() const override {
+        return "TensorElementSinglePath";
+    }
+
+    VulkanBuffer<DataType>& getDataBuffer(uint32_t pathId = -1) override {
+        if (pathId != -1) {
+            throw std::runtime_error("TensorElementSinglePath: Invalid pathId for single-path tensor");
+        }
+        return TensorElement<DataType>::getDataBuffer(0);
+    }
+
+    // Override buffer accessors to return single buffers for any pathId
+    virtual VkBuffer& getDataVkBuffer(uint32_t pathId = -1) override {
+        if (pathId != -1) {
+            throw std::runtime_error("TensorElementSinglePath: Invalid pathId for single-path tensor");
+        }
+        return TensorElement<DataType>::getDataVkBuffer(0);
+    }
+
+    virtual VkBuffer& getVkBuffer(uint32_t pathId = -1) override {
+        if (pathId != -1) {
+            throw std::runtime_error("TensorElementSinglePath: Invalid pathId for single-path tensor");
+        }
+        return TensorElement<DataType>::getVkBuffer(0);
+    }
+
+private:
+
 };
 
 } // namespace klartraum
