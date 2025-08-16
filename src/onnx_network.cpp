@@ -213,6 +213,20 @@ std::shared_ptr<TensorElementInterface> createTensorWithType(VulkanContext* vulk
     throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
 }
 
+std::shared_ptr<TensorElementInterface> createConstantTensorWithType(VulkanContext* vulkanContext, const onnx::TensorProto::DataType dataType, std::vector<uint32_t> inputShape) {
+    if (dataType == onnx::TensorProto::FLOAT) {
+        return vulkanContext->create<TensorElementSinglePath<float>>(inputShape);
+    } else if (dataType == onnx::TensorProto::DOUBLE) {
+        return vulkanContext->create<TensorElementSinglePath<double>>(inputShape);
+    } else if (dataType == onnx::TensorProto::INT32) {
+        return vulkanContext->create<TensorElementSinglePath<int32_t>>(inputShape);
+    } else if (dataType == onnx::TensorProto::INT64) {
+        return vulkanContext->create<TensorElementSinglePath<int64_t>>(inputShape);
+    }
+
+    throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
+}
+
 template<typename T, size_t N>
 void parseAttributes(const onnx::NodeProto& node, const std::string& attrName, T (&outputArray)[N]) {
     // Find the attribute with the given name
@@ -476,7 +490,7 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         // TODO deterimine dynamically
         auto dataType = onnx::TensorProto::FLOAT;
 
-        std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        std::shared_ptr<TensorElementInterface> output = createConstantTensorWithType(vulkanContext, dataType, inputShape);
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
         name2Type[node.output(0)] = dataType; // Store the output type for this operation

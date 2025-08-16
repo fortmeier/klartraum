@@ -359,24 +359,15 @@ public:
     }
 
     VulkanBuffer<DataType>& getDataBuffer(uint32_t pathId = -1) override {
-        if (pathId != -1) {
-            throw std::runtime_error("TensorElementSinglePath: Invalid pathId for single-path tensor");
-        }
         return TensorElement<DataType>::getDataBuffer(0);
     }
 
     // Override buffer accessors to return single buffers for any pathId
     virtual VkBuffer& getDataVkBuffer(uint32_t pathId = -1) override {
-        if (pathId != -1) {
-            throw std::runtime_error("TensorElementSinglePath: Invalid pathId for single-path tensor");
-        }
         return TensorElement<DataType>::getDataVkBuffer(0);
     }
 
     virtual VkBuffer& getVkBuffer(uint32_t pathId = -1) override {
-        if (pathId != -1) {
-            throw std::runtime_error("TensorElementSinglePath: Invalid pathId for single-path tensor");
-        }
         return TensorElement<DataType>::getVkBuffer(0);
     }
 
