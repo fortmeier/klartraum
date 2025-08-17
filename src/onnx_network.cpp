@@ -603,20 +603,7 @@ void OnnxNetwork::createComputeGraph() {
         }
     }
 
-    // // create all initializers
-    // for (int i = 0; i < graph.initializer_size(); ++i) {
-    //     const auto& init = graph.initializer(i);
-    //     std::string name = init.name();
-    //     std::cout << "Creating initializer tensor: " << name << std::endl;
-    //     std::vector<uint32_t> initShape;
-    //     for (int j = 0; j < init.dims_size(); j++)
-    //     {
-    //         initShape.push_back(init.dims(j));
-    //     }
-    //     const auto& dataType = static_cast<onnx::TensorProto::DataType>(init.data_type());
 
-    //     graphDataElements[name] = createTensorWithType(vulkanContext, dataType, initShape);
-    // }
 
     // to create operations, first go through all nodes and create their operation elements
     // create all operations
@@ -725,6 +712,69 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
     this->numberOfPaths = numberPaths;
 
     std::cout << "OnnxNetwork: Setting up for " << numberPaths << " paths" << std::endl;
+
+    if (!model->has_graph()) {
+        std::cerr << "OnnxNetwork: Error - Model has no graph" << std::endl;
+        return;
+    }
+
+    const onnx::GraphProto& graph = model->graph();
+
+    // create all initializers
+    for (int i = 0; i < graph.initializer_size(); ++i) {
+        const auto& init = graph.initializer(i);
+        std::string name = init.name();
+        std::cout << "Creating initializer tensor: " << name << std::endl;
+        std::vector<uint32_t> initShape;
+        for (int j = 0; j < init.dims_size(); j++)
+        {
+            initShape.push_back(init.dims(j));
+        }
+        const auto& dataType = static_cast<onnx::TensorProto::DataType>(init.data_type());
+
+        auto initData = init.raw_data(); // This is where the actual data would be, if needed
+        // if (!initData.empty()) {
+        //     switch(dataType) {
+        //         case onnx::TensorProto::FLOAT:
+        //             std::cout << " - Data type: FLOAT" << std::endl;
+        //             // Copy the data into the initializer tensor
+        //             auto tensor = dynamic_cast<TensorElementSinglePath<VulkanBuffer<float>>*>(graphDataElements[name].get());
+        //             tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
+        //             break;
+        //         // case onnx::TensorProto::INT32:
+        //         //     std::cout << " - Data type: INT32" << std::endl;
+        //         //     break;
+        //         // case onnx::TensorProto::INT64:
+        //         //     std::cout << " - Data type: INT64" << std::endl;
+        //         //     break;
+        //         default:
+        //             std::cerr << "Unsupported data type for initializer: " << dataType << std::endl;
+        //             continue; // Skip unsupported types
+        //     }
+
+        // }
+
+    }
+    // fill all constant tensors
+    for (int i = 0; i < graph.node_size(); i++) {
+        const onnx::NodeProto& node = graph.node(i);
+        std::string op_type = node.op_type();
+        if (op_type == "Constant") {
+            for (int i = 0; i < node.attribute_size(); ++i) {
+                const auto& attr = node.attribute(i);
+                if (attr.name() == "value" && attr.has_t()) {
+                    
+                    std::shared_ptr<TensorElementSinglePath<float>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(graphDataElements[node.output(0)]);
+                    // TODO fill with constant data
+                    // auto data = attr.t();
+                    // size_t dataSize = data.ByteSizeLong();
+                    // const char* dataLocation = data.raw_data().data();
+                    // std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
+                    // tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
+                }
+            }
+        }
+    }
 }
 
 void OnnxNetwork::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
