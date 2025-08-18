@@ -487,8 +487,14 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
     } else if (operationType == "Constant") {
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
 
-        // TODO deterimine dynamically
         auto dataType = onnx::TensorProto::FLOAT;
+        for (int i = 0; i < node.attribute_size(); i++) {
+            const auto& attr = node.attribute(i);
+            if (attr.name() == "value" && attr.has_t()) {
+                auto data = attr.t();
+                dataType = static_cast<onnx::TensorProto::DataType>(data.data_type());
+            }
+        }
 
         std::shared_ptr<TensorElementInterface> output = createConstantTensorWithType(vulkanContext, dataType, inputShape);
         output->setName(node.output(0));
@@ -591,7 +597,7 @@ void OnnxNetwork::createComputeGraph() {
                 onnx::TensorProto::DataType dataType = static_cast<onnx::TensorProto::DataType>(tensor_type.elem_type());
                 std::cout << "Data type: " << dataType << " ";
                 name2Type[input->name()] = dataType;
-                auto tensor = createTensorWithType(vulkanContext, dataType, inputShape);
+                auto tensor = createConstantTensorWithType(vulkanContext, dataType, inputShape);
                 tensor->setName(input->name());
                 graphDataElements[input->name()] = tensor;
 
@@ -602,8 +608,6 @@ void OnnxNetwork::createComputeGraph() {
             }
         }
     }
-
-
 
     // to create operations, first go through all nodes and create their operation elements
     // create all operations
@@ -733,27 +737,22 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         const auto& dataType = static_cast<onnx::TensorProto::DataType>(init.data_type());
 
         auto initData = init.raw_data(); // This is where the actual data would be, if needed
-        // if (!initData.empty()) {
-        //     switch(dataType) {
-        //         case onnx::TensorProto::FLOAT:
-        //             std::cout << " - Data type: FLOAT" << std::endl;
-        //             // Copy the data into the initializer tensor
-        //             auto tensor = dynamic_cast<TensorElementSinglePath<VulkanBuffer<float>>*>(graphDataElements[name].get());
-        //             tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
-        //             break;
-        //         // case onnx::TensorProto::INT32:
-        //         //     std::cout << " - Data type: INT32" << std::endl;
-        //         //     break;
-        //         // case onnx::TensorProto::INT64:
-        //         //     std::cout << " - Data type: INT64" << std::endl;
-        //         //     break;
-        //         default:
-        //             std::cerr << "Unsupported data type for initializer: " << dataType << std::endl;
-        //             continue; // Skip unsupported types
-        //     }
-
-        // }
-
+        if (!initData.empty()) {
+            switch(dataType) {
+                case onnx::TensorProto::FLOAT:
+                    std::cout << " - Data type: FLOAT" << std::endl;
+                    // Copy the data into the initializer tensor
+                    auto element = graphDataElements[name];
+                    std::shared_ptr<TensorElementSinglePath<float>> elementPtr = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
+                    TensorElementSinglePath<float>* tensor = elementPtr.get();
+                    tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
+                    std::vector<float> testData;
+                    testData.resize(initData.size() / sizeof(float));
+                    tensor->getDataBuffer().memcopyTo(testData);
+                    break;
+                // TODO support other data types
+            }
+        }
     }
     // fill all constant tensors
     for (int i = 0; i < graph.node_size(); i++) {
@@ -763,14 +762,26 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
             for (int i = 0; i < node.attribute_size(); ++i) {
                 const auto& attr = node.attribute(i);
                 if (attr.name() == "value" && attr.has_t()) {
-                    
-                    std::shared_ptr<TensorElementSinglePath<float>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(graphDataElements[node.output(0)]);
-                    // TODO fill with constant data
-                    // auto data = attr.t();
-                    // size_t dataSize = data.ByteSizeLong();
-                    // const char* dataLocation = data.raw_data().data();
-                    // std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
-                    // tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
+                    auto data = attr.t();
+                    auto type = static_cast<onnx::TensorProto::DataType>(data.data_type());
+                    size_t dataSize = data.raw_data().size();
+                    const char* dataLocation = data.raw_data().data();
+                    if(type == onnx::TensorProto::FLOAT) {
+                        std::shared_ptr<TensorElementSinglePath<float>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(graphDataElements[node.output(0)]);
+                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
+                        tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
+                    } else if(type == onnx::TensorProto::INT32) {
+                        std::shared_ptr<TensorElementSinglePath<int32_t>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(graphDataElements[node.output(0)]);
+                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
+                        tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
+                    } else if(type == onnx::TensorProto::INT64) {
+                        std::shared_ptr<TensorElementSinglePath<int64_t>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(graphDataElements[node.output(0)]);
+                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
+                        tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
+                    } else {
+                        std::cerr << "Unsupported constant data type: " << type << std::endl;
+                        throw std::runtime_error("Unsupported constant data type: " + std::to_string(type));
+                    }
                 }
             }
         }
