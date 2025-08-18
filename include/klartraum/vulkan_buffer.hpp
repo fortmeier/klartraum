@@ -63,6 +63,24 @@ public:
         vkUnmapMemory(device, vertexBufferMemory);
     }
 
+    void memcopyFrom(const T* src, size_t count) {
+        auto& device = vulkanContext.getDevice();
+        void* mappedData;
+        vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
+        size_t dataSize = sizeof(T) * std::min(count, size);
+        memcpy(mappedData, src, dataSize);
+        vkUnmapMemory(device, vertexBufferMemory);
+    }
+
+    void memcopyFrom(const char* src, size_t count) {
+        auto& device = vulkanContext.getDevice();
+        void* mappedData;
+        vkMapMemory(device, vertexBufferMemory, 0, sizeof(char) * size, 0, &mappedData);
+        size_t dataSize = std::min(count, sizeof(T) * size_t(size));
+        memcpy(mappedData, src, dataSize);
+        vkUnmapMemory(device, vertexBufferMemory);
+    }
+
     void memcopyTo(std::vector<T>& dst) {
         auto& device = vulkanContext.getDevice();
         void* mappedData;
