@@ -8,6 +8,7 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/noop.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
+#include "klartraum/onnx_push_constants.hpp"
 #include "onnx.pb.h"
 
 namespace klartraum {
@@ -168,36 +169,6 @@ void OnnxNetwork::printModelInfo() const {
         }
     }
 }
-
-struct TensorOpPushConstants {
-    uint32_t dimInput[4];
-    uint32_t dimOutput[4];
-};
-
-struct ConvPushConstants {
-    // operation attributes
-    uint32_t dilations[2];
-    uint32_t groups[1];
-    uint32_t kernel_shape[2];
-    uint32_t pads[2];
-    uint32_t strides[2];
-
-    // tensor input sizes
-    uint32_t dimInput[4];
-    uint32_t dimWeights[4];
-    uint32_t dimBias[1];
-};
-
-struct ReshapePushConstants {
-    uint32_t dimInput[4];
-    uint32_t dimShape[6];
-};
-
-struct TransposePushConstants {
-    uint32_t dimInput[4];
-    // this might work for this example, but probably will not in the future
-    uint32_t dimPerm[6];
-};
 
 std::shared_ptr<TensorElementInterface> createTensorWithType(VulkanContext* vulkanContext, const onnx::TensorProto::DataType dataType, std::vector<uint32_t> inputShape) {
     if (dataType == onnx::TensorProto::FLOAT) {
