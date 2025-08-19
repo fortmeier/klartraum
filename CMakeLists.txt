@@ -201,6 +201,7 @@ add_executable(
   tests/test_gaussian_splatting.cpp
   tests/test_onnx_network.cpp
   tests/test_tensorelement.cpp
+  tests/test_onnx_conv.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
