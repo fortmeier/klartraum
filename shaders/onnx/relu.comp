@@ -20,13 +20,13 @@ layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer {
 };
 
 void main() {
-    // uint index = gl_GlobalInvocationID.x;
-    // uint total_elements = pc.dimInput[0] * pc.dimInput[1] * pc.dimInput[2] * pc.dimInput[3];
+    uint index = gl_GlobalInvocationID.x;
+    uint total_elements = pc.dimInput[0] * pc.dimInput[1] * pc.dimInput[2] * pc.dimInput[3];
     
-    // if (index >= total_elements) {
-    //     return;
-    // }
+    if (index >= total_elements) {
+        return;
+    }
     
-    // // ReLU: f(x) = max(0, x)
-    // output_data[index] = max(0.0, input_data[index]);
+    // ReLU: f(x) = max(0, x)
+    output_data[index] = max(0.0, input_data[index]);
 }
