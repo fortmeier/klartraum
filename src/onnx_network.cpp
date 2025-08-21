@@ -7,6 +7,7 @@
 
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/noop.hpp"
+#include "klartraum/computegraph/copybuffer.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/onnx_push_constants.hpp"
 #include "onnx.pb.h"
@@ -359,7 +360,7 @@ ComputeGraphElementPtr createConstant(VulkanContext* vulkanContext, const onnx::
 ComputeGraphElementPtr createReshape(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                      const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
                                      const onnx::GraphProto& graph) {
-    ReshapePushConstants pushConstants;
+    // ReshapePushConstants pushConstants;
 
     auto inputName = node.input(0);
     auto shapeName = node.input(1);
@@ -367,19 +368,27 @@ ComputeGraphElementPtr createReshape(VulkanContext* vulkanContext, const onnx::N
     auto inputDim = getTensorDimensions(inputName, name2Value, graph);
     auto shapeDim = getTensorDimensions(shapeName, name2Value, graph);
 
-    // Copy dimensions to push constants
-    for (size_t i = 0; i < 4; ++i) {
-        pushConstants.dimInput[i] = (i < inputDim.size()) ? inputDim[i] : 1;
-    }
+    // // Copy dimensions to push constants
+    // for (size_t i = 0; i < 4; ++i) {
+    //     pushConstants.dimInput[i] = (i < inputDim.size()) ? inputDim[i] : 1;
+    // }
 
-    for (size_t i = 0; i < 6; ++i) {
-        pushConstants.dimShape[i] = (i < shapeDim.size()) ? shapeDim[i] : 1;
-    }
+    // for (size_t i = 0; i < 6; ++i) {
+    //     pushConstants.dimShape[i] = (i < shapeDim.size()) ? shapeDim[i] : 1;
+    // }
 
-    std::string shaderFilename = "shaders/onnx/reshape.comp.spv";
+    // std::string shaderFilename = "shaders/onnx/reshape.comp.spv";
 
-    auto operation = vulkanContext->create<GeneralComputation<ReshapePushConstants>>(shaderFilename);
-    operation->setPushConstants({pushConstants});
+    // auto operation = vulkanContext->create<GeneralComputation<ReshapePushConstants>>(shaderFilename);
+    // operation->setPushConstants({pushConstants});
+
+    auto operation = vulkanContext->create<CopyBuffer>();
+    operation->setName(node.name());
+
+    // input with index 1 is the shape tensor
+    // so the copy operation needs to copy from input 0 to input 2 (reshaped)
+    operation->setSrcIndex(0);
+    operation->setDstIndex(2);
 
     return operation;
 }
