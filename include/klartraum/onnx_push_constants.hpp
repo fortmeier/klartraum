@@ -24,10 +24,10 @@ struct ConvPushConstants {
     uint32_t dimBias[1];
 };
 
-struct ReshapePushConstants {
-    uint32_t dimInput[4];
-    uint32_t dimShape[6];
-};
+// struct ReshapePushConstants {
+//     uint32_t dimInput[4];
+//     uint32_t dimShape[6];
+// };
 
 struct TransposePushConstants {
     uint32_t dimInput[4];
