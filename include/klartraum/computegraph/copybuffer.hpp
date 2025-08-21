@@ -29,9 +29,9 @@ public:
 
     // ComputeGraphElement interface
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
-        if (index != 0 && index != 1) {
-            throw std::runtime_error("CopyBuffer only accepts input at index 0 (source buffer) and index 1 (destination buffer)");
-        }
+        // if (index != 0 && index != 1) {
+        //     throw std::runtime_error("CopyBuffer only accepts input at index 0 (source buffer) and index 1 (destination buffer)");
+        // }
         
         auto bufferInput = std::dynamic_pointer_cast<BufferElementInterface>(input);
         if (!bufferInput) {
@@ -49,11 +49,11 @@ public:
             throw std::runtime_error("CopyBuffer not initialized");
         }
 
-        VkBuffer srcBuffer = getInputElement<BufferElementInterface>(0)->getVkBuffer(pathId);
-        VkBuffer dstBuffer = getInputElement<BufferElementInterface>(1)->getVkBuffer(pathId);
+        VkBuffer srcBuffer = getInputElement<BufferElementInterface>(srcIndex)->getVkBuffer(pathId);
+        VkBuffer dstBuffer = getInputElement<BufferElementInterface>(dstIndex)->getVkBuffer(pathId);
 
-        size_t srcSize = getInputElement<BufferElementInterface>(0)->getBufferMemSize();
-        size_t dstSize = getInputElement<BufferElementInterface>(1)->getBufferMemSize();
+        size_t srcSize = getInputElement<BufferElementInterface>(srcIndex)->getBufferMemSize();
+        size_t dstSize = getInputElement<BufferElementInterface>(dstIndex)->getBufferMemSize();
 
         if (srcSize != dstSize) {
             throw std::runtime_error("Source and destination buffers must have the same size for CopyBuffer");
@@ -89,9 +89,28 @@ public:
         return "CopyBuffer";
     }
 
+    uint32_t getSrcIndex() const {
+        return srcIndex;
+    }
+
+    uint32_t getDstIndex() const {
+        return dstIndex;
+    }
+
+    void setSrcIndex(uint32_t index) {
+        srcIndex = index;
+    }
+
+    void setDstIndex(uint32_t index) {
+        dstIndex = index;
+    }
+
 private:
     VulkanContext& vulkanContext;
     uint32_t numberPaths = 0;
+
+    uint32_t srcIndex = 0;
+    uint32_t dstIndex = 1;
 };
 
 } // namespace klartraum
