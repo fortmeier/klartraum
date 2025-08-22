@@ -8,11 +8,11 @@ namespace klartraum {
 
 class BufferElementInterface : public ComputeGraphElement {
 public:
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) = 0;
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override = 0;
 
-    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override = 0;
 
-    virtual const char* getType() const {
+    virtual const char* getType() const override{
         return "BufferElement";
     }
 
