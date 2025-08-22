@@ -8,7 +8,6 @@
 
 using namespace klartraum;
 
-#if 0
 
 TEST(KlartraumVulkanGaussianSplatting, smoke) {
     GlfwFrontend frontend;
@@ -54,16 +53,18 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
     */
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;   
     for(int i = 0; i < 1; i++) {
-        auto [imageIndex, imageAvailableSemaphore] = vulkanContext.beginRender();
-        finishSemaphore = computegraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex);
+        auto [imageIndex, renderFinishedFence] = vulkanContext.beginRender();
+        finishSemaphore = computegraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex, renderFinishedFence);
         vulkanContext.endRender(imageIndex, finishSemaphore);
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
     vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
+
     return;
-    
+
 }
+#if 0
 
 TEST(KlartraumVulkanGaussianSplatting, project) {
     GlfwFrontend frontend;
