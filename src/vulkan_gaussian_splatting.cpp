@@ -1,6 +1,7 @@
 #include <array>
 #include <glm/glm.hpp>
 #include <stdexcept>
+#include <filesystem>
 
 #include "load-spz.h"
 

@@ -39,8 +39,8 @@ TEST(KlartraumVulkanGaussianSplatting, smoke) {
    
     std::shared_ptr<CameraUboType> cameraUBO = std::make_shared<CameraUboType>();
     cameraUBO->ubo.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
-   
-    std::string spzFile = "data/hornedlizard.spz";
+
+    std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
     std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(vulkanContext, imageViewSrc, cameraUBO, spzFile);
 
     /*
