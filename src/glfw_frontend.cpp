@@ -58,10 +58,13 @@ void GlfwFrontend::initialize() {
     glfwGetWindowContentScale(window, &xscale, &yscale);
 
     // If the content scale is not 1.0, we need to adjust the window size
-    if(xscale != 1.0f || yscale != 1.0f) {
-        glfwDestroyWindow(window);
-        window = glfwCreateWindow(config.WIDTH / xscale, config.HEIGHT / yscale, config.ENGINE_VERSION, nullptr, nullptr);
-    }
+    // seems only to make sense on Mac OS
+    #ifdef __APPLE__
+        if(xscale != 1.0f || yscale != 1.0f) {
+            glfwDestroyWindow(window);
+            window = glfwCreateWindow(config.WIDTH / xscale, config.HEIGHT / yscale, config.ENGINE_VERSION, nullptr, nullptr);
+        }
+    #endif
 
     glfwSetWindowUserPointer(window, this);
 
