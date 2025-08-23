@@ -14,6 +14,13 @@
 
 namespace klartraum {
 
+struct TensorInfo {
+    onnx::TensorProto::DataType dataType;
+    std::vector<uint32_t> shape;
+};
+
+using TensorInfoMap = std::map<std::string, TensorInfo>;
+
 OnnxNetwork::OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelPath)
     : vulkanContext(&vulkanContext), modelPath(modelPath) {
 
@@ -437,7 +444,19 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
     return operation;
 }
 
-std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(VulkanContext* vulkanContext, const onnx::NodeProto& node, std::map<std::string, onnx::TensorProto::DataType>& name2Type) {
+onnx::TensorProto::DataType getTensorDataType(const onnx::TypeProto::Tensor& tensorType) {
+    return static_cast<onnx::TensorProto::DataType>(tensorType.elem_type());
+}
+
+std::vector<uint32_t> getTensorShape(const onnx::TypeProto::Tensor& tensorType) {
+    std::vector<uint32_t> shape;
+    for (const auto& dim : tensorType.shape().dim()) {
+        shape.push_back(dim.dim_value());
+    }
+    return shape;
+}
+
+std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(VulkanContext* vulkanContext, const onnx::NodeProto& node, TensorInfoMap& name2TensorInfo) {
     auto output = node.output();
     auto x = output.size();
     // Create a compute operation for each node
@@ -446,24 +465,24 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
 
     if (operationType == "Conv") {
         std::string input0Name = node.input(0);
-        auto input0 = name2Type.at(input0Name);
-        auto dataType = input0;
+        auto tensorInfo = name2TensorInfo.at(input0Name);
+        auto dataType = tensorInfo.dataType;
 
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
-        name2Type[node.output(0)] = dataType; // Store the output type for this operation
+        name2TensorInfo[node.output(0)] = {dataType, inputShape};
     } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
         std::string input0Name = node.input(0);
-        auto input0 = name2Type.at(input0Name);
-        auto dataType = input0;
+        auto tensorInfo = name2TensorInfo.at(input0Name);
+        auto dataType = tensorInfo.dataType;
 
         std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
-        name2Type[node.output(0)] = dataType; // Store the output type for this operation
+        name2TensorInfo[node.output(0)] = {dataType, inputShape}; // Store the output type for this operation
     } else if (operationType == "Constant") {
         std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
 
@@ -479,7 +498,7 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         std::shared_ptr<TensorElementInterface> output = createConstantTensorWithType(vulkanContext, dataType, inputShape);
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
-        name2Type[node.output(0)] = dataType; // Store the output type for this operation
+        name2TensorInfo[node.output(0)] = {dataType, inputShape}; // Store the output type for this operation
     } else {
         throw std::runtime_error("Unsupported operation type: " + operationType);
     }
@@ -532,7 +551,7 @@ void OnnxNetwork::createComputeGraph() {
     std::cout << std::endl;
 
     std::map<std::string, const onnx::ValueInfoProto*> name2Value;
-    std::map<std::string, onnx::TensorProto::DataType> name2Type;
+    TensorInfoMap name2TensorInfo;
     std::map<std::string, std::pair<ComputeGraphElementPtr, int>> outputName2GraphElementAndSlot;
 
     std::cout << "Creating input tensors:" << std::endl;
@@ -574,9 +593,10 @@ void OnnxNetwork::createComputeGraph() {
                 tensorSize *= dim;
             }
             if (true) { // inputShape.size() == 4) {
-                onnx::TensorProto::DataType dataType = static_cast<onnx::TensorProto::DataType>(tensor_type.elem_type());
+                onnx::TensorProto::DataType dataType = getTensorDataType(tensor_type);
                 std::cout << "Data type: " << dataType << " ";
-                name2Type[input->name()] = dataType;
+                name2TensorInfo[input->name()] = {dataType, inputShape};
+
                 auto tensor = createConstantTensorWithType(vulkanContext, dataType, inputShape);
                 tensor->setName(input->name());
                 graphDataElements[input->name()] = tensor;
@@ -604,7 +624,7 @@ void OnnxNetwork::createComputeGraph() {
     // create all operation outputs
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
-        std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2Type);
+        std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
         std::cout << " - Created operation outputs for node: " << node.name() << std::endl;
         // TODO WARNING BUG? ARE MAPS ALWAYS INSERTION ORDERD???
         int slot = 0;
