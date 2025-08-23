@@ -178,32 +178,32 @@ void OnnxNetwork::printModelInfo() const {
     }
 }
 
-std::shared_ptr<TensorElementInterface> createTensorWithType(VulkanContext* vulkanContext, const onnx::TensorProto::DataType dataType, std::vector<uint32_t> inputShape) {
-    if (dataType == onnx::TensorProto::FLOAT) {
-        return vulkanContext->create<TensorElement<float>>(inputShape);
-    } else if (dataType == onnx::TensorProto::DOUBLE) {
-        return vulkanContext->create<TensorElement<double>>(inputShape);
-    } else if (dataType == onnx::TensorProto::INT32) {
-        return vulkanContext->create<TensorElement<int32_t>>(inputShape);
-    } else if (dataType == onnx::TensorProto::INT64) {
-        return vulkanContext->create<TensorElement<int64_t>>(inputShape);
+std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
+    if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
+        return vulkanContext->create<TensorElement<float>>(tensorInfo.shape);
+    } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
+        return vulkanContext->create<TensorElement<double>>(tensorInfo.shape);
+    } else if (tensorInfo.dataType == onnx::TensorProto::INT32) {
+        return vulkanContext->create<TensorElement<int32_t>>(tensorInfo.shape);
+    } else if (tensorInfo.dataType == onnx::TensorProto::INT64) {
+        return vulkanContext->create<TensorElement<int64_t>>(tensorInfo.shape);
     }
 
-    throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
+    throw std::runtime_error("Unsupported data type: " + std::to_string(tensorInfo.dataType));
 }
 
-std::shared_ptr<TensorElementInterface> createConstantTensorWithType(VulkanContext* vulkanContext, const onnx::TensorProto::DataType dataType, std::vector<uint32_t> inputShape) {
-    if (dataType == onnx::TensorProto::FLOAT) {
-        return vulkanContext->create<TensorElementSinglePath<float>>(inputShape);
-    } else if (dataType == onnx::TensorProto::DOUBLE) {
-        return vulkanContext->create<TensorElementSinglePath<double>>(inputShape);
-    } else if (dataType == onnx::TensorProto::INT32) {
-        return vulkanContext->create<TensorElementSinglePath<int32_t>>(inputShape);
-    } else if (dataType == onnx::TensorProto::INT64) {
-        return vulkanContext->create<TensorElementSinglePath<int64_t>>(inputShape);
+std::shared_ptr<TensorElementInterface> createConstantTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
+    if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
+        return vulkanContext->create<TensorElementSinglePath<float>>(tensorInfo.shape);
+    } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
+        return vulkanContext->create<TensorElementSinglePath<double>>(tensorInfo.shape);
+    } else if (tensorInfo.dataType == onnx::TensorProto::INT32) {
+        return vulkanContext->create<TensorElementSinglePath<int32_t>>(tensorInfo.shape);
+    } else if (tensorInfo.dataType == onnx::TensorProto::INT64) {
+        return vulkanContext->create<TensorElementSinglePath<int64_t>>(tensorInfo.shape);
     }
 
-    throw std::runtime_error("Unsupported data type: " + std::to_string(dataType));
+    throw std::runtime_error("Unsupported data type: " + std::to_string(tensorInfo.dataType));
 }
 
 template <typename T, size_t N>
@@ -468,37 +468,35 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         auto tensorInfo = name2TensorInfo.at(input0Name);
         auto dataType = tensorInfo.dataType;
 
-        std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
-        std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
-        name2TensorInfo[node.output(0)] = {dataType, inputShape};
+        name2TensorInfo[node.output(0)] = tensorInfo;
     } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
-        std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
         std::string input0Name = node.input(0);
         auto tensorInfo = name2TensorInfo.at(input0Name);
         auto dataType = tensorInfo.dataType;
 
-        std::shared_ptr<TensorElementInterface> output = createTensorWithType(vulkanContext, dataType, inputShape);
+        std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
-        name2TensorInfo[node.output(0)] = {dataType, inputShape}; // Store the output type for this operation
+        name2TensorInfo[node.output(0)] = tensorInfo; // Store the output type for this operation
     } else if (operationType == "Constant") {
-        std::vector<uint32_t> inputShape = {1, 1, 1, 1}; // Default shape
+        TensorInfo tensorInfo;
+        tensorInfo.shape = {1, 1, 1, 1}; // Default shape
 
-        auto dataType = onnx::TensorProto::FLOAT;
         for (int i = 0; i < node.attribute_size(); i++) {
             const auto& attr = node.attribute(i);
             if (attr.name() == "value" && attr.has_t()) {
                 auto data = attr.t();
-                dataType = static_cast<onnx::TensorProto::DataType>(data.data_type());
+                tensorInfo.dataType = static_cast<onnx::TensorProto::DataType>(data.data_type());
             }
         }
 
-        std::shared_ptr<TensorElementInterface> output = createConstantTensorWithType(vulkanContext, dataType, inputShape);
+        std::shared_ptr<TensorElementInterface> output = createConstantTensor(vulkanContext, tensorInfo);
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
-        name2TensorInfo[node.output(0)] = {dataType, inputShape}; // Store the output type for this operation
+        name2TensorInfo[node.output(0)] = tensorInfo; // Store the output type for this operation
     } else {
         throw std::runtime_error("Unsupported operation type: " + operationType);
     }
@@ -595,9 +593,10 @@ void OnnxNetwork::createComputeGraph() {
             if (true) { // inputShape.size() == 4) {
                 onnx::TensorProto::DataType dataType = getTensorDataType(tensor_type);
                 std::cout << "Data type: " << dataType << " ";
-                name2TensorInfo[input->name()] = {dataType, inputShape};
+                TensorInfo tensorInfo {dataType, inputShape};
+                name2TensorInfo[input->name()] = tensorInfo;
 
-                auto tensor = createConstantTensorWithType(vulkanContext, dataType, inputShape);
+                auto tensor = createConstantTensor(vulkanContext, tensorInfo);
                 tensor->setName(input->name());
                 graphDataElements[input->name()] = tensor;
 
