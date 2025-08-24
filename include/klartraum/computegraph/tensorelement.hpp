@@ -143,10 +143,6 @@ public:
     }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
-        if (pathId >= numberOfPaths) {
-            throw std::runtime_error("TensorElement: Invalid pathId in _record");
-        }
-
         // Record buffer zeroing if requested
         if (recordDataToZero) {
             dataBuffers[pathId]._recordZero(commandBuffer);
