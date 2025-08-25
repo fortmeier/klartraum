@@ -199,9 +199,14 @@ add_executable(
   tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
   tests/test_gaussian_splatting.cpp
-  tests/test_onnx_network.cpp
+  tests/test_copybuffer.cpp
   tests/test_tensorelement.cpp
+
+  tests/test_onnx_network.cpp
+  tests/test_onnx_conv.cpp
   tests/test_onnx_relu.cpp
+  tests/test_onnx_constant.cpp
+  tests/test_onnx_transpose.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
