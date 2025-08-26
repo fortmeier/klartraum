@@ -52,7 +52,11 @@ void main() {
 
     for (uint b = 0; b < output_batch; ++b) {
         ivec4 X = ivec4(b, z, y, x);
-        ivec4 Q = ivec4(X[dimPerm[0]], X[dimPerm[1]], X[dimPerm[2]], X[dimPerm[3]]);
+        ivec4 Q;
+        Q[dimPerm[0]] = X[0];
+        Q[dimPerm[1]] = X[1];
+        Q[dimPerm[2]] = X[2];
+        Q[dimPerm[3]] = X[3];
 
         uint input_idx = to_linear_index(Q[0], Q[1], Q[2], Q[3], dimInput[0], dimInput[1], dimInput[2], dimInput[3]);
 
