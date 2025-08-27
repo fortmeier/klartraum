@@ -67,10 +67,6 @@ void main() {
         // Calculate output tensor size based on transposed dimensions
         uint total_output_elements = dimOutput[0] * dimOutput[1] * dimOutput[2] * dimOutput[3];
 
-        //debugPrintfEXT("X: [%d, %d, %d, %d]\n", X[0], X[1], X[2], X[3]);
-        //debugPrintfEXT("output_idx: %u\n", output_idx);
-        debugPrintfEXT("input_idx: %u\n", input_idx);
-
         if (output_idx < total_output_elements) {
             output_data[output_idx] = input_data[input_idx];
         }
