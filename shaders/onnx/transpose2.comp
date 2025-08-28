@@ -1,0 +1,45 @@
+#version 450
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+#extension GL_EXT_debug_printf : enable
+
+#include "transpose_include.glsl"
+
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
+    float input_data[];
+};
+
+layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer {
+    float output_data[];
+};
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+
+    debugPrintfEXT("x: %d, y: %d\n", x, y);
+
+    uint output_dim0 = dimOutput[0];
+    uint output_dim1 = dimOutput[1];
+
+    if (x >= output_dim1 || y >= output_dim0) {
+        debugPrintfEXT("Invalid output coordinates: (%d, %d), output_dim0: %d, output_dim1: %d\n", x, y, output_dim0, output_dim1);
+        return;
+    }
+
+    // Build output index
+    uint out_idx = y * output_dim1 + x;
+
+    // Permute indices
+    uint in_idx = 0;
+    if (dimPerm[0] == 1 && dimPerm[1] == 0) {
+        in_idx = x * output_dim0 + y;
+    } else {
+        in_idx = out_idx; // No permutation
+    }
+
+    debugPrintfEXT("out_idx: %d, in_idx: %d\n", out_idx, in_idx);
+
+    output_data[out_idx] = input_data[in_idx];
+}
