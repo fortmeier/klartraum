@@ -7,7 +7,7 @@ namespace klartraum {
 
 /**
  * @brief NoOp (No Operation) element that passes inputs through unchanged
- * 
+ *
  * This element performs no computation and simply passes its inputs through
  * to its outputs. It's useful for representing operations like ONNX Constant
  * nodes that provide data without computation, or for debugging/testing
@@ -20,10 +20,8 @@ public:
      * @param vulkanContext The Vulkan context for this element
      */
     NoOp(VulkanContext& vulkanContext) {}
-    
+
     virtual ~NoOp() = default;
-
-
 
     // ComputeGraphElement interface
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {

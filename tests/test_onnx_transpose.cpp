@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
 #include <vector>
+
+#include <gtest/gtest.h>
+
+#include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/onnx_network.hpp"
-#include "klartraum/computegraph/tensorelement.hpp"
-#include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/onnx_push_constants.hpp"
 using namespace klartraum;
 

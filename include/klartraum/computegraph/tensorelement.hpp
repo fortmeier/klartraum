@@ -9,7 +9,6 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 
-
 namespace klartraum {
 
 template <typename T>
@@ -35,7 +34,7 @@ public:
         return "TensorElement";
     }
 
-    //virtual size_t getBufferMemSize() const = 0;
+    // virtual size_t getBufferMemSize() const = 0;
 
     virtual VkBuffer& getDataVkBuffer(uint32_t pathId) = 0;
 
@@ -52,7 +51,6 @@ public:
     virtual void setDimensions(const std::vector<uint32_t>& newDimensions) = 0;
 
 private:
-
 };
 
 /**
@@ -86,7 +84,7 @@ public:
         uint32_t height,
         uint32_t width,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) 
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
         : TensorElementInterface(),
           vulkanContext(vulkanContext),
           dimensions({width, height, depth, batch}),
@@ -120,8 +118,6 @@ public:
         validateDimensions(this->dimensions);
     }
     virtual ~TensorElement() = default;
-
-
 
     // ComputeGraphElement interface
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
@@ -179,7 +175,7 @@ public:
     /**
      * @brief Get the Vulkan buffer handle for data buffer
      */
-    virtual VkBuffer& getDataVkBuffer(uint32_t pathId) override{
+    virtual VkBuffer& getDataVkBuffer(uint32_t pathId) override {
         return getDataBuffer(pathId).getBuffer();
     }
 
@@ -258,7 +254,6 @@ public:
         return getDataVkBuffer(pathId);
     }
 
-
 private:
     VulkanContext& vulkanContext;
     std::vector<uint32_t> dimensions;
@@ -323,8 +318,7 @@ public:
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
         : TensorElement<DataType>(vulkanContext, batch, depth, height, width, dataUsageFlags, dimUsageFlags) {
-        
-        }
+    }
 
     /**
      * @brief Construct a TensorElementSinglePath with specified dimensions
@@ -340,8 +334,7 @@ public:
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
         : TensorElement<DataType>(vulkanContext, dimensions, dataUsageFlags, dimUsageFlags) {
-        
-        }
+    }
 
     virtual ~TensorElementSinglePath() = default;
 
@@ -368,7 +361,6 @@ public:
     }
 
 private:
-
 };
 
 } // namespace klartraum
