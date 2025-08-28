@@ -1,14 +1,14 @@
 #ifndef KLARTRAUM_COPYBUFFER_HPP
 #define KLARTRAUM_COPYBUFFER_HPP
 
-#include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/computegraph/bufferelement.hpp"
+#include "klartraum/computegraph/computegraphelement.hpp"
 
 namespace klartraum {
 
 /**
  * @brief CopyBuffer element that copies data from source buffer to destination buffer
- * 
+ *
  * This element performs a direct buffer copy operation using vkCmdCopyBuffer.
  * Its main purpose is to copy a buffer so that consecutive operations on the data
  * do not conflict between different operations.
@@ -20,19 +20,17 @@ public:
      * @param vulkanContext The Vulkan context for this element
      * @param bufferSize Size in bytes to copy (0 means copy entire buffer)
      */
-    CopyBuffer(VulkanContext& vulkanContext) 
+    CopyBuffer(VulkanContext& vulkanContext)
         : vulkanContext(vulkanContext) {}
 
     virtual ~CopyBuffer() = default;
-
-
 
     // ComputeGraphElement interface
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
         // if (index != 0 && index != 1) {
         //     throw std::runtime_error("CopyBuffer only accepts input at index 0 (source buffer) and index 1 (destination buffer)");
         // }
-        
+
         auto bufferInput = std::dynamic_pointer_cast<BufferElementInterface>(input);
         if (!bufferInput) {
             throw std::runtime_error("CopyBuffer input must be a BufferElementInterface");
@@ -81,8 +79,7 @@ public:
             0,
             1, &memoryBarrier,
             0, nullptr,
-            0, nullptr
-        );
+            0, nullptr);
     }
 
     virtual const char* getType() const override {

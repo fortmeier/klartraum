@@ -5,9 +5,9 @@
 #include <fstream>
 #include <iostream>
 
+#include "klartraum/computegraph/copybuffer.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/noop.hpp"
-#include "klartraum/computegraph/copybuffer.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/onnx_push_constants.hpp"
 #include "onnx.pb.h"
@@ -597,7 +597,7 @@ void OnnxNetwork::createComputeGraph() {
             if (true) { // inputShape.size() == 4) {
                 onnx::TensorProto::DataType dataType = getTensorDataType(tensor_type);
                 std::cout << "Data type: " << dataType << " ";
-                TensorInfo tensorInfo {dataType, inputShape};
+                TensorInfo tensorInfo{dataType, inputShape};
                 name2TensorInfo[input->name()] = tensorInfo;
 
                 auto tensor = createConstantTensor(vulkanContext, tensorInfo);
