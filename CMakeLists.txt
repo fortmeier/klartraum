@@ -145,7 +145,7 @@ find_program(protobuf_PROTOC_EXE
 )
 
 # ONNX Protobuf Generation
-set(ONNX_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(ONNX_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/onnx/onnx")
 set(ONNX_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # Create generated directory
