@@ -1,5 +1,5 @@
-#ifndef ONNX_NETWORK_HPP
-#define ONNX_NETWORK_HPP
+#ifndef KLARTRAUM_ONNX_NETWORK_HPP
+#define KLARTRAUM_ONNX_NETWORK_HPP
 
 #include <memory>
 #include <string>
@@ -55,7 +55,6 @@ public:
         const std::string& modelPath);
     ~OnnxNetwork();
 
-
     // Print detailed model information
     void printModelInfo() const;
 
@@ -75,7 +74,7 @@ private:
 
     // Model parsing and graph creation
     void createComputeGraph();
-    
+
     // ONNX model data
     std::unique_ptr<onnx::ModelProto> model;
     std::string modelPath;
@@ -85,9 +84,8 @@ private:
     std::map<std::string, ComputeGraphElementPtr> graphDataElements;
     std::map<uint32_t, ComputeGraphElementPtr> graphOperationElements;
     uint32_t numberOfPaths = 0;
-
 };
 
 } // namespace klartraum
 
-#endif // ONNX_NETWORK_HPP
+#endif // KLARTRAUM_ONNX_NETWORK_HPP
