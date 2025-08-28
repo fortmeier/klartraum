@@ -30,9 +30,10 @@ struct ConvPushConstants {
 // };
 
 struct TransposePushConstants {
-    uint32_t dimInput[4];
-    // this might work for this example, but probably will not in the future
-    uint32_t dimPerm[6];
+    uint32_t dims; // number of dims, max. 8 in this implementation
+    uint32_t dimInput[8];
+    uint32_t dimOutput[8];
+    uint32_t dimPerm[8];
 };
 
 } // namespace klartraum
