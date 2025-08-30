@@ -4,12 +4,15 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <map>
 
 #include "klartraum/computegraph/buffertransformation.hpp"
 #include "klartraum/computegraph/computegraphgroup.hpp"
 #include "klartraum/computegraph/rendergraphelement.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_context.hpp"
+
+#include "onnx.pb.h"
 
 // Forward declare ONNX types
 namespace onnx {
@@ -30,13 +33,20 @@ enum class OnnxDataType {
     Unknown
 };
 
-struct OnnxTensorInfo {
-    std::string name;
-    OnnxDataType dataType;
-    std::vector<int64_t> shape;
-    size_t totalElements;
-    size_t sizeInBytes;
+// struct OnnxTensorInfo {
+//     std::string name;
+//     OnnxDataType dataType;
+//     std::vector<int64_t> shape;
+//     size_t totalElements;
+//     size_t sizeInBytes;
+// };
+
+struct TensorInfo {
+    onnx::TensorProto::DataType dataType;
+    std::vector<uint32_t> shape;
 };
+
+using TensorInfoMap = std::map<std::string, TensorInfo>;
 
 class OnnxNetwork : virtual public ComputeGraphElement, virtual public ComputeGraphGroup {
     /**
@@ -74,6 +84,10 @@ private:
 
     // Model parsing and graph creation
     void createComputeGraph();
+
+    void createInfoTensor(const onnx::ValueInfoProto* input,
+        TensorInfoMap& name2TensorInfo,
+        VulkanContext* vulkanContext);
 
     // ONNX model data
     std::unique_ptr<onnx::ModelProto> model;
