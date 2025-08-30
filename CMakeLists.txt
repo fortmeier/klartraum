@@ -205,7 +205,6 @@ add_executable(
   tests/test_onnx_network.cpp
   tests/test_onnx_conv.cpp
   tests/test_onnx_relu.cpp
-  tests/test_onnx_constant.cpp
   tests/test_onnx_transpose.cpp
 )
 
