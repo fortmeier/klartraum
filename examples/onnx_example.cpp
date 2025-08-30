@@ -3,7 +3,7 @@
 #include "klartraum/computegraph/computegraph.hpp"
 
 int main() {
-    const std::string model_path = "C:\\Users\\dfort\\Desktop\\workspace\\super_resolution\\super-resolution-10.onnx";
+    const std::string model_path_encoder = "./data/onnx/simple_encoder.onnx";
 
     klartraum::GlfwFrontend frontend;
 
@@ -11,7 +11,7 @@ int main() {
 
     auto& vulkanContext = engine.getVulkanContext();
 
-    auto onnxNetwork = vulkanContext.create<klartraum::OnnxNetwork>(model_path);
+    auto onnxNetwork = vulkanContext.create<klartraum::OnnxNetwork>(model_path_encoder);
 
     onnxNetwork->printModelInfo();
 
