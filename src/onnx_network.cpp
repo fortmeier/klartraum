@@ -10,16 +10,11 @@
 #include "klartraum/computegraph/noop.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/onnx_push_constants.hpp"
-#include "onnx.pb.h"
+
 
 namespace klartraum {
 
-struct TensorInfo {
-    onnx::TensorProto::DataType dataType;
-    std::vector<uint32_t> shape;
-};
 
-using TensorInfoMap = std::map<std::string, TensorInfo>;
 
 OnnxNetwork::OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelPath)
     : vulkanContext(&vulkanContext), modelPath(modelPath) {
@@ -508,6 +503,60 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
     return outputs;
 }
 
+void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input,
+    TensorInfoMap& name2TensorInfo,
+    VulkanContext* vulkanContext)
+{
+    std::cout << "Creating input tensor: " << input->name() << std::endl;
+    
+    if (input->has_type() && input->type().has_tensor_type()) {
+        std::vector<uint32_t> inputShape;
+        const onnx::TypeProto::Tensor& tensor_type = input->type().tensor_type();
+        if (tensor_type.has_elem_type()) {
+            std::cout << " (type: " << tensor_type.elem_type() << ")";
+        }
+        if (tensor_type.has_shape()) {
+            std::cout << " shape: [";
+            for (int j = 0; j < tensor_type.shape().dim_size(); ++j) {
+                const auto& dim = tensor_type.shape().dim(j);
+                if (dim.has_dim_value()) {
+                    std::cout << dim.dim_value();
+                    inputShape.push_back(dim.dim_value());
+                } else if (dim.has_dim_param()) {
+                    // set dim = 1 for dynamic dimensions
+                    // TODO this is a placeholder, should handle dynamic dimensions properly
+                    inputShape.push_back(1);
+                    std::cout << dim.dim_param();
+                } else {
+                    std::cout << "?";
+                }
+                std::cout << " ";
+            }
+            std::cout << "]";
+        }
+        std::cout << std::endl;
+        size_t tensorSize = 1; // Calculate based on input shape
+        for (const auto& dim : inputShape) {
+            tensorSize *= dim;
+        }
+        if (true) { // inputShape.size() == 4) {
+            onnx::TensorProto::DataType dataType = getTensorDataType(tensor_type);
+            std::cout << "Data type: " << dataType << " ";
+            TensorInfo tensorInfo{dataType, inputShape};
+            name2TensorInfo[input->name()] = tensorInfo;
+
+            auto tensor = createConstantTensor(vulkanContext, tensorInfo);
+            tensor->setName(input->name());
+            graphDataElements[input->name()] = tensor;
+
+            std::cout << " - size: " << tensorSize << " elements" << std::endl;
+        } else {
+            std::cout << "Unsupported input shape size: " << inputShape.size() << std::endl;
+            throw std::runtime_error("Unsupported input shape size for tensor: " + input->name());
+        }
+    }
+}
+
 void OnnxNetwork::createComputeGraph() {
     std::cout << "OnnxNetwork: Creating compute graph from ONNX model" << std::endl;
 
@@ -537,12 +586,21 @@ void OnnxNetwork::createComputeGraph() {
         infos.push_back(&graph.input(i));
     }
 
+    // WTF why do we have the output elements here?, they will be generated together with the operations
     for (int i = 0; i < graph.output_size(); ++i) {
         infos.push_back(&graph.output(i));
     }
 
+    // WTF are actually the value infos, is that need?
     for (int i = 0; i < graph.value_info_size(); ++i) {
         infos.push_back(&graph.value_info(i));
+    }
+
+    for (int i = 0; i < graph.initializer_size(); ++i) {
+        const onnx::TensorProto& initializer = graph.initializer(i);
+        auto name = initializer.name();
+        std::cout << "Initializer tensor: " << name << std::endl;
+        //infos.push_back(&initializer);
     }
 
     // Print all tensor names
@@ -560,56 +618,8 @@ void OnnxNetwork::createComputeGraph() {
 
     // create input buffer tensors
     for (const auto& input : infos) {
-        std::cout << "Creating input tensor: " << input->name() << std::endl;
+        createInfoTensor(input, name2TensorInfo, vulkanContext);
         name2Value[input->name()] = input;
-        if (input->has_type() && input->type().has_tensor_type()) {
-            std::vector<uint32_t> inputShape;
-            // auto inputTensor = vulkanContext->create<BufferElement<VulkanBuffer<uint32_t>>>(1);
-
-            const onnx::TypeProto::Tensor& tensor_type = input->type().tensor_type();
-            if (tensor_type.has_elem_type()) {
-                std::cout << " (type: " << tensor_type.elem_type() << ")";
-            }
-            if (tensor_type.has_shape()) {
-                std::cout << " shape: [";
-                for (int j = 0; j < tensor_type.shape().dim_size(); ++j) {
-                    const auto& dim = tensor_type.shape().dim(j);
-                    if (dim.has_dim_value()) {
-                        std::cout << dim.dim_value();
-                        inputShape.push_back(dim.dim_value());
-                    } else if (dim.has_dim_param()) {
-                        // set dim = 1 for dynamic dimensions
-                        // TODO this is a placeholder, should handle dynamic dimensions properly
-                        inputShape.push_back(1);
-                        std::cout << dim.dim_param();
-                    } else {
-                        std::cout << "?";
-                    }
-                    std::cout << " ";
-                }
-                std::cout << "]";
-            }
-            std::cout << std::endl;
-            size_t tensorSize = 1; // Calculate based on input shape
-            for (const auto& dim : inputShape) {
-                tensorSize *= dim;
-            }
-            if (true) { // inputShape.size() == 4) {
-                onnx::TensorProto::DataType dataType = getTensorDataType(tensor_type);
-                std::cout << "Data type: " << dataType << " ";
-                TensorInfo tensorInfo{dataType, inputShape};
-                name2TensorInfo[input->name()] = tensorInfo;
-
-                auto tensor = createConstantTensor(vulkanContext, tensorInfo);
-                tensor->setName(input->name());
-                graphDataElements[input->name()] = tensor;
-
-                std::cout << " - size: " << tensorSize << " elements" << std::endl;
-            } else {
-                std::cout << "Unsupported input shape size: " << inputShape.size() << std::endl;
-                throw std::runtime_error("Unsupported input shape size for tensor: " + input->name());
-            }
-        }
     }
 
     // to create operations, first go through all nodes and create their operation elements
