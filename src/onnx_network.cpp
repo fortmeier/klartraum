@@ -1,4 +1,4 @@
-#include "klartraum/onnx_network.hpp"
+#include "klartraum/onnx/onnx_network.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -9,7 +9,7 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/noop.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
-#include "klartraum/onnx_push_constants.hpp"
+#include "klartraum/onnx/onnx_push_constants.hpp"
 
 
 namespace klartraum {
