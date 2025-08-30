@@ -79,6 +79,11 @@ public:
         return inputs[index];
     }
 
+    template<typename T>
+    std::shared_ptr<T> getInputElement(int index = 0) {
+        return std::dynamic_pointer_cast<T>(getInputElement(index));
+    }
+
 
     void setWaitFor(uint32_t pathId, VkSemaphore semaphore) {
         renderWaitSemaphores[pathId] = semaphore;
