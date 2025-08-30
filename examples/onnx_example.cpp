@@ -1,5 +1,5 @@
 #include "klartraum/glfw_frontend.hpp"
-#include "klartraum/onnx_network.hpp"
+#include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
 
 int main() {
