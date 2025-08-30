@@ -89,6 +89,10 @@ private:
         TensorInfoMap& name2TensorInfo,
         VulkanContext* vulkanContext);
 
+    void createInitializerTensor(const onnx::TensorProto* initializer,
+        TensorInfoMap& name2TensorInfo,
+        VulkanContext* vulkanContext);
+
     // ONNX model data
     std::unique_ptr<onnx::ModelProto> model;
     std::string modelPath;

@@ -503,6 +503,27 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
     return outputs;
 }
 
+void OnnxNetwork::createInitializerTensor(const onnx::TensorProto* initializer,
+    TensorInfoMap& name2TensorInfo,
+    VulkanContext* vulkanContext)
+{
+    std::cout << "Creating initializer tensor: " << initializer->name() << std::endl;
+    std::vector<uint32_t> initShape;
+    for (int j = 0; j < initializer->dims_size(); j++) {
+        initShape.push_back(initializer->dims(j));
+    }
+    const auto& dataType = static_cast<onnx::TensorProto::DataType>(initializer->data_type());
+
+    TensorInfo tensorInfo{dataType, initShape};
+    name2TensorInfo[initializer->name()] = tensorInfo;
+
+    auto tensor = createConstantTensor(vulkanContext, tensorInfo);
+    tensor->setName(initializer->name());
+    graphDataElements[initializer->name()] = tensor;
+
+    //std::cout << " - size: " << (initShape.empty() ? 0 : std::accumulate(initShape.begin(), initShape.end(), 1, std::multiplies<uint32_t>())) << " elements" << std::endl;
+}
+
 void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input,
     TensorInfoMap& name2TensorInfo,
     VulkanContext* vulkanContext)
@@ -596,30 +617,43 @@ void OnnxNetwork::createComputeGraph() {
         infos.push_back(&graph.value_info(i));
     }
 
+    std::vector<const onnx::TensorProto*> initializers;
     for (int i = 0; i < graph.initializer_size(); ++i) {
         const onnx::TensorProto& initializer = graph.initializer(i);
         auto name = initializer.name();
         std::cout << "Initializer tensor: " << name << std::endl;
-        //infos.push_back(&initializer);
+        initializers.push_back(&initializer);
     }
 
-    // Print all tensor names
+    // Print all info tensor names
     std::cout << "All tensor names in the graph:" << std::endl;
     for (const auto* info : infos) {
         std::cout << "  - " << info->name() << std::endl;
     }
     std::cout << std::endl;
 
+    // Print all initializer tensor names
+    std::cout << "All initializer tensor names in the graph:" << std::endl;
+    for (const auto* initializer : initializers) {
+        std::cout << "  - " << initializer->name() << std::endl;
+    }
+
     std::map<std::string, const onnx::ValueInfoProto*> name2Value;
     TensorInfoMap name2TensorInfo;
     std::map<std::string, std::pair<ComputeGraphElementPtr, int>> outputName2GraphElementAndSlot;
 
+    // Start with creating info and initializer tensors
     std::cout << "Creating input tensors:" << std::endl;
 
-    // create input buffer tensors
+    // create info buffer tensors
     for (const auto& input : infos) {
         createInfoTensor(input, name2TensorInfo, vulkanContext);
         name2Value[input->name()] = input;
+    }
+
+    // create initializer buffer tensors
+    for (const auto& initializer : initializers) {
+        createInitializerTensor(initializer, name2TensorInfo, vulkanContext);
     }
 
     // to create operations, first go through all nodes and create their operation elements
