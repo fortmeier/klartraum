@@ -5,8 +5,8 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/glfw_frontend.hpp"
-#include "klartraum/onnx_network.hpp"
-#include "klartraum/onnx_push_constants.hpp"
+#include "klartraum/onnx/onnx_network.hpp"
+#include "klartraum/onnx/onnx_push_constants.hpp"
 using namespace klartraum;
 
 class OnnxTransposeTest : public ::testing::Test {
