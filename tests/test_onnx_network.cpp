@@ -18,7 +18,7 @@ TEST(OnnxNetworkTest, ExecuteWithValidModel) {
     /*
     STEP 1: create the ONNX network
     */
-    std::string modelPath = "C:\\Users\\dfort\\Desktop\\workspace\\super_resolution\\super-resolution-10.onnx";
+    std::string modelPath = "./data/onnx/simple_encoder_with_value_info_and_param_info.onnx";
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
 
