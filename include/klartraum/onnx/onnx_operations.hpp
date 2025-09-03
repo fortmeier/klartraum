@@ -129,6 +129,54 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
     return operation;
 }
 
+ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                           const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                           const onnx::GraphProto& graph) {
+    ConvTransposePushConstants pushConstants;
+
+    // parse attributes
+    parseAttributes<uint32_t>(node, "dilations", pushConstants.dilations);
+    parseAttributes<uint32_t>(node, "group", pushConstants.groups);
+    parseAttributes<uint32_t>(node, "kernel_shape", pushConstants.kernel_shape);
+    parseAttributes<uint32_t>(node, "pads", pushConstants.pads);
+    parseAttributes<uint32_t>(node, "strides", pushConstants.strides);
+    parseAttributes<uint32_t>(node, "output_padding", pushConstants.output_padding);
+
+    // set dimension constants
+    auto inputName = node.input(0);
+    auto weightsName = node.input(1);
+    auto biasName = (node.input_size() > 2) ? node.input(2) : "";
+
+    // Extract dimensions directly from ONNX graph
+    auto inputDim = getTensorDimensions(inputName, name2Value, graph);
+    auto weightDim = getTensorDimensions(weightsName, name2Value, graph);
+    auto biasDim = biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2Value, graph);
+
+    // Copy dimensions to push constants
+    for (size_t i = 0; i < 4; ++i) {
+        pushConstants.dimInput[i] = (i < inputDim.size()) ? inputDim[i] : 1;
+        pushConstants.dimWeights[i] = (i < weightDim.size()) ? weightDim[i] : 1;
+    }
+    pushConstants.dimBias[0] = (biasDim.size() > 0) ? biasDim[0] : 1;
+
+    // Calculate output dimensions for ConvTranspose
+    // output_size = (input_size - 1) * stride - 2 * padding + kernel_size + output_padding
+    uint32_t output_height = (inputDim[2] - 1) * pushConstants.strides[0] - 2 * pushConstants.pads[0] + pushConstants.kernel_shape[0] + pushConstants.output_padding[0];
+    uint32_t output_width = (inputDim[3] - 1) * pushConstants.strides[1] - 2 * pushConstants.pads[1] + pushConstants.kernel_shape[1] + pushConstants.output_padding[1];
+    
+    pushConstants.dimOutput[0] = inputDim[0]; // batch size
+    pushConstants.dimOutput[1] = weightDim[1]; // output channels from weights
+    pushConstants.dimOutput[2] = output_height;
+    pushConstants.dimOutput[3] = output_width;
+
+    std::string shaderFilename = "shaders/onnx/conv_transpose.comp.spv";
+
+    auto operation = vulkanContext->create<GeneralComputation<ConvTransposePushConstants>>(shaderFilename);
+    operation->setPushConstants({pushConstants});
+
+    return operation;
+}
+
 ComputeGraphElementPtr createRelu(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                   const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
                                   const onnx::GraphProto& graph) {
@@ -234,6 +282,8 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
         operation = createReshape(vulkanContext, node, name2Value, graph);
     } else if (operationType == "Transpose") {
         operation = createTranspose(vulkanContext, node, name2Value, graph);
+    } else if (operationType == "ConvTranspose") {
+        operation = createConvTranspose(vulkanContext, node, name2Value, graph);
     } else {
         throw std::runtime_error("Unsupported operation type: " + operationType);
     }
