@@ -1,0 +1,109 @@
+// WARNING: This file contains AI-generated code
+// This compute shader was automatically generated and may require
+// manual review and optimization for production use.
+
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint dimInput[4];    // [batch, input_channels, input_height, input_width]
+    uint dimWeights[4];  // [input_channels, output_channels, kernel_height, kernel_width]
+    uint dimOutput[4];   // [batch, output_channels, output_height, output_width]
+    uint dimBias[4];     // [output_channels] (only first element used)
+    uint kernel_shape[8];
+    uint strides[8];
+    uint pads[8];
+    uint dilations[8];
+    uint groups[8];
+    uint output_padding[8];
+};
+
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
+    float input_data[];
+};
+
+layout(set = 0, binding = 1) restrict readonly buffer WeightsBuffer {
+    float weights_data[];
+};
+
+layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer {
+    float bias_data[];
+};
+
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer {
+    float output_data[];
+};
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint z = gl_GlobalInvocationID.z;
+
+    uint output_batch = dimOutput[0];
+    uint output_channels = dimOutput[1];
+    uint output_height = dimOutput[2];
+    uint output_width = dimOutput[3];
+
+    uint input_batch = dimInput[0];
+    uint input_channels = dimInput[1];
+    uint input_height = dimInput[2];
+    uint input_width = dimInput[3];
+
+    uint kernel_height = kernel_shape[0];
+    uint kernel_width = kernel_shape[1];
+    uint stride_h = strides[0];
+    uint stride_w = strides[1];
+    uint pad_h = pads[0];
+    uint pad_w = pads[1];
+
+    if (x >= output_width || y >= output_height || z >= output_channels) {
+        return;
+    }
+
+    for (uint b = 0; b < output_batch; ++b) {
+        float sum = 0.0;
+
+        // ConvTranspose: for each output pixel, find all input pixels that could contribute
+        for (uint ic = 0; ic < input_channels; ++ic) {
+            for (uint kh = 0; kh < kernel_height; ++kh) {
+                for (uint kw = 0; kw < kernel_width; ++kw) {
+                    // Calculate input position that would generate this output
+                    int in_y = int(y + pad_h) - int(kh);
+                    int in_x = int(x + pad_w) - int(kw);
+                    
+                    // Check if input position is valid and on stride grid
+                    if (in_y >= 0 && in_x >= 0 && 
+                        (in_y % stride_h) == 0 && (in_x % stride_w) == 0) {
+                        
+                        uint input_y = uint(in_y / stride_h);
+                        uint input_x = uint(in_x / stride_w);
+                        
+                        if (input_y < input_height && input_x < input_width) {
+                            uint input_idx = b * input_channels * input_height * input_width +
+                                           ic * input_height * input_width +
+                                           input_y * input_width + input_x;
+
+                            uint weight_idx = z * input_channels * kernel_height * kernel_width +
+                                            ic * kernel_height * kernel_width +
+                                            kh * kernel_width + kw;
+
+                            sum += input_data[input_idx] * weights_data[weight_idx];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add bias if available
+        if (dimBias[0] > 0) {
+            sum += bias_data[z];
+        }
+
+        uint output_idx = b * output_channels * output_height * output_width +
+                         z * output_height * output_width +
+                         y * output_width + x;
+
+        output_data[output_idx] = sum;
+    }
+}

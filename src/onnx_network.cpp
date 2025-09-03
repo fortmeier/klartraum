@@ -234,6 +234,15 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         output->setName(node.output(0));
         outputs[node.output(0)] = output;
         name2TensorInfo[node.output(0)] = tensorInfo;
+    } else if (operationType == "ConvTranspose") {
+        std::string input0Name = node.input(0);
+        auto tensorInfo = name2TensorInfo.at(input0Name);
+        auto dataType = tensorInfo.dataType;
+
+        std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
+        output->setName(node.output(0));
+        outputs[node.output(0)] = output;
+        name2TensorInfo[node.output(0)] = tensorInfo;
     } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
         std::string input0Name = node.input(0);
         auto tensorInfo = name2TensorInfo.at(input0Name);
