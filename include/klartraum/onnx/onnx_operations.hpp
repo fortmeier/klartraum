@@ -55,6 +55,7 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
                                           const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
                                           const onnx::GraphProto& graph) {
     std::vector<uint32_t> dimensions;
+    bool dimensionsFound = false;
 
     // First check if it's in the name2Value map (inputs, outputs, value_info)
     auto valueIt = name2Value.find(tensorName);
@@ -71,6 +72,7 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
                         // For dynamic dimensions, use 1 as placeholder
                         dimensions.push_back(1);
                     }
+                    dimensionsFound = true;
                 }
             }
         }
@@ -81,10 +83,16 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
             if (init.name() == tensorName) {
                 for (int j = 0; j < init.dims_size(); ++j) {
                     dimensions.push_back(static_cast<uint32_t>(init.dims(j)));
+                    dimensionsFound = true;
                 }
                 break;
             }
         }
+    }
+
+    if (!dimensionsFound) {
+        // If no dimensions found, throw a runtime exception
+        throw std::runtime_error("Failed to retrieve dimensions for tensor: " + tensorName);
     }
 
     return dimensions;
@@ -290,5 +298,7 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
 
     return operation;
 }
+
+
 
 } // namespace klartraum
