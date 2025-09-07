@@ -351,6 +351,17 @@ void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input,
 }
 
 void OnnxNetwork::createComputeGraph() {
+    /**
+     * ONNX models can come in different flavors. By default, the size of tensors
+     * is determined by the model's input and output specifications and all intermediate tensor sizes
+     * can be inferred from these. When going through the network graph by going through the list
+     * of graph nodes (graph->node(i)), there is only a link to intermediate tensors by their names.
+     * Thus, either the intermediate tensor sizes need to be explicitly defined in the model, or
+     * they need to be inferred during the graph traversal.
+     * For starters, we assume that all necessary intermediate tensors, weights, and biases are available
+     * in the model's value infos. This has to be made sure during the model export.
+     * For the example autoencoder, see scripts\onnx\train_simple_autoencoder.ipynb on how this can be achieved.
+     */
     std::cout << "OnnxNetwork: Creating compute graph from ONNX model" << std::endl;
 
     if (!model) {
