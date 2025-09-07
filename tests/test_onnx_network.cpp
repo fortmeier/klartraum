@@ -37,3 +37,31 @@ TEST(OnnxNetworkTest, ExecuteWithValidModel) {
 
     return;
 }
+// Test execute functionality with decoder model
+TEST(OnnxNetworkTest, CheckIncompleteModelLoadFails) {
+    /**
+     * For now, the ONNX loader only supports loading of models that have
+     * value infos for all tensors in the model.
+     * If this will be changed in the future and tensor shape etc. can be inferred
+     * automatically, this test will need to be updated and might be deleted.
+     */
+    GlfwFrontend frontend;
+    auto& core = frontend.getKlartraumEngine();
+    auto& vulkanContext = core.getVulkanContext();
+
+    /*
+    STEP 1: create the ONNX network
+    */
+    std::string modelPath = "./data/onnx/simple_decoder.onnx";
+
+    try {
+        auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
+        FAIL() << "Expected runtime_error to be thrown";
+    } catch (const std::runtime_error& e) {
+        // Expected exception caught
+        SUCCEED();
+    }
+
+    return;
+}
+
