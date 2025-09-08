@@ -85,6 +85,11 @@ private:
     // Model parsing and graph creation
     void createComputeGraph();
 
+    
+    void createGraphElementsFromNodes();
+    void createGraphElementsFromOutputTensors();
+    void connectGraphElements();
+
     void createInfoTensor(const onnx::ValueInfoProto* input,
         TensorInfoMap& name2TensorInfo,
         VulkanContext* vulkanContext);
@@ -96,6 +101,19 @@ private:
     // ONNX model data
     std::unique_ptr<onnx::ModelProto> model;
     std::string modelPath;
+
+    // helper maps for mapping ONNX names to internal representations
+
+    // name2ValueInfoProto maps ONNX tensor names to their ValueInfoProto
+    // since ONNX protobuf format does not support of indexing the ValueInfoProtos
+    // directly
+    std::map<std::string, const onnx::ValueInfoProto*> name2ValueInfoProto;
+
+    // store tensor information for each ONNX tensor so they are
+    // easily accessible by their name
+    TensorInfoMap name2TensorInfo;
+
+    std::map<std::string, std::pair<ComputeGraphElementPtr, int>> outputName2GraphElementAndSlot;
 
     // Vulkan resources
     VulkanContext* vulkanContext = nullptr;
