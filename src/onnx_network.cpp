@@ -446,32 +446,8 @@ void OnnxNetwork::createComputeGraph() {
     connectGraphElements();
 
     // get all output names
-    std::vector<std::string> outputNames;
-    for (int i = 0; i < graph.output_size(); ++i) {
-        auto output = graph.output(i);
-        auto name = output.name();
-        outputNames.push_back(name);
-    }
-
-    // all nodes that have outputs will be added the outputs elements of
-    // the compute graph group
-    uint32_t outputElementIndex = 0;
-    std::cout << "Output elements: " << std::endl;
-    for (int i = 0; i < graph.node_size(); i++) {
-        const onnx::NodeProto& node = graph.node(i);
-        for (int j = 0; j < node.output_size(); j++) {
-            auto outputName = node.output(j);
-            // check if outputName is in output names
-            if (std::find(outputNames.begin(), outputNames.end(), outputName) != outputNames.end()) {
-                std::cout << " - Found output name: " << outputName << std::endl;
-                outputElements[outputElementIndex] = graphOperationElements.at(i);
-                std::cout << " - connected output " << outputName << " to operation " << i << std::endl;
-                outputElementIndex++;
-            }
-        }
-    }
+    storeComputeGraphGroupOutputElements();
 }
-
 
 void OnnxNetwork::createGraphElementsFromNodes()
 {
@@ -509,6 +485,12 @@ void OnnxNetwork::createGraphElementsFromOutputTensors()
 
 void OnnxNetwork::connectGraphElements()
 {
+    /*
+     * Go through all operation compute graph elements that have been created from the ONNX graph nodes
+     * and connect them to their inputs and outputs.
+     * Both inputs and outputs pass through the compute element in the same fashion so
+     * first the inputs are set via setInput followed by the outputs.
+     */
     const onnx::GraphProto& graph = model->graph();
 
     for (int i = 0; i < graph.node_size(); i++) {
@@ -550,6 +532,43 @@ void OnnxNetwork::connectGraphElements()
         }
     }
 }
+
+void OnnxNetwork::storeComputeGraphGroupOutputElements()
+{
+    /**
+     * OnnxNetwork is a klartraum ComputeGraphGroup and thus can have
+     * multiple output elements.
+     * This method collects all output elements from the ONNX graph and
+     * adds them to the outputs of the compute graph group.
+     */
+    const onnx::GraphProto& graph = model->graph();
+
+    std::vector<std::string> outputNames;
+    for (int i = 0; i < graph.output_size(); ++i) {
+        auto output = graph.output(i);
+        auto name = output.name();
+        outputNames.push_back(name);
+    }
+
+    // all nodes that have outputs will be added the outputs elements of
+    // the compute graph group
+    uint32_t outputElementIndex = 0;
+    std::cout << "Output elements: " << std::endl;
+    for (int i = 0; i < graph.node_size(); i++) {
+        const onnx::NodeProto& node = graph.node(i);
+        for (int j = 0; j < node.output_size(); j++) {
+            auto outputName = node.output(j);
+            // check if outputName is in output names
+            if (std::find(outputNames.begin(), outputNames.end(), outputName) != outputNames.end()) {
+                std::cout << " - Found output name: " << outputName << std::endl;
+                outputElements[outputElementIndex] = graphOperationElements.at(i);
+                std::cout << " - connected output " << outputName << " to operation " << i << std::endl;
+                outputElementIndex++;
+            }
+        }
+    }
+}
+
 
 // ComputeGraphGroup interface implementation
 void OnnxNetwork::checkInput(ComputeGraphElementPtr input, int index) {

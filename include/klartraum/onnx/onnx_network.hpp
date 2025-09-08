@@ -89,6 +89,7 @@ private:
     void createGraphElementsFromNodes();
     void createGraphElementsFromOutputTensors();
     void connectGraphElements();
+    void storeComputeGraphGroupOutputElements();
 
     void createInfoTensor(const onnx::ValueInfoProto* input,
         TensorInfoMap& name2TensorInfo,
