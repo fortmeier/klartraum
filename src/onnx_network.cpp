@@ -1,5 +1,3 @@
-#include "klartraum/onnx/onnx_network.hpp"
-
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -9,13 +7,11 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/noop.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
+#include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/onnx/onnx_push_constants.hpp"
 #include "klartraum/onnx/onnx_operations.hpp"
 
-
 namespace klartraum {
-
-
 
 OnnxNetwork::OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelPath)
     : vulkanContext(&vulkanContext), modelPath(modelPath) {
@@ -421,37 +417,81 @@ void OnnxNetwork::createComputeGraph() {
         std::cout << "  - " << initializer->name() << std::endl;
     }
 
-    std::map<std::string, const onnx::ValueInfoProto*> name2Value;
-    TensorInfoMap name2TensorInfo;
-    std::map<std::string, std::pair<ComputeGraphElementPtr, int>> outputName2GraphElementAndSlot;
-
     // Start with creating info and initializer tensors
     std::cout << "Creating input tensors:" << std::endl;
 
     // create info buffer tensors
     for (const auto& input : infos) {
         createInfoTensor(input, name2TensorInfo, vulkanContext);
-        name2Value[input->name()] = input;
+        name2ValueInfoProto[input->name()] = input;
     }
 
     // create initializer buffer tensors
-    for (const auto& initializer : initializers) {
-        createInitializerTensor(initializer, name2TensorInfo, vulkanContext);
+    // for (const auto& initializer : initializers) {
+    //     createInitializerTensor(initializer, name2TensorInfo, vulkanContext);
+    // }
+
+    // to create operations, first go through all ONNX nodes and
+    // create their corresponding klartraum graph elements
+    // create all operations
+    createGraphElementsFromNodes();
+
+    // then, for each output tensor associated to a node,
+    // create klartraum graph elements
+    createGraphElementsFromOutputTensors();
+
+    // finally, connect all operation inputs and outputs
+    // in the klartraum compute graph, both inputs and outputs pass
+    // through the compute element in the same fashion
+    connectGraphElements();
+
+    // get all output names
+    std::vector<std::string> outputNames;
+    for (int i = 0; i < graph.output_size(); ++i) {
+        auto output = graph.output(i);
+        auto name = output.name();
+        outputNames.push_back(name);
     }
 
-    // to create operations, first go through all nodes and create their operation elements
-    // create all operations
+    // all nodes that have outputs will be added the outputs elements of
+    // the compute graph group
+    uint32_t outputElementIndex = 0;
+    std::cout << "Output elements: " << std::endl;
+    for (int i = 0; i < graph.node_size(); i++) {
+        const onnx::NodeProto& node = graph.node(i);
+        for (int j = 0; j < node.output_size(); j++) {
+            auto outputName = node.output(j);
+            // check if outputName is in output names
+            if (std::find(outputNames.begin(), outputNames.end(), outputName) != outputNames.end()) {
+                std::cout << " - Found output name: " << outputName << std::endl;
+                outputElements[outputElementIndex] = graphOperationElements.at(i);
+                std::cout << " - connected output " << outputName << " to operation " << i << std::endl;
+                outputElementIndex++;
+            }
+        }
+    }
+}
+
+
+void OnnxNetwork::createGraphElementsFromNodes()
+{
+    const onnx::GraphProto& graph = model->graph();
+
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
         auto name = node.name();
         std::cout << "Creating operation for node: " << name << std::endl;
-        auto operation = createTensorOperation(vulkanContext, node, name2Value, graph);
+        auto operation = createTensorOperation(vulkanContext, node, name2ValueInfoProto, graph);
         std::string operationName = node.op_type() + "_" + std::to_string(i) + "_" + name;
         operation->setName(operationName);
         graphOperationElements[i] = operation;
     }
+}
 
-    // create all operation outputs
+void OnnxNetwork::createGraphElementsFromOutputTensors()
+{
+    const onnx::GraphProto& graph = model->graph();
+
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
         std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
@@ -465,8 +505,12 @@ void OnnxNetwork::createComputeGraph() {
             slot++;
         }
     }
+}
 
-    // finally, connect all operation inputs
+void OnnxNetwork::connectGraphElements()
+{
+    const onnx::GraphProto& graph = model->graph();
+
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
 
@@ -503,32 +547,6 @@ void OnnxNetwork::createComputeGraph() {
             }
             std::cout << " - Output " << j << ": \"" << index << "\" -> \"" << output->getName() << "\"" << std::endl;
             operation->setInput(output, j + startIndex);
-        }
-    }
-
-    // get all output names
-    std::vector<std::string> outputNames;
-    for (int i = 0; i < graph.output_size(); ++i) {
-        auto output = graph.output(i);
-        auto name = output.name();
-        outputNames.push_back(name);
-    }
-
-    // all nodes that have outputs will be added the outputs elements of
-    // the compute graph group
-    uint32_t outputElementIndex = 0;
-    std::cout << "Output elements: " << std::endl;
-    for (int i = 0; i < graph.node_size(); i++) {
-        const onnx::NodeProto& node = graph.node(i);
-        for (int j = 0; j < node.output_size(); j++) {
-            auto outputName = node.output(j);
-            // check if outputName is in output names
-            if (std::find(outputNames.begin(), outputNames.end(), outputName) != outputNames.end()) {
-                std::cout << " - Found output name: " << outputName << std::endl;
-                outputElements[outputElementIndex] = graphOperationElements.at(i);
-                std::cout << " - connected output " << outputName << " to operation " << i << std::endl;
-                outputElementIndex++;
-            }
         }
     }
 }

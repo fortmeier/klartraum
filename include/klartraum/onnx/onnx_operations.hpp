@@ -52,14 +52,14 @@ void parseAttributes(const onnx::NodeProto& node, const std::string& attrName, T
 
 // Helper function to extract tensor dimensions from ONNX ValueInfoProto or initializer
 std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
-                                          const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                          const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                           const onnx::GraphProto& graph) {
     std::vector<uint32_t> dimensions;
     bool dimensionsFound = false;
 
-    // First check if it's in the name2Value map (inputs, outputs, value_info)
-    auto valueIt = name2Value.find(tensorName);
-    if (valueIt != name2Value.end()) {
+    // First check if it's in the name2ValueInfoProto map (inputs, outputs, value_info)
+    auto valueIt = name2ValueInfoProto.find(tensorName);
+    if (valueIt != name2ValueInfoProto.end()) {
         const onnx::ValueInfoProto* valueInfo = valueIt->second;
         if (valueInfo->has_type() && valueInfo->type().has_tensor_type()) {
             const onnx::TypeProto::Tensor& tensorType = valueInfo->type().tensor_type();
@@ -99,7 +99,7 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
 }
 
 ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                  const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                  const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                   const onnx::GraphProto& graph) {
     ConvPushConstants pushConstants;
 
@@ -118,9 +118,9 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
     auto biasName = (node.input_size() > 2) ? node.input(2) : "";
 
     // Extract dimensions directly from ONNX graph
-    auto inputDim = getTensorDimensions(inputName, name2Value, graph);
-    auto weightDim = getTensorDimensions(weightsName, name2Value, graph);
-    auto biasDim = biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2Value, graph);
+    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
+    auto weightDim = getTensorDimensions(weightsName, name2ValueInfoProto, graph);
+    auto biasDim = biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
 
     // Copy dimensions to push constants
     for (size_t i = 0; i < 4; ++i) {
@@ -138,7 +138,7 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
 }
 
 ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                           const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                           const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                            const onnx::GraphProto& graph) {
     ConvTransposePushConstants pushConstants;
 
@@ -156,9 +156,9 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
     auto biasName = (node.input_size() > 2) ? node.input(2) : "";
 
     // Extract dimensions directly from ONNX graph
-    auto inputDim = getTensorDimensions(inputName, name2Value, graph);
-    auto weightDim = getTensorDimensions(weightsName, name2Value, graph);
-    auto biasDim = biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2Value, graph);
+    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
+    auto weightDim = getTensorDimensions(weightsName, name2ValueInfoProto, graph);
+    auto biasDim = biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
 
     // Copy dimensions to push constants
     for (size_t i = 0; i < 4; ++i) {
@@ -186,12 +186,12 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
 }
 
 ComputeGraphElementPtr createRelu(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                  const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                  const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                   const onnx::GraphProto& graph) {
     TensorOpPushConstants pushConstants;
 
     auto inputName = node.input(0);
-    auto inputDim = getTensorDimensions(inputName, name2Value, graph);
+    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
 
     // set dimension constants
     for (size_t i = 0; i < 4; ++i) {
@@ -208,7 +208,7 @@ ComputeGraphElementPtr createRelu(VulkanContext* vulkanContext, const onnx::Node
 }
 
 ComputeGraphElementPtr createConstant(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                      const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                      const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                       const onnx::GraphProto& graph) {
     // Constant operations don't perform computation - they just provide constant data
     // Use NoOp to pass the constant data through without any GPU operations
@@ -218,15 +218,15 @@ ComputeGraphElementPtr createConstant(VulkanContext* vulkanContext, const onnx::
 }
 
 ComputeGraphElementPtr createReshape(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                     const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                     const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                      const onnx::GraphProto& graph) {
     // ReshapePushConstants pushConstants;
 
     auto inputName = node.input(0);
     auto shapeName = node.input(1);
 
-    auto inputDim = getTensorDimensions(inputName, name2Value, graph);
-    auto shapeDim = getTensorDimensions(shapeName, name2Value, graph);
+    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
+    auto shapeDim = getTensorDimensions(shapeName, name2ValueInfoProto, graph);
 
     // // Copy dimensions to push constants
     // for (size_t i = 0; i < 4; ++i) {
@@ -254,7 +254,7 @@ ComputeGraphElementPtr createReshape(VulkanContext* vulkanContext, const onnx::N
 }
 
 ComputeGraphElementPtr createTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                       const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                       const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                        const onnx::GraphProto& graph) {
     TransposePushConstants pushConstants;
 
@@ -270,7 +270,7 @@ ComputeGraphElementPtr createTranspose(VulkanContext* vulkanContext, const onnx:
 }
 
 ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                             const std::map<std::string, const onnx::ValueInfoProto*>& name2Value,
+                                             const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                              const onnx::GraphProto& graph) {
     auto output = node.output();
     auto x = output.size();
@@ -281,17 +281,17 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
     ComputeGraphElementPtr operation;
 
     if (operationType == "Conv") {
-        operation = createConv(vulkanContext, node, name2Value, graph);
+        operation = createConv(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Relu") {
-        operation = createRelu(vulkanContext, node, name2Value, graph);
+        operation = createRelu(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Constant") {
-        operation = createConstant(vulkanContext, node, name2Value, graph);
+        operation = createConstant(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Reshape") {
-        operation = createReshape(vulkanContext, node, name2Value, graph);
+        operation = createReshape(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Transpose") {
-        operation = createTranspose(vulkanContext, node, name2Value, graph);
+        operation = createTranspose(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "ConvTranspose") {
-        operation = createConvTranspose(vulkanContext, node, name2Value, graph);
+        operation = createConvTranspose(vulkanContext, node, name2ValueInfoProto, graph);
     } else {
         throw std::runtime_error("Unsupported operation type: " + operationType);
     }
