@@ -162,8 +162,8 @@ public:
         }
     }
 
-    void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, P pushConstant) {
-        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
+    void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, const P* pushConstant) {
+        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), pushConstant);
         if (dynamicGroupDispatchParams == nullptr)
         {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
@@ -207,7 +207,7 @@ public:
                 recordScratchToZero(commandBuffer, pathId);
                 for(VkPipeline computePipeline : computePipelines) {
                     bind(commandBuffer, pathId, computePipeline);
-                    dispatch(commandBuffer, pathId, computePipeline, pushConstant);
+                    dispatch(commandBuffer, pathId, computePipeline, &pushConstant);
                 }
             }
         }
