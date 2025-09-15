@@ -78,6 +78,10 @@ public:
         return "OnnxNetwork";
     }
 
+    // Helper methods to access model information
+    std::vector<float> getFloatInitializerData(const std::string& name) const;
+    ComputeGraphElementPtr getOutputElement(const std::string& name) const;
+
 private:
     // Load ONNX model from file
     bool loadModel(const std::string& modelPath);

@@ -5,6 +5,7 @@
 
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
+#include "klartraum/computegraph/tensorelement.hpp"
 #include "onnx.pb.h"
 
 using namespace klartraum;
@@ -18,7 +19,7 @@ TEST(OnnxNetworkTest, ExecuteWithValidModel) {
     /*
     STEP 1: create the ONNX network
     */
-    std::string modelPath = "./data/onnx/simple_encoder_with_value_info_and_param_info.onnx";
+    std::string modelPath = "./data/onnx/simple_encoder_with_onnx_frozen_intermediates.onnx";
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
 
@@ -35,31 +36,19 @@ TEST(OnnxNetworkTest, ExecuteWithValidModel) {
     */
     computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
-    return;
-}
-// Test execute functionality with decoder model
-TEST(OnnxNetworkTest, CheckIncompleteModelLoadFails) {
-    /**
-     * For now, the ONNX loader only supports loading of models that have
-     * value infos for all tensors in the model.
-     * If this will be changed in the future and tensor shape etc. can be inferred
-     * automatically, this test will need to be updated and might be deleted.
-     */
-    GlfwFrontend frontend;
-    auto& core = frontend.getKlartraumEngine();
-    auto& vulkanContext = core.getVulkanContext();
+    auto conv1Output = onnxNetwork->getOutputElement("/conv1/Conv_output_0");
+    ASSERT_NE(conv1Output, nullptr);
+    auto conv1OutputTensor = std::dynamic_pointer_cast<TensorElement<float>>(conv1Output);
+    ASSERT_NE(conv1OutputTensor, nullptr);
 
-    /*
-    STEP 1: create the ONNX network
-    */
-    std::string modelPath = "./data/onnx/simple_decoder.onnx";
+    std::vector<float> dataGPU( conv1OutputTensor->getDataElementCount() );
+    conv1OutputTensor->getDataBuffer(0).memcopyTo(dataGPU);
 
-    try {
-        auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
-        FAIL() << "Expected runtime_error to be thrown";
-    } catch (const std::runtime_error& e) {
-        // Expected exception caught
-        SUCCEED();
+    // now compare the output tensor to expected values
+    std::vector<float> dataGT = onnxNetwork->getFloatInitializerData("/conv1/Conv_output_0");
+    
+    for(size_t i = 0; i < dataGT.size(); i++) {
+        ASSERT_FLOAT_EQ(dataGT[i], dataGPU[i]);
     }
 
     return;
