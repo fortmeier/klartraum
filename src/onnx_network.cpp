@@ -473,7 +473,8 @@ void OnnxNetwork::createGraphElementsFromOutputTensors()
         std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
         std::cout << " - Created operation outputs for node: " << node.name() << std::endl;
         // TODO WARNING BUG? ARE MAPS ALWAYS INSERTION ORDERD???
-        int slot = 0;
+        // slots start just one after the slots of the inputs
+        int slot = node.input_size();
         for (const auto& [name, output] : outputs) {
             std::cout << "   - Output " << name << ": " << output << std::endl;
             graphDataElements[name] = output;
@@ -657,6 +658,52 @@ void OnnxNetwork::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
 
     // Record compute shader dispatches (placeholder implementation)
     // In practice, this would record the actual Vulkan commands for neural network execution
+}
+
+std::vector<float> OnnxNetwork::getFloatInitializerData(const std::string& name) const {
+    /**
+     * @brief this method retrieves the data associated to a given (tensor) initializer
+     * it looks up the initializer by name in the model's graph initializers
+     * and returns the data as a vector of floats
+     */
+    auto graph = model->graph();
+    for (int i = 0; i < graph.initializer_size(); i++) {
+        const auto& init = graph.initializer(i);
+        std::string initName = init.name();
+        if (initName == name) {
+            if (init.data_type() != onnx::TensorProto::FLOAT) {
+                throw std::runtime_error("Initializer " + name + " is not of type FLOAT");
+            }
+            if (init.has_raw_data()) {
+                return std::vector<float>(reinterpret_cast<const float*>(init.raw_data().data()),
+                                           reinterpret_cast<const float*>(init.raw_data().data()) + (init.raw_data().size() / sizeof(float)));
+            } else if (init.float_data_size() > 0) {
+                // Data is stored in float_data field
+                const float* data = init.float_data().data();
+                return std::vector<float>(data, data + init.float_data_size());
+            } else {
+                throw std::runtime_error("Initializer " + name + " has no data");
+            }
+        }
+    }
+    throw std::runtime_error("Initializer " + name + " not found");
+}
+
+ComputeGraphElementPtr OnnxNetwork::getOutputElement(const std::string& name) const{
+    /**
+     * this methods returns the compute graph element that is associated with the given output name
+     * it looks up the output name in the map outputName2GraphElementAndSlot
+     * which contains the graph elements that compute the output tensors
+     * and thus the respective input slot has to be used to get the output tensor graph element
+     */
+    auto it = outputName2GraphElementAndSlot.find(name);
+    if (it != outputName2GraphElementAndSlot.end()) {
+        auto slot = it->second.second;
+        auto element = it->second.first;
+        auto outputElement = element->getInputElement(slot);
+        return outputElement;
+    }
+    throw std::runtime_error("Output element " + name + " not found");
 }
 
 } // namespace klartraum
