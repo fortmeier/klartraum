@@ -52,7 +52,7 @@ private:
 
     std::queue<std::unique_ptr<Event> > eventQueue;
 
-    std::vector<ComputeGraph> computeGraphs;
+    std::vector<std::unique_ptr<ComputeGraph>> computeGraphs;
 
 };
 
