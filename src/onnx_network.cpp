@@ -611,12 +611,26 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
                 std::shared_ptr<TensorElementSinglePath<float>> elementPtr = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
                 TensorElementSinglePath<float>* tensor = elementPtr.get();
                 tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
-                std::vector<float> testData;
-                testData.resize(initData.size() / sizeof(float));
-                tensor->getDataBuffer().memcopyTo(testData);
                 break;
                 // TODO support other data types
             }
+        }
+        else if (init.float_data_size() > 0) {
+            std::cout << " - Data type: FLOAT (float_data field)" << std::endl;
+            auto element = graphDataElements[name];
+            std::shared_ptr<TensorElementSinglePath<float>> elementPtrSingle = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
+            std::shared_ptr<TensorElement<float>> elementPtrMulti = std::dynamic_pointer_cast<TensorElement<float>>(element);
+            if (elementPtrSingle) {
+                TensorElementSinglePath<float>* tensor = elementPtrSingle.get();
+                tensor->getDataBuffer().memcopyFrom(init.float_data().data(), init.float_data_size());
+            } else if (elementPtrMulti) {
+                TensorElement<float>* tensor = elementPtrMulti.get();
+                tensor->getDataBuffer(0).memcopyFrom(init.float_data().data(), init.float_data_size());
+            } else {
+                throw std::runtime_error("Initializer " + name + " has unsupported tensor element type");
+            }
+        } else {
+            throw std::runtime_error("Initializer " + name + " has no data");
         }
     }
     // fill all constant tensors
@@ -680,7 +694,7 @@ std::vector<float> OnnxNetwork::getFloatInitializerData(const std::string& name)
             } else if (init.float_data_size() > 0) {
                 // Data is stored in float_data field
                 const float* data = init.float_data().data();
-                return std::vector<float>(data, data + init.float_data_size());
+                return std::vector<float>(data, data + init.float_data_size() / sizeof(float));
             } else {
                 throw std::runtime_error("Initializer " + name + " has no data");
             }
