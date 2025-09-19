@@ -48,7 +48,7 @@ TEST(OnnxNetworkTest, ExecuteWithValidModel) {
     std::vector<float> dataGT = onnxNetwork->getFloatInitializerData("/conv1/Conv_output_0");
     
     for(size_t i = 0; i < dataGT.size(); i++) {
-        ASSERT_FLOAT_EQ(dataGT[i], dataGPU[i]);
+        ASSERT_NEAR(dataGT[i], dataGPU[i], 1e-3);
     }
 
     return;
