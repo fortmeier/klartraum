@@ -133,6 +133,9 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
 
     auto operation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
+    operation->setGroupCountX(pushConstants.dimInput[2] / 8); // assuming local size x = 8
+    operation->setGroupCountY(pushConstants.dimInput[3] / 8); // assuming local size y = 8
+    operation->setGroupCountZ(pushConstants.dimWeights[3]);
 
     return operation;
 }
