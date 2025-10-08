@@ -222,32 +222,34 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
     std::map<std::string, ComputeGraphElementPtr> outputs;
 
     if (operationType == "Conv") {
-        std::string input0Name = node.input(0);
-        auto tensorInfo = name2TensorInfo.at(input0Name);
+        std::string output0Name = node.output(0);
+
+        auto tensorInfo = name2TensorInfo.at(output0Name);
         auto dataType = tensorInfo.dataType;
 
         std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
-        output->setName(node.output(0));
-        outputs[node.output(0)] = output;
-        name2TensorInfo[node.output(0)] = tensorInfo;
+        output->setName(output0Name);
+        outputs[output0Name] = output;
+        name2TensorInfo[output0Name] = tensorInfo;
     } else if (operationType == "ConvTranspose") {
-        std::string input0Name = node.input(0);
-        auto tensorInfo = name2TensorInfo.at(input0Name);
+        std::string output0Name = node.output(0);
+        auto tensorInfo = name2TensorInfo.at(output0Name);
         auto dataType = tensorInfo.dataType;
 
         std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
-        output->setName(node.output(0));
-        outputs[node.output(0)] = output;
+        output->setName(output0Name);
+        outputs[output0Name] = output;
         name2TensorInfo[node.output(0)] = tensorInfo;
     } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
-        std::string input0Name = node.input(0);
-        auto tensorInfo = name2TensorInfo.at(input0Name);
+        std::string output0Name = node.output(0);
+
+        auto tensorInfo = name2TensorInfo.at(output0Name);
         auto dataType = tensorInfo.dataType;
 
         std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
-        output->setName(node.output(0));
-        outputs[node.output(0)] = output;
-        name2TensorInfo[node.output(0)] = tensorInfo; // Store the output type for this operation
+        output->setName(output0Name);
+        outputs[output0Name] = output;
+        name2TensorInfo[output0Name] = tensorInfo; // Store the output type for this operation
     } else if (operationType == "Constant") {
         TensorInfo tensorInfo;
         tensorInfo.shape = {1, 1, 1, 1}; // Default shape
@@ -694,7 +696,7 @@ std::vector<float> OnnxNetwork::getFloatInitializerData(const std::string& name)
             } else if (init.float_data_size() > 0) {
                 // Data is stored in float_data field
                 const float* data = init.float_data().data();
-                return std::vector<float>(data, data + init.float_data_size() / sizeof(float));
+                return std::vector<float>(data, data + init.float_data_size());
             } else {
                 throw std::runtime_error("Initializer " + name + " has no data");
             }

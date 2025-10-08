@@ -13,16 +13,18 @@ using namespace klartraum;
 
 void testLayer(std::shared_ptr<OnnxNetwork> onnxNetwork, std::string layerName)
 {
-    auto conv1Output = onnxNetwork->getOutputElement(layerName);
-    ASSERT_NE(conv1Output, nullptr);
-    auto conv1OutputTensor = std::dynamic_pointer_cast<TensorElement<float>>(conv1Output);
-    ASSERT_NE(conv1OutputTensor, nullptr);
+    auto element = onnxNetwork->getOutputElement(layerName);
+    ASSERT_NE(element, nullptr);
+    auto tensor = std::dynamic_pointer_cast<TensorElement<float>>(element);
+    ASSERT_NE(tensor, nullptr);
 
-    std::vector<float> dataGPU( conv1OutputTensor->getDataElementCount() );
-    conv1OutputTensor->getDataBuffer(0).memcopyTo(dataGPU);
+    std::vector<float> dataGPU( tensor->getDataElementCount() );
+    tensor->getDataBuffer(0).memcopyTo(dataGPU);
 
     // now compare the output tensor to expected values
     std::vector<float> dataGT = onnxNetwork->getFloatInitializerData(layerName);
+
+    ASSERT_EQ(dataGT.size(), dataGPU.size());
 
     for(size_t i = 0; i < dataGT.size(); i++) {
         ASSERT_NEAR(dataGT[i], dataGPU[i], 1e-3);
@@ -56,6 +58,10 @@ TEST(OnnxNetworkTest, ExecuteWithValidModel) {
     computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
     testLayer(onnxNetwork, "/conv1/Conv_output_0");
     testLayer(onnxNetwork, "/relu/Relu_output_0");
+    testLayer(onnxNetwork, "/conv2/Conv_output_0");
+    testLayer(onnxNetwork, "/relu_1/Relu_output_0");
+    testLayer(onnxNetwork, "/conv3/Conv_output_0");
+    testLayer(onnxNetwork, "output");
 
     return;
 }
