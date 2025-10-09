@@ -32,7 +32,7 @@ void testLayer(std::shared_ptr<OnnxNetwork> onnxNetwork, std::string layerName)
 }
 
 // Test execute functionality
-TEST(OnnxNetworkTest, ExecuteWithValidModel) {
+TEST(OnnxNetworkTest, ExecuteWithValidEncoderModel) {
     GlfwFrontend frontend;
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
@@ -44,18 +44,14 @@ TEST(OnnxNetworkTest, ExecuteWithValidModel) {
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
 
-    /*
-    STEP 2: create the computegraph backend and compile the computegraph
-    */
-
-    // this traverses the computegraph and creates the vulkan objects
-    auto computegraph = ComputeGraph(vulkanContext, 1);
-    computegraph.compileFrom(onnxNetwork);
 
     /*
-    STEP 3: submit the computegraph and compare the output
+    STEP 2: use the render engine to execute the computegraph so it can be debugged with renderdoc
     */
-    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
+    core.add(core.createRenderPass());
+    core.add(onnxNetwork);
+    core.step();
+
     testLayer(onnxNetwork, "/conv1/Conv_output_0");
     testLayer(onnxNetwork, "/relu/Relu_output_0");
     testLayer(onnxNetwork, "/conv2/Conv_output_0");
