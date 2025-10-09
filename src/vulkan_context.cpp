@@ -751,6 +751,11 @@ void VulkanContext::stopRender() {
     for(uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
         vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);
     }
+
+    // make sure all activity has been finalized
+    // so that subsequent destroys on vulkan objects
+    // are successful
+    vkDeviceWaitIdle(device);
 }
 
 void VulkanContext::createCommandPool() {
