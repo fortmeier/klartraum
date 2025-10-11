@@ -81,12 +81,12 @@ TEST(OnnxNetworkTest, ExecuteWithValidDecoderModel) {
     core.add(onnxNetwork);
     core.step();
 
-    // testLayer(onnxNetwork, "/deconv1/ConvTranspose_output_0");
-    // testLayer(onnxNetwork, "/relu/Relu_output_0");
-    // testLayer(onnxNetwork, "/deconv2/ConvTranspose_output_0");
-    // testLayer(onnxNetwork, "/relu_1/Relu_output_0");
-    // testLayer(onnxNetwork, "/deconv3/ConvTranspose_output_0");
-    // testLayer(onnxNetwork, "output");
+    testLayer(onnxNetwork, "/deconv1/ConvTranspose_output_0");
+    testLayer(onnxNetwork, "/relu/Relu_output_0");
+    testLayer(onnxNetwork, "/deconv2/ConvTranspose_output_0");
+    testLayer(onnxNetwork, "/relu_1/Relu_output_0");
+    testLayer(onnxNetwork, "/deconv3/ConvTranspose_output_0");
+    testLayer(onnxNetwork, "output");
 
     return;
 }

@@ -151,7 +151,7 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
     parseAttributes<uint32_t>(node, "kernel_shape", pushConstants.kernel_shape);
     parseAttributes<uint32_t>(node, "pads", pushConstants.pads);
     parseAttributes<uint32_t>(node, "strides", pushConstants.strides);
-    parseAttributes<uint32_t>(node, "output_padding", pushConstants.output_padding);
+    //parseAttributes<uint32_t>(node, "output_padding", pushConstants.output_padding);
 
     // set dimension constants
     auto inputName = node.input(0);
@@ -172,8 +172,8 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
 
     // Calculate output dimensions for ConvTranspose
     // output_size = (input_size - 1) * stride - 2 * padding + kernel_size + output_padding
-    uint32_t output_height = (inputDim[2] - 1) * pushConstants.strides[0] - 2 * pushConstants.pads[0] + pushConstants.kernel_shape[0] + pushConstants.output_padding[0];
-    uint32_t output_width = (inputDim[3] - 1) * pushConstants.strides[1] - 2 * pushConstants.pads[1] + pushConstants.kernel_shape[1] + pushConstants.output_padding[1];
+    uint32_t output_height = (inputDim[2] - 1) * pushConstants.strides[0] - 2 * pushConstants.pads[0] + pushConstants.kernel_shape[0]; // + pushConstants.output_padding[0];
+    uint32_t output_width = (inputDim[3] - 1) * pushConstants.strides[1] - 2 * pushConstants.pads[1] + pushConstants.kernel_shape[1]; // + pushConstants.output_padding[1];
     
     pushConstants.dimOutput[0] = inputDim[0]; // batch size
     pushConstants.dimOutput[1] = weightDim[1]; // output channels from weights
@@ -184,6 +184,9 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
 
     auto operation = vulkanContext->create<GeneralComputation<ConvTransposePushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
+    operation->setGroupCountX(pushConstants.dimOutput[2] / 8); // assuming local size x = 8
+    operation->setGroupCountY(pushConstants.dimOutput[3] / 8); // assuming local size y = 8
+    operation->setGroupCountZ(pushConstants.dimOutput[1]);     // output channels
 
     return operation;
 }
