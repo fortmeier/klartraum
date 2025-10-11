@@ -46,7 +46,7 @@ struct ConvTransposePushConstants {
     uint32_t pads[8];
     uint32_t dilations[8];
     uint32_t groups[8];
-    uint32_t output_padding[8];
+    // uint32_t output_padding[8];
 };
 
 } // namespace klartraum
