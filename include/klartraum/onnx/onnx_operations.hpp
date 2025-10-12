@@ -48,6 +48,7 @@ void parseAttributes(const onnx::NodeProto& node, const std::string& attrName, T
             }
         }
     }
+    throw std::runtime_error("Attribute " + attrName + " not found in node " + node.name());
 }
 
 // Helper function to extract tensor dimensions from ONNX ValueInfoProto or initializer
