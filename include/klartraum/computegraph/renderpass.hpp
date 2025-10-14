@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.h>
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/rendergraphelement.hpp"
+#include "klartraum/draw_component.hpp"
 
 namespace klartraum {
 

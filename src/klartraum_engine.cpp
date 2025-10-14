@@ -21,7 +21,7 @@ KlartraumEngine::~KlartraumEngine() {
 void KlartraumEngine::step() {
 
     // start frame rendering
-    auto [imageIndex, semaphore] = vulkanContext.beginRender();
+    auto [imageIndex, fence] = vulkanContext.beginRender();
 
     // process event queue,
     // this currently only updates the camera
@@ -40,8 +40,14 @@ void KlartraumEngine::step() {
     auto& graphicsQueue = vulkanContext.getGraphicsQueue();
 
     VkSemaphore renderFinishedSemaphore;
-    for (auto& computeGraph : computeGraphs) {
-        renderFinishedSemaphore = computeGraph->submitTo(graphicsQueue, imageIndex);
+
+    for(auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
+        if (it == computeGraphs.end() - 1) {
+            renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
+        }
+        else {
+            (*it)->submitTo(graphicsQueue, imageIndex);
+        }
     }
 
     // finish frame rendering
