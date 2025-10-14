@@ -85,18 +85,21 @@ Currently, Klartraum can only be build on Windows with Visual Studio 2022 on the
 
 ```bash
 git clone https://github.com/fortmeier/klartraum.git
+cd klartraum
 git submodule update --init --recursive
 
 mkdir build
 cd build
 
 cmake ..
-cmake --build . --target gaussian_splatting_example
+cmake --build .
 
 cd ..
 # on Windows
 .\build\examples\Debug\gaussian_splatting_example.exe
+.\build\Debug\klartraum_tests.exe
 
+    
 # on Linux
 # t.b.d.
 ```
