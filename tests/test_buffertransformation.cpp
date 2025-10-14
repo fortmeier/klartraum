@@ -138,6 +138,8 @@ TEST(BufferTransformation, create_with_ubo_multiple_paths) {
    computegraph.compileFrom(transform);
    
    bufferElement->getBuffer(0).memcopyFrom(data);
+   bufferElement->getBuffer(1).memcopyFrom(data);
+   bufferElement->getBuffer(2).memcopyFrom(data);
    /*
    STEP 3: submit the computegraph and compare the output
    */
