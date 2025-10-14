@@ -8,6 +8,8 @@
 #include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 #include "klartraum/computegraph/bufferelement.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+#include "klartraum/computegraph/tensorelement.hpp"
 
 namespace klartraum {
 
@@ -160,9 +162,10 @@ public:
         BufferElementInterface* bufferSrc = std::dynamic_pointer_cast<BufferElementInterface>(input).get();
         ImageViewSrc* imageSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
         UniformBufferObjectInterface* uboSrc = std::dynamic_pointer_cast<UniformBufferObjectInterface>(input).get();
+        TensorElementInterface* tensorSrc = std::dynamic_pointer_cast<TensorElementInterface>(input).get();
 
-        if (bufferSrc == nullptr && imageSrc == nullptr && uboSrc == nullptr) {
-            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc or UniformBufferObject!");
+        if (bufferSrc == nullptr && imageSrc == nullptr && uboSrc == nullptr && tensorSrc == nullptr) {
+            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc or UniformBufferObject or TensorElementInterface!");
         }
     }
 
