@@ -40,8 +40,14 @@ void KlartraumEngine::step() {
     auto& graphicsQueue = vulkanContext.getGraphicsQueue();
 
     VkSemaphore renderFinishedSemaphore;
-    for(auto &computeGraph : computeGraphs) {
-        renderFinishedSemaphore = computeGraph.submitTo(graphicsQueue, imageIndex, fence);
+
+    for(auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
+        if (it == computeGraphs.end() - 1) {
+            renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
+        }
+        else {
+            (*it)->submitTo(graphicsQueue, imageIndex);
+        }
     }
 
     // finish frame rendering
@@ -68,9 +74,9 @@ VulkanContext& KlartraumEngine::getVulkanContext()
 
 void KlartraumEngine::add(ComputeGraphElementPtr element)
 {
-    computeGraphs.emplace_back(vulkanContext, 3);
+    computeGraphs.emplace_back(std::make_unique<ComputeGraph>(vulkanContext, 3));
     auto& computeGraph = computeGraphs.back();
-    computeGraph.compileFrom(element);
+    computeGraph->compileFrom(element);
 }
 
 RenderPassPtr KlartraumEngine::createRenderPass()

@@ -164,8 +164,8 @@ public:
 
     template<typename PushConstantType = P>
     typename std::enable_if<!std::is_void<PushConstantType>::value, void>::type
-    dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, const PushConstantType& pushConstant) {
-        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstantType), &pushConstant);
+    dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, const PushConstantType* pushConstant) {
+        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstantType), pushConstant);
         if (dynamicGroupDispatchParams == nullptr)
         {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
@@ -209,7 +209,7 @@ public:
                 recordScratchToZero(commandBuffer, pathId);
                 for(VkPipeline computePipeline : computePipelines) {
                     bind(commandBuffer, pathId, computePipeline);
-                    dispatch(commandBuffer, pathId, computePipeline, pushConstant);
+                    dispatch(commandBuffer, pathId, computePipeline, &pushConstant);
                 }
             }
         }
