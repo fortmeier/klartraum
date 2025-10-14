@@ -37,7 +37,6 @@ public:
 
     // maybe order of arguments should be changed to index, input, slot
     // or index should be a template parameter
-    [[deprecated("Consider using template version setInput<index>(input, slot) for better type safety and clarity")]]
     void setInput(ComputeGraphElementPtr input, int index = 0, int slot = -1) {
         if(slot == -1) {
             checkInput(input, index);
@@ -73,11 +72,16 @@ public:
     ComputeGraphElementPtr getInputElement(int index = 0) {
         // if a slot is set, we need to get the element from
         // the inputs of the input element
-        if (srcOutputSlots[index] != -1) {
-            return inputs[index]->getInputElement(srcOutputSlots[index]);
+        if (srcOutputSlots.at(index) != -1) {
+            return inputs.at(index)->getInputElement(srcOutputSlots.at(index));
         }
         // otherwise we can just return the input at the index
         return inputs[index];
+    }
+
+    template<typename T>
+    std::shared_ptr<T> getInputElement(int index = 0) {
+        return std::dynamic_pointer_cast<T>(getInputElement(index));
     }
 
 

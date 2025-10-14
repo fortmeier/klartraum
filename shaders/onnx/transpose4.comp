@@ -1,0 +1,71 @@
+// WARNING: This file contains AI-generated code
+// This compute shader was automatically generated and may require
+// manual review and optimization for production use.
+
+#version 450
+
+#extension GL_EXT_debug_printf : enable
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+#extension GL_EXT_debug_printf : enable
+
+#include "transpose_include.glsl"
+
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
+    float input_data[];
+};
+
+layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer {
+    float output_data[];
+};
+
+// Helper function to convert multi-dimensional index to linear index
+uint to_linear_index(uint b, uint d, uint h, uint w, uint batch_size, uint depth_size, uint height_size, uint width_size) {
+    return b * (depth_size * height_size * width_size) +
+           d * (height_size * width_size) +
+           h * width_size +
+           w;
+}
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint z = gl_GlobalInvocationID.z;
+    
+    uint input_batch = dimInput[0];
+    uint input_channels = dimInput[1];
+    uint input_height = dimInput[2];
+    uint input_width = dimInput[3];
+
+    uint output_batch = dimOutput[0];
+    uint output_channels = dimOutput[1];
+    uint output_height = dimOutput[2];
+    uint output_width = dimOutput[3];
+
+    if (x >= output_width || y >= output_height || z >= output_channels) {
+        return;
+    }
+
+    for (uint b = 0; b < output_batch; ++b) {
+        ivec4 X = ivec4(b, z, y, x);
+        ivec4 Q;
+        Q[dimPerm[0]] = X[0];
+        Q[dimPerm[1]] = X[1];
+        Q[dimPerm[2]] = X[2];
+        Q[dimPerm[3]] = X[3];
+
+        uint input_idx = to_linear_index(Q[0], Q[1], Q[2], Q[3], dimInput[0], dimInput[1], dimInput[2], dimInput[3]);
+
+        // Apply permutation - for now, assume simple height/width transpose
+        // In a complete implementation, you would use dimPerm to determine the mapping
+        uint output_idx = to_linear_index(X[0], X[1], X[2], X[3], dimOutput[0], dimOutput[1], dimOutput[2], dimOutput[3]);
+
+        // Calculate output tensor size based on transposed dimensions
+        uint total_output_elements = dimOutput[0] * dimOutput[1] * dimOutput[2] * dimOutput[3];
+
+        if (output_idx < total_output_elements) {
+            output_data[output_idx] = input_data[input_idx];
+        }
+    }
+}

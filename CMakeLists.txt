@@ -79,33 +79,6 @@ set(SPZ_SRC
   3rdparty/spz/src/cc/splat-types.cc
 )
 
-set(KLARTRAUM_LIB_SRC 
-  src/glfw_frontend.cpp
-  src/vulkan_gaussian_splatting.cpp
-  src/vulkan_helpers.cpp
-  src/vulkan_context.cpp
-  src/klartraum_engine.cpp
-  src/interface_camera_orbit.cpp
-  src/draw_basics.cpp
-  ${SPZ_SRC}
-  )
-
-# Create Klartraum library
-add_library(klartraum_lib STATIC ${KLARTRAUM_LIB_SRC})
-
-set(LIBRARIES 
-    ${Vulkan_LIBRARIES}
-    glfw
-    zlibstatic
-    glm::glm
-)
-
-if(APPLE)
-  list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
-endif()
-
-target_link_libraries(klartraum_lib ${LIBRARIES})
-
 # Add examples
 add_subdirectory(examples)
 
@@ -135,17 +108,77 @@ add_custom_target(
   DEPENDS ${SPIRV_BINARY_FILES} ${GLSL_SOURCE_FILES}
 )
 
-add_dependencies(klartraum_lib Shaders)
-
+# Add dependencies using FetchContent
+include(FetchContent)
 
 # Add GLM (OpenGL Mathematics) - header-only library
-include(FetchContent)
 FetchContent_Declare(
   glm
   GIT_REPOSITORY https://github.com/g-truc/glm.git
   GIT_TAG 1.0.1
 )
 FetchContent_MakeAvailable(glm)
+
+# Add Protobuf for ONNX support
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  protobuf
+  GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
+  GIT_TAG v25.1
+  SOURCE_SUBDIR cmake
+)
+FetchContent_MakeAvailable(protobuf)
+
+# Build protobuf after making it available
+
+add_subdirectory(${protobuf_SOURCE_DIR} ${protobuf_BINARY_DIR})
+
+# find protoc
+find_program(protobuf_PROTOC_EXE 
+    NAMES protoc protoc.exe
+    PATHS build/_deps/protobuf-build/Debug
+)
+
+# ONNX Protobuf Generation
+set(ONNX_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/onnx/onnx")
+set(ONNX_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# Create generated directory
+file(MAKE_DIRECTORY ${ONNX_GENERATED_DIR})
+
+# Copy ONNX proto files to project (you'll need to copy them manually first)
+# Expected files: onnx.proto, onnx-data.proto, onnx-operators.proto
+set(ONNX_PROTO_FILES
+    "${ONNX_PROTO_DIR}/onnx.proto"
+)
+
+# Generate C++ files from proto files
+set(ONNX_GENERATED_SOURCES)
+foreach(proto_file ${ONNX_PROTO_FILES})
+    get_filename_component(proto_name ${proto_file} NAME_WE)
+    set(generated_cpp "${ONNX_GENERATED_DIR}/${proto_name}.pb.cc")
+    set(generated_h "${ONNX_GENERATED_DIR}/${proto_name}.pb.h")
+    
+    add_custom_command(
+        OUTPUT ${generated_cpp} ${generated_h}
+        COMMAND ${protobuf_PROTOC_EXE} --cpp_out=${ONNX_GENERATED_DIR} --proto_path=${ONNX_PROTO_DIR} ${proto_file}
+        DEPENDS ${proto_file}
+        COMMENT "Generating C++ code from ${proto_file}"
+    )
+    
+    list(APPEND ONNX_GENERATED_SOURCES ${generated_cpp} ${generated_h})
+endforeach()
+
+# Create ONNX library with generated sources
+add_library(onnx_proto STATIC ${ONNX_GENERATED_SOURCES})
+target_link_libraries(onnx_proto protobuf::libprotobuf)
+target_include_directories(onnx_proto PUBLIC ${ONNX_GENERATED_DIR})
+
+
 
 # Add Google Test
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -165,9 +198,50 @@ add_executable(
   tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
   tests/test_gaussian_splatting.cpp
+  tests/test_copybuffer.cpp
+  tests/test_tensorelement.cpp
+
+  tests/test_onnx_network.cpp
+  tests/test_onnx_conv.cpp
+  tests/test_onnx_conv_transpose.cpp
+  tests/test_onnx_relu.cpp
+  tests/test_onnx_transpose.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
+
+
+set(KLARTRAUM_LIB_SRC 
+  src/glfw_frontend.cpp
+  src/vulkan_gaussian_splatting.cpp
+  src/vulkan_helpers.cpp
+  src/vulkan_context.cpp
+  src/klartraum_engine.cpp
+  src/interface_camera_orbit.cpp
+  src/draw_basics.cpp
+  src/onnx_network.cpp
+  ${SPZ_SRC}
+  )
+
+# Create Klartraum library
+add_library(klartraum_lib STATIC ${KLARTRAUM_LIB_SRC})
+
+set(LIBRARIES 
+    ${Vulkan_LIBRARIES}
+    glfw
+    zlibstatic
+    glm::glm
+    protobuf::libprotobuf
+    onnx_proto
+)
+
+if(APPLE)
+  list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
+endif()
+
+target_link_libraries(klartraum_lib ${LIBRARIES})
+
+add_dependencies(klartraum_lib Shaders onnx_proto)
 
 target_link_libraries(
   klartraum_tests
