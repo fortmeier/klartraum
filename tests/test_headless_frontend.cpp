@@ -4,7 +4,7 @@
 
 using namespace klartraum;
 
-TEST(OnnxNetworkTest, Smoketest) {
+TEST(HeadlessFrontend, Smoketest) {
     HeadlessFrontend frontend;
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();

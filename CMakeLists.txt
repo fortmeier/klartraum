@@ -215,6 +215,7 @@ add_dependencies(klartraum_tests Shaders)
 
 set(KLARTRAUM_LIB_SRC 
   src/glfw_frontend.cpp
+  src/headless_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp

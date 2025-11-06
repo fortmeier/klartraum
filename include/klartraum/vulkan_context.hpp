@@ -62,6 +62,7 @@ private:
     VkDebugUtilsMessengerEXT debugMessenger;
 
     std::vector<VkImage> swapChainImages;
+    std::vector<VkDeviceMemory> swapChainImageMemories;
 
     VkFormat swapChainImageFormat;
 
@@ -70,14 +71,7 @@ private:
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};
 
-    const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
-#ifdef __APPLE__
-        "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
-#endif
-    };
+    std::vector<const char*> deviceExtensions;
 
 #ifdef NDEBUG
     const bool enableValidationLayers = false;
@@ -115,6 +109,8 @@ private:
 
     void createSwapChain();
 
+    void createSwapImagesHeadless();
+
     void createImageViews();
 
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
@@ -135,6 +131,8 @@ public:
     ~VulkanContext();
 
     void initialize(VkSurfaceKHR& surface);
+    void initialize();
+
     void shutdown();
 
     template<typename T, typename... Args>
@@ -172,6 +170,8 @@ public:
     VkImageView& getImageView(uint32_t imageIndex);
 
     VkImage& getSwapChainImage(uint32_t imageIndex);
+
+    uint32_t getNumberOfSwapChainImages() const;
 
     VkExtent2D& getSwapChainExtent();
 
