@@ -6,7 +6,7 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/copybuffer.hpp"
-#include "klartraum/glfw_frontend.hpp"
+#include "klartraum/headless_frontend.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 
@@ -15,11 +15,11 @@ using namespace klartraum;
 class CopyBufferTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        frontend = std::make_unique<GlfwFrontend>();
+        frontend = std::make_unique<HeadlessFrontend>();
         vulkanContext = &frontend->getKlartraumEngine().getVulkanContext();
     }
 
-    std::unique_ptr<GlfwFrontend> frontend;
+    std::unique_ptr<HeadlessFrontend> frontend;
     VulkanContext* vulkanContext;
 };
 

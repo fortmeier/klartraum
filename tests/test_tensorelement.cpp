@@ -1,18 +1,18 @@
 #include <gtest/gtest.h>
 
 #include "klartraum/computegraph/tensorelement.hpp"
-#include "klartraum/glfw_frontend.hpp"
+#include "klartraum/headless_frontend.hpp"
 
 using namespace klartraum;
 
 class TensorElementTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        frontend = std::make_unique<GlfwFrontend>();
+        frontend = std::make_unique<HeadlessFrontend>();
         vulkanContext = &frontend->getKlartraumEngine().getVulkanContext();
     }
 
-    std::unique_ptr<GlfwFrontend> frontend;
+    std::unique_ptr<HeadlessFrontend> frontend;
     VulkanContext* vulkanContext;
 };
 
