@@ -4,7 +4,7 @@
 
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
-#include "klartraum/glfw_frontend.hpp"
+#include "klartraum/headless_frontend.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/onnx/onnx_push_constants.hpp"
 using namespace klartraum;
@@ -12,10 +12,10 @@ using namespace klartraum;
 class OnnxTransposeTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        frontend = std::make_unique<GlfwFrontend>();
+        frontend = std::make_unique<HeadlessFrontend>();
         vulkanContext = &frontend->getKlartraumEngine().getVulkanContext();
     }
-    std::unique_ptr<GlfwFrontend> frontend;
+    std::unique_ptr<HeadlessFrontend> frontend;
     VulkanContext* vulkanContext;
 };
 
