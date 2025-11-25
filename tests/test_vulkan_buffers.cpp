@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
-#include "klartraum/glfw_frontend.hpp"
+#include "klartraum/headless_frontend.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 
 
 TEST(VulkanBuffer, memcopy) {
-    klartraum::GlfwFrontend frontend;
+    klartraum::HeadlessFrontend frontend;
 
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();

@@ -3,7 +3,7 @@
 #include <map>
 #include <vector>
 
-#include "klartraum/glfw_frontend.hpp"
+#include "klartraum/headless_frontend.hpp"
 
 #include "klartraum/computegraph/computegraph.hpp"
 
@@ -18,7 +18,7 @@ using namespace klartraum;
 
 
 TEST(BufferTransformation, create) {
-    klartraum::GlfwFrontend frontend;
+    klartraum::HeadlessFrontend frontend;
 
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
@@ -60,7 +60,7 @@ TEST(BufferTransformation, create) {
 }
 
 TEST(BufferTransformation, create_with_ubo) {
-    klartraum::GlfwFrontend frontend;
+    klartraum::HeadlessFrontend frontend;
 
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
@@ -110,7 +110,7 @@ TEST(BufferTransformation, create_with_ubo) {
 }
 
 TEST(BufferTransformation, create_with_ubo_multiple_paths) {
-    klartraum::GlfwFrontend frontend;
+    klartraum::HeadlessFrontend frontend;
 
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
