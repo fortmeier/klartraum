@@ -206,6 +206,8 @@ add_executable(
   tests/test_onnx_conv_transpose.cpp
   tests/test_onnx_relu.cpp
   tests/test_onnx_transpose.cpp
+
+  tests/test_headless_frontend.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -213,6 +215,7 @@ add_dependencies(klartraum_tests Shaders)
 
 set(KLARTRAUM_LIB_SRC 
   src/glfw_frontend.cpp
+  src/headless_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp

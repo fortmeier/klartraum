@@ -7,7 +7,7 @@
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/draw_basics.hpp"
-#include "klartraum/glfw_frontend.hpp"
+#include "klartraum/headless_frontend.hpp"
 
 using namespace klartraum;
 
@@ -60,7 +60,7 @@ class CopyOp : public ComputeGraphElement {
 };
 
 TEST(ComputeGraph, create) {
-    klartraum::GlfwFrontend frontend;
+    klartraum::HeadlessFrontend frontend;
 
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
@@ -73,7 +73,7 @@ TEST(ComputeGraph, create) {
     std::vector<VkImage> images;
     std::vector<VkSemaphore> imageAvailableSemaphores;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 2; i++) {
         imageViews.push_back(vulkanContext.getImageView(i));
         images.push_back(vulkanContext.getSwapChainImage(i));
         imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);
@@ -116,7 +116,7 @@ TEST(ComputeGraph, create) {
 }
 #if 0 
 TEST(ComputeGraph, trippleFramebuffer) {
-    klartraum::GlfwFrontend frontend;
+    klartraum::HeadlessFrontend frontend;
 
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
