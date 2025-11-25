@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include "klartraum/glfw_frontend.hpp"
+#include "klartraum/headless_frontend.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "onnx.pb.h"
@@ -33,7 +33,7 @@ void testLayer(std::shared_ptr<OnnxNetwork> onnxNetwork, std::string layerName)
 
 // Test execute functionality
 TEST(OnnxNetworkTest, ExecuteWithValidEncoderModel) {
-    GlfwFrontend frontend;
+    HeadlessFrontend frontend;
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
 
@@ -63,7 +63,7 @@ TEST(OnnxNetworkTest, ExecuteWithValidEncoderModel) {
 }
 
 TEST(OnnxNetworkTest, ExecuteWithValidDecoderModel) {
-    GlfwFrontend frontend;
+    HeadlessFrontend frontend;
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
 

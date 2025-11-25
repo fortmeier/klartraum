@@ -42,6 +42,8 @@ void KlartraumEngine::step() {
     VkSemaphore renderFinishedSemaphore;
 
     for(auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
+        // only the last computegraph submits the fence and returns the renderFinishedSemaphore
+        // should be done somewhat different
         if (it == computeGraphs.end() - 1) {
             renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
         }
@@ -74,7 +76,8 @@ VulkanContext& KlartraumEngine::getVulkanContext()
 
 void KlartraumEngine::add(ComputeGraphElementPtr element)
 {
-    computeGraphs.emplace_back(std::make_unique<ComputeGraph>(vulkanContext, 3));
+    uint32_t numberPaths = vulkanContext.getNumberOfSwapChainImages();
+    computeGraphs.emplace_back(std::make_unique<ComputeGraph>(vulkanContext, numberPaths));
     auto& computeGraph = computeGraphs.back();
     computeGraph->compileFrom(element);
 }
@@ -86,7 +89,7 @@ RenderPassPtr KlartraumEngine::createRenderPass()
     std::vector<VkExtent2D> imageExtents;
     std::vector<VkSemaphore> imageAvailableSemaphores;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < vulkanContext.getNumberOfSwapChainImages(); i++) {
         imageViews.push_back(vulkanContext.getImageView(i));
         images.push_back(vulkanContext.getSwapChainImage(i));
         imageExtents.push_back(vulkanContext.getSwapChainExtent());
@@ -95,9 +98,9 @@ RenderPassPtr KlartraumEngine::createRenderPass()
 
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images, imageExtents);
 
-    imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
-    imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
-    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);
+    for (int i = 0; i < vulkanContext.getNumberOfSwapChainImages(); i++) {
+        imageViewSrc->setWaitFor(i, imageAvailableSemaphores[i]);
+    }
 
     auto camera = std::make_shared<CameraUboType>();
 

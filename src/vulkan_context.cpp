@@ -208,10 +208,15 @@ QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDevice device) {
             indices.graphicsAndComputeFamily = i;
         }
 
-        VkBool32 presentSupport = false;
-        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+        bool noSurfaceNeeded = (surface == VK_NULL_HANDLE);
 
-        if (presentSupport) {
+        VkBool32 presentSupport = false;
+        if (!noSurfaceNeeded)
+        {
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+        }
+
+        if (presentSupport || noSurfaceNeeded) {
             indices.presentFamily = i;
         }
 
@@ -230,10 +235,17 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device) {
 
     bool extensionsSupported = checkDeviceExtensionSupport(device);
 
+    bool swapChainNeeded = surface != VK_NULL_HANDLE;
+    
     bool swapChainAdequate = false;
-    if (extensionsSupported) {
-        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
-        swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+
+    if (swapChainNeeded) {
+        if (extensionsSupported) {
+            SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+            swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+        }
+    } else {
+        swapChainAdequate = true;
     }
 
     return indices.isComplete() && extensionsSupported && swapChainAdequate;
@@ -334,6 +346,53 @@ void VulkanContext::createSwapChain() {
     swapChainImageFormat = surfaceFormat.format;
     swapChainExtent = extent;
 
+}
+
+void VulkanContext::createSwapImagesHeadless() {
+
+    swapChainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+    swapChainExtent = { config.WIDTH, config.HEIGHT };
+
+    swapChainImages.resize(2);
+    swapChainImageMemories.resize(2);
+
+    VkImageCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    createInfo.imageType = VK_IMAGE_TYPE_2D;
+    createInfo.format = swapChainImageFormat;
+    createInfo.extent = { config.WIDTH, config.HEIGHT, 1 };
+    createInfo.mipLevels = 1;
+    createInfo.arrayLayers = 1;
+    createInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    createInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    createInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+
+    for(size_t i = 0; i < swapChainImages.size(); i++) {
+        if (vkCreateImage(device, &createInfo, nullptr, &swapChainImages[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create swap chain image!");
+        }
+        
+        // Allocate and bind memory for the image
+        VkMemoryRequirements memRequirements;
+        vkGetImageMemoryRequirements(device, swapChainImages[0], &memRequirements);
+        
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
+                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        VkDeviceMemory imageMemory;
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate image memory!");
+        }
+        
+        vkBindImageMemory(device, swapChainImages[i], imageMemory, 0);
+        
+        // Store the memory for cleanup - you'll need to add this member to the class
+        // TODO cleanup
+        swapChainImageMemories[i] = imageMemory;
+    }
 }
 
 void VulkanContext::createImageViews() {
@@ -467,9 +526,49 @@ void VulkanContext::initialize(VkSurfaceKHR& surface) {
 
     this->surface = surface;
 
+    deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
+#ifdef __APPLE__
+        "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
+#endif
+    };
+
+
     pickPhysicalDevice();
     createLogicalDevice();
     createSwapChain();
+
+    createImageViews();
+
+    createCommandPool();
+    createSyncObjects();
+
+    state = State::INITIALIZED;
+
+}
+
+void VulkanContext::initialize() {
+    if(state != State::UNINITIALIZED) {
+        throw std::runtime_error("VulkanContext already initialized!");
+    }
+
+    this->surface = VK_NULL_HANDLE;
+
+    deviceExtensions = {
+        VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
+#ifdef __APPLE__
+        "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
+#endif
+    };
+
+    pickPhysicalDevice();
+    createLogicalDevice();
+
+    createSwapImagesHeadless();
+
     createImageViews();
     
     createCommandPool();
@@ -498,7 +597,14 @@ void VulkanContext::shutdown() {
         vkDestroySemaphore(device, imageAvailableSemaphoresPerImage[i], nullptr);
     }
 
-    vkDestroySwapchainKHR(device, swapChain, nullptr);
+    if (surface != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device, swapChain, nullptr);
+    } else {
+        for(size_t i = 0; i < swapChainImages.size(); i++) {
+            vkDestroyImage(device, swapChainImages[i], nullptr);
+            vkFreeMemory(device, swapChainImageMemories[i], nullptr);
+        }
+    }
 
     for (size_t i = 0; i < swapChainImages.size(); i++) {
         vkDestroyImageView(device, swapChainImageViews[i], nullptr);
@@ -556,6 +662,10 @@ VkImage& VulkanContext::getSwapChainImage(uint32_t imageIndex)
         throw std::runtime_error("Invalid image index!");
     }
     return swapChainImages[imageIndex];
+}
+
+uint32_t VulkanContext::getNumberOfSwapChainImages() const {
+    return static_cast<uint32_t>(swapChainImages.size());
 }
 
 VkExtent2D& VulkanContext::getSwapChainExtent()
@@ -668,15 +778,28 @@ std::tuple<uint32_t, VkFence&> VulkanContext::beginRender() {
     }
 
     uint32_t imageIndex;
-    VkResult acquireResult = vkAcquireNextImageKHR(device, swapChain, one_second, imageAvailableSemaphoresPerFrame[currentFrame], VK_NULL_HANDLE, &imageIndex);
-    if (acquireResult != VK_SUCCESS) {
-        throw std::runtime_error("failed to acquire swap chain image!");
-    }
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &imageAvailableSemaphoresPerFrame[currentFrame];
+        
+    if(surface != VK_NULL_HANDLE) {
+        VkResult acquireResult = vkAcquireNextImageKHR(device, swapChain, one_second, imageAvailableSemaphoresPerFrame[currentFrame], VK_NULL_HANDLE, &imageIndex);
+        if (acquireResult != VK_SUCCESS) {
+            throw std::runtime_error("failed to acquire swap chain image!");
+        }
+
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &imageAvailableSemaphoresPerFrame[currentFrame];
+
+    } else {
+        // headless mode - just cycle through images
+        imageIndex = currentFrame % swapChainImages.size();
+
+        submitInfo.waitSemaphoreCount = 0;
+
+    }
+
+
     static VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.signalSemaphoreCount = 1;
@@ -693,23 +816,42 @@ std::tuple<uint32_t, VkFence&> VulkanContext::beginRender() {
 }
 
 void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
+    if(surface != VK_NULL_HANDLE) {
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
+        
+        VkSwapchainKHR swapChains[] = {swapChain};
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = swapChains;
+        presentInfo.pImageIndices = &imageIndex;
+        
+        presentInfo.pResults = nullptr; // Optional
+        
+        VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
+        if (presentResult != VK_SUCCESS) {
+            throw std::runtime_error("failed to present swap chain image!");
+        }
+    } else {
+        // In headless mode, just wait for render to finish
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &renderFinishedSemaphore;
 
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        static VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+        submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.signalSemaphoreCount = 0;
+        submitInfo.pSignalSemaphores = nullptr;
+        submitInfo.commandBufferCount = 0;
+        submitInfo.pCommandBuffers = nullptr;
 
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
-
-    VkSwapchainKHR swapChains[] = {swapChain};
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = swapChains;
-    presentInfo.pImageIndices = &imageIndex;
-
-    presentInfo.pResults = nullptr; // Optional
-
-    VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
-    if (presentResult != VK_SUCCESS) {
-        throw std::runtime_error("failed to present swap chain image!");
+        VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        if (submitResult != VK_SUCCESS) {
+            throw std::runtime_error("headless render finished submit failed!");
+        }
     }
 
     currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;
