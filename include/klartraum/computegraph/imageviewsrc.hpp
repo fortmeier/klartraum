@@ -10,7 +10,18 @@
 
 namespace klartraum {
 
-class ImageViewSrc : public virtual ComputeGraphElement {
+class ImageViewSrcInterface : public virtual ComputeGraphElement {
+public:
+    virtual const char* getType() const {
+        return "ImageViewSrcInterface";
+    }
+
+    virtual VkImageView& getImageView(uint32_t pathId) = 0;
+    virtual VkImage& getImage(uint32_t pathId) = 0;
+    virtual VkExtent2D& getImageExtent(uint32_t pathId) = 0;
+};
+
+class ImageViewSrc : public virtual ImageViewSrcInterface {
 public:
     ImageViewSrc() {};
 
@@ -88,6 +99,75 @@ public:
 
     std::vector<VkImage> images;
     
+};
+
+/**
+ * @brief A compute graph element that performs image layout transitions for Vulkan images.
+ * 
+ * This class handles the transition of image layouts using VkImageMemoryBarrier.
+ * It's designed to work with ImageViewSrc elements in a compute graph and
+ * records the necessary commands to transition an image from one layout to another.
+ * 
+ * Default transition is from VK_IMAGE_LAYOUT_GENERAL to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR.
+ */
+class ImageViewSrcTransition : public ComputeGraphElement {
+    
+public:
+
+    ImageViewSrcTransition(VkImageLayout oldLayout, VkImageLayout newLayout) 
+        : oldLayout(oldLayout), newLayout(newLayout) {}
+
+    // create also default constructor
+    ImageViewSrcTransition() = default;
+
+    virtual const char* getType() const {
+        return "ImageViewSrcTransition";
+    }
+
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
+        ImageViewSrcInterface* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrcInterface>(input).get();
+        if (index == 0 && imageViewSrc == nullptr) {
+            throw std::runtime_error("input is not an ImageViewSrcInterface!");
+        }
+    }
+
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
+        if (imageViewSrc == nullptr) {
+            throw std::runtime_error("input is not an ImageViewSrc!");
+        }
+        VkImage image = imageViewSrc->getImage(pathId);
+
+        VkImageMemoryBarrier barrierBack = {};
+        barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrierBack.oldLayout = oldLayout;
+        barrierBack.newLayout = newLayout;
+        barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrierBack.image = image;
+        barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrierBack.subresourceRange.baseMipLevel = 0;
+        barrierBack.subresourceRange.levelCount = 1;
+        barrierBack.subresourceRange.baseArrayLayer = 0;
+        barrierBack.subresourceRange.layerCount = 1;
+
+        barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrierBack);
+    };
+
+private:
+    VkImageLayout oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkImageLayout newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
 };
 
 }
