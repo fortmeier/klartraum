@@ -140,7 +140,7 @@ add_subdirectory(${protobuf_SOURCE_DIR} ${protobuf_BINARY_DIR})
 # find protoc
 find_program(protobuf_PROTOC_EXE 
     NAMES protoc protoc.exe
-    PATHS build/_deps/protobuf-build/Debug
+    PATHS "${CMAKE_CURRENT_SOURCE_DIR}/build/_deps/protobuf-build/Debug"
 )
 
 # ONNX Protobuf Generation
