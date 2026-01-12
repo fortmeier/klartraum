@@ -15,6 +15,10 @@ public:
     VulkanBuffer(VulkanContext& kernel, uint32_t size, VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : vulkanContext(kernel), size(size) {
         auto& device = kernel.getDevice();
 
+        if (size == 0) {
+            throw std::invalid_argument("Buffer size must be greater than 0");
+        }
+
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.size = sizeof(T) * size;
@@ -67,7 +71,7 @@ public:
         auto& device = vulkanContext.getDevice();
         void* mappedData;
         vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
-        size_t dataSize = sizeof(T) * std::min(count, size);
+        size_t dataSize = sizeof(T) * std::min((uint32_t)count, size);
         memcpy(mappedData, src, dataSize);
         vkUnmapMemory(device, vertexBufferMemory);
     }

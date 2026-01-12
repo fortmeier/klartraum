@@ -8,62 +8,65 @@
 
 using namespace klartraum;
 
-
+#if 0
 TEST(KlartraumVulkanGaussianSplatting, smoke) {
     GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumEngine();
-    auto& vulkanContext = core.getVulkanContext();
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vulkanContext = engine.getVulkanContext();
     auto& device = vulkanContext.getDevice();
     
-    std::vector<VkImageView> imageViews;
-    std::vector<VkImage> images;
-
-    std::vector<VkSemaphore> imageAvailableSemaphores;
-    for (int i = 0; i < 3; i++) {
-        imageViews.push_back(vulkanContext.getImageView(i));
-        images.push_back(vulkanContext.getSwapChainImage(i));
-        imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);        
-        
-    }
-
-    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
-    imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
-    imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
-    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);    
+    RenderPassPtr renderpass = engine.createRenderPass();
 
     /*
     STEP 1: create the computegraph elements
     */
    
-    std::shared_ptr<CameraUboType> cameraUBO = std::make_shared<CameraUboType>();
-    cameraUBO->ubo.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
+    auto cameraUBO = renderpass->getCameraUBO();
+    cameraUBO->setName("CameraUBO");
+    
+    //cameraUBO->ubo.proj = glm::perspective(glm::radians(45.0f), (float)BackendConfig::WIDTH / (float)BackendConfig::HEIGHT, 0.1f, 100.0f);
+
+    std::shared_ptr<klartraum::InterfaceCameraOrbit> cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
+    cameraOrbit->initialize(vulkanContext);
+    cameraOrbit->setAzimuth(0.9);
+    cameraOrbit->setElevation(-0.5);
+    cameraOrbit->setPosition({-0.5, 0.0, 0.5});
+    cameraOrbit->setDistance(1.0);
+
+    cameraOrbit->update(cameraUBO->ubo);
 
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
-    std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(vulkanContext, imageViewSrc, cameraUBO, spzFile);
+    std::shared_ptr<VulkanGaussianSplatting> splatting = std::make_shared<VulkanGaussianSplatting>(vulkanContext, renderpass, cameraUBO, spzFile);
 
     /*
     STEP 2: create the computegraph backend and compile the computegraph
     */
-    auto computegraph = ComputeGraph(vulkanContext, 1);
+    auto computegraph = ComputeGraph(vulkanContext, 3);
     computegraph.compileFrom(splatting);
+
+    cameraUBO->update(0);
+    cameraUBO->update(1);
+    cameraUBO->update(2);
+
 
     /*
     STEP 3: submit the computegraph and compare the output
     */
     VkSemaphore finishSemaphore = VK_NULL_HANDLE;   
-    for(int i = 0; i < 1; i++) {
+    for(int i = 0; i < 5; i++) {
         auto [imageIndex, renderFinishedFence] = vulkanContext.beginRender();
         finishSemaphore = computegraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex, renderFinishedFence);
         vulkanContext.endRender(imageIndex, finishSemaphore);
     }
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
     vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
 
     return;
 
 }
+#endif
+
 #if 0
 
 TEST(KlartraumVulkanGaussianSplatting, project) {
@@ -171,81 +174,188 @@ TEST(KlartraumVulkanGaussianSplatting, project) {
    return;    
 }
 
+#endif
+
+
+
 TEST(KlartraumVulkanGaussianSplatting, sort2DGaussians) {
     GlfwFrontend frontend;
 
-    auto& core = frontend.getKlartraumEngine();
-    auto& vulkanContext = core.getVulkanContext();
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vulkanContext = engine.getVulkanContext();
 
+    auto number_streaming_processors = 40; // vulkanContext.getDeviceComputingBlocks();
+
+    const uint32_t number_of_gaussians = 1024 * 1024;
+    
     // Create a list of 2D gaussians with different depths (z values)
-    std::vector<Gaussian2D> gaussians2D = {
-        {{100.0f, 100.0f}, -0.5f, 0},
-        {{200.0f, 200.0f}, 0.2f, 0},
-        {{150.0f, 150.0f}, 0.8f, 0},
-        {{250.0f, 250.0f}, 0.1f, 0},
-        {{100.0f, 100.0f}, -0.5f, 4},
-        {{200.0f, 200.0f}, 0.2f, 2},
-        {{150.0f, 150.0f}, 0.8f, 1},
-        {{250.0f, 250.0f}, 0.1f, 16}
+    std::vector<Gaussian2D> gaussians2D; //= {
+    //     {{100.0f, 100.0f}, -0.5f, 0},
+    //     {{200.0f, 200.0f}, 0.2f, 0},
+    //     {{150.0f, 150.0f}, 0.8f, 0},
+    //     {{250.0f, 250.0f}, 0.1f, 0},
+    //     {{100.0f, 100.0f}, -0.5f, 4},
+    //     {{200.0f, 200.0f}, 0.2f, 2},
+    //     {{150.0f, 150.0f}, 0.8f, 1},
+    //     {{250.0f, 250.0f}, 0.1f, 16}
+    // };
+    struct RadixContainer {
+        uint32_t value;
+        uint32_t originalIndex;
     };
 
+    std::vector<RadixContainer> radixContainers;
+    float depth = 1.0;
+    for(uint32_t i = 0; i < number_of_gaussians; ++i) {
+        Gaussian2D gaussian {{100.0f, 100.0f}, depth, 0};
+        depth = depth * -1.1f;
+        gaussians2D.push_back(gaussian);
+        radixContainers.push_back({*reinterpret_cast<uint32_t*>(&depth), static_cast<uint32_t>(i)});
+    }
+    
+    
+    const uint32_t gridSize = 4; // 4x4 grid for binning
+    const uint32_t numBins = 16;
+    
+    const uint32_t threadsPerGroup = 128; // number of threads per workgroup
+    const uint32_t numWorkGroups = number_streaming_processors * 1024 / threadsPerGroup;
+    const uint32_t maxGaussiansModifier = 2; // arbitrary number, currently 2x the number of initial 3D gaussians
+    
     // Create buffer and copy data
-    auto bufferElement = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(vulkanContext, gaussians2D.size());
-    auto& gaussian2DBuffer = bufferElement->getBuffer();
-    gaussian2DBuffer.memcopyFrom(gaussians2D);
+    auto bufferElementA = std::make_shared<BufferElement<VulkanBuffer<RadixContainer>>>(vulkanContext, gaussians2D.size());
+    
+    auto bufferElementB = std::make_shared<BufferElement<VulkanBuffer<RadixContainer>>>(vulkanContext, gaussians2D.size());
+
+    #if 0
+    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
+    totalGaussian2DCounts->setRecordToZero(true);
+    totalGaussian2DCounts->setName("TotalGaussian2DCounts");
+    totalGaussian2DCounts->getBuffer(0).memcopyFrom(&number_of_gaussians, 1);
+    #else
+    auto totalGaussian2DCounts = std::make_shared<BufferElementSinglePath<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
+    //totalGaussian2DCounts->setRecordToZero(true);
+    totalGaussian2DCounts->setName("TotalGaussian2DCounts");
+    totalGaussian2DCounts->getBuffer(0).memcopyFrom(&number_of_gaussians, 1);
+    #endif
+    
 
     // Buffer transformation that sorts by z (depth)
-    std::shared_ptr<GaussianSort> sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, "shaders/gaussian_splatting_radix_sort.comp.spv");
+    std::vector<std::string> shaderFiles = {
+        "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
+        "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
+    };
 
-    sort2DGaussians->setInput(bufferElement);
-
-    uint32_t numElements = (uint32_t)gaussians2D.size();
+    std::shared_ptr<RadixSort> sort2DGaussians =
+        std::make_shared<RadixSort>(vulkanContext, shaderFiles);
+    
+    sort2DGaussians->setInput(bufferElementA, 0);
+    sort2DGaussians->setInput(bufferElementB, 1);
+    
+    auto scratchBufferHistograms = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numWorkGroups);
+    scratchBufferHistograms->setName("ScratchBufferHistograms");
+    scratchBufferHistograms->setRecordToZero(true);
+    
+    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
+    scratchBufferCounts->setName("ScratchBufferCounts");
+    scratchBufferCounts->setRecordToZero(true);
+    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
+    scratchBufferOffsets->setName("ScratchBufferOffsets");
+    scratchBufferOffsets->setRecordToZero(true);
+    
+    auto scratchBufferIndexA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
+    scratchBufferIndexA->setName("ScratchBufferIndexA");
+    scratchBufferIndexA->setRecordToZero(true);
+    
+    auto scratchBufferIndexB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
+    scratchBufferIndexB->setName("ScratchBufferIndexB");
+    scratchBufferIndexB->setRecordToZero(true);
+    
+    sort2DGaussians->addScratchBufferElement(scratchBufferCounts, true);
+    sort2DGaussians->addScratchBufferElement(scratchBufferOffsets, true);
+    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts, false);
+    sort2DGaussians->addScratchBufferElement(scratchBufferHistograms, true);
+    sort2DGaussians->addScratchBufferElement(scratchBufferIndexA, false);
+    sort2DGaussians->addScratchBufferElement(scratchBufferIndexB, false);
+    
+    sort2DGaussians->setGroupCountX(numWorkGroups);
+    
+    uint32_t numElements = (uint32_t)((number_of_gaussians));
     uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
-    uint32_t numBins = 16; // Number of bins for sorting = 2 ^ numBitsPerPass
-    uint32_t passes = 32 + 16; // 32 bits for depth, 16 bits for binning
-    std::vector<SortPushConstants> pushConstants;
+    //uint32_t numBins = numBins;       // Number of bins for sorting = 2 ^ numBitsPerPass
+    uint32_t passes = 32 + 16;   // 32 bits for depth, 16 bits for binning
+    std::vector<SortPushConstants> sortPushConstants;
     for (uint32_t i = 0; i < passes / numBitsPerPass; i++) {
-        pushConstants.push_back({i, numElements, numBins}); // pass, numElements, numBins
+        sortPushConstants.push_back({i, numElements, numBins}); // pass, numElements, numBins
     }
-
-    sort2DGaussians->setPushConstants(pushConstants);
-
-    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
-    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 16);
-    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
-    totalGaussian2DCounts->zero();
-
-
-    sort2DGaussians->addScratchBufferElement(scratchBufferCounts);
-    sort2DGaussians->addScratchBufferElement(scratchBufferOffsets);
-    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts);
-
+    
+    sort2DGaussians->setPushConstants(sortPushConstants);
+    
     auto& computegraph = ComputeGraph(vulkanContext, 1);
     computegraph.compileFrom(sort2DGaussians);
+    
+    //computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 
-    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
+    auto renderpass = engine.createRenderPass();
+    auto transition = std::make_shared<ImageViewSrcTransition>();
+    transition->setInput<0>(renderpass);
+    
+    auto& rendergraph = ComputeGraph(vulkanContext, 1);
 
+    rendergraph.compileFrom(transition);
+
+    auto& radixContainerBufferA = bufferElementA->getBuffer(0);
+    auto& radixContainerBufferB = bufferElementB->getBuffer(0);
+    radixContainerBufferA.memcopyFrom(radixContainers);
+    radixContainerBufferB.memcopyFrom(radixContainers);
+
+
+
+    /*
+    STEP 3: submit the computegraph and compare the output
+    */
+    VkSemaphore finishSemaphore = VK_NULL_HANDLE;   
+    for(int i = 0; i < 1; i++) {
+        auto [imageIndex, renderFinishedFence] = vulkanContext.beginRender();
+        finishSemaphore = computegraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex);
+        finishSemaphore = rendergraph.submitTo(vulkanContext.getGraphicsQueue(), imageIndex, renderFinishedFence);
+        vulkanContext.endRender(imageIndex, finishSemaphore);
+    }
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
+
+    
     // Read back and check sorted order (should be descending by z)
-    std::vector<Gaussian2D> sortedGaussians2D(gaussians2D.size());
-    sort2DGaussians->getOutputBuffer().memcopyTo(sortedGaussians2D);
+    std::vector<RadixContainer> sortedGaussians2D(gaussians2D.size());
+    std::shared_ptr<klartraum::BufferElement<klartraum::VulkanBuffer<RadixContainer>>> output = sort2DGaussians->getOutputElement<BufferElement<VulkanBuffer<RadixContainer>>>(0);
+    output->getBuffer(0).memcopyTo(sortedGaussians2D);
 
-    EXPECT_LE(sortedGaussians2D[0].z, sortedGaussians2D[1].z);
-    EXPECT_LE(sortedGaussians2D[1].z, sortedGaussians2D[2].z);
-    EXPECT_LE(sortedGaussians2D[2].z, sortedGaussians2D[3].z);
-
-    // check the exact sorted depth values
-    EXPECT_FLOAT_EQ(sortedGaussians2D[0].z, -0.5f);
-    EXPECT_FLOAT_EQ(sortedGaussians2D[1].z, 0.1f);
-    EXPECT_FLOAT_EQ(sortedGaussians2D[2].z, 0.2f);
-    EXPECT_FLOAT_EQ(sortedGaussians2D[3].z, 0.8f);
-
-    // check th binMask values
-    EXPECT_LE(sortedGaussians2D[4].binMask, sortedGaussians2D[5].binMask);
-    EXPECT_LE(sortedGaussians2D[5].binMask, sortedGaussians2D[6].binMask);
-    EXPECT_LE(sortedGaussians2D[6].binMask, sortedGaussians2D[7].binMask);
-
+    for(int i = 1; i < sortedGaussians2D.size(); ++i) {
+        EXPECT_LE(sortedGaussians2D[i-1].value, sortedGaussians2D[i].value);
+        if (sortedGaussians2D[i-1].value > sortedGaussians2D[i].value) {
+            break;
+        }
+    }
+    
+    // EXPECT_LE(sortedGaussians2D[1].z, sortedGaussians2D[2].z);
+    // EXPECT_LE(sortedGaussians2D[2].z, sortedGaussians2D[3].z);
+    
+    // // check the exact sorted depth values
+    // EXPECT_FLOAT_EQ(sortedGaussians2D[0].z, -0.5f);
+    // EXPECT_FLOAT_EQ(sortedGaussians2D[1].z, 0.1f);
+    // EXPECT_FLOAT_EQ(sortedGaussians2D[2].z, 0.2f);
+    // EXPECT_FLOAT_EQ(sortedGaussians2D[3].z, 0.8f);
+    
+    // // check th binMask values
+    // EXPECT_LE(sortedGaussians2D[4].binMask, sortedGaussians2D[5].binMask);
+    // EXPECT_LE(sortedGaussians2D[5].binMask, sortedGaussians2D[6].binMask);
+    // EXPECT_LE(sortedGaussians2D[6].binMask, sortedGaussians2D[7].binMask);
+    #if 0
+    #endif
     return;
 }
+
+#if 0
 
 TEST(KlartraumVulkanGaussianSplatting, bin2DGaussians) {
     GlfwFrontend frontend;

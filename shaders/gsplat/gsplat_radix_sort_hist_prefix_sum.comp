@@ -26,7 +26,7 @@ void main() {
         return;
     }
 
-    uint totalNumberHistograms = inputBuffer2.numberTotalGaussians / 128 + 1;
+    uint totalNumberHistograms = gl_NumWorkGroups.x * 1024 / 128;
 
     uint oldValue = 0;
     for (uint idx = 0; idx < totalNumberHistograms; idx++) {

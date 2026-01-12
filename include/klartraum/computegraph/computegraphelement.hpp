@@ -84,6 +84,25 @@ public:
         return std::dynamic_pointer_cast<T>(getInputElement(index));
     }
 
+    /**
+     * @brief get the output with specified index
+     * 
+     * Generally simply returns the input at the given index.
+     * In the klartraum computegraph framework, each input is passed through the
+     * node, regardless of whether it is modified or not.
+     * 
+     * 
+     * @param index 
+     * @return ComputeGraphElementPtr 
+     */
+    ComputeGraphElementPtr getOutputElement(int index = 0) {
+        return inputs.at(index);
+    }
+
+    template<typename T>
+    std::shared_ptr<T> getOutputElement(int index = 0) {
+        return std::dynamic_pointer_cast<T>(getOutputElement(index));
+    }    
 
     void setWaitFor(uint32_t pathId, VkSemaphore semaphore) {
         renderWaitSemaphores[pathId] = semaphore;
