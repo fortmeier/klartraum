@@ -20,32 +20,38 @@ void main() {
     if (binIdx < 16) {
         sharedHistogram[binIdx] = 0;
     }
-
-    barrier();
+/*
+    barrier(); 
 
     uint idx = gl_GlobalInvocationID.x;
-    if (idx >= inputBuffer2.numberTotalGaussians) return;
+    while (idx < inputBuffer2.numberTotalGaussians) {
 
-    Gaussian2D gaussian = getInputGaussian(idx);
-    // get the value to sort (use z here)
-    uint value = floatBitsToUint(gaussian.z);
-    uint binMask = gaussian.binMask;
+        Gaussian2D gaussian = getInputGaussian(idx);
+        // get the value to sort (use z here)
+        uint value = floatBitsToUint(gaussian.z);
+        uint binMask = gaussian.binMask;
 
-    // get the bin of the current value for the current pass
-    uint bin = getBin(value, binMask, pushConstants.pass);
+        // get the bin of the current value for the current pass
+        uint bin = getBin(value, binMask, pushConstants.pass);
 
-    // count the occurrences of this bin
-    uint uadsd = atomicAdd(sharedHistogram[bin], 1);
-    //debugPrintfEXT("uadsd value: %u, bin value: %u\n", uadsd, bin);
+        // count the occurrences of this bin
+        uint uadsd = atomicAdd(sharedHistogram[bin], 1);
+        // debugPrintfEXT("uadsd value: %u, bin value: %u\n", uadsd, bin);
+
+        idx += gl_WorkGroupSize.x * gl_NumWorkGroups.x;
+    }
 
     barrier();
     memoryBarrier();
 
+    // since we walked through the array with idx,
+    // now reset it to the invocation id
+    idx = gl_GlobalInvocationID.x;
     // now we need to write the histogram to the global memory
     if (binIdx < 16) {
         uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;
         inputBuffer3.histogram[globalBinIdx] = sharedHistogram[binIdx];
 
     }
-
+*/
 }
