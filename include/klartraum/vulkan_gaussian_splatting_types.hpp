@@ -18,7 +18,9 @@ struct Gaussian2D {
     uint32_t binMask;
     glm::mat2 covariance;
     glm::vec3 color;
+    float alpha;
 };
+
 
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
 struct Gaussian3D {
@@ -60,6 +62,7 @@ struct SortPushConstants {
   uint32_t numBins;
 };
 typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
+typedef GeneralComputation<SortPushConstants> RadixSort;
 
 typedef GeneralComputation<ProjectionPushConstants> GaussianBinning;
 typedef GeneralComputation<ProjectionPushConstants> GaussianComputeBounds;

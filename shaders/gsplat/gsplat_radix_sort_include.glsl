@@ -5,11 +5,11 @@
 #extension GL_EXT_scalar_block_layout : enable
 
 layout(scalar, binding = 0) buffer BufferA {
-    Gaussian2D gaussiansA[];
+    RadixContainer radixContainerA[];
 };
 
 layout(scalar, binding = 2) buffer BufferB {
-    Gaussian2D gaussiansB[];
+    RadixContainer radixContainerB[];
 };
 
 layout(scalar, binding = 3) buffer CountBuffer {
@@ -28,13 +28,13 @@ layout(scalar, binding = 6) buffer InputBuffer3 {
     uint histogram[];
 } inputBuffer3;
 
-layout(scalar, binding = 7) buffer InputBufferIndexA {
-    uint inputBufferIndexA[];
-};
+// layout(scalar, binding = 7) buffer InputBufferIndexA {
+//     uint inputBufferIndexA[];
+// };
 
-layout(scalar, binding = 8) buffer InputBufferIndexB {
-    uint inputBufferIndexB[];
-};
+// layout(scalar, binding = 8) buffer InputBufferIndexB {
+//     uint inputBufferIndexB[];
+// };
 
 
 layout(push_constant) uniform PushConstants {
@@ -67,31 +67,31 @@ uint getBin(uint value, uint binMask, uint pass) {
 // or alternatively from index buffers
 // this way, the other shaders do not have to change
 
-Gaussian2D getInputGaussian(uint idx) {
-    if (pushConstants.pass == 0) {
-        inputBufferIndexA[idx] = idx;
-    }
+// Gaussian2D getInputGaussian(uint idx) {
+//     if (pushConstants.pass == 0) {
+//         inputBufferIndexA[idx] = idx;
+//     }
 
-    if (pushConstants.pass % 2 == 0) {
-        return gaussiansA[inputBufferIndexA[idx]];
-    } else {
-        return gaussiansA[inputBufferIndexB[idx]];
-    }
-}
+//     if (pushConstants.pass % 2 == 0) {
+//         return gaussiansA[inputBufferIndexA[idx]];
+//     } else {
+//         return gaussiansA[inputBufferIndexB[idx]];
+//     }
+// }
 
-void setOutputGaussian(uint idxNew, uint idxOld) {
-    if (pushConstants.pass % 2 == 0) {
-        inputBufferIndexB[idxNew] = inputBufferIndexA[idxOld];
-    } else {
-        inputBufferIndexA[idxNew] = inputBufferIndexB[idxOld];
-    }
+// void setOutputGaussian(uint idxNew, uint idxOld) {
+//     if (pushConstants.pass % 2 == 0) {
+//         inputBufferIndexB[idxNew] = inputBufferIndexA[idxOld];
+//     } else {
+//         inputBufferIndexA[idxNew] = inputBufferIndexB[idxOld];
+//     }
 
-    if (pushConstants.pass == 11) {
-        // for the last pass, we need to write the final output to the output buffer
-        // this is done by writing to the B buffer
-        // (one might expect to write again to the A buffer, since 11 % 2 == 1,
-        // but that would require to read and write from the same buffer in the last pass,
-        // which will give wrong results)
-        gaussiansB[idxNew] = gaussiansA[inputBufferIndexA[idxNew]];
-    }
-}
+//     if (pushConstants.pass == 11) {
+//         // for the last pass, we need to write the final output to the output buffer
+//         // this is done by writing to the B buffer
+//         // (one might expect to write again to the A buffer, since 11 % 2 == 1,
+//         // but that would require to read and write from the same buffer in the last pass,
+//         // which will give wrong results)
+//         gaussiansB[idxNew] = gaussiansA[inputBufferIndexA[idxNew]];
+//     }
+// }
