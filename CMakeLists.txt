@@ -197,6 +197,7 @@ add_executable(
   tests/test_vulkan_buffers.cpp
   tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
+  tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
   tests/test_tensorelement.cpp
