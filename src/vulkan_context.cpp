@@ -513,74 +513,101 @@ void VulkanContext::createLogicalDevice() {
 }
 
 
-VulkanContext::VulkanContext() {
-    createInstance();
-    setupDebugMessenger();
-    state = State::UNINITIALIZED;
-}
+// Constructor: trivial initialization
+// All Vulkan setup happens in explicit initialize() calls
+// This ensures noexcept guarantee and clear lifecycle separation
+// State: PRE_INITIALIZED
 
 void VulkanContext::initialize(VkSurfaceKHR& surface) {
-    if(state != State::UNINITIALIZED) {
-        throw std::runtime_error("VulkanContext already initialized!");
+    if(state != State::PRE_INITIALIZED) {
+        throw std::runtime_error("VulkanContext already initialized! State must be PRE_INITIALIZED");
     }
 
-    this->surface = surface;
+    try {
+        std::cout << "=== Phase 1: Creating Vulkan Instance ===" << std::endl;
+        createInstance();
+        setupDebugMessenger();
+        state = State::DEVICE_READY;
+        std::cout << "State -> DEVICE_READY" << std::endl;
 
-    deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
+        this->surface = surface;
+
+        deviceExtensions = {
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+            VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+            VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
 #ifdef __APPLE__
-        "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
+            "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
 #endif
-    };
+        };
 
+        std::cout << "=== Phase 2: Creating Device & Swapchain ===" << std::endl;
+        pickPhysicalDevice();
+        createLogicalDevice();
+        createSwapChain();
 
-    pickPhysicalDevice();
-    createLogicalDevice();
-    createSwapChain();
+        createImageViews();
 
-    createImageViews();
+        createCommandPool();
+        createSyncObjects();
 
-    createCommandPool();
-    createSyncObjects();
-
-    state = State::INITIALIZED;
-
+        state = State::SWAPCHAIN_READY;
+        std::cout << "State -> SWAPCHAIN_READY" << std::endl;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed during initialize: " << e.what() << std::endl;
+        state = State::PRE_INITIALIZED;  // Reset to allow retry
+        throw;
+    }
 }
 
 void VulkanContext::initialize() {
-    if(state != State::UNINITIALIZED) {
-        throw std::runtime_error("VulkanContext already initialized!");
+    if(state != State::PRE_INITIALIZED) {
+        throw std::runtime_error("VulkanContext already initialized! State must be PRE_INITIALIZED");
     }
 
-    this->surface = VK_NULL_HANDLE;
+    try {
+        std::cout << "=== Headless Mode: Creating Vulkan Instance ===" << std::endl;
+        createInstance();
+        setupDebugMessenger();
+        state = State::DEVICE_READY;
+        std::cout << "State -> DEVICE_READY" << std::endl;
 
-    deviceExtensions = {
-        VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
+        this->surface = VK_NULL_HANDLE;
+
+        deviceExtensions = {
+            VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+            VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
 #ifdef __APPLE__
-        "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
+            "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
 #endif
-    };
+        };
 
-    pickPhysicalDevice();
-    createLogicalDevice();
+        std::cout << "=== Headless Mode: Creating Device & Offscreen Images ===" << std::endl;
+        pickPhysicalDevice();
+        createLogicalDevice();
 
-    createSwapImagesHeadless();
+        createSwapImagesHeadless();
 
-    createImageViews();
-    
-    createCommandPool();
-    createSyncObjects();
+        createImageViews();
+        
+        createCommandPool();
+        createSyncObjects();
 
-    state = State::INITIALIZED;
-
+        state = State::SWAPCHAIN_READY;
+        std::cout << "State -> SWAPCHAIN_READY" << std::endl;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed during headless initialize: " << e.what() << std::endl;
+        state = State::PRE_INITIALIZED;  // Reset to allow retry
+        throw;
+    }
 }
 
 void VulkanContext::shutdown() {
-    if (state != State::INITIALIZED) {
-        throw std::runtime_error("VulkanContext not initialized!");
+    // Phase 1 analysis step 2: Only shutdown if in valid state
+    if (state != State::SWAPCHAIN_READY && state != State::DEVICE_READY) {
+        throw std::runtime_error("VulkanContext not in valid state for shutdown!");
     }
 
     stopRender();
@@ -615,15 +642,27 @@ void VulkanContext::shutdown() {
     if (enableValidationLayers) {
         DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
     }
+    
+    vkDestroyInstance(instance, nullptr);
     state = State::SHUTDOWN;
 }
 
 
 VulkanContext::~VulkanContext() {
+    // If not already shut down, attempt shutdown but don't throw
     if (state != State::SHUTDOWN) {
-        throw std::runtime_error("VulkanContext not shut down!");
+        try {
+            // Only call shutdown if we're in a state that allows it
+            if (state == State::SWAPCHAIN_READY || state == State::DEVICE_READY) {
+                shutdown();
+            }
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Warning: shutdown() threw exception in destructor: " << e.what() << std::endl;
+            // Continue and set state to SHUTDOWN anyway
+        }
+        state = State::SHUTDOWN;
     }
-    vkDestroyInstance(instance, nullptr);
 }
 
 QueueFamilyIndices VulkanContext::findQueueFamiliesPhysicalDevice() {
