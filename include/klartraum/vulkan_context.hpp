@@ -120,25 +120,34 @@ private:
     void createLogicalDevice();
 
     enum class State {
-        UNINITIALIZED,
-        INITIALIZED,
-        SHUTDOWN
-    } state = State::UNINITIALIZED;
+        PRE_INITIALIZED,  // Object created, no Vulkan work done
+        DEVICE_READY,     // Instance, device, queues initialized
+        SWAPCHAIN_READY,  // Swapchain/headless images, imageviews, sync objects ready
+        SHUTDOWN          // All resources cleaned up, object ready for destruction
+    } state = State::PRE_INITIALIZED;
 
 public:
-    VulkanContext();
+    // Explicit trivial constructor (no Vulkan work done here)
+    VulkanContext() noexcept = default;
 
     ~VulkanContext();
 
-    void initialize(VkSurfaceKHR& surface);
-    void initialize();
+    // Initialize with surface (windowed mode)
+    // Valid state transition: PRE_INITIALIZED -> DEVICE_READY -> SWAPCHAIN_READY
+    // Throws std::runtime_error if already initialized or if Vulkan creation fails
+    [[nodiscard]] void initialize(VkSurfaceKHR& surface);
+
+    // Initialize without surface (headless mode)
+    // Valid state transition: PRE_INITIALIZED -> DEVICE_READY -> SWAPCHAIN_READY
+    // Throws std::runtime_error if already initialized or if Vulkan creation fails
+    [[nodiscard]] void initialize();
 
     void shutdown();
 
     template<typename T, typename... Args>
     std::shared_ptr<T> create(Args&&... args) {
-        if (state != State::INITIALIZED) {
-            throw std::runtime_error("VulkanContext is not initialized!");
+        if (state != State::SWAPCHAIN_READY) {
+            throw std::runtime_error("VulkanContext is not fully initialized! Call initialize() first.");
         }
         return std::make_shared<T>(*this, std::forward<Args>(args)...);
     }
