@@ -231,6 +231,12 @@ QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDevice device) {
 }
 
 bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device) {
+
+    // get device propierties
+    VkPhysicalDeviceProperties props;
+
+    vkGetPhysicalDeviceProperties(device, &props);
+
     QueueFamilyIndices indices = findQueueFamilies(device);
 
     bool extensionsSupported = checkDeviceExtensionSupport(device);

@@ -62,7 +62,7 @@ public:
 
 
 private:
-    VulkanContext* vulkanContext;
+    VulkanContext* vulkanContext = nullptr;
     double azimuth = 0.0;
     double elevation = 0.0;
     double distance = 2.0;

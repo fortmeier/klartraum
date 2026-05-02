@@ -93,7 +93,7 @@ public:
         return "ImageSrc";
     }
 
-    virtual void _record(VkCommandBuffer commandBuffer) {
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
 
     };
 
