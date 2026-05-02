@@ -118,8 +118,8 @@ TEST_F(OnnxConvTransposeTest, ConvTransposePushConstants) {
     pushConstants.pads[1] = 1;
     pushConstants.strides[0] = 2;
     pushConstants.strides[1] = 2;
-    pushConstants.output_padding[0] = 1;
-    pushConstants.output_padding[1] = 1;
+    // pushConstants.output_padding[0] = 1;
+    // pushConstants.output_padding[1] = 1;
 
     // Set tensor dimensions
     pushConstants.dimInput[0] = 1;
@@ -192,8 +192,8 @@ TEST_F(OnnxConvTransposeTest, ConvTransposeGeneralComputationFullTest) {
     pushConstants.pads[1] = 1;
     pushConstants.strides[0] = 2;
     pushConstants.strides[1] = 2;
-    pushConstants.output_padding[0] = 1;
-    pushConstants.output_padding[1] = 1;
+    // pushConstants.output_padding[0] = 1;
+    // pushConstants.output_padding[1] = 1;
 
     // Tensor dimensions
     pushConstants.dimInput[0] = 1; // batch
