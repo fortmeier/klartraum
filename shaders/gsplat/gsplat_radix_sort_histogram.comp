@@ -20,38 +20,59 @@ void main() {
     if (binIdx < 16) {
         sharedHistogram[binIdx] = 0;
     }
-/*
+
     barrier(); 
 
-    uint idx = gl_GlobalInvocationID.x;
-    while (idx < inputBuffer2.numberTotalGaussians) {
-
-        Gaussian2D gaussian = getInputGaussian(idx);
-        // get the value to sort (use z here)
-        uint value = floatBitsToUint(gaussian.z);
-        uint binMask = gaussian.binMask;
+    uint itemsPerWorkGroup0 = pushConstants.numElements / gl_NumWorkGroups.x;
+    uint iterationsPerWorkGroup = (itemsPerWorkGroup0 + gl_WorkGroupSize.x - 1) / gl_WorkGroupSize.x;
+    uint itemsPerWorkGroup = iterationsPerWorkGroup * gl_WorkGroupSize.x;
+    
+    //uint itemsPerWorkGroup = (pushConstants.numElements + gl_NumWorkGroups.x - 1) / gl_NumWorkGroups.x;
+    uint idx = gl_WorkGroupID.x * itemsPerWorkGroup + gl_LocalInvocationID.x;
+    uint endIdx = idx + itemsPerWorkGroup;
+    while ((idx < endIdx) && (idx < pushConstants.numElements)) {
+        uint value;
+        uint index;
+        if (pushConstants.pass % 2 == 0) {
+            value = radixValuesA[idx];
+            index = indexesA[idx];
+        } else {
+            value = radixValuesB[idx];
+            index = indexesB[idx];
+        }
 
         // get the bin of the current value for the current pass
-        uint bin = getBin(value, binMask, pushConstants.pass);
+        uint bin = (value >> (pushConstants.pass * 4)) & 0xF;
 
         // count the occurrences of this bin
-        uint uadsd = atomicAdd(sharedHistogram[bin], 1);
-        // debugPrintfEXT("uadsd value: %u, bin value: %u\n", uadsd, bin);
+        uint last_bin_value = atomicAdd(sharedHistogram[bin], 1);
 
-        idx += gl_WorkGroupSize.x * gl_NumWorkGroups.x;
+        // debugPrintfEXT("uadsd value: %u, bin value: %u\n", uadsd, bin);
+        // if (gl_LocalInvocationID.x == 127 && gl_WorkGroupID.x == 319) {
+        //     debugPrintfEXT("idx: %u endIdx: %u numElements: %u itemsPerWorkGroup: %u\n", idx, endIdx, pushConstants.numElements, itemsPerWorkGroup);
+        // }
+
+        idx += gl_WorkGroupSize.x;
     }
 
     barrier();
-    memoryBarrier();
+    // memoryBarrier();
 
     // since we walked through the array with idx,
     // now reset it to the invocation id
-    idx = gl_GlobalInvocationID.x;
+    // idx = gl_GlobalInvocationID.x;
     // now we need to write the histogram to the global memory
     if (binIdx < 16) {
-        uint globalBinIdx = gl_WorkGroupID.x * (16) + binIdx;
+        uint globalBinIdx = gl_NumWorkGroups.x * binIdx + gl_WorkGroupID.x;
         inputBuffer3.histogram[globalBinIdx] = sharedHistogram[binIdx];
-
     }
-*/
+
+    if (gl_LocalInvocationID.x == 0) {
+        if (gl_WorkGroupID.x == 0) {
+            offsetBuffer.offsets[gl_WorkGroupID.x] = 0;
+        } else {
+            offsetBuffer.offsets[gl_WorkGroupID.x] = -1;
+        }
+    }
+
 }

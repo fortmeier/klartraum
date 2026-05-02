@@ -4,38 +4,37 @@
 
 #extension GL_EXT_scalar_block_layout : enable
 
-layout(scalar, binding = 0) buffer BufferA {
-    RadixContainer radixContainerA[];
+layout(scalar, binding = 0) buffer BufferA0 {
+    uint radixValuesA[];
 };
 
-layout(scalar, binding = 2) buffer BufferB {
-    RadixContainer radixContainerB[];
+layout(scalar, binding = 1) buffer BufferA1 {
+    uint indexesA[];
 };
 
-layout(scalar, binding = 3) buffer CountBuffer {
+layout(scalar, binding = 2) buffer BufferB0 {
+    uint radixValuesB[];
+};
+
+layout(scalar, binding = 3) buffer BufferB1 {
+    uint indexesB[];
+};
+
+layout(scalar, binding = 4) buffer CountBuffer {
     uint counts[];
 } countBuffer;
 
-layout(scalar, binding = 4) buffer OffsetBuffer {
+layout(scalar, binding = 5) buffer OffsetBuffer {
     uint offsets[];
 } offsetBuffer;
 
-layout(scalar, binding = 5) buffer InputBuffer2 {
+layout(scalar, binding = 6) buffer InputBuffer2 {
     uint numberTotalGaussians;
 } inputBuffer2;
 
-layout(scalar, binding = 6) buffer InputBuffer3 {
+layout(scalar, binding = 7) buffer InputBuffer3 {
     uint histogram[];
 } inputBuffer3;
-
-// layout(scalar, binding = 7) buffer InputBufferIndexA {
-//     uint inputBufferIndexA[];
-// };
-
-// layout(scalar, binding = 8) buffer InputBufferIndexB {
-//     uint inputBufferIndexB[];
-// };
-
 
 layout(push_constant) uniform PushConstants {
     uint pass;
