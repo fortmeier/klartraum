@@ -4,7 +4,9 @@
 
 layout(local_size_x = 16) in;
 
-shared uint cumulativeSum[16];
+shared uint histogram[16];
+
+shared uint prev_sum;
 
 void main() {
     /* This shader computes the prefix sum of the histogram bins.
@@ -18,34 +20,81 @@ void main() {
      * to scatter the elements to the right positions in the output buffer.
      */
 
-    uint binIdx = gl_LocalInvocationID.x;
+    // uint binIdx = gl_LocalInvocationID.x;
 
-    cumulativeSum[binIdx] = 0;
+    // cumulativeSum[binIdx] = 0;
 
-    if (gl_WorkGroupID.x > 0) {
-        return;
-    }
+    // if (gl_WorkGroupID.x > 0) {
+    //     return;
+    // }
 
-    uint totalNumberHistograms = gl_NumWorkGroups.x * 1024 / 128;
+    // coop loading
+    uint globalBinIdx = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
 
-    uint oldValue = 0;
-    for (uint idx = 0; idx < totalNumberHistograms; idx++) {
-        uint globalBinIdx = idx * 16 + binIdx;
-        uint newValue = inputBuffer3.histogram[globalBinIdx];
-
-        inputBuffer3.histogram[globalBinIdx] = oldValue;
-        oldValue += newValue;
-    }
-
-    cumulativeSum[binIdx] = oldValue;
+    histogram[gl_LocalInvocationID.x] = inputBuffer3.histogram[globalBinIdx];
 
     barrier();
 
-    offsetBuffer.offsets[0] = 0;
-
-    if (gl_LocalInvocationID.x == 0) {
-        for (uint i = 1; i < 16; i++) {
-            offsetBuffer.offsets[i] = offsetBuffer.offsets[i-1] + cumulativeSum[i-1];
+    uint sum = 0; 
+    if(gl_LocalInvocationID.x == 0) {
+        for(uint i = 0; i < 16; ++i) {
+            uint temp = histogram[i];
+            histogram[i] = sum;
+            sum += temp;
         }
+
     }
+    barrier();
+
+
+
+    if(gl_LocalInvocationID.x == 0 /* && gl_WorkGroupID.x < 3*/) {
+        prev_sum = -1;
+        //debugPrintfEXT("entering loop workgroup %u \n", gl_WorkGroupID.x);
+        do {
+            //memoryBarrier();
+            prev_sum = atomicAdd(offsetBuffer.offsets[gl_WorkGroupID.x], 0);
+
+        } while(prev_sum == -1);
+
+        uint total_sum = prev_sum + sum;
+        atomicAdd(offsetBuffer.offsets[gl_WorkGroupID.x+1], total_sum + 1);
+
+        //memoryBarrier();
+
+        // debugPrintfEXT("workgroup %u offset: %u\n", gl_WorkGroupID.x, prev_sum);
+    }
+
+    barrier();
+
+    inputBuffer3.histogram[globalBinIdx] = histogram[gl_LocalInvocationID.x] + prev_sum;
+
+    // inputBuffer3.histogram[0] = 0;
+
+    // for(uint i = 1; i < gl_NumWorkGroups.x * 16; ++i) {
+    //     inputBuffer3.histogram[i] = inputBuffer3.histogram[i - 1] + inputBuffer3.histogram[i];
+    // }
+
+    // uint totalNumberHistograms = gl_NumWorkGroups.x * 1024 / 128;
+
+    // uint oldValue = 0;
+    // for (uint idx = 0; idx < totalNumberHistograms; idx++) {
+    //     uint globalBinIdx = idx * 16 + binIdx;
+    //     uint newValue = inputBuffer3.histogram[globalBinIdx];
+
+    //     inputBuffer3.histogram[globalBinIdx] = oldValue;
+    //     oldValue += newValue;
+    // }
+
+    // cumulativeSum[binIdx] = oldValue;
+
+    // barrier();
+
+    // offsetBuffer.offsets[0] = 0;
+
+    // if (gl_LocalInvocationID.x == 0) {
+    //     for (uint i = 1; i < 16; i++) {
+    //         offsetBuffer.offsets[i] = offsetBuffer.offsets[i-1] + cumulativeSum[i-1];
+    //     }
+    // }
 }
