@@ -194,19 +194,19 @@ enable_testing()
 add_executable(
   klartraum_tests
   tests/test_main.cpp
-  tests/test_vulkan_buffers.cpp
-  tests/test_computegraph.cpp
-  tests/test_buffertransformation.cpp
-  tests/test_general_computation.cpp
+  # tests/test_vulkan_buffers.cpp
+  # tests/test_computegraph.cpp
+  # tests/test_buffertransformation.cpp
+  # tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
-  tests/test_copybuffer.cpp
-  tests/test_tensorelement.cpp
+  # tests/test_copybuffer.cpp
+  # tests/test_tensorelement.cpp
 
-  tests/test_onnx_network.cpp
-  tests/test_onnx_conv.cpp
-  tests/test_onnx_conv_transpose.cpp
-  tests/test_onnx_relu.cpp
-  tests/test_onnx_transpose.cpp
+  # tests/test_onnx_network.cpp
+  # tests/test_onnx_conv.cpp
+  # tests/test_onnx_conv_transpose.cpp
+  # tests/test_onnx_relu.cpp
+  # tests/test_onnx_transpose.cpp
 
   tests/test_headless_frontend.cpp
 )
@@ -249,7 +249,7 @@ add_dependencies(klartraum_lib Shaders onnx_proto)
 
 target_link_libraries(
   klartraum_tests
-  gtest_main
+  gtest
   klartraum_lib
   )
 

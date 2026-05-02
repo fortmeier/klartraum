@@ -101,6 +101,7 @@ void GlfwFrontend::shutdown() {
     klartraumEngine->clearComputeGraphs();
 
     // Surface must be destroyed before the instance
+    // which is done in the VulkanContext destructor, so we just need to destroy the surface here
     vkDestroySurfaceKHR(instance, surface, nullptr);
     surface = VK_NULL_HANDLE;
 
