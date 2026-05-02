@@ -72,15 +72,12 @@ void GlfwFrontend::initialize() {
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
 
-    auto instance = klartraumEngine->getVulkanContext().getInstance();
+    klartraumEngine->getVulkanContext().initialize();
 
-    // cerate the window surface
-    // (this needs to be done after the Vulkan instance is created)
+    auto instance = klartraumEngine->getVulkanContext().getInstance();
     if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create window surface!");
     }
-
-    klartraumEngine->getVulkanContext().initialize(surface);
 }
 
 
@@ -97,17 +94,20 @@ void GlfwFrontend::loop() {
 }
 
 void GlfwFrontend::shutdown() {
-    auto& instance = klartraumEngine->getVulkanContext().getInstance();
+    auto instance = klartraumEngine->getVulkanContext().getInstance();
     auto& vulkanContext = klartraumEngine->getVulkanContext();
-    
+
     vulkanContext.stopRender();
     klartraumEngine->clearComputeGraphs();
+
+    // Surface must be destroyed before the instance
+    vkDestroySurfaceKHR(instance, surface, nullptr);
+    surface = VK_NULL_HANDLE;
+
     vulkanContext.shutdown();
 
-    vkDestroySurfaceKHR(instance, surface, nullptr);
-
     glfwDestroyWindow(window);
-    glfwTerminate();
+    window = nullptr;
 }
 
 
