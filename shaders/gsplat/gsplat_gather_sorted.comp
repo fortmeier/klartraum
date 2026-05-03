@@ -1,0 +1,32 @@
+#version 450
+
+#include "gsplat_types.glsl"
+
+layout(local_size_x = 128) in;
+
+#extension GL_EXT_scalar_block_layout : enable
+
+// Reorder binnedGaussians2D into sorted order using the index array
+// produced by the radix sort (sortedIndexes[i] = original position of
+// the element that should appear at position i after sorting).
+layout(scalar, binding = 0) readonly buffer Unsorted {
+    Gaussian2D gaussians[];
+} unsorted;
+
+layout(scalar, binding = 1) readonly buffer SortedIdx {
+    uint indexes[];
+};
+
+layout(scalar, binding = 2) readonly buffer CountBuf {
+    uint totalCount;
+};
+
+layout(scalar, binding = 3) buffer Sorted {
+    Gaussian2D gaussians[];
+} sorted;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= totalCount) return;
+    sorted.gaussians[idx] = unsorted.gaussians[indexes[idx]];
+}
