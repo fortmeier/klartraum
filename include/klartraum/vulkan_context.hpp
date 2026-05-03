@@ -207,6 +207,7 @@ public:
     void stopRender();
 
     void createCommandPool();
+    VkCommandPool getCommandPool() const { return commandPool; }
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
