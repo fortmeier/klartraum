@@ -1,0 +1,32 @@
+#version 450
+
+#include "gsplat_types.glsl"
+
+layout(local_size_x = 128) in;
+
+#extension GL_EXT_scalar_block_layout : enable
+
+// Read binned Gaussian2D structs; extract their binMask as sort key
+// and fill a parallel index array with 0..N-1.
+layout(scalar, binding = 0) readonly buffer BinnedGaussians {
+    Gaussian2D gaussians[];
+};
+
+layout(scalar, binding = 1) readonly buffer CountBuf {
+    uint totalCount;
+};
+
+layout(scalar, binding = 2) buffer SortValues {
+    uint values[];
+};
+
+layout(scalar, binding = 3) buffer SortIndexes {
+    uint indexes[];
+};
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= totalCount) return;
+    values[idx]  = gaussians[idx].binMask;
+    indexes[idx] = idx;
+}

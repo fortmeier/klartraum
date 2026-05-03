@@ -298,10 +298,13 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
 
     //     vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);*/
 
+    // Keep the image in GENERAL layout so it is readable without requiring
+    // VK_KHR_swapchain.  A windowed frontend can add a GENERAL->PRESENT_SRC_KHR
+    // barrier separately before calling vkQueuePresentKHR.
     VkImageMemoryBarrier barrierBack = {};
     barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrierBack.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrierBack.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrierBack.newLayout = VK_IMAGE_LAYOUT_GENERAL;
     barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrierBack.image = image;
@@ -310,14 +313,13 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
     barrierBack.subresourceRange.levelCount = 1;
     barrierBack.subresourceRange.baseArrayLayer = 0;
     barrierBack.subresourceRange.layerCount = 1;
-
     barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    barrierBack.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_MEMORY_READ_BIT;
 
     vkCmdPipelineBarrier(
         commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
         0,
         0, nullptr,
         0, nullptr,

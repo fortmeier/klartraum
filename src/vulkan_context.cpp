@@ -371,7 +371,8 @@ void VulkanContext::createSwapImagesHeadless() {
     createInfo.arrayLayers = 1;
     createInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     createInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    createInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    createInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT
+                     | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     for(size_t i = 0; i < swapChainImages.size(); i++) {
         if (vkCreateImage(device, &createInfo, nullptr, &swapChainImages[i]) != VK_SUCCESS) {

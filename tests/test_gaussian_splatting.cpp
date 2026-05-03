@@ -1,11 +1,17 @@
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <filesystem>
 #include <set>
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/backend_config.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+
+#include "load-spz.h"
 
 using namespace klartraum;
 
@@ -374,4 +380,306 @@ TEST_F(GaussianSplattingTest, projectionAndBinning) {
     }
     // All 4 gaussians in different bins
     EXPECT_EQ(foundBins.size(), N);
+}
+
+// ----------------------------------------------------------------
+// Helper: write a BGRA image (4 bytes/pixel, row-major) to a binary
+// PPM (P6) file. PPM requires RGB so B and R channels are swapped.
+// ----------------------------------------------------------------
+static void writePPM(const std::string& path,
+                     const uint8_t* bgra,
+                     uint32_t width, uint32_t height)
+{
+    std::ofstream f(path, std::ios::binary);
+    f << "P6\n" << width << " " << height << "\n255\n";
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const uint8_t* p = bgra + (y * width + x) * 4;
+            uint8_t rgb[3] = { p[2], p[1], p[0] };  // BGRA → RGB
+            f.write(reinterpret_cast<const char*>(rgb), 3);
+        }
+    }
+}
+
+// ----------------------------------------------------------------
+// Helper: load an SPZ file and convert to Gaussian3D host data.
+// Mirrors the logic in VulkanGaussianSplatting::loadSPZModel.
+// ----------------------------------------------------------------
+static std::vector<Gaussian3D> loadSpz(const std::string& path) {
+    spz::PackedGaussians packed = spz::loadSpzPacked(path);
+    spz::CoordinateConverter conv;
+    std::vector<Gaussian3D> out;
+    out.reserve(packed.numPoints);
+    for (int i = 0; i < packed.numPoints; ++i) {
+        spz::UnpackedGaussian g = packed.unpack(i, conv);
+        Gaussian3D g3d;
+        std::memcpy(&g3d, &g, sizeof(spz::UnpackedGaussian));
+        g3d.alpha    = 1.0f / (1.0f + std::exp(-g.alpha));
+        g3d.scale[0] = std::exp(g.scale[0]);
+        g3d.scale[1] = std::exp(g.scale[1]);
+        g3d.scale[2] = std::exp(g.scale[2]);
+        out.push_back(g3d);
+    }
+    return out;
+}
+
+// ----------------------------------------------------------------
+// Helper: copy a VkImage (BGRA GENERAL layout) to a host buffer
+// and write it as a binary PPM (P6) file. B and R are swapped.
+// ----------------------------------------------------------------
+static void saveImageAsPPM(VulkanContext& vc,
+                           VkImage image,
+                           uint32_t W, uint32_t H,
+                           const std::string& path)
+{
+    const VkDeviceSize bytes = W * H * 4;
+    VkBuffer       buf; VkDeviceMemory mem;
+    vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    buf, mem);
+
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool        = vc.getCommandPool();
+    ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {W, H, 1};
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &region);
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vc.getGraphicsQueue());
+    vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
+
+    void* data;
+    vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
+    writePPM(path, static_cast<const uint8_t*>(data), W, H);
+    vkUnmapMemory(vc.getDevice(), mem);
+    vkFreeMemory(vc.getDevice(), mem, nullptr);
+    vkDestroyBuffer(vc.getDevice(), buf, nullptr);
+}
+
+// ----------------------------------------------------------------
+// Test 5: full gaussian splatting pipeline (headless offscreen)
+//
+// Pipeline (using the same shader setup as the individual unit tests):
+//   projection → binning → extract sort keys → radix sort →
+//   gather sorted → compute bin bounds → splatting
+//
+// Phase 1: projection + binning.  Wait and read totalCount from GPU.
+// Phase 2: extract → sort → gather → bounds → splat.  Wait.
+// Then copy the rendered offscreen image to host and write a PPM file.
+// ----------------------------------------------------------------
+TEST_F(GaussianSplattingTest, renderWithSpzFile) {
+    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
+    if (!std::filesystem::exists(spzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+    }
+
+    // ---- Load SPZ ----
+    auto g3dHost = loadSpz(spzPath);
+    const uint32_t N = (uint32_t)g3dHost.size();
+    const uint32_t maxBinned = N * 2;
+    std::cout << "Loaded " << N << " gaussians" << std::endl;
+
+    const float W = BackendConfig::WIDTH;
+    const float H = BackendConfig::HEIGHT;
+    const uint32_t gridSize = 4;
+    const uint32_t numBins  = gridSize * gridSize;
+
+    // Sort constants (same as sort2DGaussians unit test)
+    const uint32_t threadsPerGroup   = 128;
+    const uint32_t streamingProcs    = 40;
+    const uint32_t numSortWorkGroups = streamingProcs * 1024 / threadsPerGroup; // 320
+
+    // ---- Shared buffers ----
+    auto bufG3D    = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(*vulkanContext, N);
+    auto bufG2D    = std::make_shared<BufferElement<Gaussian2DBuffer>>(*vulkanContext, N);
+    auto bufBinned = std::make_shared<BufferElement<Gaussian2DBuffer>>(*vulkanContext, maxBinned);
+    bufBinned->setRecordToZero(false);
+
+    auto bufCount  = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, 1);
+    bufCount->setRecordToZero(true);
+
+    using DispatchBuf = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
+    auto bufDispatch = std::make_shared<DispatchBuf>(*vulkanContext, 1);
+    bufDispatch->setRecordToZero(true);
+
+    std::shared_ptr<CameraUboType> cameraUBO;
+    makeCameraUBO(cameraUBO, 2.0f);
+
+    // ---- Phase 1: projection + binning ----
+    auto projStage = std::make_shared<GaussianProjection>(
+        *vulkanContext, "shaders/gsplat/gsplat_projection.comp.spv");
+    projStage->setInput(bufG3D,    0);
+    projStage->setInput(cameraUBO, 1);
+    projStage->setInput(bufG2D,    2);
+    projStage->setPushConstants({{N, gridSize, W, H}});
+    projStage->setGroupCountX(N / threadsPerGroup + 1);
+
+    auto binStage = std::make_shared<GaussianBinning>(
+        *vulkanContext, "shaders/gsplat/gsplat_binning.comp.spv");
+    binStage->setInput(projStage,   0, 2);  // slot 2 of proj = bufG2D
+    binStage->setInput(bufBinned,   1);
+    binStage->setInput(bufCount,    2);
+    binStage->setInput(bufDispatch, 3);
+    binStage->setPushConstants({{N, gridSize, W, H}});
+    binStage->setGroupCountX(N / threadsPerGroup + 1);
+
+    {
+        auto cg1 = ComputeGraph(*vulkanContext, 1);
+        cg1.compileFrom(binStage);
+        bufG3D->getBuffer().memcopyFrom(g3dHost);
+        cameraUBO->update(0);
+        cg1.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+    }
+
+    // Read totalCount from GPU
+    uint32_t totalCount = 0;
+    {
+        std::vector<uint32_t> tmp(1);
+        bufCount->getBuffer(0).memcopyTo(tmp);
+        totalCount = tmp[0];
+    }
+    ASSERT_GT(totalCount, 0u) << "Binning produced zero gaussians";
+    std::cout << "Binned " << totalCount << " gaussians" << std::endl;
+
+    // ---- Phase 2: extract → sort → gather → bounds → splat ----
+
+    // Sort buffers (uint32_t: sort values and indices, ping-pong A/B)
+    auto bufValA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, maxBinned);
+    auto bufIdxA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, maxBinned);
+    auto bufValB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, maxBinned);
+    auto bufIdxB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, maxBinned);
+
+    // Scratch buffers for radix sort
+    auto scratchHist    = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, numBins * numSortWorkGroups);
+    scratchHist->setRecordToZero(true);
+    auto scratchCounts  = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, numBins);
+    scratchCounts->setRecordToZero(true);
+    auto scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, numSortWorkGroups + 1);
+    scratchOffsets->setRecordToZero(true);
+
+    // Sorted Gaussian2D output (gather result) and bounds
+    auto bufSorted = std::make_shared<BufferElement<Gaussian2DBuffer>>(*vulkanContext, maxBinned);
+    auto bufBounds = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, numBins * 2);
+    bufBounds->setRecordToZero(true);
+
+    // Stage: extract binMask → radixValuesA, indexes 0..N-1 → indexesA
+    auto extractStage = std::make_shared<GeneralComputation<>>(
+        *vulkanContext, "shaders/gsplat/gsplat_extract_sort_keys.comp.spv");
+    extractStage->setInput(bufBinned, 0);
+    extractStage->setInput(bufCount,  1);
+    extractStage->setInput(bufValA,   2);
+    extractStage->setInput(bufIdxA,   3);
+    extractStage->setGroupCountX(totalCount / threadsPerGroup + 1);
+
+    // Stage: radix sort (same setup as sort2DGaussians unit test)
+    // 8 passes over 32 bits; last pass=7 (odd) → output in A buffers
+    std::vector<std::string> sortShaders = {
+        "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
+        "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
+        "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"
+    };
+    auto sortOp = std::make_shared<RadixSort>(*vulkanContext, sortShaders);
+    sortOp->setInput(bufValA, 0);
+    sortOp->setInput(bufIdxA, 1);
+    sortOp->setInput(bufValB, 2);
+    sortOp->setInput(bufIdxB, 3);
+    sortOp->addScratchBufferElement(scratchCounts,  true);
+    sortOp->addScratchBufferElement(scratchOffsets, true);
+    sortOp->addScratchBufferElement(bufCount,       false);
+    sortOp->addScratchBufferElement(scratchHist,    true);
+    sortOp->setGroupCountX(numSortWorkGroups);
+    {
+        std::vector<SortPushConstants> pcs;
+        for (uint32_t i = 0; i < 32 / 4; ++i)
+            pcs.push_back({i, totalCount, numBins});
+        sortOp->setPushConstants(pcs);
+    }
+
+    // Stage: gather sorted Gaussian2D using sorted indexesA
+    auto gatherStage = std::make_shared<GeneralComputation<>>(
+        *vulkanContext, "shaders/gsplat/gsplat_gather_sorted.comp.spv");
+    gatherStage->setInput(bufBinned, 0);  // unsorted source
+    gatherStage->setInput(bufIdxA,   1);  // sorted indices (output of sort is in A after 8 passes)
+    gatherStage->setInput(bufCount,  2);
+    gatherStage->setInput(bufSorted, 3);
+    gatherStage->setGroupCountX(totalCount / threadsPerGroup + 1);
+
+    // Stage: compute bin start/end bounds
+    auto boundsStage = std::make_shared<GaussianComputeBounds>(
+        *vulkanContext, "shaders/gsplat/gsplat_bin_bounds.comp.spv");
+    boundsStage->setInput(bufSorted, 0);
+    boundsStage->setInput(bufCount,  1);
+    boundsStage->setInput(bufBounds, 2);
+    boundsStage->setPushConstants({{totalCount, gridSize, W, H}});
+    boundsStage->setGroupCountX(totalCount / 256 + 1);
+
+    // Stage: splatting — one dispatch per bin (16 bins for 4×4 grid)
+    // Each dispatch covers groupsPerBinX×groupsPerBinY workgroups of 8×8 threads.
+    const uint32_t tbX = 8, tbY = 8;
+    const uint32_t gpbX = uint32_t((W / tbX) / gridSize);  // 16
+    const uint32_t gpbY = uint32_t((H / tbY) / gridSize);  // 12
+
+    // Build ImageViewSrc with the headless offscreen image
+    uint32_t numImages = vulkanContext->getNumberOfSwapChainImages();
+    VkExtent2D extent  = vulkanContext->getSwapChainExtent();
+    std::vector<VkImageView> ivs(numImages);
+    std::vector<VkImage>     imgs(numImages);
+    std::vector<VkExtent2D>  exts(numImages, extent);
+    for (uint32_t i = 0; i < numImages; ++i) {
+        ivs[i]  = vulkanContext->getImageView(i);
+        imgs[i] = vulkanContext->getSwapChainImage(i);
+    }
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(ivs, imgs, exts);
+
+    auto splatStage = std::make_shared<GaussianSplatting>(
+        *vulkanContext, "shaders/gsplat/gsplat_binned_splatting.comp.spv");
+    splatStage->setInput(bufSorted,    0);
+    splatStage->setInput(bufCount,     1);
+    splatStage->setInput(bufBounds,    2);
+    splatStage->setInput(imageViewSrc, 3);
+    {
+        std::vector<SplatPushConstants> pcs;
+        for (uint32_t y = 0; y < gridSize; ++y)
+            for (uint32_t x = 0; x < gridSize; ++x)
+                pcs.push_back({totalCount, gridSize, x, y, W, H});
+        splatStage->setPushConstants(pcs);
+    }
+    splatStage->setGroupCountX(gpbX);
+    splatStage->setGroupCountY(gpbY);
+    splatStage->setGroupCountZ(1);
+
+    // Chain: extractStage → sortOp → gatherStage → boundsStage → splatStage
+    // We chain them manually via setInput; compile from the last element.
+    // (Each is already connected to shared buffers; no additional setInput chaining
+    //  is needed since they share buffer objects directly.)
+    {
+        auto cg2 = ComputeGraph(*vulkanContext, 1);
+        cg2.compileFrom(splatStage);
+        cg2.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+    }
+
+    // ---- Copy rendered image to host and write PPM ----
+    saveImageAsPPM(*vulkanContext, imgs[0], (uint32_t)W, (uint32_t)H,
+                   "test_gaussian_splatting_render.ppm");
+
+    SUCCEED() << "Rendered " << (uint32_t)W << "x" << (uint32_t)H
+              << " image written to test_gaussian_splatting_render.ppm";
 }
