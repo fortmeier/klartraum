@@ -99,57 +99,79 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     bin->setGroupCountX((number_of_gaussians * maxGaussiansModifier) / threadsPerGroup + 1);
     bin->setPushConstants({pushConstants});
 
-    // setup sorting stage
+    // setup sorting stage — extract → radix sort → gather
     /////////////////////////////////////////////
-    std::vector<std::string> shaders = {
+
+    const uint32_t maxBinned         = number_of_gaussians * maxGaussiansModifier;
+    const uint32_t numSortWorkGroups  = maxBinned / threadsPerGroup + 1;
+
+    // Ping-pong value/index buffers for the radix sort.
+    // sortRadixValA and sortRadixValB are stored as members so _record can
+    // pre-fill them with 0xFFFFFFFF each frame.  Elements beyond totalCount
+    // retain that sentinel value and sort to the end of the output, keeping
+    // the first totalCount positions clean for computeBounds and splatting.
+    sortRadixValA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
+    sortRadixValA->setName("SortRadixValA");
+    sortRadixValB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
+    sortRadixValB->setName("SortRadixValB");
+    auto sortRadixIdxA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
+    sortRadixIdxA->setName("SortRadixIdxA");
+    auto sortRadixIdxB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
+    sortRadixIdxB->setName("SortRadixIdxB");
+
+    auto scratchHistograms = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numSortWorkGroups);
+    scratchHistograms->setName("ScratchHistograms"); scratchHistograms->setRecordToZero(true);
+    auto scratchCounts  = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
+    scratchCounts->setName("ScratchCounts");  scratchCounts->setRecordToZero(true);
+    auto scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numSortWorkGroups + 1);
+    scratchOffsets->setName("ScratchOffsets"); scratchOffsets->setRecordToZero(true);
+
+    // Stage: extract binMask from binnedGaussians2D → sortRadixValA, fill index 0..N
+    extractSortKeys = std::make_shared<GeneralComputation<>>(
+        vulkanContext, "shaders/gsplat/gsplat_extract_sort_keys.comp.spv");
+    extractSortKeys->setName("ExtractSortKeys");
+    extractSortKeys->setInput(bin, 0, 1);           // binnedGaussians2D
+    extractSortKeys->setInput(bin, 1, 2);           // totalGaussian2DCounts
+    extractSortKeys->setInput(sortRadixValA, 2);    // sort keys (output)
+    extractSortKeys->setInput(sortRadixIdxA, 3);    // sort indices (output)
+    extractSortKeys->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
+
+    // Stage: radix sort (8 passes × 4 bits = 32 bits, last pass=7 odd → output in A buffers)
+    std::vector<std::string> sortShaders = {
         "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
         "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
         "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"
     };
-    sort2DGaussians = std::make_shared<GaussianSort>(vulkanContext, shaders);
-
-    sort2DGaussians->setName("GaussianSort");
-
-    sort2DGaussians->setInput(bin, 0, 1);
-
-    auto scratchBufferHistograms = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * ((number_of_gaussians * maxGaussiansModifier) / threadsPerGroup + 1));
-    scratchBufferHistograms->setName("ScratchBufferHistograms");
-    scratchBufferHistograms->setRecordToZero(true);
-
-    auto scratchBufferCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
-    scratchBufferCounts->setName("ScratchBufferCounts");
-    scratchBufferCounts->setRecordToZero(true);
-    auto scratchBufferOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
-    scratchBufferOffsets->setName("ScratchBufferOffsets");
-    scratchBufferOffsets->setRecordToZero(true);
-
-    auto scratchBufferIndexA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
-    scratchBufferIndexA->setName("ScratchBufferIndexA");
-    scratchBufferIndexA->setRecordToZero(true);
-
-    auto scratchBufferIndexB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
-    scratchBufferIndexB->setName("ScratchBufferIndexB");
-    scratchBufferIndexB->setRecordToZero(true);
-
-    sort2DGaussians->addScratchBufferElement(scratchBufferCounts, true);
-    sort2DGaussians->addScratchBufferElement(scratchBufferOffsets, true);
-    sort2DGaussians->addScratchBufferElement(totalGaussian2DCounts, false);
-    sort2DGaussians->addScratchBufferElement(scratchBufferHistograms, true);
-    sort2DGaussians->addScratchBufferElement(scratchBufferIndexA, false);
-    sort2DGaussians->addScratchBufferElement(scratchBufferIndexB, false);
-
-    sort2DGaussians->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
-
-    uint32_t numElements = (uint32_t)((number_of_gaussians));
-    uint32_t numBitsPerPass = 4; // Number of bits per pass (4 bits for 16 bins)
-    //uint32_t numBins = numBins;       // Number of bins for sorting = 2 ^ numBitsPerPass
-    uint32_t passes = 32 + 16;   // 32 bits for depth, 16 bits for binning
-    std::vector<SortPushConstants> sortPushConstants;
-    for (uint32_t i = 0; i < passes / numBitsPerPass; i++) {
-        sortPushConstants.push_back({i, numElements, numBins}); // pass, numElements, numBins
+    sortOp = std::make_shared<RadixSort>(vulkanContext, sortShaders);
+    sortOp->setName("RadixSort");
+    sortOp->setInput(extractSortKeys, 0, 2);   // sortRadixValA
+    sortOp->setInput(extractSortKeys, 1, 3);   // sortRadixIdxA
+    sortOp->setInput(sortRadixValB, 2);
+    sortOp->setInput(sortRadixIdxB, 3);
+    sortOp->addScratchBufferElement(scratchCounts,      true);
+    sortOp->addScratchBufferElement(scratchOffsets,     true);
+    sortOp->addScratchBufferElement(totalGaussian2DCounts, false);
+    sortOp->addScratchBufferElement(scratchHistograms,  true);
+    sortOp->setGroupCountX(numSortWorkGroups);
+    {
+        std::vector<SortPushConstants> pcs;
+        for (uint32_t i = 0; i < 32 / 4; ++i)
+            pcs.push_back({i, maxBinned, numBins});
+        sortOp->setPushConstants(pcs);
     }
 
-    sort2DGaussians->setPushConstants(sortPushConstants);
+    // Stage: gather binnedGaussians2D in sorted order → sortedGaussians2D
+    auto sortedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, maxBinned);
+    sortedGaussians2D->setName("SortedGaussians2D");
+
+    gatherSorted = std::make_shared<GeneralComputation<>>(
+        vulkanContext, "shaders/gsplat/gsplat_gather_sorted.comp.spv");
+    gatherSorted->setName("GatherSorted");
+    gatherSorted->setInput(bin, 0, 1);          // binnedGaussians2D (unsorted source)
+    gatherSorted->setInput(sortOp, 1, 1);       // sortRadixIdxA (sorted indices via extractSortKeys)
+    gatherSorted->setInput(bin, 2, 2);          // totalGaussian2DCounts
+    gatherSorted->setInput(sortedGaussians2D, 3);
+    gatherSorted->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
 
     // setup bounds computation stage
     /////////////////////////////////////////////
@@ -161,17 +183,16 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     computeBounds->setName("GaussianComputeBounds");
 
     ProjectionPushConstants computeBoundsPushConstants = {
-        (uint32_t)((number_of_gaussians)), // numElements
-        gridSize,                          // gridSize (4x4)
-        screenWidth,                       // screenWidth
-        screenHeight                       // screenHeight
+        maxBinned,    // numElements (upper bound; shader uses totalCount from buffer)
+        gridSize,
+        screenWidth,
+        screenHeight
     };
 
-    computeBounds->setInput(sort2DGaussians, 0);       // bufferElement, 0);
-    computeBounds->setInput(bin, 1, 2);                // totalGaussian2DCounts, 1);
-    computeBounds->setInput(scratchBinStartAndEnd, 2); // scratchBinStartAndEnd, 2);
+    computeBounds->setInput(gatherSorted, 0, 3);       // sortedGaussians2D
+    computeBounds->setInput(bin, 1, 2);                // totalGaussian2DCounts
+    computeBounds->setInput(scratchBinStartAndEnd, 2);
     computeBounds->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
-
 
     computeBounds->setPushConstants({computeBoundsPushConstants});
 
@@ -297,6 +318,23 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
     //     uint32_t num_groups_z = number_of_gaussians / 16;
 
     //     vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);*/
+
+    // Pre-fill sort value buffers with 0xFFFFFFFF for the NEXT frame's radix
+    // sort pass.  The extract stage only writes elements 0..totalCount-1; any
+    // remaining elements retain this sentinel and sort to the very end of the
+    // output (0xFFFFFFFF > any valid binMask 0..0x8000), so computeBounds and
+    // splatting see only the valid sorted gaussians in positions 0..totalCount-1.
+    vkCmdFillBuffer(commandBuffer, sortRadixValA->getVkBuffer(pathId), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+    vkCmdFillBuffer(commandBuffer, sortRadixValB->getVkBuffer(pathId), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+    {
+        VkMemoryBarrier mb{};
+        mb.sType          = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask  = VK_ACCESS_TRANSFER_WRITE_BIT;
+        mb.dstAccessMask  = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 1, &mb, 0, nullptr, 0, nullptr);
+    }
 
     // Keep the image in GENERAL layout so it is readable without requiring
     // VK_KHR_swapchain.  A windowed frontend can add a GENERAL->PRESENT_SRC_KHR
