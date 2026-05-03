@@ -1,6 +1,11 @@
 #include <iostream>
 #include <filesystem>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <crtdbg.h>
+#endif
+
 #include "klartraum/glfw_frontend.hpp"
 
 #include "klartraum/draw_basics.hpp"
@@ -9,6 +14,13 @@
 #include "klartraum/computegraph/imageviewsrc.hpp"
 
 int main() {
+#ifdef _WIN32
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportMode(_CRT_ERROR,  _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportFile(_CRT_ERROR,  _CRTDBG_FILE_STDERR);
+#endif
     std::cout << "Wake up, dreamer!" << std::endl;
 
     klartraum::GlfwFrontend frontend;
@@ -35,6 +47,9 @@ int main() {
         images.push_back(vulkanContext.getSwapChainImage(i));
     }
     auto imageViewSrc = std::make_shared<klartraum::ImageViewSrc>(imageViews, images, extents);
+    for (uint32_t i = 0; i < numImages; ++i) {
+        imageViewSrc->setWaitFor(i, vulkanContext.imageAvailableSemaphoresPerImage[i]);
+    }
 
     auto cameraUBO = renderpass->getCameraUBO();
     cameraUBO->setName("CameraUBO");
