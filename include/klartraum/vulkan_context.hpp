@@ -132,15 +132,19 @@ public:
 
     ~VulkanContext();
 
-    // Initialize with surface (windowed mode)
-    // Valid state transition: PRE_INITIALIZED -> DEVICE_READY -> SWAPCHAIN_READY
-    // Throws std::runtime_error if already initialized or if Vulkan creation fails
+    // Initialize with surface (windowed mode, one-shot)
     [[nodiscard]] void initialize(VkSurfaceKHR& surface);
 
     // Initialize without surface (headless mode)
-    // Valid state transition: PRE_INITIALIZED -> DEVICE_READY -> SWAPCHAIN_READY
-    // Throws std::runtime_error if already initialized or if Vulkan creation fails
     [[nodiscard]] void initialize();
+
+    // Two-step windowed init for frontends that need the VkInstance before
+    // they can create a VkSurfaceKHR (e.g. GlfwFrontend):
+    //   1. initializeInstance()      → PRE_INITIALIZED → DEVICE_READY
+    //   2. <caller creates surface>
+    //   3. initializeDevice(surface) → DEVICE_READY   → SWAPCHAIN_READY
+    void initializeInstance();
+    void initializeDevice(VkSurfaceKHR surface);
 
     void shutdown();
 
@@ -208,6 +212,7 @@ public:
 
     void createCommandPool();
     VkCommandPool getCommandPool() const { return commandPool; }
+    bool hasSurface() const { return surface != VK_NULL_HANDLE; }
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;

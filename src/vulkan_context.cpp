@@ -525,6 +525,47 @@ void VulkanContext::createLogicalDevice() {
 // This ensures noexcept guarantee and clear lifecycle separation
 // State: PRE_INITIALIZED
 
+void VulkanContext::initializeInstance() {
+    if (state != State::PRE_INITIALIZED) {
+        throw std::runtime_error("VulkanContext already initialized!");
+    }
+    std::cout << "=== Creating Vulkan Instance ===" << std::endl;
+    createInstance();
+    setupDebugMessenger();
+    state = State::DEVICE_READY;
+    std::cout << "State -> DEVICE_READY" << std::endl;
+}
+
+void VulkanContext::initializeDevice(VkSurfaceKHR surface) {
+    if (state != State::DEVICE_READY) {
+        throw std::runtime_error("Call initializeInstance() before initializeDevice()!");
+    }
+    try {
+        this->surface = surface;
+        deviceExtensions = {
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+            VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+            VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
+#ifdef __APPLE__
+            "VK_KHR_portability_subset",
+#endif
+        };
+        std::cout << "=== Creating Device & Swapchain ===" << std::endl;
+        pickPhysicalDevice();
+        createLogicalDevice();
+        createSwapChain();
+        createImageViews();
+        createCommandPool();
+        createSyncObjects();
+        state = State::SWAPCHAIN_READY;
+        std::cout << "State -> SWAPCHAIN_READY" << std::endl;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed during initializeDevice: " << e.what() << std::endl;
+        throw;
+    }
+}
+
 void VulkanContext::initialize(VkSurfaceKHR& surface) {
     if(state != State::PRE_INITIALIZED) {
         throw std::runtime_error("VulkanContext already initialized! State must be PRE_INITIALIZED");
@@ -642,6 +683,12 @@ void VulkanContext::shutdown() {
 
     for (size_t i = 0; i < swapChainImages.size(); i++) {
         vkDestroyImageView(device, swapChainImageViews[i], nullptr);
+    }
+
+    // Surface must be destroyed after the swapchain but before the instance.
+    if (surface != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+        surface = VK_NULL_HANDLE;
     }
 
     vkDestroyDevice(device, nullptr);
