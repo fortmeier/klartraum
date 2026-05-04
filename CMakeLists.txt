@@ -209,6 +209,7 @@ add_executable(
   tests/test_onnx_transpose.cpp
 
   tests/test_headless_frontend.cpp
+  tests/test_glfw_frontend.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
