@@ -59,13 +59,18 @@ public:
     
         colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    
-        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
-        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_GENERAL;
-    
+
+        // For windowed rendering the image must be in PRESENT_SRC_KHR after
+        // the renderpass so vkQueuePresentKHR accepts it.  For headless
+        // offscreen rendering GENERAL is fine.
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorAttachment.finalLayout   = vulkanContext.hasSurface()
+                                         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                         : VK_IMAGE_LAYOUT_GENERAL;
+
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;
-        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_GENERAL;
+        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
