@@ -72,12 +72,18 @@ void GlfwFrontend::initialize() {
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
 
-    klartraumEngine->getVulkanContext().initialize();
+    // Two-step windowed init:
+    // 1. Create the VkInstance so GLFW can create the surface against it.
+    klartraumEngine->getVulkanContext().initializeInstance();
 
+    // 2. Create the OS window surface.
     auto instance = klartraumEngine->getVulkanContext().getInstance();
     if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create window surface!");
     }
+
+    // 3. Create device + real swapchain with VK_KHR_swapchain enabled.
+    klartraumEngine->getVulkanContext().initializeDevice(surface);
 }
 
 
@@ -100,12 +106,10 @@ void GlfwFrontend::shutdown() {
     vulkanContext.stopRender();
     klartraumEngine->clearComputeGraphs();
 
-    // Surface must be destroyed before the instance
-    // which is done in the VulkanContext destructor, so we just need to destroy the surface here
-    vkDestroySurfaceKHR(instance, surface, nullptr);
-    surface = VK_NULL_HANDLE;
-
+    // VulkanContext::shutdown() destroys swapchain → surface → device → instance
+    // in the correct Vulkan teardown order.
     vulkanContext.shutdown();
+    surface = VK_NULL_HANDLE;
 
     glfwDestroyWindow(window);
     window = nullptr;
