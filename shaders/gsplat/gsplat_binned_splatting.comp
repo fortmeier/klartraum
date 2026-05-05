@@ -116,10 +116,13 @@ void main() {
         }
     }
 
-    vec4 imageInput = imageLoad(outputImage, pixelCoord);
-    vec4 outputColor = imageInput + finalColor * (1.0 - accum_opacity);
+    // Each frame is rendered fresh: write only this frame's gaussian
+    // contributions.  Do NOT read and add to the existing image — that
+    // would accumulate across frames because Vulkan's UNDEFINED→GENERAL
+    // layout transition does not guarantee the content is discarded on
+    // all implementations, causing saturation over time.
+    vec4 outputColor = finalColor * (1.0 - accum_opacity);
     outputColor = clamp(outputColor, vec4(0.0), vec4(1.0));
 
-    // Write final color to output image
     imageStore(outputImage, pixelCoord, outputColor);
 } 
