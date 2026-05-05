@@ -1244,3 +1244,74 @@ TEST_F(GaussianSplattingTest, splattingShaderIsolated) {
 
     SUCCEED() << "Splatting shader isolation test: image written to test_splat_isolated.ppm";
 }
+
+// ----------------------------------------------------------------
+// Test 8: VulkanGaussianSplatting — single frame via engine.step()
+//
+// Uses the production VulkanGaussianSplatting class exactly as the
+// example app does, but runs exactly one frame through the headless
+// engine and copies the result to a PPM for visual inspection.
+//
+// This is a divide-and-conquer test for the projection/synchronisation
+// issues reported with the interactive example.  Running headless with
+// submitAndWait-style synchronisation (vkQueueWaitIdle after step)
+// eliminates double-buffering races and gives a stable, reproducible
+// snapshot of what the full pipeline produces.
+// ----------------------------------------------------------------
+TEST_F(GaussianSplattingTest, vulkanGaussianSplattingSingleFrame) {
+    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
+    if (!std::filesystem::exists(spzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+    }
+
+    auto& engine = frontend->getKlartraumEngine();
+
+    // ---- ImageViewSrc from headless offscreen images (with semaphores) ----
+    uint32_t numImages = vulkanContext->getNumberOfSwapChainImages();
+    VkExtent2D ext = vulkanContext->getSwapChainExtent();
+    std::vector<VkImageView> ivs(numImages);
+    std::vector<VkImage>     imgs(numImages);
+    std::vector<VkExtent2D>  exts(numImages, ext);
+    for (uint32_t i = 0; i < numImages; ++i) {
+        ivs[i]  = vulkanContext->getImageView(i);
+        imgs[i] = vulkanContext->getSwapChainImage(i);
+    }
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(ivs, imgs, exts);
+    for (uint32_t i = 0; i < numImages; ++i) {
+        imageViewSrc->setWaitFor(i, vulkanContext->imageAvailableSemaphoresPerImage[i]);
+    }
+
+    // ---- Camera matching the example app defaults ----
+    auto cameraUBO = std::make_shared<CameraUboType>();
+    InterfaceCameraOrbit cameraOrbit(InterfaceCameraOrbit::UpDirection::Y);
+    cameraOrbit.initialize(*vulkanContext);
+    cameraOrbit.setAzimuth(0.9f);
+    cameraOrbit.setElevation(-0.5f);
+    cameraOrbit.setPosition({-0.5f, 0.0f, 0.5f});
+    cameraOrbit.setDistance(1.0f);
+    cameraOrbit.update(cameraUBO->ubo);
+
+    // ---- Instantiate VulkanGaussianSplatting and add to engine ----
+    auto splatting = vulkanContext->create<VulkanGaussianSplatting>(
+        imageViewSrc, cameraUBO, spzPath);
+    engine.add(splatting);
+
+    // Upload camera matrices to GPU for all paths (after compileFrom)
+    for (uint32_t i = 0; i < numImages; ++i) {
+        cameraUBO->update(i);
+    }
+
+    // ---- Render exactly one frame, then drain the queue ----
+    // engine.step() uses imageIndex = currentFrame % numImages = 0 for the
+    // first call, so the result is in imgs[0].
+    engine.step();
+    vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
+
+    // ---- Copy image[0] (GENERAL layout, BGRA) to host and write PPM ----
+    saveImageAsPPM(*vulkanContext, imgs[0],
+                   ext.width, ext.height,
+                   "test_gsplatting_single_frame.ppm");
+
+    SUCCEED() << "Single frame written to test_gsplatting_single_frame.ppm ("
+              << ext.width << "x" << ext.height << ")";
+}
