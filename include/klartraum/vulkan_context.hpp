@@ -213,6 +213,7 @@ public:
     void createCommandPool();
     VkCommandPool getCommandPool() const { return commandPool; }
     bool hasSurface() const { return surface != VK_NULL_HANDLE; }
+    float getTimestampPeriod() const;   // nanoseconds per GPU timestamp unit
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;

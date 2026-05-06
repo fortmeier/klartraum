@@ -54,7 +54,16 @@ void KlartraumEngine::step() {
 
     // finish frame rendering
     vulkanContext.endRender(imageIndex, renderFinishedSemaphore);
- 
+
+    // When profiling is enabled, wait for the GPU to finish this frame so we
+    // can read back the timestamp queries.  This makes each step() synchronous
+    // but that is acceptable in a profiling / development build.
+    if (profilingEnabled_) {
+        vkQueueWaitIdle(graphicsQueue);
+        for (auto& cg : computeGraphs) {
+            cg->readAndAccumulateTimestamps_();
+        }
+    }
 }
 
 std::queue<std::unique_ptr<Event> >& KlartraumEngine::getEventQueue()
@@ -79,7 +88,23 @@ void KlartraumEngine::add(ComputeGraphElementPtr element)
     uint32_t numberPaths = vulkanContext.getNumberOfSwapChainImages();
     computeGraphs.emplace_back(std::make_unique<ComputeGraph>(vulkanContext, numberPaths));
     auto& computeGraph = computeGraphs.back();
+    if (profilingEnabled_) computeGraph->enableProfiling();
     computeGraph->compileFrom(element);
+}
+
+std::vector<std::pair<std::string, float>> KlartraumEngine::getProfilingResults()
+{
+    // Ensure GPU is idle so timestamp readback is safe.
+    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
+    for (auto& cg : computeGraphs) {
+        cg->readAndAccumulateTimestamps_();
+    }
+    std::vector<std::pair<std::string, float>> results;
+    for (auto& cg : computeGraphs) {
+        auto r = cg->getProfilingResults();
+        results.insert(results.end(), r.begin(), r.end());
+    }
+    return results;
 }
 
 RenderPassPtr KlartraumEngine::createRenderPass()

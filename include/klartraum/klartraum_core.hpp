@@ -1,6 +1,8 @@
 #ifndef KLARTRAUM_CORE_HPP
 #define KLARTRAUM_CORE_HPP
 
+#include <string>
+#include <utility>
 #include <vector>
 #include <queue>
 #include <optional>
@@ -44,7 +46,17 @@ public:
         computeGraphs.clear();
     }
 
+    // Call before add() to enable GPU timestamp profiling on all subsequent
+    // compute graphs.  Results accumulate across frames and are averaged.
+    void enableProfiling() { profilingEnabled_ = true; }
+
+    // Waits for the GPU to be idle, reads the last frame's timestamps, and
+    // returns {elementName, meanTimeMs} for every element across all graphs.
+    std::vector<std::pair<std::string, float>> getProfilingResults();
+
 private:
+    bool profilingEnabled_ = false;
+
     VulkanContext vulkanContext;
 
     std::shared_ptr<InterfaceCamera> interfaceCamera;
