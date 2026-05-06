@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <fstream>
 #include <filesystem>
+#include <random>
 #include <set>
+#include <thread>
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
@@ -518,6 +521,54 @@ static void runSortBoundsSplat(
 }
 
 // ----------------------------------------------------------------
+// Helper: copy a VkImage (BGRA GENERAL layout) to a host vector.
+// ----------------------------------------------------------------
+static std::vector<uint8_t> readImageToHost(VulkanContext& vc, VkImage image,
+                                             uint32_t W, uint32_t H)
+{
+    const VkDeviceSize bytes = W * H * 4;
+    VkBuffer buf; VkDeviceMemory mem;
+    vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    buf, mem);
+
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool        = vc.getCommandPool();
+    ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {W, H, 1};
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &region);
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vc.getGraphicsQueue());
+    vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
+
+    void* data;
+    vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
+                                static_cast<const uint8_t*>(data) + bytes);
+    vkUnmapMemory(vc.getDevice(), mem);
+    vkFreeMemory(vc.getDevice(), mem, nullptr);
+    vkDestroyBuffer(vc.getDevice(), buf, nullptr);
+    return result;
+}
+
+// ----------------------------------------------------------------
 // Helper: write a BGRA image (4 bytes/pixel, row-major) to a binary
 // PPM (P6) file. PPM requires RGB so B and R channels are swapped.
 // ----------------------------------------------------------------
@@ -656,7 +707,14 @@ TEST_F(GaussianSplattingTest, renderWithSpzFile) {
     bufDispatch->setRecordToZero(true);
 
     std::shared_ptr<CameraUboType> cameraUBO;
-    makeCameraUBO(cameraUBO, 2.0f);
+    makeCameraUBO(cameraUBO);
+    InterfaceCameraOrbit cameraOrbit(InterfaceCameraOrbit::UpDirection::Y);
+    cameraOrbit.initialize(*vulkanContext);
+    cameraOrbit.setAzimuth(0.9f);
+    cameraOrbit.setElevation(-0.5f);
+    cameraOrbit.setPosition({-0.5f, 0.0f, 0.5f});
+    cameraOrbit.setDistance(1.0f);
+    cameraOrbit.update(cameraUBO->ubo);
 
     // ---- Phase 1: projection + binning ----
     auto projStage = std::make_shared<GaussianProjection>(
@@ -1246,19 +1304,20 @@ TEST_F(GaussianSplattingTest, splattingShaderIsolated) {
 }
 
 // ----------------------------------------------------------------
-// Test 8: VulkanGaussianSplatting — single frame via engine.step()
+// Test 8: VulkanGaussianSplatting — two consecutive frames
 //
-// Uses the production VulkanGaussianSplatting class exactly as the
-// example app does, but runs exactly one frame through the headless
-// engine and copies the result to a PPM for visual inspection.
+// Uses the production VulkanGaussianSplatting class (same as the
+// example app) via the headless engine.  Renders two consecutive
+// frames, draining the queue with vkQueueWaitIdle after each step
+// to eliminate any double-buffering race conditions.
 //
-// This is a divide-and-conquer test for the projection/synchronisation
-// issues reported with the interactive example.  Running headless with
-// submitAndWait-style synchronisation (vkQueueWaitIdle after step)
-// eliminates double-buffering races and gives a stable, reproducible
-// snapshot of what the full pipeline produces.
+// Assertions:
+//   1. The two frames are pixel-identical (temporal stability).
+//   2. At least one of the 16 bin centres (4×4 grid on 512×384)
+//      has a channel value > 127 (> 50 % of max), proving that the
+//      full pipeline produced visible content and not a black image.
 // ----------------------------------------------------------------
-TEST_F(GaussianSplattingTest, vulkanGaussianSplattingSingleFrame) {
+TEST_F(GaussianSplattingTest, vulkanGaussianSplattingTwoFrames) {
     const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
     if (!std::filesystem::exists(spzPath)) {
         GTEST_SKIP() << "SPZ sample not found: " << spzPath;
@@ -1301,17 +1360,295 @@ TEST_F(GaussianSplattingTest, vulkanGaussianSplattingSingleFrame) {
         cameraUBO->update(i);
     }
 
-    // ---- Render exactly one frame, then drain the queue ----
-    // engine.step() uses imageIndex = currentFrame % numImages = 0 for the
-    // first call, so the result is in imgs[0].
-    engine.step();
-    vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
+    // Render 4 frames: path 0, 1, 0, 1 (engine cycles imageIndex 0→1→0→1)
+    // Comparison strategy: compare the SAME PATH across two runs.
+    // Note: different paths may produce different pixel orderings because the
+    // binning shader uses non-deterministic atomicAdd to place gaussians into
+    // binnedGaussians2D, and the stable radix sort preserves that initial order
+    // for same-binMask elements.  Within a single path the GPU schedules work
+    // identically on every submission, so the same path must be bit-exact.
 
-    // ---- Copy image[0] (GENERAL layout, BGRA) to host and write PPM ----
-    saveImageAsPPM(*vulkanContext, imgs[0],
-                   ext.width, ext.height,
-                   "test_gsplatting_single_frame.ppm");
+    engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue()); 
+    std::this_thread::sleep_for(std::chrono::seconds(4));
+    
+    auto frame1 = readImageToHost(*vulkanContext, imgs[0], ext.width, ext.height); // path 0 run 1
+    std::this_thread::sleep_for(std::chrono::seconds(4));
+    
+    engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
+    std::this_thread::sleep_for(std::chrono::seconds(4));
+    auto frame2 = readImageToHost(*vulkanContext, imgs[1], ext.width, ext.height); // path 1 run 1
+    writePPM("test_gsplatting_frame2.ppm", frame2.data(), ext.width, ext.height);
+    
+    engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
+    writePPM("test_gsplatting_frame1.ppm", frame1.data(), ext.width, ext.height);
+    auto frame3 = readImageToHost(*vulkanContext, imgs[0], ext.width, ext.height); // path 0 run 2
+    writePPM("test_gsplatting_frame3.ppm", frame3.data(), ext.width, ext.height);
 
-    SUCCEED() << "Single frame written to test_gsplatting_single_frame.ppm ("
-              << ext.width << "x" << ext.height << ")";
+    engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
+    auto frame4 = readImageToHost(*vulkanContext, imgs[1], ext.width, ext.height); // path 1 run 2
+    writePPM("test_gsplatting_frame4.ppm", frame4.data(), ext.width, ext.height);
+
+    // ---- Assert 1: temporal stability — same path must be bit-exact ----
+    // KNOWN ISSUE: the binning shader uses non-deterministic atomicAdd to
+    // place gaussians into binnedGaussians2D.  Different GPU thread schedules
+    // across runs produce different element orderings, which the stable radix
+    // sort propagates to the final image.  This assert tracks the bug; it is
+    // expected to fail until the binning is made deterministic.
+    // TODO: fix gsplat_binning.comp to use a deterministic scatter.
+    EXPECT_EQ(frame1, frame3)
+        << "Path 0 frame 1 vs frame 3 differ — binning atomicAdd is non-deterministic";
+    EXPECT_EQ(frame2, frame4)
+        << "Path 1 frame 2 vs frame 4 differ — binning atomicAdd is non-deterministic";
+
+    // ---- Assert 2: content — at least one bin centre must be > 50 % bright ----
+    // 4×4 grid on 512×384: cellW=128, cellH=96; bin(x,y) centre = (x*128+64, y*96+48).
+    const uint32_t gridSize = 4;
+    const uint32_t cellW    = ext.width  / gridSize;
+    const uint32_t cellH    = ext.height / gridSize;
+    uint8_t maxBinCentre = 0;
+    for (uint32_t by = 0; by < gridSize; ++by) {
+        for (uint32_t bx = 0; bx < gridSize; ++bx) {
+            uint32_t cx = bx * cellW + cellW / 2;
+            uint32_t cy = by * cellH + cellH / 2;
+            const uint8_t* p = frame1.data() + (cy * ext.width + cx) * 4;
+            maxBinCentre = std::max(maxBinCentre, std::max({p[0], p[1], p[2]}));
+        }
+    }
+    EXPECT_GT(maxBinCentre, uint8_t(127))
+        << "No bin centre exceeds 50 % brightness — the pipeline may not "
+           "be rendering any gaussians";
+
+    SUCCEED() << "Two frames written to test_gsplatting_frame1/2.ppm ("
+              << ext.width << "x" << ext.height << "); "
+              << "max bin-centre channel = " << (int)maxBinCentre;
+}
+
+// ----------------------------------------------------------------
+// Test 9: extract → sort → gather stability with random Gaussian2D
+//
+// Bypasses the non-deterministic binning atomicAdd by injecting a
+// known, fixed set of Gaussian2D objects directly into the extract
+// stage.  The pipeline is:
+//   extract (binMask→sortValA, idx→sortIdxA) → radix sort → gather
+//
+// Checks performed on each of two consecutive runs (same graph):
+//   1. Correctness: sortedGaussians[i].binMask ≤ sortedGaussians[i+1].binMask
+//   2. Completeness: the multiset of output binMasks equals the input multiset
+//   3. Gather fidelity: output gaussian i has the position/color of the
+//      original gaussian at index sortedIdx[i] (verify a subset)
+//   4. Stability: run 1 output and run 2 output are bit-identical
+// ----------------------------------------------------------------
+TEST_F(GaussianSplattingTest, extractSortGatherStability) {
+    // Sort key = (binIndex[3:0] << 28) | (floatBitsToUint(z) >> 4)
+    // 4 MSBs: bin index 0-15; 28 LSBs: top 28 bits of float z.
+    // Gaussians in z ∈ (0,1) are all positive → unsigned integer order
+    // matches float order, so no sign-bit correction is needed.
+    // (Future: extend to 64-bit key to keep all z bits.)
+
+    const uint32_t N       = 4096;
+    const uint32_t numBins = 16;
+    const uint32_t tpg     = 128;
+    const uint32_t nsg     = N / tpg + 1;
+
+    // ---- CPU-side key function (mirrors gsplat_extract_sort_keys.comp) ----
+    // binMask is a power-of-2; its bit position is the bin index.
+    auto floatBitsToU32 = [](float f) -> uint32_t {
+        uint32_t b; std::memcpy(&b, &f, 4); return b;
+    };
+    auto binIdxOf = [](uint32_t mask) -> uint32_t {
+        uint32_t idx = 0, m = mask >> 1;
+        while (m) { ++idx; m >>= 1; }
+        return idx;
+    };
+    auto sortKey = [&](uint32_t binMask, float z) -> uint32_t {
+        return (binIdxOf(binMask) << 28u) | (floatBitsToU32(z) >> 4);
+    };
+
+    // ---- Deterministic input: N Gaussian2D with random binMask and z ----
+    std::mt19937 rng(0xDEADBEEF);
+    std::uniform_real_distribution<float> zDist(0.01f, 0.99f);  // well within (0,1)
+    std::vector<Gaussian2D> inputG(N);
+    for (uint32_t i = 0; i < N; ++i) {
+        inputG[i].binMask   = 1u << (rng() % numBins);
+        inputG[i].z         = zDist(rng);
+        inputG[i].position  = { float(i % 512), float(i / 512) };
+        inputG[i].covariance = glm::mat2(1.0f);
+        inputG[i].color     = { float(rng()%256)/255.f,
+                                 float(rng()%256)/255.f,
+                                 float(rng()%256)/255.f };
+        inputG[i].alpha = 1.0f;
+    }
+
+    // ---- Shared buffers ----
+    auto bufBinned = std::make_shared<BufferElementSinglePath<Gaussian2DBuffer>>(*vulkanContext, N);
+    bufBinned->getBuffer().memcopyFrom(inputG);
+
+    auto bufCount = std::make_shared<BufferElementSinglePath<VulkanBuffer<uint32_t>>>(*vulkanContext, 1);
+    bufCount->getBuffer(0).memcopyFrom(&N, 1);
+
+    auto bufValA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, N);
+    auto bufIdxA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, N);
+    auto bufValB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, N);
+    auto bufIdxB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, N);
+
+    auto scratchHist    = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, numBins * nsg);
+    scratchHist->setRecordToZero(true);
+    auto scratchCounts  = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, numBins);
+    scratchCounts->setRecordToZero(true);
+    auto scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vulkanContext, nsg + 1);
+    scratchOffsets->setRecordToZero(true);
+
+    auto bufSorted = std::make_shared<BufferElement<Gaussian2DBuffer>>(*vulkanContext, N);
+
+    // ---- Stage definitions ----
+    auto extractStage = std::make_shared<GeneralComputation<>>(
+        *vulkanContext, "shaders/gsplat/gsplat_extract_sort_keys.comp.spv");
+    extractStage->setInput(bufBinned, 0);
+    extractStage->setInput(bufCount,  1);
+    extractStage->setInput(bufValA,   2);
+    extractStage->setInput(bufIdxA,   3);
+    extractStage->setGroupCountX(nsg);
+
+    std::vector<std::string> sortShaders = {
+        "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
+        "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
+        "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"
+    };
+    auto sortOp = std::make_shared<RadixSort>(*vulkanContext, sortShaders);
+    sortOp->setInput(extractStage, 0, 2);
+    sortOp->setInput(extractStage, 1, 3);
+    sortOp->setInput(bufValB, 2);
+    sortOp->setInput(bufIdxB, 3);
+    sortOp->addScratchBufferElement(scratchCounts,  true);
+    sortOp->addScratchBufferElement(scratchOffsets, true);
+    sortOp->addScratchBufferElement(bufCount,       false);
+    sortOp->addScratchBufferElement(scratchHist,    true);
+    sortOp->setGroupCountX(nsg);
+    {
+        std::vector<SortPushConstants> pcs;
+        for (uint32_t i = 0; i < 32 / 4; ++i) pcs.push_back({i, N, numBins});
+        sortOp->setPushConstants(pcs);
+    }
+
+    auto gatherStage = std::make_shared<GeneralComputation<>>(
+        *vulkanContext, "shaders/gsplat/gsplat_gather_sorted.comp.spv");
+    gatherStage->setInput(bufBinned, 0);
+    gatherStage->setInput(sortOp,    1, 1);  // sorted bufIdxA
+    gatherStage->setInput(bufCount,  2);
+    gatherStage->setInput(bufSorted, 3);
+    gatherStage->setGroupCountX(nsg);
+
+    // ================================================================
+    // Phase 1: extract only — verify the shader produces the correct
+    // concatenated key before any sorting happens.
+    //
+    // A fresh stage instance is used so that Phase 1 and Phase 2 each
+    // own their own GPU pipeline/descriptor-pool objects and neither
+    // leaks resources when the other is compiled.  They share the same
+    // underlying VkBuffer objects (getVkBuffer(0) is always buffers[0]).
+    // ================================================================
+    {
+        auto extractVerify = std::make_shared<GeneralComputation<>>(
+            *vulkanContext, "shaders/gsplat/gsplat_extract_sort_keys.comp.spv");
+        extractVerify->setInput(bufBinned, 0);
+        extractVerify->setInput(bufCount,  1);
+        extractVerify->setInput(bufValA,   2);
+        extractVerify->setInput(bufIdxA,   3);
+        extractVerify->setGroupCountX(nsg);
+
+        auto cgExtract = ComputeGraph(*vulkanContext, 1);
+        cgExtract.compileFrom(extractVerify);
+        cgExtract.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+
+        std::vector<uint32_t> gotKeys(N), gotIdx(N);
+        bufValA->getBuffer(0).memcopyTo(gotKeys);
+        bufIdxA->getBuffer(0).memcopyTo(gotIdx);
+
+        bool ok = true;
+        for (uint32_t i = 0; i < N && ok; ++i) {
+            uint32_t expectedKey = sortKey(inputG[i].binMask, inputG[i].z);
+            EXPECT_EQ(gotKeys[i], expectedKey)
+                << "Extract key wrong at i=" << i
+                << " binMask=" << inputG[i].binMask
+                << " z=" << inputG[i].z
+                << " expected=0x" << std::hex << expectedKey
+                << " got=0x" << gotKeys[i] << std::dec;
+            EXPECT_EQ(gotIdx[i], i)
+                << "Extract index wrong at i=" << i;
+            if (gotKeys[i] != expectedKey || gotIdx[i] != i) ok = false;
+        }
+        ASSERT_TRUE(ok) << "Extract phase produced wrong keys — aborting further checks";
+        // cgExtract and extractVerify destroyed here; GPU resources freed cleanly.
+    }
+
+    // ================================================================
+    // Phase 2: extract → sort → gather — correctness and stability.
+    // ================================================================
+    auto cgFull = ComputeGraph(*vulkanContext, 1);
+    cgFull.compileFrom(gatherStage);
+
+    // Run 1
+    cgFull.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+    std::vector<Gaussian2D> run1(N);
+    bufSorted->getBuffer(0).memcopyTo(run1);
+
+    // Run 2 — same graph, same input, must be bit-identical
+    cgFull.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+    std::vector<Gaussian2D> run2(N);
+    bufSorted->getBuffer(0).memcopyTo(run2);
+
+    // ---- Check A: sorted by concatenated key (bin+z, both must be correct) ----
+    bool sortOK = true;
+    for (uint32_t i = 1; i < N && sortOK; ++i) {
+        uint32_t k0 = sortKey(run1[i-1].binMask, run1[i-1].z);
+        uint32_t k1 = sortKey(run1[i  ].binMask, run1[i  ].z);
+        EXPECT_LE(k0, k1)
+            << "Key order violation at i=" << i
+            << ": key[i-1]=0x" << std::hex << k0
+            << " > key[i]=0x" << k1 << std::dec
+            << " (binMask[i-1]=" << run1[i-1].binMask << " z[i-1]=" << run1[i-1].z
+            << " binMask[i]="   << run1[i  ].binMask << " z[i]="   << run1[i  ].z << ")";
+        if (k0 > k1) sortOK = false;
+    }
+
+    // ---- Check B: completeness — input binMask multiset is preserved ----
+    {
+        std::vector<uint32_t> inM(N), outM(N);
+        for (uint32_t i = 0; i < N; ++i) { inM[i] = inputG[i].binMask; outM[i] = run1[i].binMask; }
+        std::sort(inM.begin(), inM.end());
+        std::sort(outM.begin(), outM.end());
+        EXPECT_EQ(inM, outM) << "Output binMask multiset does not match input";
+    }
+
+    // ---- Check C: gather fidelity — positions match the sorted-index source ----
+    {
+        std::vector<uint32_t> sortedIdx(N);
+        bufIdxA->getBuffer(0).memcopyTo(sortedIdx);
+        bool ok = true;
+        for (uint32_t i = 0; i < N && ok; ++i) {
+            uint32_t src = sortedIdx[i];
+            EXPECT_LT(src, N) << "Sorted index out of range at i=" << i;
+            if (src >= N) { ok = false; break; }
+            EXPECT_FLOAT_EQ(run1[i].position.x, inputG[src].position.x)
+                << "Gather position.x mismatch at i=" << i << " src=" << src;
+            EXPECT_FLOAT_EQ(run1[i].z, inputG[src].z)
+                << "Gather z mismatch at i=" << i << " src=" << src;
+            if (run1[i].position.x != inputG[src].position.x ||
+                run1[i].z          != inputG[src].z) ok = false;
+        }
+    }
+
+    // ---- Check D: stability — run 1 and run 2 are bit-identical ----
+    bool stable = true;
+    for (uint32_t i = 0; i < N && stable; ++i) {
+        if (run1[i].binMask    != run2[i].binMask    ||
+            run1[i].position.x != run2[i].position.x ||
+            run1[i].z          != run2[i].z) {
+            EXPECT_EQ(run1[i].binMask,    run2[i].binMask)    << "Stability binMask at i=" << i;
+            EXPECT_EQ(run1[i].position.x, run2[i].position.x) << "Stability position at i=" << i;
+            EXPECT_EQ(run1[i].z,          run2[i].z)           << "Stability z at i=" << i;
+            stable = false;
+        }
+    }
+    EXPECT_TRUE(stable) << "extract→sort→gather is not stable across two consecutive runs";
 }

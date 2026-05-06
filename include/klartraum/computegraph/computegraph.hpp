@@ -154,9 +154,21 @@ public:
         if (waitResult != VK_SUCCESS) {
             throw std::runtime_error("failed to wait for fence!");
         }
-
         vkDestroyFence(device, fence, nullptr);
-        return;
+
+        // submitTo signals graphFinishedSemaphores[pathId] but never consumes it.
+        // Drain it with an empty wait submit so repeated submitAndWait calls do
+        // not fail with "semaphore already signaled".
+        VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        VkSubmitInfo drainInfo{};
+        drainInfo.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        drainInfo.waitSemaphoreCount   = 1;
+        drainInfo.pWaitSemaphores      = &finishSemaphore;
+        drainInfo.pWaitDstStageMask    = &waitStage;
+        drainInfo.signalSemaphoreCount = 0;
+        drainInfo.commandBufferCount   = 0;
+        vkQueueSubmit(graphicsQueue, 1, &drainInfo, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphicsQueue);
     }
 
 private:
