@@ -57,11 +57,6 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     // setup projection stage
     /////////////////////////////////////////////
 
-    auto flags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    auto dynamicNumberOf2DGaussiansThreads = vulkanContext.create<BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>>(1, flags);
-    dynamicNumberOf2DGaussiansThreads->setName("DynamicNumberOf2DGaussiansThreads");
-
     ProjectionPushConstants pushConstants = {
         number_of_gaussians, // numElements
         gridSize,             // gridSize (4x4)
@@ -77,27 +72,62 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     project3Dto2D->setGroupCountX(number_of_gaussians / threadsPerGroup + 1);
     project3Dto2D->setPushConstants({pushConstants});
 
-    // setup binning stage
+    // setup binning stage — three-pass deterministic prefix-sum scatter
     /////////////////////////////////////////////
+    // Pass 1 (count): per-workgroup histogram of (gaussian,bin) overlaps
+    // Pass 2 (prefix sum): exclusive prefix sums → global write offsets
+    // Pass 3 (scatter): each gaussian writes to a deterministic position
+    // using a Hillis-Steele scan within each workgroup, eliminating the
+    // non-deterministic atomicAdd of the old single-pass approach.
 
     auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
     totalGaussian2DCounts->setRecordToZero(true);
     totalGaussian2DCounts->setName("TotalGaussian2DCounts");
 
     auto binnedGaussians2D = vulkanContext.create<BufferElement<Gaussian2DBuffer>>(number_of_gaussians * maxGaussiansModifier);
-    binnedGaussians2D->zero();                 // nice if it is zero initially, but not necessary
-    binnedGaussians2D->setRecordToZero(false); // does not have to be reset
+    binnedGaussians2D->setRecordToZero(false);
     binnedGaussians2D->setName("BinnedGaussians2D");
 
-    bin = std::make_shared<GaussianBinning>(vulkanContext, "shaders/gsplat/gsplat_binning.comp.spv");
-    bin->setName("GaussianBinning");
-    bin->setInput(project3Dto2D, 0, 2);
-    bin->setInput(binnedGaussians2D, 1);
-    bin->setInput(totalGaussian2DCounts, 2);
-    bin->setInput(dynamicNumberOf2DGaussiansThreads, 3);
+    const uint32_t maxBinnedGaussians = number_of_gaussians * maxGaussiansModifier;
+    const uint32_t numBinWorkGroups   = maxBinnedGaussians / threadsPerGroup + 1;
 
-    bin->setGroupCountX((number_of_gaussians * maxGaussiansModifier) / threadsPerGroup + 1);
-    bin->setPushConstants({pushConstants});
+    auto binHistogram = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numBinWorkGroups);
+    binHistogram->setName("BinHistogram"); binHistogram->setRecordToZero(true);
+    auto binOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBinWorkGroups + 1);
+    binOffsets->setName("BinOffsets"); binOffsets->setRecordToZero(true);
+
+    // Pass 1: count
+    binCount = std::make_shared<GaussianBinningCount>(vulkanContext, "shaders/gsplat/gsplat_binning_count.comp.spv");
+    binCount->setName("GaussianBinningCount");
+    binCount->setInput(project3Dto2D, 0, 2);  // projected Gaussian2D (slot 2)
+    binCount->setInput(binHistogram, 1);
+    binCount->setInput(binOffsets,   2);
+    binCount->setGroupCountX(numBinWorkGroups);
+    binCount->setPushConstants({pushConstants});
+
+    // Pass 2: prefix sum (reuses the chained-scan algorithm from the radix sort)
+    binPrefixSum = std::make_shared<GeneralComputation<>>(vulkanContext, "shaders/gsplat/gsplat_binning_prefix_sum.comp.spv");
+    binPrefixSum->setName("GaussianBinningPrefixSum");
+    binPrefixSum->setInput(binCount, 0, 1);  // binHistogram (slot 1 of count stage)
+    binPrefixSum->setInput(binCount, 1, 2);  // binOffsets   (slot 2 of count stage)
+    binPrefixSum->setGroupCountX(numBinWorkGroups);  // one workgroup per histogram column
+
+    // Pass 3: scatter
+    BinningScatterPushConstants scatterPC{
+        number_of_gaussians,
+        gridSize,
+        screenWidth,
+        screenHeight,
+        maxBinnedGaussians
+    };
+    binScatter = std::make_shared<GaussianBinningScatter>(vulkanContext, "shaders/gsplat/gsplat_binning_scatter.comp.spv");
+    binScatter->setName("GaussianBinningScatter");
+    binScatter->setInput(project3Dto2D, 0, 2);       // projected gaussians (slot 2)
+    binScatter->setInput(binnedGaussians2D,  1);      // output buffer
+    binScatter->setInput(binPrefixSum, 2, 0);         // prefix sums (slot 0 = binHistogram after pass 2)
+    binScatter->setInput(totalGaussian2DCounts, 3);   // output totalCount
+    binScatter->setGroupCountX(numBinWorkGroups);
+    binScatter->setPushConstants({scatterPC});
 
     // setup sorting stage — extract → radix sort → gather
     /////////////////////////////////////////////
@@ -126,15 +156,15 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     auto scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numSortWorkGroups + 1);
     scratchOffsets->setName("ScratchOffsets"); scratchOffsets->setRecordToZero(true);
 
-    // Stage: extract binMask from binnedGaussians2D → sortRadixValA, fill index 0..N
+    // Stage: extract (bin+z) sort keys from binnedGaussians2D → sortRadixValA
     extractSortKeys = std::make_shared<GeneralComputation<>>(
         vulkanContext, "shaders/gsplat/gsplat_extract_sort_keys.comp.spv");
     extractSortKeys->setName("ExtractSortKeys");
-    extractSortKeys->setInput(bin, 0, 1);           // binnedGaussians2D
-    extractSortKeys->setInput(bin, 1, 2);           // totalGaussian2DCounts
-    extractSortKeys->setInput(sortRadixValA, 2);    // sort keys (output)
-    extractSortKeys->setInput(sortRadixIdxA, 3);    // sort indices (output)
-    extractSortKeys->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
+    extractSortKeys->setInput(binScatter, 0, 1);    // binnedGaussians2D  (slot 1 of scatter)
+    extractSortKeys->setInput(binScatter, 1, 3);    // totalGaussian2DCounts (slot 3 of scatter)
+    extractSortKeys->setInput(sortRadixValA, 2);
+    extractSortKeys->setInput(sortRadixIdxA, 3);
+    extractSortKeys->setGroupCountX(numSortWorkGroups);  // fixed; shader returns early beyond totalCount
 
     // Stage: radix sort (8 passes × 4 bits = 32 bits, last pass=7 odd → output in A buffers)
     std::vector<std::string> sortShaders = {
@@ -167,11 +197,11 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     gatherSorted = std::make_shared<GeneralComputation<>>(
         vulkanContext, "shaders/gsplat/gsplat_gather_sorted.comp.spv");
     gatherSorted->setName("GatherSorted");
-    gatherSorted->setInput(bin, 0, 1);          // binnedGaussians2D (unsorted source)
-    gatherSorted->setInput(sortOp, 1, 1);       // sortRadixIdxA (sorted indices via extractSortKeys)
-    gatherSorted->setInput(bin, 2, 2);          // totalGaussian2DCounts
+    gatherSorted->setInput(binScatter, 0, 1);   // binnedGaussians2D (slot 1 of scatter)
+    gatherSorted->setInput(sortOp, 1, 1);       // sortRadixIdxA (sorted indices)
+    gatherSorted->setInput(binScatter, 2, 3);   // totalGaussian2DCounts (slot 3 of scatter)
     gatherSorted->setInput(sortedGaussians2D, 3);
-    gatherSorted->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
+    gatherSorted->setGroupCountX(numSortWorkGroups);
 
     // setup bounds computation stage
     /////////////////////////////////////////////
@@ -190,9 +220,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     };
 
     computeBounds->setInput(gatherSorted, 0, 3);       // sortedGaussians2D
-    computeBounds->setInput(bin, 1, 2);                // totalGaussian2DCounts
+    computeBounds->setInput(binScatter, 1, 3);         // totalGaussian2DCounts (slot 3 of scatter)
     computeBounds->setInput(scratchBinStartAndEnd, 2);
-    computeBounds->setDynamicGroupDispatchParams(dynamicNumberOf2DGaussiansThreads);
+    computeBounds->setGroupCountX(maxBinnedGaussians / 256 + 1);
 
     computeBounds->setPushConstants({computeBoundsPushConstants});
 
@@ -215,9 +245,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         }
     }
 
-    splat->setInput(computeBounds, 0, 0); // bufferElement, 0);
-    splat->setInput(computeBounds, 1, 1); // totalGaussian2DCounts, 1);
-    splat->setInput(computeBounds, 2, 2); // scratchBinStartAndEnd, 2);
+    splat->setInput(computeBounds, 0, 0);       // sortedGaussians2D
+    splat->setInput(binScatter, 1, 3);           // totalGaussian2DCounts (slot 3 of scatter)
+    splat->setInput(computeBounds, 2, 2);        // scratchBinStartAndEnd
     splat->setInput(imageViewSrc, 3);
 
 

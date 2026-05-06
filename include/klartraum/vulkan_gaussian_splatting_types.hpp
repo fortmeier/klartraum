@@ -64,7 +64,19 @@ struct SortPushConstants {
 typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
 typedef GeneralComputation<SortPushConstants> RadixSort;
 
-typedef GeneralComputation<ProjectionPushConstants> GaussianBinning;
+// Three-pass deterministic binning pipeline
+typedef GeneralComputation<ProjectionPushConstants> GaussianBinningCount;
+
+struct BinningScatterPushConstants {
+    uint32_t numElements;   // number of projected gaussians
+    uint32_t gridSize;
+    float    screenWidth;
+    float    screenHeight;
+    uint32_t maxOutput;     // capacity of binnedGaussians buffer
+};
+typedef GeneralComputation<BinningScatterPushConstants> GaussianBinningScatter;
+
+typedef GeneralComputation<ProjectionPushConstants> GaussianBinning;  // kept for compatibility
 typedef GeneralComputation<ProjectionPushConstants> GaussianComputeBounds;
 typedef GeneralComputation<SplatPushConstants> GaussianSplatting;
 
