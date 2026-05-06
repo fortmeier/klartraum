@@ -27,6 +27,15 @@ layout(scalar, binding = 3) buffer SortIndexes {
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= totalCount) return;
-    values[idx]  = gaussians[idx].binMask;
+
+    // Sort key: (bin_index[3:0] << 28) | (floatBitsToUint(z) >> 4)
+    // The 4 MSBs hold the bin index (findMSB of a power-of-2 binMask gives
+    // the bit position, 0-15) so all entries for the same bin sort together.
+    // The 28 LSBs hold the top 28 bits of the IEEE 754 z value, providing
+    // depth ordering within each bin (valid z is in [0,1], all positive, so
+    // unsigned integer order == float order).
+    uint binIdx = uint(findMSB(gaussians[idx].binMask));   // 0-15
+    uint zBits  = floatBitsToUint(gaussians[idx].z) >> 4;  // top 28 bits of z
+    values[idx]  = (binIdx << 28u) | zBits;
     indexes[idx] = idx;
 }
