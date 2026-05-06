@@ -18,7 +18,9 @@ public:
     ~GlfwFrontend();
 
 
-    void loop();
+    // Run the render loop.  If maxFrames > 0 the window closes automatically
+    // after that many frames; pass -1 (default) to run until user closes it.
+    void loop(int maxFrames = -1);
 
 
 
