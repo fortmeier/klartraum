@@ -75,13 +75,16 @@ private:
     std::shared_ptr<BufferElementSinglePath<Gaussian3DBuffer>> gaussians3D;
     std::shared_ptr<BufferElement<Gaussian2DBuffer>> gaussians2D;
 
-    std::shared_ptr<GaussianProjection>    project3Dto2D;
-    std::shared_ptr<GaussianBinning>       bin;
-    std::shared_ptr<GeneralComputation<>>  extractSortKeys;
-    std::shared_ptr<RadixSort>             sortOp;
-    std::shared_ptr<GeneralComputation<>>  gatherSorted;
-    std::shared_ptr<GaussianComputeBounds> computeBounds;
-    std::shared_ptr<GaussianSplatting>     splat;
+    std::shared_ptr<GaussianProjection>      project3Dto2D;
+    // Three-pass deterministic binning (replaces the old single-pass atomicAdd bin)
+    std::shared_ptr<GaussianBinningCount>    binCount;
+    std::shared_ptr<GeneralComputation<>>    binPrefixSum;
+    std::shared_ptr<GaussianBinningScatter>  binScatter;
+    std::shared_ptr<GeneralComputation<>>    extractSortKeys;
+    std::shared_ptr<RadixSort>               sortOp;
+    std::shared_ptr<GeneralComputation<>>    gatherSorted;
+    std::shared_ptr<GaussianComputeBounds>   computeBounds;
+    std::shared_ptr<GaussianSplatting>       splat;
 
     // Sort ping-pong buffers — stored as members so _record can pre-fill them
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sortRadixValA;

@@ -1,0 +1,98 @@
+#version 450
+
+#include "gsplat_types.glsl"
+
+layout(local_size_x = 128) in;
+
+#extension GL_EXT_scalar_block_layout : enable
+
+// Pass 1 of the three-pass deterministic binning pipeline.
+// Counts, for each workgroup, how many (gaussian, bin) overlap pairs belong
+// to each of the 16 bins.  The resulting per-workgroup histogram is written
+// in the layout histogram[numWorkGroups * binIdx + workGroupID] — identical
+// to the radix sort histogram format so the same prefix sum shader can be
+// reused.  Also initialises the prefix sum offset buffer (offsets[0]=0,
+// offsets[1..N]=-1) that the chained prefix sum shader needs.
+
+layout(scalar, binding = 0) readonly buffer InputGaussians {
+    Gaussian2D gaussians[];
+} inputBuf;
+
+layout(scalar, binding = 1) buffer HistogramBuf {
+    uint histogram[];
+} histoBuf;
+
+layout(scalar, binding = 2) buffer OffsetBuf {
+    uint offsets[];
+} offsetBuf;
+
+layout(push_constant) uniform PC {
+    uint  numElements;
+    uint  gridSize;
+    float screenWidth;
+    float screenHeight;
+} pc;
+
+shared uint sharedHisto[16];
+
+bool overlapsWithBin(Gaussian2D g, uint binIdx) {
+    float cellW = pc.screenWidth  / float(pc.gridSize);
+    float cellH = pc.screenHeight / float(pc.gridSize);
+
+    uint gridX = binIdx % pc.gridSize;
+    uint gridY = binIdx / pc.gridSize;
+
+    vec2 binMin = vec2(gridX * cellW, gridY * cellH);
+    vec2 binMax = vec2((gridX + 1) * cellW, (gridY + 1) * cellH);
+
+    mat2 cov     = inverse(g.covarianceInv);
+    float spreadX = sqrt(cov[0][0]) * 2.5;
+    float spreadY = sqrt(cov[1][1]) * 2.5;
+
+    vec2 gMin = g.position - vec2(spreadX, spreadY);
+    vec2 gMax = g.position + vec2(spreadX, spreadY);
+
+    return !(gMax.x < binMin.x || gMin.x > binMax.x ||
+             gMax.y < binMin.y || gMin.y > binMax.y);
+}
+
+void main() {
+    uint lid   = gl_LocalInvocationIndex;
+    uint idx   = gl_GlobalInvocationID.x;
+    uint wgID  = gl_WorkGroupID.x;
+    uint numBins = pc.gridSize * pc.gridSize;
+
+    // Initialise per-workgroup histogram in shared memory
+    if (lid < numBins) sharedHisto[lid] = 0u;
+    barrier();
+
+    // Count overlaps
+    if (idx < pc.numElements) {
+        Gaussian2D g = inputBuf.gaussians[idx];
+        if (g.z >= 0.0 && g.z <= 1.0) {
+            for (uint b = 0; b < numBins; b++) {
+                if (overlapsWithBin(g, b)) {
+                    atomicAdd(sharedHisto[b], 1u);
+                }
+            }
+        }
+    }
+    barrier();
+
+    // Write per-workgroup histogram to global buffer
+    // Layout: histogram[numWorkGroups * binIdx + workGroupID]
+    if (lid < numBins) {
+        histoBuf.histogram[gl_NumWorkGroups.x * lid + wgID] = sharedHisto[lid];
+    }
+
+    // Initialise prefix sum chaining offsets:
+    //   offsets[0]   = 0   (workgroup 0 starts with sum = 0)
+    //   offsets[1..N]= -1  (sentinel: "not yet computed by previous workgroup")
+    if (lid == 0) {
+        if (wgID == 0) {
+            offsetBuf.offsets[0] = 0u;
+        } else {
+            offsetBuf.offsets[wgID] = 0xFFFFFFFFu;  // -1 as uint
+        }
+    }
+}
