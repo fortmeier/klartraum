@@ -804,6 +804,12 @@ void VulkanContext::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Vk
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
+float VulkanContext::getTimestampPeriod() const {
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &props);
+    return props.limits.timestampPeriod;
+}
+
 BackendConfig& VulkanContext::getConfig()
 {
     return config;

@@ -37,6 +37,10 @@ int main(int argc, char** argv) {
     auto& engine = frontend.getKlartraumEngine();
     auto& vulkanContext = engine.getVulkanContext();
 
+    // Enable GPU timestamp profiling before add() so the compute graph
+    // instruments all its nodes.
+    if (maxFrames > 0) engine.enableProfiling();
+
     // Build an ImageViewSrc from the real swapchain images so
     // VulkanGaussianSplatting can write directly to the presentable images.
     uint32_t numImages = vulkanContext.getNumberOfSwapChainImages();
@@ -74,6 +78,14 @@ int main(int argc, char** argv) {
     engine.setCameraUBO(cameraUBO);
 
     frontend.loop(maxFrames);
+
+    // Print GPU profiling results when --frames N was given.
+    if (maxFrames > 0) {
+        std::cout << "\n--- GPU timing (mean over " << maxFrames << " frames) ---\n";
+        for (auto& [name, ms] : engine.getProfilingResults()) {
+            std::cout << "  " << name << ": " << ms << " ms\n";
+        }
+    }
 
     return 0;
 }

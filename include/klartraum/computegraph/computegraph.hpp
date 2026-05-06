@@ -62,8 +62,11 @@ public:
         for (auto& buffer : commandBuffers) {
             vkFreeCommandBuffers(device, commandPool, 1, &buffer);
         }
-        // destroy the command pool
         vkDestroyCommandPool(device, commandPool, nullptr);
+
+        if (profilingQueryPool_ != VK_NULL_HANDLE) {
+            vkDestroyQueryPool(device, profilingQueryPool_, nullptr);
+        }
     }
 
     void compileFrom(ComputeGraphElementPtr element) {
@@ -94,11 +97,26 @@ public:
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
+        // Create timestamp query pool when profiling is enabled.
+        // Each element gets two queries: one at the top of its CB (start)
+        // and one at the bottom (end).  The pool is reset inside each CB so
+        // it is re-used correctly every frame.
+        if (profilingEnabled_) {
+            profilingTimestampPeriodNs_ = vulkanContext.getTimestampPeriod();
+            profilingAccum_.assign(ordered_elements.size(), {0.0, 0ULL});
+
+            VkQueryPoolCreateInfo qi{};
+            qi.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+            qi.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+            qi.queryCount = 2u * (uint32_t)ordered_elements.size();
+            vkCreateQueryPool(device, &qi, nullptr, &profilingQueryPool_);
+        }
+
         for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
             for (size_t i = 0; i < ordered_elements.size(); i++) {
                 auto& element = ordered_elements[i];
                 VkCommandBuffer& commandBuffer = commandBuffers[i * numberPaths + pathId];
-                recordCommandBuffer(commandBuffer, element, pathId);
+                recordCommandBuffer(commandBuffer, element, pathId, (uint32_t)i);
                 // for now, all command buffers will be submitted to the same queue without any synchronization
                 // this is okay since we sorted the elements in the graph before and the queue is
                 // processing them one after another (assumption!!!)
@@ -156,9 +174,8 @@ public:
         }
         vkDestroyFence(device, fence, nullptr);
 
-        // submitTo signals graphFinishedSemaphores[pathId] but never consumes it.
-        // Drain it with an empty wait submit so repeated submitAndWait calls do
-        // not fail with "semaphore already signaled".
+        // Drain graphFinishedSemaphores[pathId] so repeated submitAndWait calls
+        // don't double-signal it.
         VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
         VkSubmitInfo drainInfo{};
         drainInfo.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -169,6 +186,9 @@ public:
         drainInfo.commandBufferCount   = 0;
         vkQueueSubmit(graphicsQueue, 1, &drainInfo, VK_NULL_HANDLE);
         vkQueueWaitIdle(graphicsQueue);
+
+        // GPU is now idle: accumulate timestamp results if profiling is on.
+        readAndAccumulateTimestamps_();
     }
 
 private:
@@ -193,21 +213,84 @@ private:
 
     std::vector<VkSemaphore> graphFinishedSemaphores;
 
-    void recordCommandBuffer(VkCommandBuffer commandBuffer, ComputeGraphElementPtr element, uint32_t pathId) {
-        // reset the command buffer before recording
+    // ---- Profiling -------------------------------------------------------
+    bool         profilingEnabled_          = false;
+    VkQueryPool  profilingQueryPool_        = VK_NULL_HANDLE;
+    float        profilingTimestampPeriodNs_ = 1.0f;
+    // Per ordered_element: {accumulated nanoseconds, sample count}
+    std::vector<std::pair<double, uint64_t>> profilingAccum_;
+
+public:
+    // Call before compileFrom().
+    void enableProfiling() { profilingEnabled_ = true; }
+
+    // Returns {elementName, meanTimeMs} for every element in execution order.
+    // Only meaningful after at least one submitAndWait() or after an explicit
+    // readAndAccumulateTimestamps_() call following vkQueueWaitIdle().
+    std::vector<std::pair<std::string, float>> getProfilingResults() const {
+        std::vector<std::pair<std::string, float>> out;
+        for (size_t i = 0; i < ordered_elements.size(); ++i) {
+            auto& [totalNs, count] = profilingAccum_[i];
+            float meanMs = (count > 0) ? float(totalNs / double(count)) * 1e-6f : 0.f;
+            std::string label = ordered_elements[i]->getName();
+            if (label.empty()) label = ordered_elements[i]->getType();
+            out.push_back({label, meanMs});
+        }
+        return out;
+    }
+
+    // Read timestamp results from the GPU (GPU must be idle).
+    // Accumulates into profilingAccum_ for mean computation.
+    void readAndAccumulateTimestamps_() {
+        if (!profilingEnabled_ || profilingQueryPool_ == VK_NULL_HANDLE) return;
+        uint32_t n = (uint32_t)ordered_elements.size();
+        std::vector<uint64_t> ts(2u * n, 0ULL);
+        VkResult r = vkGetQueryPoolResults(
+            vulkanContext.getDevice(), profilingQueryPool_,
+            0, 2u * n,
+            sizeof(uint64_t) * 2u * n, ts.data(), sizeof(uint64_t),
+            VK_QUERY_RESULT_64_BIT);     // don't use WAIT_BIT: GPU must already be idle
+        if (r != VK_SUCCESS && r != VK_NOT_READY) return;
+        for (uint32_t i = 0; i < n; ++i) {
+            if (ts[2*i+1] >= ts[2*i]) {
+                profilingAccum_[i].first  += double(ts[2*i+1] - ts[2*i]) * profilingTimestampPeriodNs_;
+                profilingAccum_[i].second += 1;
+            }
+        }
+    }
+
+private:
+    void recordCommandBuffer(VkCommandBuffer commandBuffer,
+                             ComputeGraphElementPtr element,
+                             uint32_t pathId,
+                             uint32_t elementIdx = 0) {
         vkResetCommandBuffer(commandBuffer, 0);
 
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = 0;                  // Optional
-        beginInfo.pInheritanceInfo = nullptr; // Optional
+        beginInfo.flags = 0;
+        beginInfo.pInheritanceInfo = nullptr;
 
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
             throw std::runtime_error("failed to begin recording command buffer!");
         }
 
-        // record the command buffer
+        if (profilingEnabled_ && profilingQueryPool_ != VK_NULL_HANDLE) {
+            // Reset this element's two query slots, then write the start timestamp.
+            vkCmdResetQueryPool(commandBuffer, profilingQueryPool_, 2 * elementIdx, 2);
+            vkCmdWriteTimestamp(commandBuffer,
+                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                profilingQueryPool_, 2 * elementIdx);
+        }
+
         element->_record(commandBuffer, pathId);
+
+        if (profilingEnabled_ && profilingQueryPool_ != VK_NULL_HANDLE) {
+            // End timestamp: written after all GPU work in this CB completes.
+            vkCmdWriteTimestamp(commandBuffer,
+                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                profilingQueryPool_, 2 * elementIdx + 1);
+        }
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
             throw std::runtime_error("failed to record command buffer!");
