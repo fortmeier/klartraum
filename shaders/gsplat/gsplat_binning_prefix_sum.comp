@@ -1,0 +1,62 @@
+#version 450
+
+layout(local_size_x = 16) in;
+
+#extension GL_EXT_scalar_block_layout : enable
+
+// Pass 2 of the three-pass deterministic binning pipeline.
+// Converts the per-workgroup histogram produced by gsplat_binning_count.comp
+// into exclusive prefix sums using the same chained-scan algorithm as
+// gsplat_radix_sort_hist_prefix_sum.comp.
+//
+// Buffer layout: histogram[numCountWorkGroups * binIdx + countWorkGroupID]
+// After this pass each entry holds the total number of (gaussian,bin) pairs
+// that precede this workgroup for this bin across all earlier workgroups.
+// The scatter shader uses these values as base write offsets.
+
+layout(scalar, binding = 0) buffer HistogramBuf {
+    uint histogram[];
+} histoBuf;
+
+layout(scalar, binding = 1) buffer OffsetBuf {
+    uint offsets[];
+} offsetBuf;
+
+shared uint sharedHisto[16];
+shared uint prev_sum;
+
+void main() {
+    // Each workgroup handles one column of the histogram (one count-workgroup).
+    // Each of the 16 threads within handles one bin (row).
+    uint globalIdx = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+
+    sharedHisto[gl_LocalInvocationID.x] = histoBuf.histogram[globalIdx];
+    barrier();
+
+    // Thread 0 computes the inclusive per-bin prefix sum within this column
+    uint sum = 0u;
+    if (gl_LocalInvocationID.x == 0) {
+        for (uint i = 0; i < 16u; ++i) {
+            uint temp = sharedHisto[i];
+            sharedHisto[i] = sum;   // exclusive: store OLD sum before adding
+            sum += temp;
+        }
+    }
+    barrier();
+
+    // Chain across count-workgroups: spin until the previous workgroup has
+    // written its running total, then publish ours.
+    if (gl_LocalInvocationID.x == 0) {
+        prev_sum = 0xFFFFFFFFu;
+        do {
+            prev_sum = atomicAdd(offsetBuf.offsets[gl_WorkGroupID.x], 0u);
+        } while (prev_sum == 0xFFFFFFFFu);
+
+        uint total_sum = prev_sum + sum;
+        atomicAdd(offsetBuf.offsets[gl_WorkGroupID.x + 1u], total_sum + 1u);
+    }
+    barrier();
+
+    // Write exclusive prefix sum back: local exclusive + global running total
+    histoBuf.histogram[globalIdx] = sharedHisto[gl_LocalInvocationID.x] + prev_sum;
+}
