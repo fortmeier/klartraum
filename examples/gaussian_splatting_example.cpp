@@ -1,5 +1,6 @@
 #include <iostream>
 #include <filesystem>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -11,7 +12,7 @@
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 
-int main() {
+int main(int argc, char** argv) {
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
@@ -19,7 +20,18 @@ int main() {
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
     _CrtSetReportFile(_CRT_ERROR,  _CRTDBG_FILE_STDERR);
 #endif
-    std::cout << "Gaussian Splatting example" << std::endl;
+
+    // Parse --frames N  (optional: close after N rendered frames)
+    int maxFrames = -1;
+    for (int i = 1; i < argc - 1; ++i) {
+        if (std::string(argv[i]) == "--frames") {
+            try { maxFrames = std::stoi(argv[i + 1]); } catch (...) {}
+        }
+    }
+    if (maxFrames > 0)
+        std::cout << "Gaussian Splatting example (closing after " << maxFrames << " frames)" << std::endl;
+    else
+        std::cout << "Gaussian Splatting example" << std::endl;
 
     klartraum::GlfwFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -61,7 +73,7 @@ int main() {
     engine.setInterfaceCamera(cameraOrbit);
     engine.setCameraUBO(cameraUBO);
 
-    frontend.loop();
+    frontend.loop(maxFrames);
 
     return 0;
 }

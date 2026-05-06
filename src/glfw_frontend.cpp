@@ -87,14 +87,18 @@ void GlfwFrontend::initialize() {
 }
 
 
-void GlfwFrontend::loop() {
+void GlfwFrontend::loop(int maxFrames) {
 
+    int frameCount = 0;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
         processGLFWEvents();
 
         klartraumEngine->step();
+
+        if (maxFrames > 0 && ++frameCount >= maxFrames)
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
 }
