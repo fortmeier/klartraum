@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <iostream>
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/vulkan_context.hpp"
@@ -59,6 +60,7 @@ TEST_F(GeneralComputationTest, ComputeGraphCreation) {
    
    // this traverses the computegraph and creates the vulkan objects
    auto computegraph = ComputeGraph(vulkanContext, 1);
+   computegraph.enableProfiling();   // enable before compileFrom
    computegraph.compileFrom(op);
 
     std::vector<float> dataA = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
@@ -80,6 +82,24 @@ TEST_F(GeneralComputationTest, ComputeGraphCreation) {
     for (int i = 0; i < 7; i++) {
         EXPECT_EQ(dataA[i] * dataB[i], data_out[i]);
     }
+
+    // Retrieve and verify profiling results.
+    // submitAndWait() already accumulated the timestamps internally.
+    auto profilingResults = computegraph.getProfilingResults();
+
+    std::cout << "\n--- ComputeGraph profiling (single frame) ---\n";
+    for (auto& [name, ms] : profilingResults) {
+        std::cout << "  " << name << ": " << ms << " ms\n";
+    }
+
+    // There should be one entry per node in the graph
+    // (the three leaf buffers + the op shader node).
+    EXPECT_EQ(profilingResults.size(), 4u);
+
+    // The compute shader node ('GeneralComputation') must have a positive time.
+    // It's the last entry in topological order (root).
+    EXPECT_GT(profilingResults.back().second, 0.0f)
+        << "Compute shader reported zero GPU time — profiling may not be working";
 
     SUCCEED();
 }
