@@ -263,6 +263,38 @@ void VulkanGaussianSplatting::checkInput(ComputeGraphElementPtr input, int index
 
 void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
     numberOfPaths = numberPaths;
+
+    // The _record pre-fill (0xFFFFFFFF) only takes effect from the SECOND use
+    // of each path because it runs AFTER the sort.  Pre-fill all paths here
+    // during setup so that even the very first frame of each path has correct
+    // overflow sentinel values in the sort buffers.
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool        = vulkanContext.getCommandPool();
+    ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(vulkanContext.getDevice(), &ai, &cmd);
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+
+    for (uint32_t i = 0; i < numberPaths; ++i) {
+        vkCmdFillBuffer(cmd, sortRadixValA->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+        vkCmdFillBuffer(cmd, sortRadixValB->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+    }
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo si{};
+    si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers    = &cmd;
+    vkQueueSubmit(vulkanContext.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
+    vkFreeCommandBuffers(vulkanContext.getDevice(), vulkanContext.getCommandPool(), 1, &cmd);
 }
 
 void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
