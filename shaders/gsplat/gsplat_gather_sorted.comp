@@ -1,32 +1,33 @@
 #version 450
-
-#include "gsplat_types.glsl"
+#extension GL_EXT_scalar_block_layout : enable
 
 layout(local_size_x = 128) in;
 
-#extension GL_EXT_scalar_block_layout : enable
+// Binned (unsorted) SoA inputs
+layout(scalar, set = 0, binding = 0) readonly buffer InPos2D      { vec2  inPos2D[];      };
+layout(scalar, set = 0, binding = 1) readonly buffer InZ          { float inZ[];          };
+layout(scalar, set = 0, binding = 2) readonly buffer InBinMask    { uint  inBinMask[];    };
+layout(scalar, set = 0, binding = 3) readonly buffer InCovInv     { vec4  inCovInv[];     };
+layout(scalar, set = 0, binding = 4) readonly buffer InColorAlpha { vec4  inColorAlpha[]; };
 
-// Reorder binnedGaussians2D into sorted order using the index array
-// produced by the radix sort (sortedIndexes[i] = original position of
-// the element that should appear at position i after sorting).
-layout(scalar, binding = 0) readonly buffer Unsorted {
-    Gaussian2D gaussians[];
-} unsorted;
+layout(scalar, set = 0, binding = 5) readonly buffer SortedIdx  { uint  sortedIndexes[]; };
+layout(scalar, set = 0, binding = 6) readonly buffer CountBuf   { uint  totalCount;      };
 
-layout(scalar, binding = 1) readonly buffer SortedIdx {
-    uint indexes[];
-};
-
-layout(scalar, binding = 2) readonly buffer CountBuf {
-    uint totalCount;
-};
-
-layout(scalar, binding = 3) buffer Sorted {
-    Gaussian2D gaussians[];
-} sorted;
+// Sorted SoA outputs
+layout(scalar, set = 0, binding = 7)  buffer OutPos2D      { vec2  outPos2D[];      };
+layout(scalar, set = 0, binding = 8)  buffer OutZ          { float outZ[];          };
+layout(scalar, set = 0, binding = 9)  buffer OutBinMask    { uint  outBinMask[];    };
+layout(scalar, set = 0, binding = 10) buffer OutCovInv     { vec4  outCovInv[];     };
+layout(scalar, set = 0, binding = 11) buffer OutColorAlpha { vec4  outColorAlpha[]; };
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= totalCount) return;
-    sorted.gaussians[idx] = unsorted.gaussians[indexes[idx]];
+
+    uint src = sortedIndexes[idx];
+    outPos2D[idx]      = inPos2D[src];
+    outZ[idx]          = inZ[src];
+    outBinMask[idx]    = inBinMask[src];
+    outCovInv[idx]     = inCovInv[src];
+    outColorAlpha[idx] = inColorAlpha[src];
 }

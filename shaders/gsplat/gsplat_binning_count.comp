@@ -1,30 +1,17 @@
 #version 450
+#extension GL_EXT_scalar_block_layout : enable
 
 #include "gsplat_types.glsl"
 
 layout(local_size_x = 128) in;
 
-#extension GL_EXT_scalar_block_layout : enable
+// SoA inputs from projection
+layout(scalar, set = 0, binding = 0) readonly buffer Pos2DBuf  { vec2  pos2D[];  };
+layout(scalar, set = 0, binding = 1) readonly buffer ZBuf      { float zBuf[];   };
+layout(scalar, set = 0, binding = 2) readonly buffer CovInvBuf { vec4  covInv[]; }; // (m00,m10,m01,m11)
 
-// Pass 1 of the three-pass deterministic binning pipeline.
-// Counts, for each workgroup, how many (gaussian, bin) overlap pairs belong
-// to each of the 16 bins.  The resulting per-workgroup histogram is written
-// in the layout histogram[numWorkGroups * binIdx + workGroupID] — identical
-// to the radix sort histogram format so the same prefix sum shader can be
-// reused.  Also initialises the prefix sum offset buffer (offsets[0]=0,
-// offsets[1..N]=-1) that the chained prefix sum shader needs.
-
-layout(scalar, binding = 0) readonly buffer InputGaussians {
-    Gaussian2D gaussians[];
-} inputBuf;
-
-layout(scalar, binding = 1) buffer HistogramBuf {
-    uint histogram[];
-} histoBuf;
-
-layout(scalar, binding = 2) buffer OffsetBuf {
-    uint offsets[];
-} offsetBuf;
+layout(scalar, set = 0, binding = 3) buffer HistogramBuf { uint histogram[]; };
+layout(scalar, set = 0, binding = 4) buffer OffsetBuf    { uint offsets[];   };
 
 layout(push_constant) uniform PC {
     uint  numElements;
@@ -35,42 +22,39 @@ layout(push_constant) uniform PC {
 
 shared uint sharedHisto[16];
 
-bool overlapsWithBin(Gaussian2D g, uint binIdx) {
+bool overlapsWithBin(vec2 position, mat2 covarianceInv, uint binIdx) {
     float cellW = pc.screenWidth  / float(pc.gridSize);
     float cellH = pc.screenHeight / float(pc.gridSize);
-
     uint gridX = binIdx % pc.gridSize;
     uint gridY = binIdx / pc.gridSize;
-
     vec2 binMin = vec2(gridX * cellW, gridY * cellH);
     vec2 binMax = vec2((gridX + 1) * cellW, (gridY + 1) * cellH);
-
-    mat2 cov     = inverse(g.covarianceInv);
+    mat2 cov = inverse(covarianceInv);
     float spreadX = sqrt(cov[0][0]) * 2.5;
     float spreadY = sqrt(cov[1][1]) * 2.5;
-
-    vec2 gMin = g.position - vec2(spreadX, spreadY);
-    vec2 gMax = g.position + vec2(spreadX, spreadY);
-
+    vec2 gMin = position - vec2(spreadX, spreadY);
+    vec2 gMax = position + vec2(spreadX, spreadY);
     return !(gMax.x < binMin.x || gMin.x > binMax.x ||
              gMax.y < binMin.y || gMin.y > binMax.y);
 }
 
 void main() {
-    uint lid   = gl_LocalInvocationIndex;
-    uint idx   = gl_GlobalInvocationID.x;
-    uint wgID  = gl_WorkGroupID.x;
+    uint lid  = gl_LocalInvocationIndex;
+    uint idx  = gl_GlobalInvocationID.x;
+    uint wgID = gl_WorkGroupID.x;
     uint numBins = pc.gridSize * pc.gridSize;
 
-    // Initialise per-workgroup histogram in shared memory
     if (lid < numBins) sharedHisto[lid] = 0u;
     barrier();
 
     if (idx < pc.numElements) {
-        Gaussian2D g = inputBuf.gaussians[idx];
-        if (g.z >= 0.0 && g.z <= 1.0) {
+        float z = zBuf[idx];
+        if (z >= 0.0 && z <= 1.0) {
+            vec2 pos = pos2D[idx];
+            vec4 ci  = covInv[idx];
+            mat2 covInvMat = mat2(ci.x, ci.y, ci.z, ci.w);
             for (uint b = 0; b < numBins; b++) {
-                if (overlapsWithBin(g, b)) {
+                if (overlapsWithBin(pos, covInvMat, b)) {
                     atomicAdd(sharedHisto[b], 1u);
                 }
             }
@@ -78,20 +62,11 @@ void main() {
     }
     barrier();
 
-    // Write per-workgroup histogram to global buffer
-    // Layout: histogram[numWorkGroups * binIdx + workGroupID]
     if (lid < numBins) {
-        histoBuf.histogram[gl_NumWorkGroups.x * lid + wgID] = sharedHisto[lid];
+        histogram[gl_NumWorkGroups.x * lid + wgID] = sharedHisto[lid];
     }
 
-    // Initialise prefix sum chaining offsets:
-    //   offsets[0]   = 0   (workgroup 0 starts with sum = 0)
-    //   offsets[1..N]= -1  (sentinel: "not yet computed by previous workgroup")
     if (lid == 0) {
-        if (wgID == 0) {
-            offsetBuf.offsets[0] = 0u;
-        } else {
-            offsetBuf.offsets[wgID] = 0xFFFFFFFFu;  // -1 as uint
-        }
+        offsets[wgID] = (wgID == 0) ? 0u : 0xFFFFFFFFu;
     }
 }

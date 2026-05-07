@@ -4,89 +4,74 @@
 #include <string>
 #include <vector>
 
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include "klartraum/computegraph/buffertransformation.hpp"
 #include "klartraum/computegraph/computegraphgroup.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/rendergraphelement.hpp"
+#include "klartraum/computegraph/buffertransformation.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
-enum class GaussianSplattingRenderingType {
-    PointCloud,
-    // GaussianSplatting, not implemented yet
-};
-
-class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual public ComputeGraphGroup {
-    /**
-     * @brief
-     *
-     * Gaussian Splatting consists of these steps:
-     * 1. project the 3D Gaussian to 2D
-     * 2. distribute/bin the 2D Gaussians to 4x4 subtiles
-     * 3. sort the 2D Gaussians by depth and tile using radix sort
-     * 4. splat the 2D Gaussians to each subtile of the image
-     *
-     * The current implementation is probably not optimal:
-     * - projection and binning could be combined into single step
-     * - binning of the 2D gaussians creates a new number of gaussians,
-     *   which is limited to 2 * number of initinal 3D gaussians.
-     *   (2 is a magic number currently)
-     * - all further steps thus start enough workgroups to potentially
-     *   process all newly created gaussians and discarding the ones
-     *   that are not needed. a dynamic workgroup count
-     *   would be more efficient, but it is unclear how to implement this
-     */
+class VulkanGaussianSplatting : virtual public RenderGraphElement,
+                                virtual public ComputeGraphGroup {
 public:
     VulkanGaussianSplatting(
         VulkanContext& vulkanContext,
         std::shared_ptr<ImageViewSrc> imageViewSrc,
         std::shared_ptr<CameraUboType> cameraUBO,
         std::string path);
+
+    VulkanGaussianSplatting(
+        VulkanContext& vulkanContext,
+        std::shared_ptr<ImageViewSrc> imageViewSrc,
+        std::shared_ptr<CameraUboType> cameraUBO,
+        std::vector<Gaussian3D> gaussians);
+
     ~VulkanGaussianSplatting();
 
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override;
-
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override;
-
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override;
 
-    virtual const char* getType() const override {
-        return "GaussianSplatting";
-    }
+    virtual const char* getType() const override { return "GaussianSplatting"; }
 
 private:
     void loadSPZModel(std::string path);
-    void loadPLYModel(std::string path);
+    void initialize(VulkanContext& vulkanContext,
+                    std::shared_ptr<ImageViewSrc> imageViewSrc,
+                    std::shared_ptr<CameraUboType> cameraUBO);
 
     VulkanContext* vulkanContext = nullptr;
-
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
+    uint32_t number_of_gaussians = 0;
+    uint32_t numberOfPaths       = 0;
 
     std::vector<Gaussian3D> gaussians3DData;
-    uint32_t number_of_gaussians;
 
-    uint32_t numberOfPaths = 0;
+    // SoA 3D input buffers (single-path: static data)
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec3>>> buf3DPos;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec4>>> buf3DRot;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec3>>> buf3DScale;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec4>>> buf3DColAlpha;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     buf3DShR;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     buf3DShG;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     buf3DShB;
 
-    std::shared_ptr<BufferElementSinglePath<Gaussian3DBuffer>> gaussians3D;
-    std::shared_ptr<BufferElement<Gaussian2DBuffer>> gaussians2D;
+    // Pipeline stages
+    std::shared_ptr<GaussianProjection>     project3Dto2D;
+    std::shared_ptr<GaussianBinningCount>   binCount;
+    std::shared_ptr<GeneralComputation<>>   binPrefixSum;
+    std::shared_ptr<GaussianBinningScatter> binScatter;
+    std::shared_ptr<GeneralComputation<>>   extractSortKeys;
+    std::shared_ptr<RadixSort>              sortOp;
+    std::shared_ptr<GeneralComputation<>>   gatherSorted;
+    std::shared_ptr<GeneralComputation<>>   computeBounds;
+    std::shared_ptr<GaussianSplatting>      splat;
 
-    std::shared_ptr<GaussianProjection>      project3Dto2D;
-    // Three-pass deterministic binning (replaces the old single-pass atomicAdd bin)
-    std::shared_ptr<GaussianBinningCount>    binCount;
-    std::shared_ptr<GeneralComputation<>>    binPrefixSum;
-    std::shared_ptr<GaussianBinningScatter>  binScatter;
-    std::shared_ptr<GeneralComputation<>>    extractSortKeys;
-    std::shared_ptr<RadixSort>               sortOp;
-    std::shared_ptr<GeneralComputation<>>    gatherSorted;
-    std::shared_ptr<GaussianComputeBounds>   computeBounds;
-    std::shared_ptr<GaussianSplatting>       splat;
-
-    // Sort ping-pong buffers — stored as members so _record can pre-fill them
+    // Sort ping-pong value buffers (stored as members for _record pre-fill)
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sortRadixValA;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sortRadixValB;
 };
