@@ -46,6 +46,10 @@ public:
         computeGraphs.clear();
     }
 
+    void clearInterfaceCamera() {
+        interfaceCamera = nullptr;
+    }
+
     // Call before add() to enable GPU timestamp profiling on all subsequent
     // compute graphs.  Results accumulate across frames and are averaged.
     void enableProfiling() { profilingEnabled_ = true; }

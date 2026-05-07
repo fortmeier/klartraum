@@ -6,18 +6,6 @@ layout(local_size_x = 128) in;
 
 #extension GL_EXT_scalar_block_layout : enable
 
-// Pass 3 of the three-pass deterministic binning pipeline.
-// Scatters each (gaussian, bin) pair to a DETERMINISTIC position computed
-// from the prefix sums produced by gsplat_binning_prefix_sum.comp.
-//
-// Within each workgroup, a Hillis-Steele parallel prefix scan computes each
-// thread's exclusive rank among all threads in the same workgroup that overlap
-// the same bin.  Combined with the workgroup's global base offset from the
-// prefix sum buffer, this gives a globally unique, deterministic write index.
-//
-// No global atomics are used during the scatter: the only global atomic is a
-// single atomicAdd per workgroup at the end to accumulate totalCount.
-
 layout(scalar, binding = 0) readonly buffer InputGaussians {
     Gaussian2D gaussians[];
 } inputBuf;
@@ -27,7 +15,7 @@ layout(scalar, binding = 1) buffer OutputBuf {
 } outputBuf;
 
 layout(scalar, binding = 2) readonly buffer PrefixSumBuf {
-    uint prefixSums[];   // exclusive prefix sums, same layout as histogram
+    uint prefixSums[];
 } psBuf;
 
 layout(scalar, binding = 3) buffer TotalCountBuf {
@@ -35,33 +23,28 @@ layout(scalar, binding = 3) buffer TotalCountBuf {
 } totalBuf;
 
 layout(push_constant) uniform PC {
-    uint  numElements;   // number of projected gaussians
-    uint  gridSize;      // 4 for 4×4 grid
+    uint  numElements;
+    uint  gridSize;
     float screenWidth;
     float screenHeight;
-    uint  maxOutput;     // capacity of binnedGaussians (numElements * modifier)
+    uint  maxOutput;
 } pc;
 
-shared uint sharedScan[128];     // Hillis-Steele scan workspace
-shared uint sharedBinCounts[16]; // per-bin count for this workgroup (saved across loop iterations)
+shared uint sharedScan[128];
+shared uint sharedBinCounts[16];
 
 bool overlapsWithBin(Gaussian2D g, uint binIdx) {
     float cellW = pc.screenWidth  / float(pc.gridSize);
     float cellH = pc.screenHeight / float(pc.gridSize);
-
     uint gridX = binIdx % pc.gridSize;
     uint gridY = binIdx / pc.gridSize;
-
     vec2 binMin = vec2(gridX * cellW, gridY * cellH);
     vec2 binMax = vec2((gridX + 1) * cellW, (gridY + 1) * cellH);
-
     mat2 cov      = inverse(g.covarianceInv);
     float spreadX = sqrt(cov[0][0]) * 2.5;
     float spreadY = sqrt(cov[1][1]) * 2.5;
-
     vec2 gMin = g.position - vec2(spreadX, spreadY);
     vec2 gMax = g.position + vec2(spreadX, spreadY);
-
     return !(gMax.x < binMin.x || gMin.x > binMax.x ||
              gMax.y < binMin.y || gMin.y > binMax.y);
 }
@@ -78,11 +61,9 @@ void main() {
     if (inRange) g = inputBuf.gaussians[idx];
     bool validZ = inRange && (g.z >= 0.0 && g.z <= 1.0);
 
-    // Process each bin independently with a Hillis-Steele prefix scan
     for (uint b = 0u; b < numBins; b++) {
         bool overlaps = validZ && overlapsWithBin(g, b);
 
-        // --- Hillis-Steele inclusive prefix scan of the overlap flags ---
         sharedScan[lid] = overlaps ? 1u : 0u;
         barrier();
 
@@ -94,15 +75,11 @@ void main() {
             barrier();
         }
 
-        // After the scan: sharedScan[lid] = number of overlapping threads in [0..lid]
-        // exclusive rank = sharedScan[lid] - 1   (only valid when overlaps==true)
         uint inclusiveVal = sharedScan[lid];
-        uint totalInWg    = sharedScan[127];   // total overlapping threads in this workgroup
+        uint totalInWg    = sharedScan[127];
 
-        // Save for totalCount computation after the loop
         if (lid == 0u) sharedBinCounts[b] = totalInWg;
 
-        // --- Scatter to deterministic position ---
         if (overlaps) {
             uint exclusiveRank = inclusiveVal - 1u;
             uint basePos       = psBuf.prefixSums[numWGs * b + wgID];
@@ -116,9 +93,6 @@ void main() {
         barrier();
     }
 
-    // Thread 0 computes this workgroup's actual output count and accumulates
-    // it into the global total.  Since positions are pre-computed from the
-    // prefix sums the count is the sum of min(count, available_space) per bin.
     if (lid == 0u) {
         uint workgroupTotal = 0u;
         for (uint b = 0u; b < numBins; b++) {

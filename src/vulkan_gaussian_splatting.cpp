@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <glm/glm.hpp>
 #include <stdexcept>
@@ -89,7 +90,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     binnedGaussians2D->setName("BinnedGaussians2D");
 
     const uint32_t maxBinnedGaussians = number_of_gaussians * maxGaussiansModifier;
-    const uint32_t numBinWorkGroups   = maxBinnedGaussians / threadsPerGroup + 1;
+    const uint32_t numBinWorkGroups   = number_of_gaussians / threadsPerGroup + 1;
 
     auto binHistogram = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numBinWorkGroups);
     binHistogram->setName("BinHistogram"); binHistogram->setRecordToZero(true);
@@ -133,7 +134,9 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     /////////////////////////////////////////////
 
     const uint32_t maxBinned         = number_of_gaussians * maxGaussiansModifier;
-    const uint32_t numSortWorkGroups  = maxBinned / threadsPerGroup + 1;
+    // Capped at 320 (40 SMs × 8) but never more than ceil(maxBinned/128).
+    // Without this cap, integer division gives 0 items/WG when maxBinned < 320*128.
+    const uint32_t numSortWorkGroups  = std::max(1u, std::min(320u, maxBinned / threadsPerGroup + 1));
 
     // Ping-pong value/index buffers for the radix sort.
     // sortRadixValA and sortRadixValB are stored as members so _record can
@@ -164,7 +167,10 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     extractSortKeys->setInput(binScatter, 1, 3);    // totalGaussian2DCounts (slot 3 of scatter)
     extractSortKeys->setInput(sortRadixValA, 2);
     extractSortKeys->setInput(sortRadixIdxA, 3);
-    extractSortKeys->setGroupCountX(numSortWorkGroups);  // fixed; shader returns early beyond totalCount
+    // Extract is 1 thread per element — must cover all maxBinned slots (no looping).
+    // The sort histogram loops so it can use the smaller numSortWorkGroups.
+    const uint32_t numCoverWorkGroups = maxBinned / threadsPerGroup + 1;
+    extractSortKeys->setGroupCountX(numCoverWorkGroups);
 
     // Stage: radix sort (8 passes × 4 bits = 32 bits, last pass=7 odd → output in A buffers)
     std::vector<std::string> sortShaders = {
@@ -201,7 +207,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     gatherSorted->setInput(sortOp, 1, 1);       // sortRadixIdxA (sorted indices)
     gatherSorted->setInput(binScatter, 2, 3);   // totalGaussian2DCounts (slot 3 of scatter)
     gatherSorted->setInput(sortedGaussians2D, 3);
-    gatherSorted->setGroupCountX(numSortWorkGroups);
+    gatherSorted->setGroupCountX(numCoverWorkGroups);
 
     // setup bounds computation stage
     /////////////////////////////////////////////
