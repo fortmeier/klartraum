@@ -9,6 +9,7 @@
 
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
+#include "klartraum/vulkan_gaussian_splatting_soa.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 
@@ -21,17 +22,20 @@ int main(int argc, char** argv) {
     _CrtSetReportFile(_CRT_ERROR,  _CRTDBG_FILE_STDERR);
 #endif
 
-    // Parse --frames N  (optional: close after N rendered frames)
-    int maxFrames = -1;
-    for (int i = 1; i < argc - 1; ++i) {
-        if (std::string(argv[i]) == "--frames") {
+    // Parse args:  --frames N   (close after N frames)
+    //              --soa        (use SoA pipeline)
+    int  maxFrames = -1;
+    bool useSoA    = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--frames" && i + 1 < argc) {
             try { maxFrames = std::stoi(argv[i + 1]); } catch (...) {}
         }
+        if (std::string(argv[i]) == "--soa") useSoA = true;
     }
-    if (maxFrames > 0)
-        std::cout << "Gaussian Splatting example (closing after " << maxFrames << " frames)" << std::endl;
-    else
-        std::cout << "Gaussian Splatting example" << std::endl;
+    std::cout << "Gaussian Splatting example"
+              << (useSoA ? " [SoA pipeline]" : " [AoS pipeline]");
+    if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
+    std::cout << std::endl;
 
     klartraum::GlfwFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -62,10 +66,16 @@ int main(int argc, char** argv) {
     cameraUBO->setName("CameraUBO");
 
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
-    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting =
-        vulkanContext.create<klartraum::VulkanGaussianSplatting>(imageViewSrc, cameraUBO, spzFile);
 
-    engine.add(splatting);
+    if (useSoA) {
+        auto splatting = vulkanContext.create<klartraum::VulkanGaussianSplattingSoA>(
+            imageViewSrc, cameraUBO, spzFile);
+        engine.add(splatting);
+    } else {
+        auto splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(
+            imageViewSrc, cameraUBO, spzFile);
+        engine.add(splatting);
+    }
 
     auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
         klartraum::InterfaceCameraOrbit::UpDirection::Y);
