@@ -110,6 +110,11 @@ void GlfwFrontend::shutdown() {
     vulkanContext.stopRender();
     klartraumEngine->clearComputeGraphs();
 
+    // Release all engine-owned GPU resource holders (camera UBO, interface camera)
+    // before device shutdown so their VkBuffer destructors run while device is valid.
+    klartraumEngine->setCameraUBO(nullptr);
+    klartraumEngine->clearInterfaceCamera();
+
     // VulkanContext::shutdown() destroys swapchain → surface → device → instance
     // in the correct Vulkan teardown order.
     vulkanContext.shutdown();

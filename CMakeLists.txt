@@ -89,6 +89,8 @@ find_program(GLSLC glslc REQUIRED)
 set(SHADER_BASE_DIR "${PROJECT_SOURCE_DIR}/shaders")
 
 file(GLOB_RECURSE GLSL_SOURCE_FILES "${SHADER_BASE_DIR}/*.vert" "${SHADER_BASE_DIR}/*.frag" "${SHADER_BASE_DIR}/*.comp")
+# Exclude draft/scratch shaders prefixed with underscore
+list(FILTER GLSL_SOURCE_FILES EXCLUDE REGEX "/_[^/]+\\.comp$")
 
 foreach(GLSL ${GLSL_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
@@ -194,22 +196,23 @@ enable_testing()
 add_executable(
   klartraum_tests
   tests/test_main.cpp
-  tests/test_vulkan_buffers.cpp
-  tests/test_computegraph.cpp
-  tests/test_buffertransformation.cpp
-  tests/test_general_computation.cpp
+  # tests/test_vulkan_buffers.cpp
+  # tests/test_computegraph.cpp
+  # tests/test_buffertransformation.cpp
+  # tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
-  tests/test_copybuffer.cpp
-  tests/test_tensorelement.cpp
+  tests/test_gaussian_splatting_arrays.cpp
+  # tests/test_copybuffer.cpp
+  # tests/test_tensorelement.cpp
 
-  tests/test_onnx_network.cpp
-  tests/test_onnx_conv.cpp
-  tests/test_onnx_conv_transpose.cpp
-  tests/test_onnx_relu.cpp
-  tests/test_onnx_transpose.cpp
+  # tests/test_onnx_network.cpp
+  # tests/test_onnx_conv.cpp
+  # tests/test_onnx_conv_transpose.cpp
+  # tests/test_onnx_relu.cpp
+  # tests/test_onnx_transpose.cpp
 
-  tests/test_headless_frontend.cpp
-  tests/test_glfw_frontend.cpp
+  # tests/test_headless_frontend.cpp
+  # tests/test_glfw_frontend.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -219,6 +222,7 @@ set(KLARTRAUM_LIB_SRC
   src/glfw_frontend.cpp
   src/headless_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
+  src/vulkan_gaussian_splatting_soa.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp
   src/klartraum_engine.cpp

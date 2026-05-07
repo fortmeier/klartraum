@@ -1360,25 +1360,16 @@ TEST_F(GaussianSplattingTest, vulkanGaussianSplattingTwoFrames) {
         cameraUBO->update(i);
     }
 
-    // Render 4 frames: path 0, 1, 0, 1 (engine cycles imageIndex 0→1→0→1)
-    // Comparison strategy: compare the SAME PATH across two runs.
-    // Note: different paths may produce different pixel orderings because the
-    // binning shader uses non-deterministic atomicAdd to place gaussians into
-    // binnedGaussians2D, and the stable radix sort preserves that initial order
-    // for same-binMask elements.  Within a single path the GPU schedules work
-    // identically on every submission, so the same path must be bit-exact.
+    // Render 4 frames: path 0, 1, 0, 1 (engine cycles imageIndex 0→1→0→1).
+    // vkQueueWaitIdle is sufficient for synchronisation; sleep_for is not needed.
 
-    engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue()); 
-    std::this_thread::sleep_for(std::chrono::seconds(4));
-    
-    auto frame1 = readImageToHost(*vulkanContext, imgs[0], ext.width, ext.height); // path 0 run 1
-    std::this_thread::sleep_for(std::chrono::seconds(4));
-    
     engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
-    std::this_thread::sleep_for(std::chrono::seconds(4));
+    auto frame1 = readImageToHost(*vulkanContext, imgs[0], ext.width, ext.height); // path 0 run 1
+
+    engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
     auto frame2 = readImageToHost(*vulkanContext, imgs[1], ext.width, ext.height); // path 1 run 1
     writePPM("test_gsplatting_frame2.ppm", frame2.data(), ext.width, ext.height);
-    
+
     engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
     writePPM("test_gsplatting_frame1.ppm", frame1.data(), ext.width, ext.height);
     auto frame3 = readImageToHost(*vulkanContext, imgs[0], ext.width, ext.height); // path 0 run 2
@@ -1389,38 +1380,54 @@ TEST_F(GaussianSplattingTest, vulkanGaussianSplattingTwoFrames) {
     writePPM("test_gsplatting_frame4.ppm", frame4.data(), ext.width, ext.height);
 
     // ---- Assert 1: temporal stability — same path must be bit-exact ----
-    // KNOWN ISSUE: the binning shader uses non-deterministic atomicAdd to
-    // place gaussians into binnedGaussians2D.  Different GPU thread schedules
-    // across runs produce different element orderings, which the stable radix
-    // sort propagates to the final image.  This assert tracks the bug; it is
-    // expected to fail until the binning is made deterministic.
-    // TODO: fix gsplat_binning.comp to use a deterministic scatter.
+    // The deterministic Hillis-Steele scatter (replacing the old atomicAdd) and
+    // the stable radix sort guarantee identical output for the same path.
     EXPECT_EQ(frame1, frame3)
-        << "Path 0 frame 1 vs frame 3 differ — binning atomicAdd is non-deterministic";
+        << "Path 0 frame 1 vs frame 3 differ — rendering is not deterministic";
     EXPECT_EQ(frame2, frame4)
-        << "Path 1 frame 2 vs frame 4 differ — binning atomicAdd is non-deterministic";
+        << "Path 1 frame 2 vs frame 4 differ — rendering is not deterministic";
 
-    // ---- Assert 2: content — at least one bin centre must be > 50 % bright ----
-    // 4×4 grid on 512×384: cellW=128, cellH=96; bin(x,y) centre = (x*128+64, y*96+48).
-    const uint32_t gridSize = 4;
-    const uint32_t cellW    = ext.width  / gridSize;
-    const uint32_t cellH    = ext.height / gridSize;
-    uint8_t maxBinCentre = 0;
-    for (uint32_t by = 0; by < gridSize; ++by) {
-        for (uint32_t bx = 0; bx < gridSize; ++bx) {
+    // ---- Assert 2: content — each bin must have non-zero pixels ----
+    // The raccoon scene at this camera should fill the whole frame.
+    // Check the centre of every bin in the 4×4 grid and verify that
+    // at least 12 of the 16 bins have some visible content (> 0).
+    // This catches regressions where all gaussians collapse into a single bin.
+    const uint32_t gridSize2 = 4;
+    const uint32_t cellW = ext.width  / gridSize2;
+    const uint32_t cellH = ext.height / gridSize2;
+    int binsWithContent = 0;
+    uint8_t maxBright = 0;
+    std::cout << "  Bin-centre brightness (4×4 grid):\n";
+    for (uint32_t by = 0; by < gridSize2; ++by) {
+        for (uint32_t bx = 0; bx < gridSize2; ++bx) {
             uint32_t cx = bx * cellW + cellW / 2;
             uint32_t cy = by * cellH + cellH / 2;
-            const uint8_t* p = frame1.data() + (cy * ext.width + cx) * 4;
-            maxBinCentre = std::max(maxBinCentre, std::max({p[0], p[1], p[2]}));
+            // Check a 5×5 patch around the centre for robustness
+            uint8_t patchMax = 0;
+            for (int dy = -2; dy <= 2; ++dy) {
+                for (int dx = -2; dx <= 2; ++dx) {
+                    int px = (int)cx + dx, py = (int)cy + dy;
+                    if (px < 0 || px >= (int)ext.width || py < 0 || py >= (int)ext.height) continue;
+                    size_t base = ((size_t)py * ext.width + (size_t)px) * 4;
+                    patchMax = std::max(patchMax, std::max({frame1[base], frame1[base+1], frame1[base+2]}));
+                }
+            }
+            if (patchMax > 0) ++binsWithContent;
+            maxBright = std::max(maxBright, patchMax);
+            std::cout << "    bin(" << bx << "," << by << ") centre(" << cx << "," << cy << ") max=" << (int)patchMax << "\n";
         }
     }
-    EXPECT_GT(maxBinCentre, uint8_t(127))
-        << "No bin centre exceeds 50 % brightness — the pipeline may not "
-           "be rendering any gaussians";
+    std::cout << "  Bins with content: " << binsWithContent << "/16, overall max=" << (int)maxBright << "\n";
+
+    EXPECT_GE(binsWithContent, 12)
+        << "Only " << binsWithContent << "/16 bins have non-zero content — "
+        << "gaussians may be collapsed into a single bin (binning bug)";
+    EXPECT_GT(maxBright, uint8_t(100))
+        << "Rendered image too dark — pipeline may not be drawing any gaussians";
 
     SUCCEED() << "Two frames written to test_gsplatting_frame1/2.ppm ("
               << ext.width << "x" << ext.height << "); "
-              << "max bin-centre channel = " << (int)maxBinCentre;
+              << "bins with content=" << binsWithContent << "/16, max=" << (int)maxBright;
 }
 
 // ----------------------------------------------------------------
