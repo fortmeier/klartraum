@@ -201,7 +201,6 @@ add_executable(
   # tests/test_buffertransformation.cpp
   # tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
-  tests/test_gaussian_splatting_arrays.cpp
   # tests/test_copybuffer.cpp
   # tests/test_tensorelement.cpp
 
@@ -222,7 +221,6 @@ set(KLARTRAUM_LIB_SRC
   src/glfw_frontend.cpp
   src/headless_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
-  src/vulkan_gaussian_splatting_soa.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp
   src/klartraum_engine.cpp

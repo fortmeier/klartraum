@@ -1,73 +1,33 @@
 #version 450
-
-layout(local_size_x = 256) in;
+#extension GL_EXT_scalar_block_layout : enable
 
 #include "gsplat_types.glsl"
 
-#extension GL_EXT_scalar_block_layout : enable
-#extension GL_EXT_debug_printf : enable
+layout(local_size_x = 256) in;
 
-layout(scalar, binding = 0) buffer InputBuffer {
-    Gaussian2D gaussians[];
-} inputBuffer;
-
-layout(scalar, binding = 1) buffer InputBuffer2 {
-    uint numberTotalGaussians;
-} inputBuffer2;
-
-layout(scalar, binding = 2) buffer OutputBuffer {
-    StartAndEnd startAndEnd[];
-} outputBuffer;
-
-
-layout(push_constant) uniform PushConstants {
-    uint numElements;
-    uint gridSize;
-} pushConstants;
-
-bool debug = false;
+// Sorted SoA — only binMask is needed for bounds computation
+layout(scalar, set = 0, binding = 0) readonly buffer BinMaskBuf { uint binMask[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer CountBuf   { uint totalCount; };
+layout(scalar, set = 0, binding = 2) buffer BoundsBuf           { StartAndEnd startAndEnd[]; };
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
+    if (idx >= totalCount) return;
 
-
-    uint numGridElements = pushConstants.gridSize * pushConstants.gridSize;
-
-    if (idx == 0 && debug) {
-        debugPrintfEXT("Number of gaussians: %u\n", inputBuffer2.numberTotalGaussians);
-    }
-
-    // discard all threads that are not in the range of the input buffer
-    if (idx >= inputBuffer2.numberTotalGaussians) return;
-
-
-    if (idx == inputBuffer2.numberTotalGaussians - 1) {
-        // last element: store the end index of the whole sequence
-        uint binMask = inputBuffer.gaussians[idx].binMask;
-        uint logBinMask = uint(log2(binMask));
-        outputBuffer.startAndEnd[logBinMask].end = idx + 1;
-        if (debug) {
-            debugPrintfEXT("outputBuffer.startAndEnd[logBinMask].end = %u\n", outputBuffer.startAndEnd[logBinMask].end);
-        }
+    if (idx == totalCount - 1) {
+        uint bm  = binMask[idx];
+        uint bin = uint(log2(bm));
+        startAndEnd[bin].end = idx + 1;
         return;
-    } else {
-        // all other elements: store the start and end indices
-        // of the current and next element if they are different
-        // i.e. if there is a boundary between two elements
-        uint binMask = inputBuffer.gaussians[idx].binMask;
-        uint binMaskNext = inputBuffer.gaussians[idx+1].binMask;
-
-        uint logBinMask = uint(log2(binMask));
-        uint logBinMaskNext = uint(log2(binMaskNext));
-
-
-        if (binMask != binMaskNext) {
-            if (debug) {
-                debugPrintfEXT("Bounds idx: %u m0: %u m1: %u logm0: %u logm1: %u\n", idx, binMask, binMaskNext, logBinMask, logBinMaskNext);
-            }
-            outputBuffer.startAndEnd[logBinMask].end = idx + 1;
-            outputBuffer.startAndEnd[logBinMaskNext].start = idx + 1;
-        }
     }
 
-} 
+    uint bm0   = binMask[idx];
+    uint bm1   = binMask[idx + 1];
+    uint bin0  = uint(log2(bm0));
+    uint bin1  = uint(log2(bm1));
+
+    if (bm0 != bm1) {
+        startAndEnd[bin0].end   = idx + 1;
+        startAndEnd[bin1].start = idx + 1;
+    }
+}

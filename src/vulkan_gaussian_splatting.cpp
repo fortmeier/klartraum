@@ -1,194 +1,241 @@
 #include <algorithm>
-#include <array>
-#include <glm/glm.hpp>
+#include <cmath>
 #include <stdexcept>
-#include <filesystem>
+
+#include <glm/glm.hpp>
 
 #include "load-spz.h"
 
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
-#include "klartraum/vulkan_helpers.hpp"
 
 namespace klartraum {
+
+static float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 
 VulkanGaussianSplatting::VulkanGaussianSplatting(
     VulkanContext& vulkanContext,
     std::shared_ptr<ImageViewSrc> _imageViewSrc,
     std::shared_ptr<CameraUboType> _cameraUBO,
-    std::string path) {
+    std::string path)
+{
     loadSPZModel(path);
+    initialize(vulkanContext, _imageViewSrc, _cameraUBO);
+}
 
+VulkanGaussianSplatting::VulkanGaussianSplatting(
+    VulkanContext& vulkanContext,
+    std::shared_ptr<ImageViewSrc> _imageViewSrc,
+    std::shared_ptr<CameraUboType> _cameraUBO,
+    std::vector<Gaussian3D> gaussians)
+{
+    gaussians3DData     = std::move(gaussians);
+    number_of_gaussians = static_cast<uint32_t>(gaussians3DData.size());
+    initialize(vulkanContext, _imageViewSrc, _cameraUBO);
+}
 
-    const uint32_t gridSize = 4; // 4x4 grid for binning
-    const uint32_t numBins = gridSize * gridSize; // number of bins in the grid
-    const uint32_t threadsPerGroup = 128; // number of threads per workgroup
-    const uint32_t maxGaussiansModifier = 2; // arbitrary number, currently 2x the number of initial 3D gaussians
-
-    assert(number_of_gaussians > 0, "number_of_gaussians must be greater than 0");
-
+void VulkanGaussianSplatting::initialize(
+    VulkanContext& vulkanContext,
+    std::shared_ptr<ImageViewSrc> _imageViewSrc,
+    std::shared_ptr<CameraUboType> _cameraUBO)
+{
     this->vulkanContext = &vulkanContext;
     this->setInput(_imageViewSrc, 0);
-    this->setInput(_cameraUBO, 1);
+    this->setInput(_cameraUBO,    1);
 
-    if (inputs.size() == 0) {
-        throw std::runtime_error("no input!");
+    auto imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
+    if (!imageViewSrc) throw std::runtime_error("VulkanGaussianSplatting: input 0 is not ImageViewSrc");
+
+    VkExtent2D ext = imageViewSrc->getImageExtent(0);
+    const float W  = static_cast<float>(ext.width);
+    const float H  = static_cast<float>(ext.height);
+    const uint32_t N          = number_of_gaussians;
+    const uint32_t gridSize   = 4;
+    const uint32_t numBins    = gridSize * gridSize;
+    const uint32_t tpg        = 128;
+    const uint32_t maxMod     = 2;
+    const uint32_t maxBinned  = N * maxMod;
+    const uint32_t numBinWGs  = N / tpg + 1;
+    const uint32_t numSortWGs = std::max(1u, std::min(320u, maxBinned / tpg + 1));
+
+    // Convert AoS → SoA and upload to GPU (single-path, static)
+    std::vector<glm::vec3> pos3d(N), scale3d(N);
+    std::vector<glm::vec4> rot3d(N), colAlpha3d(N);
+    std::vector<float>     shR(15*N), shG(15*N), shB(15*N);
+
+    for (uint32_t i = 0; i < N; i++) {
+        const auto& g = gaussians3DData[i];
+        pos3d[i]     = {g.position[0], g.position[1], g.position[2]};
+        rot3d[i]     = {g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3]};
+        scale3d[i]   = {g.scale[0],    g.scale[1],    g.scale[2]};
+        colAlpha3d[i]= {g.color[0],    g.color[1],    g.color[2],    g.alpha};
+        for (int b = 0; b < 15; b++) {
+            shR[b * N + i] = g.shR[b];
+            shG[b * N + i] = g.shG[b];
+            shB[b * N + i] = g.shB[b];
+        }
     }
-    std::shared_ptr<ImageViewSrc> imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
-    if (imageViewSrc == nullptr) {
-        throw std::runtime_error("input is not an ImageViewSrc!");
-    }
 
-    VkExtent2D imageExtent = imageViewSrc->getImageExtent(0);
-    if (imageExtent.width == 0 || imageExtent.height == 0) {
-        throw std::runtime_error("ImageViewSrc has invalid image extent!");
-    }
+    buf3DPos      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
+    buf3DRot      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
+    buf3DScale    = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
+    buf3DColAlpha = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
+    buf3DShR      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
+    buf3DShG      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
+    buf3DShB      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
 
-    const float screenWidth = static_cast<float>(imageExtent.width);
-    const float screenHeight = static_cast<float>(imageExtent.height);
+    buf3DPos->setName("Pos3D");
+    buf3DRot->setName("Rot3D");
+    buf3DScale->setName("Scale3D");
+    buf3DColAlpha->setName("ColAlpha3D");
+    buf3DShR->setName("ShR");
+    buf3DShG->setName("ShG");
+    buf3DShB->setName("ShB");
 
-    gaussians3D = std::make_shared<BufferElementSinglePath<Gaussian3DBuffer>>(vulkanContext, number_of_gaussians);
-    gaussians3D->setName("Gaussians3D");
+    buf3DPos->getBuffer().memcopyFrom(pos3d);
+    buf3DRot->getBuffer().memcopyFrom(rot3d);
+    buf3DScale->getBuffer().memcopyFrom(scale3d);
+    buf3DColAlpha->getBuffer().memcopyFrom(colAlpha3d);
+    buf3DShR->getBuffer().memcopyFrom(shR);
+    buf3DShG->getBuffer().memcopyFrom(shG);
+    buf3DShB->getBuffer().memcopyFrom(shB);
 
-    gaussians3D->getBuffer().memcopyFrom(gaussians3DData);
+    // Projected 2D outputs (per-path)
+    auto proj2DPos2D   = std::make_shared<BufferElement<VulkanBuffer<glm::vec2>>>(vulkanContext, N);
+    auto proj2DZ       = std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, N);
+    auto proj2DBinMask = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N);
+    auto proj2DCovInv  = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
+    auto proj2DColAlpha= std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
+    proj2DPos2D->setName("ProjPos2D");
+    proj2DZ->setName("ProjZ");
+    proj2DBinMask->setName("ProjBinMask");
+    proj2DCovInv->setName("ProjCovInv");
+    proj2DColAlpha->setName("ProjColAlpha");
 
-    gaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, number_of_gaussians * maxGaussiansModifier);
-    gaussians2D->setName("Gaussians2D");
-
-    // setup projection stage
-    /////////////////////////////////////////////
-
-    ProjectionPushConstants pushConstants = {
-        number_of_gaussians, // numElements
-        gridSize,             // gridSize (4x4)
-        screenWidth,         // screenWidth
-        screenHeight         // screenHeight
-    };
-
-    project3Dto2D = vulkanContext.create<GaussianProjection>("shaders/gsplat/gsplat_projection.comp.spv");
+    // Stage 1: projection
+    project3Dto2D = vulkanContext.create<GaussianProjection>(
+        "shaders/gsplat/gsplat_projection.comp.spv");
     project3Dto2D->setName("GaussianProjection");
-    project3Dto2D->setInput(gaussians3D, 0);
-    project3Dto2D->setInput(_cameraUBO, 1);
-    project3Dto2D->setInput(gaussians2D, 2);
-    project3Dto2D->setGroupCountX(number_of_gaussians / threadsPerGroup + 1);
-    project3Dto2D->setPushConstants({pushConstants});
+    project3Dto2D->setInput(buf3DPos,       0);
+    project3Dto2D->setInput(buf3DRot,       1);
+    project3Dto2D->setInput(buf3DScale,     2);
+    project3Dto2D->setInput(buf3DColAlpha,  3);
+    project3Dto2D->setInput(buf3DShR,       4);
+    project3Dto2D->setInput(buf3DShG,       5);
+    project3Dto2D->setInput(buf3DShB,       6);
+    project3Dto2D->setInput(_cameraUBO,     7);
+    project3Dto2D->setInput(proj2DPos2D,    8);
+    project3Dto2D->setInput(proj2DZ,        9);
+    project3Dto2D->setInput(proj2DBinMask,  10);
+    project3Dto2D->setInput(proj2DCovInv,   11);
+    project3Dto2D->setInput(proj2DColAlpha, 12);
+    project3Dto2D->setGroupCountX(N / tpg + 1);
+    project3Dto2D->setPushConstants({{N, gridSize, W, H}});
 
-    // setup binning stage — three-pass deterministic prefix-sum scatter
-    /////////////////////////////////////////////
-    // Pass 1 (count): per-workgroup histogram of (gaussian,bin) overlaps
-    // Pass 2 (prefix sum): exclusive prefix sums → global write offsets
-    // Pass 3 (scatter): each gaussian writes to a deterministic position
-    // using a Hillis-Steele scan within each workgroup, eliminating the
-    // non-deterministic atomicAdd of the old single-pass approach.
-
-    auto totalGaussian2DCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
-    totalGaussian2DCounts->setRecordToZero(true);
-    totalGaussian2DCounts->setName("TotalGaussian2DCounts");
-
-    auto binnedGaussians2D = vulkanContext.create<BufferElement<Gaussian2DBuffer>>(number_of_gaussians * maxGaussiansModifier);
-    binnedGaussians2D->setRecordToZero(false);
-    binnedGaussians2D->setName("BinnedGaussians2D");
-
-    const uint32_t maxBinnedGaussians = number_of_gaussians * maxGaussiansModifier;
-    const uint32_t numBinWorkGroups   = number_of_gaussians / threadsPerGroup + 1;
-
-    auto binHistogram = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numBinWorkGroups);
+    // Binning buffers
+    auto binHistogram = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numBinWGs);
     binHistogram->setName("BinHistogram"); binHistogram->setRecordToZero(true);
-    auto binOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBinWorkGroups + 1);
-    binOffsets->setName("BinOffsets"); binOffsets->setRecordToZero(true);
+    auto binOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBinWGs + 1);
+    binOffsets->setName("BinOffsets");   binOffsets->setRecordToZero(true);
+    auto totalCount = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
+    totalCount->setName("TotalCount"); totalCount->setRecordToZero(true);
 
-    // Pass 1: count
-    binCount = std::make_shared<GaussianBinningCount>(vulkanContext, "shaders/gsplat/gsplat_binning_count.comp.spv");
+    // Stage 2: binning count
+    binCount = std::make_shared<GaussianBinningCount>(
+        vulkanContext, "shaders/gsplat/gsplat_binning_count.comp.spv");
     binCount->setName("GaussianBinningCount");
-    binCount->setInput(project3Dto2D, 0, 2);  // projected Gaussian2D (slot 2)
-    binCount->setInput(binHistogram, 1);
-    binCount->setInput(binOffsets,   2);
-    binCount->setGroupCountX(numBinWorkGroups);
-    binCount->setPushConstants({pushConstants});
+    binCount->setInput(project3Dto2D, 0, 8);   // proj2DPos2D
+    binCount->setInput(project3Dto2D, 1, 9);   // proj2DZ
+    binCount->setInput(project3Dto2D, 2, 11);  // proj2DCovInv
+    binCount->setInput(binHistogram,  3);
+    binCount->setInput(binOffsets,    4);
+    binCount->setGroupCountX(numBinWGs);
+    binCount->setPushConstants({{N, gridSize, W, H}});
 
-    // Pass 2: prefix sum (reuses the chained-scan algorithm from the radix sort)
-    binPrefixSum = std::make_shared<GeneralComputation<>>(vulkanContext, "shaders/gsplat/gsplat_binning_prefix_sum.comp.spv");
+    // Stage 3: binning prefix sum
+    binPrefixSum = std::make_shared<GeneralComputation<>>(
+        vulkanContext, "shaders/gsplat/gsplat_binning_prefix_sum.comp.spv");
     binPrefixSum->setName("GaussianBinningPrefixSum");
-    binPrefixSum->setInput(binCount, 0, 1);  // binHistogram (slot 1 of count stage)
-    binPrefixSum->setInput(binCount, 1, 2);  // binOffsets   (slot 2 of count stage)
-    binPrefixSum->setGroupCountX(numBinWorkGroups);  // one workgroup per histogram column
+    binPrefixSum->setInput(binCount, 0, 3);  // binHistogram
+    binPrefixSum->setInput(binCount, 1, 4);  // binOffsets
+    binPrefixSum->setGroupCountX(numBinWGs);
 
-    // Pass 3: scatter
-    BinningScatterPushConstants scatterPC{
-        number_of_gaussians,
-        gridSize,
-        screenWidth,
-        screenHeight,
-        maxBinnedGaussians
-    };
-    binScatter = std::make_shared<GaussianBinningScatter>(vulkanContext, "shaders/gsplat/gsplat_binning_scatter.comp.spv");
+    // Binned buffers
+    auto binPos2D   = std::make_shared<BufferElement<VulkanBuffer<glm::vec2>>>(vulkanContext, maxBinned);
+    auto binZ       = std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, maxBinned);
+    auto binBinMask = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
+    auto binCovInv  = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, maxBinned);
+    auto binColAlpha= std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, maxBinned);
+    binPos2D->setName("BinPos2D");    binPos2D->setRecordToZero(false);
+    binZ->setName("BinZ");            binZ->setRecordToZero(false);
+    binBinMask->setName("BinMask");   binBinMask->setRecordToZero(false);
+    binCovInv->setName("BinCovInv");  binCovInv->setRecordToZero(false);
+    binColAlpha->setName("BinCA");    binColAlpha->setRecordToZero(false);
+
+    // Stage 4: binning scatter
+    BinningScatterPushConstants scatterPC{N, gridSize, W, H, maxBinned};
+    binScatter = std::make_shared<GaussianBinningScatter>(
+        vulkanContext, "shaders/gsplat/gsplat_binning_scatter.comp.spv");
     binScatter->setName("GaussianBinningScatter");
-    binScatter->setInput(project3Dto2D, 0, 2);       // projected gaussians (slot 2)
-    binScatter->setInput(binnedGaussians2D,  1);      // output buffer
-    binScatter->setInput(binPrefixSum, 2, 0);         // prefix sums (slot 0 = binHistogram after pass 2)
-    binScatter->setInput(totalGaussian2DCounts, 3);   // output totalCount
-    binScatter->setGroupCountX(numBinWorkGroups);
+    binScatter->setInput(project3Dto2D, 0, 8);   // proj2DPos2D
+    binScatter->setInput(project3Dto2D, 1, 9);   // proj2DZ
+    binScatter->setInput(project3Dto2D, 2, 11);  // proj2DCovInv
+    binScatter->setInput(project3Dto2D, 3, 12);  // proj2DColAlpha
+    binScatter->setInput(binPrefixSum,  4, 0);   // prefix sums
+    binScatter->setInput(totalCount,    5);
+    binScatter->setInput(binPos2D,      6);
+    binScatter->setInput(binZ,          7);
+    binScatter->setInput(binBinMask,    8);
+    binScatter->setInput(binCovInv,     9);
+    binScatter->setInput(binColAlpha,   10);
+    binScatter->setGroupCountX(numBinWGs);
     binScatter->setPushConstants({scatterPC});
 
-    // setup sorting stage — extract → radix sort → gather
-    /////////////////////////////////////////////
-
-    const uint32_t maxBinned         = number_of_gaussians * maxGaussiansModifier;
-    // Capped at 320 (40 SMs × 8) but never more than ceil(maxBinned/128).
-    // Without this cap, integer division gives 0 items/WG when maxBinned < 320*128.
-    const uint32_t numSortWorkGroups  = std::max(1u, std::min(320u, maxBinned / threadsPerGroup + 1));
-
-    // Ping-pong value/index buffers for the radix sort.
-    // sortRadixValA and sortRadixValB are stored as members so _record can
-    // pre-fill them with 0xFFFFFFFF each frame.  Elements beyond totalCount
-    // retain that sentinel value and sort to the end of the output, keeping
-    // the first totalCount positions clean for computeBounds and splatting.
+    // Sort ping-pong buffers
     sortRadixValA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
-    sortRadixValA->setName("SortRadixValA");
+    sortRadixValA->setName("SortValA");
     sortRadixValB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
-    sortRadixValB->setName("SortRadixValB");
+    sortRadixValB->setName("SortValB");
     auto sortRadixIdxA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
-    sortRadixIdxA->setName("SortRadixIdxA");
+    sortRadixIdxA->setName("SortIdxA");
     auto sortRadixIdxB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
-    sortRadixIdxB->setName("SortRadixIdxB");
+    sortRadixIdxB->setName("SortIdxB");
 
-    auto scratchHistograms = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numSortWorkGroups);
-    scratchHistograms->setName("ScratchHistograms"); scratchHistograms->setRecordToZero(true);
+    auto scratchHist    = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numSortWGs);
+    scratchHist->setName("ScratchHist");    scratchHist->setRecordToZero(true);
     auto scratchCounts  = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
-    scratchCounts->setName("ScratchCounts");  scratchCounts->setRecordToZero(true);
-    auto scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numSortWorkGroups + 1);
-    scratchOffsets->setName("ScratchOffsets"); scratchOffsets->setRecordToZero(true);
+    scratchCounts->setName("ScratchCounts");scratchCounts->setRecordToZero(true);
+    auto scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numSortWGs + 1);
+    scratchOffsets->setName("ScratchOff"); scratchOffsets->setRecordToZero(true);
 
-    // Stage: extract (bin+z) sort keys from binnedGaussians2D → sortRadixValA
+    // Stage 5: extract sort keys
     extractSortKeys = std::make_shared<GeneralComputation<>>(
         vulkanContext, "shaders/gsplat/gsplat_extract_sort_keys.comp.spv");
     extractSortKeys->setName("ExtractSortKeys");
-    extractSortKeys->setInput(binScatter, 0, 1);    // binnedGaussians2D  (slot 1 of scatter)
-    extractSortKeys->setInput(binScatter, 1, 3);    // totalGaussian2DCounts (slot 3 of scatter)
-    extractSortKeys->setInput(sortRadixValA, 2);
-    extractSortKeys->setInput(sortRadixIdxA, 3);
-    // Extract is 1 thread per element — must cover all maxBinned slots (no looping).
-    // The sort histogram loops so it can use the smaller numSortWorkGroups.
-    const uint32_t numCoverWorkGroups = maxBinned / threadsPerGroup + 1;
-    extractSortKeys->setGroupCountX(numCoverWorkGroups);
+    extractSortKeys->setInput(binScatter, 0, 8);  // binnedBinMask
+    extractSortKeys->setInput(binScatter, 1, 7);  // binnedZ
+    extractSortKeys->setInput(binScatter, 2, 5);  // totalCount
+    extractSortKeys->setInput(sortRadixValA, 3);
+    extractSortKeys->setInput(sortRadixIdxA, 4);
+    const uint32_t numCoverWGs = std::max(1u, std::min(maxBinned / tpg + 1, 14534u));
+    extractSortKeys->setGroupCountX(numCoverWGs);
 
-    // Stage: radix sort (8 passes × 4 bits = 32 bits, last pass=7 odd → output in A buffers)
-    std::vector<std::string> sortShaders = {
+    // Stage 6: radix sort
+    sortOp = std::make_shared<RadixSort>(vulkanContext, std::vector<std::string>{
         "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
         "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
         "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"
-    };
-    sortOp = std::make_shared<RadixSort>(vulkanContext, sortShaders);
+    });
     sortOp->setName("RadixSort");
-    sortOp->setInput(extractSortKeys, 0, 2);   // sortRadixValA
-    sortOp->setInput(extractSortKeys, 1, 3);   // sortRadixIdxA
+    sortOp->setInput(extractSortKeys, 0, 3);  // sortRadixValA
+    sortOp->setInput(extractSortKeys, 1, 4);  // sortRadixIdxA
     sortOp->setInput(sortRadixValB, 2);
     sortOp->setInput(sortRadixIdxB, 3);
-    sortOp->addScratchBufferElement(scratchCounts,      true);
-    sortOp->addScratchBufferElement(scratchOffsets,     true);
-    sortOp->addScratchBufferElement(totalGaussian2DCounts, false);
-    sortOp->addScratchBufferElement(scratchHistograms,  true);
-    sortOp->setGroupCountX(numSortWorkGroups);
+    sortOp->addScratchBufferElement(scratchCounts,  true);
+    sortOp->addScratchBufferElement(scratchOffsets, true);
+    sortOp->addScratchBufferElement(totalCount,     false);
+    sortOp->addScratchBufferElement(scratchHist,    true);
+    sortOp->setGroupCountX(numSortWGs);
     {
         std::vector<SortPushConstants> pcs;
         for (uint32_t i = 0; i < 32 / 4; ++i)
@@ -196,114 +243,90 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
         sortOp->setPushConstants(pcs);
     }
 
-    // Stage: gather binnedGaussians2D in sorted order → sortedGaussians2D
-    auto sortedGaussians2D = std::make_shared<BufferElement<Gaussian2DBuffer>>(vulkanContext, maxBinned);
-    sortedGaussians2D->setName("SortedGaussians2D");
+    // Sorted buffers
+    auto sortedPos2D   = std::make_shared<BufferElement<VulkanBuffer<glm::vec2>>>(vulkanContext, maxBinned);
+    auto sortedZ       = std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, maxBinned);
+    auto sortedBinMask = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, maxBinned);
+    auto sortedCovInv  = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, maxBinned);
+    auto sortedColAlpha= std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, maxBinned);
+    sortedPos2D->setName("SortedPos2D");
+    sortedZ->setName("SortedZ");
+    sortedBinMask->setName("SortedBinMask");
+    sortedCovInv->setName("SortedCovInv");
+    sortedColAlpha->setName("SortedColAlpha");
 
+    // Stage 7: gather sorted
     gatherSorted = std::make_shared<GeneralComputation<>>(
         vulkanContext, "shaders/gsplat/gsplat_gather_sorted.comp.spv");
     gatherSorted->setName("GatherSorted");
-    gatherSorted->setInput(binScatter, 0, 1);   // binnedGaussians2D (slot 1 of scatter)
-    gatherSorted->setInput(sortOp, 1, 1);       // sortRadixIdxA (sorted indices)
-    gatherSorted->setInput(binScatter, 2, 3);   // totalGaussian2DCounts (slot 3 of scatter)
-    gatherSorted->setInput(sortedGaussians2D, 3);
-    gatherSorted->setGroupCountX(numCoverWorkGroups);
+    gatherSorted->setInput(binScatter,  0, 6);   // binnedPos2D
+    gatherSorted->setInput(binScatter,  1, 7);   // binnedZ
+    gatherSorted->setInput(binScatter,  2, 8);   // binnedBinMask
+    gatherSorted->setInput(binScatter,  3, 9);   // binnedCovInv
+    gatherSorted->setInput(binScatter,  4, 10);  // binnedColAlpha
+    gatherSorted->setInput(sortOp,      5, 1);   // sortRadixIdxA
+    gatherSorted->setInput(binScatter,  6, 5);   // totalCount
+    gatherSorted->setInput(sortedPos2D,    7);
+    gatherSorted->setInput(sortedZ,        8);
+    gatherSorted->setInput(sortedBinMask,  9);
+    gatherSorted->setInput(sortedCovInv,   10);
+    gatherSorted->setInput(sortedColAlpha, 11);
+    gatherSorted->setGroupCountX(numCoverWGs);
 
-    // setup bounds computation stage
-    /////////////////////////////////////////////
-    auto scratchBinStartAndEnd = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * 2);
-    scratchBinStartAndEnd->setName("ScratchBinStartAndEnd");
-    scratchBinStartAndEnd->setRecordToZero(true);
+    // Stage 8: bin bounds
+    auto scratchBounds = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * 2);
+    scratchBounds->setName("Bounds"); scratchBounds->setRecordToZero(true);
 
-    computeBounds = std::make_shared<GaussianComputeBounds>(vulkanContext, "shaders/gsplat/gsplat_bin_bounds.comp.spv");
+    computeBounds = std::make_shared<GeneralComputation<>>(
+        vulkanContext, "shaders/gsplat/gsplat_bin_bounds.comp.spv");
     computeBounds->setName("GaussianComputeBounds");
+    computeBounds->setInput(gatherSorted, 0, 9);  // sortedBinMask
+    computeBounds->setInput(binScatter,   1, 5);  // totalCount
+    computeBounds->setInput(scratchBounds, 2);
+    computeBounds->setGroupCountX(maxBinned / 256 + 1);
 
-    ProjectionPushConstants computeBoundsPushConstants = {
-        maxBinned,    // numElements (upper bound; shader uses totalCount from buffer)
-        gridSize,
-        screenWidth,
-        screenHeight
-    };
-
-    computeBounds->setInput(gatherSorted, 0, 3);       // sortedGaussians2D
-    computeBounds->setInput(binScatter, 1, 3);         // totalGaussian2DCounts (slot 3 of scatter)
-    computeBounds->setInput(scratchBinStartAndEnd, 2);
-    computeBounds->setGroupCountX(maxBinnedGaussians / 256 + 1);
-
-    computeBounds->setPushConstants({computeBoundsPushConstants});
-
-    // setup splatting stage
-    /////////////////////////////////////////////
-    splat = std::make_shared<GaussianSplatting>(vulkanContext, "shaders/gsplat/gsplat_binned_splatting.comp.spv");
+    // Stage 9: splatting
+    splat = std::make_shared<GaussianSplatting>(
+        vulkanContext, "shaders/gsplat/gsplat_binned_splatting.comp.spv");
     splat->setName("GaussianSplatting");
+    splat->setInput(gatherSorted,  0, 7);   // sortedPos2D
+    splat->setInput(gatherSorted,  1, 10);  // sortedCovInv
+    splat->setInput(gatherSorted,  2, 11);  // sortedColAlpha
+    splat->setInput(binScatter,    3, 5);   // totalCount
+    splat->setInput(computeBounds, 4, 2);   // scratchBounds
+    splat->setInput(_imageViewSrc, 5);
 
-    std::vector<SplatPushConstants> splatPushConstants;
-    for (uint32_t y = 0; y < gridSize; y++) {
-        for (uint32_t x = 0; x < gridSize; x++) {
-            splatPushConstants.push_back({
-                (uint32_t)(number_of_gaussians * maxGaussiansModifier), // max. numElements
-                gridSize,                             // gridSize (4x4)
-                x,                                    // gridX
-                y,                                    // gridY
-                screenWidth,                          // screenWidth
-                screenHeight                           // screenHeight
-            });
-        }
+    const uint32_t tbX  = 8, tbY = 8;
+    const uint32_t gpbX = uint32_t((W / tbX) / gridSize);
+    const uint32_t gpbY = uint32_t((H / tbY) / gridSize);
+    splat->setGroupCountX(gpbX);
+    splat->setGroupCountY(gpbY);
+    splat->setGroupCountZ(1);
+    {
+        std::vector<SplatPushConstants> pcs;
+        for (uint32_t y = 0; y < gridSize; y++)
+            for (uint32_t x = 0; x < gridSize; x++)
+                pcs.push_back({maxBinned, gridSize, x, y, W, H});
+        splat->setPushConstants(pcs);
     }
 
-    splat->setInput(computeBounds, 0, 0);       // sortedGaussians2D
-    splat->setInput(binScatter, 1, 3);           // totalGaussian2DCounts (slot 3 of scatter)
-    splat->setInput(computeBounds, 2, 2);        // scratchBinStartAndEnd
-    splat->setInput(imageViewSrc, 3);
-
-
-    // each bin computes several workgroups, each processing 8x8 pixels
-    // where each pixel is processed by a single thread
-    const uint32_t threadsPerBinX = 8;
-    const uint32_t threadsPerBinY = 8;
-
-    const uint32_t groupsPerBinX = uint32_t((screenWidth / threadsPerBinX) / gridSize);
-    const uint32_t groupsPerBinY = uint32_t((screenHeight / threadsPerBinY) / gridSize);
-
-    splat->setGroupCountX(groupsPerBinX);
-    splat->setGroupCountY(groupsPerBinY);
-    splat->setGroupCountZ(1);
-
-    splat->setPushConstants(splatPushConstants);
-
-    // this is the last element in the splatting pipeline
-    // it will be used as the output of the computegraphgroup
-    // so that the computegraph compilation traversal can
-    // traverse from this element back through all the elements of the gaussian splatting pipeline
     outputElements[0] = splat;
 }
 
-VulkanGaussianSplatting::~VulkanGaussianSplatting() {
-    if (vulkanContext != nullptr) {
-    }
-}
+VulkanGaussianSplatting::~VulkanGaussianSplatting() {}
 
 void VulkanGaussianSplatting::checkInput(ComputeGraphElementPtr input, int index) {
-    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(input).get();
-    if (index == 0 && imageViewSrc == nullptr) {
-        throw std::runtime_error("input is not an ImageViewSrc!");
-    }
-    CameraUboType* cameraUbo = std::dynamic_pointer_cast<CameraUboType>(input).get();
-    if (index == 1 && cameraUbo == nullptr) {
-        throw std::runtime_error("input is not a CameraUboType!");
-    }
-    if (index > 1) {
-        throw std::runtime_error("input index out of range!");
-    }
+    if (index == 0 && !std::dynamic_pointer_cast<ImageViewSrc>(input))
+        throw std::runtime_error("VulkanGaussianSplatting: input 0 must be ImageViewSrc");
+    if (index == 1 && !std::dynamic_pointer_cast<CameraUboType>(input))
+        throw std::runtime_error("VulkanGaussianSplatting: input 1 must be CameraUboType");
+    if (index > 1)
+        throw std::runtime_error("VulkanGaussianSplatting: input index out of range");
 }
 
 void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
     numberOfPaths = numberPaths;
 
-    // The _record pre-fill (0xFFFFFFFF) only takes effect from the SECOND use
-    // of each path because it runs AFTER the sort.  Pre-fill all paths here
-    // during setup so that even the very first frame of each path has correct
-    // overflow sentinel values in the sort buffers.
     VkCommandBufferAllocateInfo ai{};
     ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     ai.commandPool        = vulkanContext.getCommandPool();
@@ -323,7 +346,6 @@ void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numb
     }
 
     vkEndCommandBuffer(cmd);
-
     VkSubmitInfo si{};
     si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
@@ -334,205 +356,59 @@ void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numb
 }
 
 void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
-    auto& device = vulkanContext->getDevice();
-    auto& swapChain = vulkanContext->getSwapChain();
-    auto& graphicsQueue = vulkanContext->getGraphicsQueue();
-
-    auto& swapChainExtent = vulkanContext->getSwapChainExtent();
-
-    ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
-    if (imageViewSrc == nullptr) {
-        throw std::runtime_error("input is not an ImageViewSrc!");
-    }
-    VkImage image = imageViewSrc->getImage(pathId);
-
-    //     // Ensure compute writes are visible to graphics
-    //     VkImageMemoryBarrier imageBarrier = {};
-    //     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    //     imageBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;  // Graphics writes
-    //     imageBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Compute reads/writes
-    //     imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Layout used by graphics rendering
-    //     imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;  // Layout used by compute shader
-    //     imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;  // Assume single queue
-    //     imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    //     // TODO : use the correct image
-
-    //     // imageBarrier.image = image;  // The image used as framebuffer and compute input
-    //     imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    //     imageBarrier.subresourceRange.baseMipLevel = 0;
-    //     imageBarrier.subresourceRange.levelCount = 1;
-    //     imageBarrier.subresourceRange.baseArrayLayer = 0;
-    //     imageBarrier.subresourceRange.layerCount = 1;
-
-    //     vkCmdPipelineBarrier(
-    //         commandBuffer,
-    //         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-    //         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-    //         0,  // No dependency flags
-    //         0, nullptr,  // No global memory barriers
-    //         0, nullptr,  // No buffer memory barriers
-    //         1, &imageBarrier // Image memory barrier
-    //     );
-
-    // /*
-    //     // issue the compute pipeline for gaussian splatting
-    //     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-
-    //     auto& cameraUBO = this->getCameraUBO();
-    //     auto& descriptorSets = cameraUBO->getDescriptorSets();
-    //     std::array<VkDescriptorSet, 2> combinedDescriptorSets = {computeDescriptorSets[pathId], descriptorSets[pathId]};
-    //     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 2, combinedDescriptorSets.data(), 0, 0);
-
-    //     uint32_t num_groups_z = number_of_gaussians / 16;
-
-    //     vkCmdDispatch(commandBuffer, 64, 64, num_groups_z);*/
-
-    // Pre-fill sort value buffers with 0xFFFFFFFF for the NEXT frame's radix
-    // sort pass.  The extract stage only writes elements 0..totalCount-1; any
-    // remaining elements retain this sentinel and sort to the very end of the
-    // output (0xFFFFFFFF > any valid binMask 0..0x8000), so computeBounds and
-    // splatting see only the valid sorted gaussians in positions 0..totalCount-1.
     vkCmdFillBuffer(commandBuffer, sortRadixValA->getVkBuffer(pathId), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
     vkCmdFillBuffer(commandBuffer, sortRadixValB->getVkBuffer(pathId), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
     {
         VkMemoryBarrier mb{};
-        mb.sType          = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        mb.srcAccessMask  = VK_ACCESS_TRANSFER_WRITE_BIT;
-        mb.dstAccessMask  = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
         vkCmdPipelineBarrier(commandBuffer,
             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 1, &mb, 0, nullptr, 0, nullptr);
     }
 
-    // When rendering to a real swapchain the image must be in PRESENT_SRC_KHR
-    // for vkQueuePresentKHR; in headless mode GENERAL is sufficient.
+    auto* ivs = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
+    VkImage image = ivs->getImage(pathId);
+
     const VkImageLayout finalLayout = vulkanContext->hasSurface()
-        ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-        : VK_IMAGE_LAYOUT_GENERAL;
+        ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL;
 
-    VkImageMemoryBarrier barrierBack = {};
-    barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrierBack.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrierBack.newLayout = finalLayout;
-    barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrierBack.image = image;
-    barrierBack.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrierBack.subresourceRange.baseMipLevel = 0;
-    barrierBack.subresourceRange.levelCount = 1;
-    barrierBack.subresourceRange.baseArrayLayer = 0;
-    barrierBack.subresourceRange.layerCount = 1;
-    barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrierBack);
-}
-
-float sigmoid(float x) {
-    return 1.0f / (1.0f + std::exp(-x));
+    VkImageMemoryBarrier barrier{};
+    barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout                       = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout                       = finalLayout;
+    barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image                           = image;
+    barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount     = 1;
+    barrier.subresourceRange.layerCount     = 1;
+    barrier.srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask                   = VK_ACCESS_MEMORY_READ_BIT;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
 void VulkanGaussianSplatting::loadSPZModel(std::string path) {
-
     spz::PackedGaussians packed = spz::loadSpzPacked(path);
-
     gaussians3DData.clear();
     gaussians3DData.reserve(packed.numPoints);
-    number_of_gaussians = 256 * 256;
-
-    // float clipBoundsX = 300.0f;
-    // float clipBoundsY = 300.0f;
-    // float clipBoundsZ = 300.0f;
-
-    spz::CoordinateConverter defaultCoordinateConverter;
+    spz::CoordinateConverter conv;
 
     for (int i = 0; i < packed.numPoints; i++) {
-    //for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
-        spz::UnpackedGaussian gaussian = packed.unpack(i, defaultCoordinateConverter);
-        // if (gaussian.position[0] < -clipBoundsX || gaussian.position[0] > clipBoundsX ||
-        //     gaussian.position[1] < -clipBoundsY || gaussian.position[1] > clipBoundsY ||
-        //     gaussian.position[2] < -clipBoundsZ || gaussian.position[2] > clipBoundsZ) {
-        //     continue; // Skip gaussians outside the clipping bounds
-        // }
-        Gaussian3D gaussian3D;
-        memcpy(&gaussian3D, &gaussian, sizeof(spz::UnpackedGaussian));
-
-        // use activation functions as done in original implementation and described in the paper
-        gaussian3D.alpha = sigmoid(gaussian.alpha); // inverse logistic back to alpha
-
-        // color is sh0 encoding, if we want to skip the spherical harmonics, we can use the following:
-        // gaussian3D.color[0] = 0.5 + 0.282095 * gaussian.color[0];
-        // gaussian3D.color[1] = 0.5 + 0.282095 * gaussian.color[1];
-        // gaussian3D.color[2] = 0.5 + 0.282095 * gaussian.color[2];
-
-
-        gaussian3D.scale[0] = std::exp(gaussian.scale[0]);
-        gaussian3D.scale[1] = std::exp(gaussian.scale[1]);
-        gaussian3D.scale[2] = std::exp(gaussian.scale[2]);
-        gaussians3DData.push_back(gaussian3D);
+        spz::UnpackedGaussian ug = packed.unpack(i, conv);
+        Gaussian3D g;
+        memcpy(&g, &ug, sizeof(spz::UnpackedGaussian));
+        g.alpha    = sigmoid(ug.alpha);
+        g.scale[0] = std::exp(ug.scale[0]);
+        g.scale[1] = std::exp(ug.scale[1]);
+        g.scale[2] = std::exp(ug.scale[2]);
+        gaussians3DData.push_back(g);
     }
-
-    number_of_gaussians = (uint32_t)gaussians3DData.size();
-
-    std::cout << "Loaded " << number_of_gaussians << " gaussians from SPZ file: " << path << std::endl;
+    number_of_gaussians = static_cast<uint32_t>(gaussians3DData.size());
+    std::cout << "Loaded " << number_of_gaussians << " gaussians from " << path << "\n";
 }
 
-void VulkanGaussianSplatting::loadPLYModel(std::string path) {
-
-    spz::UnpackOptions unpackOptions;
-    spz::GaussianCloud cloud = spz::loadSplatFromPly("input/bonsai/point_cloud/iteration_7000/point_cloud.ply", unpackOptions);
-
-    gaussians3DData.clear();
-    gaussians3DData.reserve(cloud.numPoints);
-    number_of_gaussians = 256 * 256;
-
-    float clipBounds = 1.5f;
-
-    spz::CoordinateConverter defaultCoordinateConverter;
-
-    for (int i = 0; i < cloud.numPoints; i++) {
-    //for (int i = 60000; i < 60000 + number_of_gaussians; /*packed.numPoints*/ i++) {
-        Gaussian3D gaussian3D;
-        // use activation functions as done in original implementation and described in the paper
-        // position
-        gaussian3D.position[0] = cloud.positions[i * 3 + 0];
-        gaussian3D.position[1] = cloud.positions[i * 3 + 1];
-        gaussian3D.position[2] = cloud.positions[i * 3 + 2];
-
-        // rotation
-        gaussian3D.rotation[0] = cloud.rotations[i * 4 + 0];
-        gaussian3D.rotation[1] = cloud.rotations[i * 4 + 1];
-        gaussian3D.rotation[2] = cloud.rotations[i * 4 + 2];
-        gaussian3D.rotation[3] = cloud.rotations[i * 4 + 3];
-
-        // alpha, color, scale
-        gaussian3D.alpha = sigmoid(cloud.alphas[i]); // inverse logistic back to alpha
-        gaussian3D.color[0] = 0.5f + 0.282095f * cloud.colors[i*3+0];
-        gaussian3D.color[1] = 0.5f + 0.282095f * cloud.colors[i*3+1];
-        gaussian3D.color[2] = 0.5f + 0.282095f * cloud.colors[i*3+2];
-        
-        gaussian3D.scale[0] = std::exp(cloud.scales[i*3+0]);
-        gaussian3D.scale[1] = std::exp(cloud.scales[i*3+1]);
-        gaussian3D.scale[2] = std::exp(cloud.scales[i*3+2]);
-
-
-        if (cloud.positions[i*3+0] < -clipBounds || cloud.positions[i*3+0] > clipBounds ||
-            cloud.positions[i*3+1] < -clipBounds || cloud.positions[i*3+1] > clipBounds ||
-            cloud.positions[i*3+2] < -clipBounds || cloud.positions[i*3+2] > clipBounds) {
-            continue; // Skip gaussians outside the clipping bounds
-        }
-        gaussians3DData.push_back(gaussian3D);
-    }
-
-    number_of_gaussians = (uint32_t)gaussians3DData.size();
-
-    std::cout << "Loaded " << number_of_gaussians << " gaussians from PLY file: " << path << std::endl;
-}
 } // namespace klartraum

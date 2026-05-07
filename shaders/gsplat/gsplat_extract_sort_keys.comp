@@ -1,41 +1,23 @@
 #version 450
-
-#include "gsplat_types.glsl"
+#extension GL_EXT_scalar_block_layout : enable
 
 layout(local_size_x = 128) in;
 
-#extension GL_EXT_scalar_block_layout : enable
+// Binned SoA inputs — only binMask and z are needed for key extraction
+layout(scalar, set = 0, binding = 0) readonly buffer BinMaskBuf { uint  binMask[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer ZBuf       { float zBuf[];    };
+layout(scalar, set = 0, binding = 2) readonly buffer CountBuf   { uint  totalCount; };
 
-// Read binned Gaussian2D structs; extract their binMask as sort key
-// and fill a parallel index array with 0..N-1.
-layout(scalar, binding = 0) readonly buffer BinnedGaussians {
-    Gaussian2D gaussians[];
-};
-
-layout(scalar, binding = 1) readonly buffer CountBuf {
-    uint totalCount;
-};
-
-layout(scalar, binding = 2) buffer SortValues {
-    uint values[];
-};
-
-layout(scalar, binding = 3) buffer SortIndexes {
-    uint indexes[];
-};
+layout(scalar, set = 0, binding = 3) buffer SortValues  { uint values[];  };
+layout(scalar, set = 0, binding = 4) buffer SortIndexes { uint indexes[]; };
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= totalCount) return;
 
-    // Sort key: (bin_index[3:0] << 28) | (floatBitsToUint(z) >> 4)
-    // The 4 MSBs hold the bin index (findMSB of a power-of-2 binMask gives
-    // the bit position, 0-15) so all entries for the same bin sort together.
-    // The 28 LSBs hold the top 28 bits of the IEEE 754 z value, providing
-    // depth ordering within each bin (valid z is in [0,1], all positive, so
-    // unsigned integer order == float order).
-    uint binIdx = uint(findMSB(gaussians[idx].binMask));   // 0-15
-    uint zBits  = floatBitsToUint(gaussians[idx].z) >> 4;  // top 28 bits of z
+    // Sort key: (binIndex[3:0] << 28) | (floatBitsToUint(z) >> 4)
+    uint binIdx = uint(findMSB(binMask[idx]));
+    uint zBits  = floatBitsToUint(zBuf[idx]) >> 4;
     values[idx]  = (binIdx << 28u) | zBits;
     indexes[idx] = idx;
 }

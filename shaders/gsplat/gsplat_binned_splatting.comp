@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_scalar_block_layout : enable
 
 #include "gsplat_types.glsl"
 
@@ -6,123 +7,94 @@
 #define WORKGROUP_SIZE (WORKGROUP_SIZE_SQRT * WORKGROUP_SIZE_SQRT)
 layout(local_size_x = WORKGROUP_SIZE_SQRT, local_size_y = WORKGROUP_SIZE_SQRT) in;
 
+// Sorted Gaussian2D SoA inputs
+layout(scalar, set = 0, binding = 0) readonly buffer SortedPos2D      { vec2  sortedPos2D[];      };
+layout(scalar, set = 0, binding = 1) readonly buffer SortedCovInv     { vec4  sortedCovInv[];     }; // (m00,m10,m01,m11)
+layout(scalar, set = 0, binding = 2) readonly buffer SortedColorAlpha { vec4  sortedColorAlpha[]; }; // (r,g,b,alpha)
 
-#extension GL_EXT_scalar_block_layout : enable
-#extension GL_EXT_debug_printf : enable
+layout(scalar, set = 0, binding = 3) readonly buffer CountBuf  { uint numberTotalGaussians; };
+layout(scalar, set = 0, binding = 4) readonly buffer BoundsBuf { StartAndEnd startAndEnd[];  };
 
-// Original Gaussian2D data
-layout(scalar, binding = 0) buffer GaussianBuffer {
-    Gaussian2D gaussians[];
-};
-
-layout(scalar, binding = 1) buffer InputBuffer2 {
-    uint numberTotalGaussians;
-};
-
-// Start and end indices for each bin
-layout(scalar, binding = 2) buffer OutputBuffer {
-    StartAndEnd startAndEnd[];
-};
-
-shared Gaussian2D sharedGaussians[WORKGROUP_SIZE]; // Shared memory for gaussians in the workgroup
-
-// Output image
-layout(binding = 3, rgba8) uniform image2D outputImage;
+layout(binding = 5, rgba8) uniform image2D outputImage;
 
 layout(push_constant) uniform PushConstants {
-    uint numElements;
-    uint gridSize;
-    uint binIndexX;
-    uint binIndexY;
+    uint  numElements;
+    uint  gridSize;
+    uint  binIndexX;
+    uint  binIndexY;
     float screenWidth;
     float screenHeight;
 } pushConstants;
 
+// Shared memory batches: load per-field for coalesced global reads
+struct GaussBatch {
+    vec2 pos2D;
+    vec4 covInv;
+    vec4 colorAlpha;
+};
+shared GaussBatch sharedGauss[WORKGROUP_SIZE];
+
 float evaluateGaussian(vec2 x, vec2 mu, mat2 sigmaInv) {
-    vec2 diff = (x - mu);
-    float distance = dot(diff, (sigmaInv * diff));
-    return exp(-0.5 * distance);
+    vec2 diff = x - mu;
+    return exp(-0.5 * dot(diff, sigmaInv * diff));
 }
 
-bool debug = false;
-
 void main() {
-
-
     ivec2 binOffset;
     binOffset.x = int(pushConstants.binIndexX * gl_WorkGroupSize.x * gl_NumWorkGroups.x);
     binOffset.y = int(pushConstants.binIndexY * gl_WorkGroupSize.y * gl_NumWorkGroups.y);
 
     const ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy) + binOffset;
-    if (pixelCoord.x >= int(pushConstants.screenWidth) || 
-        pixelCoord.y >= int(pushConstants.screenHeight)) {
-        return;
-    }
+    if (pixelCoord.x >= int(pushConstants.screenWidth) ||
+        pixelCoord.y >= int(pushConstants.screenHeight)) return;
     const vec2 pixelCoordF = vec2(pixelCoord);
 
-
-
-    const StartAndEnd range = startAndEnd[pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX];
+    const StartAndEnd range = startAndEnd[
+        pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX];
     const uint start = range.start;
-    const uint end = range.end;
-
+    const uint end   = range.end;
     const uint stepsize = WORKGROUP_SIZE;
+    const uint preend   = start + ((end - start) / stepsize) * stepsize;
 
-    const uint preend = start + ((end - start) / stepsize) * stepsize;
-
-    vec4 finalColor = vec4(0.0, 0.0, 0.0, 1.0);
-
-    // Accumulate contributions from all Gaussians in this bin
+    vec4  finalColor   = vec4(0.0, 0.0, 0.0, 1.0);
     float accum_opacity = 1.0;
 
-    for (uint i = start; i < preend; i+= stepsize) {
-        // Load Gaussian from shared memory if available
-        sharedGaussians[gl_LocalInvocationIndex] = gaussians[i + gl_LocalInvocationIndex];
-
-        // Wait for all threads in the workgroup to load their Gaussians
+    for (uint i = start; i < preend; i += stepsize) {
+        uint li = i + gl_LocalInvocationIndex;
+        sharedGauss[gl_LocalInvocationIndex].pos2D      = sortedPos2D[li];
+        sharedGauss[gl_LocalInvocationIndex].covInv     = sortedCovInv[li];
+        sharedGauss[gl_LocalInvocationIndex].colorAlpha = sortedColorAlpha[li];
         barrier();
 
-        // Process the Gaussians in shared memory
         for (uint j = 0; j < stepsize; j++) {
-            Gaussian2D gaussian = sharedGaussians[j];
+            vec2 mu       = sharedGauss[j].pos2D;
+            vec4 ci       = sharedGauss[j].covInv;
+            mat2 covInvMat = mat2(ci.x, ci.y, ci.z, ci.w);
+            vec4 rgba     = sharedGauss[j].colorAlpha;
 
-            // Evaluate Gaussian at this pixel
-            float a_j = evaluateGaussian(pixelCoordF, gaussian.position, gaussian.covarianceInv) * gaussian.alpha;
-
-            // += c_i * a_i * opacity     
-            finalColor += vec4(gaussian.color * a_j * accum_opacity, 0);
-            accum_opacity *= (1.0 - a_j);
+            float a = evaluateGaussian(pixelCoordF, mu, covInvMat) * rgba.a;
+            finalColor   += vec4(rgba.rgb * a * accum_opacity, 0.0);
+            accum_opacity *= (1.0 - a);
         }
-        barrier(); // Ensure all threads have finished processing before the next iteration
+        barrier();
 
-        if (accum_opacity <= 1.0 - 0.9999) {
-            break; // Early exit if opacity is very low
-        }
+        if (accum_opacity <= 1.0 - 0.9999) break;
     }
 
-    // tail loop for remaining Gaussians, might be optimized further
+    // Tail loop
     for (uint i = preend; i < end; i++) {
-        Gaussian2D gaussian = gaussians[i];
-        
-        // Evaluate Gaussian at this pixel
-        float a_i = evaluateGaussian(pixelCoord, gaussian.position, gaussian.covarianceInv) * gaussian.alpha;
+        vec2 mu       = sortedPos2D[i];
+        vec4 ci       = sortedCovInv[i];
+        mat2 covInvMat = mat2(ci.x, ci.y, ci.z, ci.w);
+        vec4 rgba     = sortedColorAlpha[i];
 
-        // += c_i * a_i * opacity     
-        finalColor += vec4(gaussian.color * a_i * accum_opacity, 0);
-        accum_opacity *= (1.0 - a_i);
+        float a = evaluateGaussian(pixelCoordF, mu, covInvMat) * rgba.a;
+        finalColor   += vec4(rgba.rgb * a * accum_opacity, 0.0);
+        accum_opacity *= (1.0 - a);
 
-        if (accum_opacity <= 1.0 - 0.9999) {
-            break; // Early exit if opacity is very low
-        }
+        if (accum_opacity <= 1.0 - 0.9999) break;
     }
 
-    // Each frame is rendered fresh: write only this frame's gaussian
-    // contributions.  Do NOT read and add to the existing image — that
-    // would accumulate across frames because Vulkan's UNDEFINED→GENERAL
-    // layout transition does not guarantee the content is discarded on
-    // all implementations, causing saturation over time.
-    vec4 outputColor = finalColor * (1.0 - accum_opacity);
-    outputColor = clamp(outputColor, vec4(0.0), vec4(1.0));
-
+    vec4 outputColor = clamp(finalColor * (1.0 - accum_opacity), vec4(0.0), vec4(1.0));
     imageStore(outputImage, pixelCoord, outputColor);
-} 
+}

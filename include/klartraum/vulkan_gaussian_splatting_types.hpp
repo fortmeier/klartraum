@@ -12,16 +12,6 @@
 
 namespace klartraum {
 
-struct Gaussian2D {
-    glm::vec2 position;
-    float z;
-    uint32_t binMask;
-    glm::mat2 covariance;
-    glm::vec3 color;
-    float alpha;
-};
-
-
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
 struct Gaussian3D {
     std::array<float, 3> position;  // x, y, z
@@ -32,10 +22,9 @@ struct Gaussian3D {
     std::array<float, 15> shR;
     std::array<float, 15> shG;
     std::array<float, 15> shB;
-  };
+};
 
 typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
-typedef VulkanBuffer<Gaussian2D> Gaussian2DBuffer;
 
 struct ProjectionPushConstants {
   uint32_t numElements;
@@ -55,13 +44,11 @@ struct SplatPushConstants {
   float screenHeight;
 };
 
-
 struct SortPushConstants {
   uint32_t pass;
   uint32_t numElements;
   uint32_t numBins;
 };
-typedef BufferTransformation<Gaussian2DBuffer, Gaussian2DBuffer, void, SortPushConstants> GaussianSort;
 typedef GeneralComputation<SortPushConstants> RadixSort;
 
 // Three-pass deterministic binning pipeline
@@ -76,8 +63,6 @@ struct BinningScatterPushConstants {
 };
 typedef GeneralComputation<BinningScatterPushConstants> GaussianBinningScatter;
 
-typedef GeneralComputation<ProjectionPushConstants> GaussianBinning;  // kept for compatibility
-typedef GeneralComputation<ProjectionPushConstants> GaussianComputeBounds;
 typedef GeneralComputation<SplatPushConstants> GaussianSplatting;
 
 } // namespace klartraum

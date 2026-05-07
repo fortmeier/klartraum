@@ -9,7 +9,6 @@
 
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
-#include "klartraum/vulkan_gaussian_splatting_soa.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 
@@ -23,17 +22,13 @@ int main(int argc, char** argv) {
 #endif
 
     // Parse args:  --frames N   (close after N frames)
-    //              --soa        (use SoA pipeline)
-    int  maxFrames = -1;
-    bool useSoA    = false;
+    int maxFrames = -1;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--frames" && i + 1 < argc) {
             try { maxFrames = std::stoi(argv[i + 1]); } catch (...) {}
         }
-        if (std::string(argv[i]) == "--soa") useSoA = true;
     }
-    std::cout << "Gaussian Splatting example"
-              << (useSoA ? " [SoA pipeline]" : " [AoS pipeline]");
+    std::cout << "Gaussian Splatting example";
     if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
     std::cout << std::endl;
 
@@ -41,12 +36,8 @@ int main(int argc, char** argv) {
     auto& engine = frontend.getKlartraumEngine();
     auto& vulkanContext = engine.getVulkanContext();
 
-    // Enable GPU timestamp profiling before add() so the compute graph
-    // instruments all its nodes.
     if (maxFrames > 0) engine.enableProfiling();
 
-    // Build an ImageViewSrc from the real swapchain images so
-    // VulkanGaussianSplatting can write directly to the presentable images.
     uint32_t numImages = vulkanContext.getNumberOfSwapChainImages();
     auto extent = vulkanContext.getSwapChainExtent();
     std::vector<VkImageView> imageViews(numImages);
@@ -61,21 +52,14 @@ int main(int argc, char** argv) {
         imageViewSrc->setWaitFor(i, vulkanContext.imageAvailableSemaphoresPerImage[i]);
     }
 
-    // Camera UBO — used by both the projection shader and the camera orbit.
     auto cameraUBO = std::make_shared<klartraum::CameraUboType>();
     cameraUBO->setName("CameraUBO");
 
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
 
-    if (useSoA) {
-        auto splatting = vulkanContext.create<klartraum::VulkanGaussianSplattingSoA>(
-            imageViewSrc, cameraUBO, spzFile);
-        engine.add(splatting);
-    } else {
-        auto splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(
-            imageViewSrc, cameraUBO, spzFile);
-        engine.add(splatting);
-    }
+    auto splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(
+        imageViewSrc, cameraUBO, spzFile);
+    engine.add(splatting);
 
     auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
         klartraum::InterfaceCameraOrbit::UpDirection::Y);
@@ -89,7 +73,6 @@ int main(int argc, char** argv) {
 
     frontend.loop(maxFrames);
 
-    // Print GPU profiling results when --frames N was given.
     if (maxFrames > 0) {
         std::cout << "\n--- GPU timing (mean over " << maxFrames << " frames) ---\n";
         for (auto& [name, ms] : engine.getProfilingResults()) {
