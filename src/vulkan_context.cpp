@@ -491,6 +491,7 @@ void VulkanContext::createLogicalDevice() {
     }
 
     VkPhysicalDeviceFeatures deviceFeatures{};
+    deviceFeatures.pipelineStatisticsQuery = VK_TRUE;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -503,17 +504,51 @@ void VulkanContext::createLogicalDevice() {
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
+    // Optionally enable VK_KHR_performance_query. Added after physical device selection
+    // so pickPhysicalDevice() suitability check is unaffected by this optional extension.
+    // Only add it if the driver actually exposes it; the Khronos validation layer filters
+    // it out when it is not available, so we can rely on the enumeration result.
+    // Note: on Windows, enabling this extension requires Windows Developer Mode.
+    {
+        uint32_t cnt = 0;
+        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &cnt, nullptr);
+        std::vector<VkExtensionProperties> avail(cnt);
+        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &cnt, avail.data());
+        for (auto& e : avail) {
+            if (strcmp(e.extensionName, VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME) == 0) {
+                deviceExtensions.push_back(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME);
+                break;
+            }
+        }
+        createInfo.enabledExtensionCount   = static_cast<uint32_t>(deviceExtensions.size());
+        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+    }
+
     VkPhysicalDeviceScalarBlockLayoutFeatures scalarBlockLayoutFeatures;
     scalarBlockLayoutFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES;
     scalarBlockLayoutFeatures.pNext = NULL;
     scalarBlockLayoutFeatures.scalarBlockLayout = VK_TRUE;
 
+    // Only chain the performance query feature struct when the extension was enabled.
+    VkPhysicalDevicePerformanceQueryFeaturesKHR perfQueryFeatures{};
+    perfQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR;
+    perfQueryFeatures.pNext = NULL;
+    perfQueryFeatures.performanceCounterQueryPools         = VK_TRUE;
+    perfQueryFeatures.performanceCounterMultipleQueryPools = VK_FALSE;
+
+    bool perfQueryPresent = false;
+    for (auto& ext : deviceExtensions)
+        if (strcmp(ext, VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME) == 0) { perfQueryPresent = true; break; }
+    if (perfQueryPresent)
+        scalarBlockLayoutFeatures.pNext = &perfQueryFeatures;
+
     createInfo.pNext = &scalarBlockLayoutFeatures;
 
-
-    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
         throw std::runtime_error("failed to create logical device!");
-    }
+
+    if (perfQueryPresent)
+        std::cout << "[VulkanContext] VK_KHR_performance_query enabled\n";
 
     vkGetDeviceQueue(device, indices.graphicsAndComputeFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);

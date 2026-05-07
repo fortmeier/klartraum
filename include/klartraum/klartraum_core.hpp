@@ -54,12 +54,22 @@ public:
     // compute graphs.  Results accumulate across frames and are averaged.
     void enableProfiling() { profilingEnabled_ = true; }
 
+    // Call before add() to enable VK_KHR_performance_query counter profiling.
+    // nameFilter: sub-strings matched against counter name/description; empty = all counters.
+    void enablePerformanceProfiling(std::vector<std::string> nameFilter = {}) {
+        perfProfilingEnabled_   = true;
+        perfProfilingNameFilter_ = std::move(nameFilter);
+    }
+
     // Waits for the GPU to be idle, reads the last frame's timestamps, and
-    // returns {elementName, meanTimeMs} for every element across all graphs.
+    // returns {elementName, meanTimeMs} for every element across all graphs,
+    // followed by {elementName " [counterName]", value} for any perf counters.
     std::vector<std::pair<std::string, float>> getProfilingResults();
 
 private:
-    bool profilingEnabled_ = false;
+    bool profilingEnabled_            = false;
+    bool perfProfilingEnabled_        = false;
+    std::vector<std::string> perfProfilingNameFilter_;
 
     VulkanContext vulkanContext;
 
