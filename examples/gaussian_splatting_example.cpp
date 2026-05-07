@@ -36,7 +36,10 @@ int main(int argc, char** argv) {
     auto& engine = frontend.getKlartraumEngine();
     auto& vulkanContext = engine.getVulkanContext();
 
-    if (maxFrames > 0) engine.enableProfiling();
+    if (maxFrames > 0) {
+        engine.enableProfiling();
+        engine.enablePerformanceProfiling({"SM"});
+    }
 
     uint32_t numImages = vulkanContext.getNumberOfSwapChainImages();
     auto extent = vulkanContext.getSwapChainExtent();

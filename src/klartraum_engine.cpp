@@ -89,15 +89,16 @@ void KlartraumEngine::add(ComputeGraphElementPtr element)
     computeGraphs.emplace_back(std::make_unique<ComputeGraph>(vulkanContext, numberPaths));
     auto& computeGraph = computeGraphs.back();
     if (profilingEnabled_) computeGraph->enableProfiling();
+    if (perfProfilingEnabled_) computeGraph->enablePerformanceProfiling(perfProfilingNameFilter_);
     computeGraph->compileFrom(element);
 }
 
 std::vector<std::pair<std::string, float>> KlartraumEngine::getProfilingResults()
 {
-    // Ensure GPU is idle so timestamp readback is safe.
     vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
     for (auto& cg : computeGraphs) {
         cg->readAndAccumulateTimestamps_();
+        cg->readAndAccumulatePerformanceCounters_();
     }
     std::vector<std::pair<std::string, float>> results;
     for (auto& cg : computeGraphs) {
