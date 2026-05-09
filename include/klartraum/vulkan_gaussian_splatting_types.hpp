@@ -12,6 +12,30 @@
 
 namespace klartraum {
 
+// Runtime-tunable knobs for the Gaussian splatting pipeline.
+// Different hardware benefits from different settings; adjust before construction.
+struct GsplatConfig {
+    // Gaussian footprint multiplier used in bin overlap tests (default 2.5 = 2.5 sigma).
+    // Smaller → fewer bins touched, faster binning, slight clipping at edges.
+    // Larger  → more bins touched, slower binning, better edge quality.
+    float spreadMultiplier = 2.5f;
+
+    // Binned buffer capacity = N * maxMod.  Each Gaussian can appear in at most
+    // maxMod bins on average before the buffer clips.  2 is safe for most scenes.
+    uint32_t maxMod = 2u;
+
+    // Hard cap on radix-sort workgroup count.
+    // More WGs = better GPU utilisation for large scenes.
+    // Fewer WGs = less overhead for small scenes.
+    uint32_t numSortWGsCap = 320u;
+
+    // Splatting tile dimensions (workgroup = tileX × tileY threads).
+    // Larger tiles → fewer barrier() pairs per Gaussian, higher shared-memory use.
+    // Must divide the per-bin tile count evenly.
+    uint32_t splatTileX = 8u;
+    uint32_t splatTileY = 8u;
+};
+
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
 struct Gaussian3D {
     std::array<float, 3> position;  // x, y, z
@@ -35,6 +59,25 @@ struct ProjectionPushConstants {
 
 typedef GeneralComputation<ProjectionPushConstants> GaussianProjection;
 
+struct BinningCountPushConstants {
+    uint32_t numElements;
+    uint32_t gridSize;
+    float    screenWidth;
+    float    screenHeight;
+    float    spreadMultiplier;  // Gaussian footprint radius multiplier
+};
+typedef GeneralComputation<BinningCountPushConstants> GaussianBinningCount;
+
+struct BinningScatterPushConstants {
+    uint32_t numElements;
+    uint32_t gridSize;
+    float    screenWidth;
+    float    screenHeight;
+    uint32_t maxOutput;
+    float    spreadMultiplier;  // Gaussian footprint radius multiplier
+};
+typedef GeneralComputation<BinningScatterPushConstants> GaussianBinningScatter;
+
 struct SplatPushConstants {
   uint32_t numElements;
   uint32_t gridSize;
@@ -50,18 +93,6 @@ struct SortPushConstants {
   uint32_t numBins;
 };
 typedef GeneralComputation<SortPushConstants> RadixSort;
-
-// Three-pass deterministic binning pipeline
-typedef GeneralComputation<ProjectionPushConstants> GaussianBinningCount;
-
-struct BinningScatterPushConstants {
-    uint32_t numElements;   // number of projected gaussians
-    uint32_t gridSize;
-    float    screenWidth;
-    float    screenHeight;
-    uint32_t maxOutput;     // capacity of binnedGaussians buffer
-};
-typedef GeneralComputation<BinningScatterPushConstants> GaussianBinningScatter;
 
 typedef GeneralComputation<SplatPushConstants> GaussianSplatting;
 

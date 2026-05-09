@@ -18,22 +18,30 @@ layout(push_constant) uniform PC {
     uint  gridSize;
     float screenWidth;
     float screenHeight;
+    float spreadMultiplier;   // tunable: Gaussian footprint radius multiplier (default 2.5)
 } pc;
 
 shared uint sharedHisto[16];
 
-bool overlapsWithBin(vec2 position, mat2 covarianceInv, uint binIdx) {
+// Compute 2D spread (stddev × multiplier) directly from the inverse covariance vec4,
+// avoiding a full mat2 inverse() call.
+// covInv is stored column-major as (m00, m10, m01, m11):
+//   mat = [[m00, m01], [m10, m11]]  with symmetric m10==m01
+// cov[0][0] = m11 / det,  cov[1][1] = m00 / det,  det = m00*m11 - m01*m10
+vec2 computeSpread(vec4 ci) {
+    float det = ci.x * ci.w - ci.y * ci.z;
+    return sqrt(vec2(ci.w, ci.x) / det) * pc.spreadMultiplier;
+}
+
+bool overlapsWithBin(vec2 position, vec2 spread, uint binIdx) {
     float cellW = pc.screenWidth  / float(pc.gridSize);
     float cellH = pc.screenHeight / float(pc.gridSize);
     uint gridX = binIdx % pc.gridSize;
     uint gridY = binIdx / pc.gridSize;
-    vec2 binMin = vec2(gridX * cellW, gridY * cellH);
-    vec2 binMax = vec2((gridX + 1) * cellW, (gridY + 1) * cellH);
-    mat2 cov = inverse(covarianceInv);
-    float spreadX = sqrt(cov[0][0]) * 2.5;
-    float spreadY = sqrt(cov[1][1]) * 2.5;
-    vec2 gMin = position - vec2(spreadX, spreadY);
-    vec2 gMax = position + vec2(spreadX, spreadY);
+    vec2 binMin = vec2(float(gridX) * cellW,        float(gridY) * cellH);
+    vec2 binMax = vec2(float(gridX + 1u) * cellW,   float(gridY + 1u) * cellH);
+    vec2 gMin = position - spread;
+    vec2 gMax = position + spread;
     return !(gMax.x < binMin.x || gMin.x > binMax.x ||
              gMax.y < binMin.y || gMin.y > binMax.y);
 }
@@ -50,11 +58,11 @@ void main() {
     if (idx < pc.numElements) {
         float z = zBuf[idx];
         if (z >= 0.0 && z <= 1.0) {
-            vec2 pos = pos2D[idx];
-            vec4 ci  = covInv[idx];
-            mat2 covInvMat = mat2(ci.x, ci.y, ci.z, ci.w);
-            for (uint b = 0; b < numBins; b++) {
-                if (overlapsWithBin(pos, covInvMat, b)) {
+            vec2 pos    = pos2D[idx];
+            vec4 ci     = covInv[idx];
+            vec2 spread = computeSpread(ci);   // computed once, shared across all bin tests
+            for (uint b = 0u; b < numBins; b++) {
+                if (overlapsWithBin(pos, spread, b)) {
                     atomicAdd(sharedHisto[b], 1u);
                 }
             }
