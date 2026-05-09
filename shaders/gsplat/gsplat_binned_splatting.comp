@@ -3,9 +3,17 @@
 
 #include "gsplat_types.glsl"
 
-#define WORKGROUP_SIZE_SQRT 8
-#define WORKGROUP_SIZE (WORKGROUP_SIZE_SQRT * WORKGROUP_SIZE_SQRT)
-layout(local_size_x = WORKGROUP_SIZE_SQRT, local_size_y = WORKGROUP_SIZE_SQRT) in;
+// Tile dimensions — tunable for different hardware.
+// Larger tiles: fewer barrier() pairs per Gaussian, but more registers per thread.
+// Default 8×8 = 64 threads balances occupancy and batch throughput.
+#ifndef TILE_X
+#define TILE_X 8
+#endif
+#ifndef TILE_Y
+#define TILE_Y 8
+#endif
+#define WORKGROUP_SIZE (TILE_X * TILE_Y)
+layout(local_size_x = TILE_X, local_size_y = TILE_Y) in;
 
 // Sorted Gaussian2D SoA inputs
 layout(scalar, set = 0, binding = 0) readonly buffer SortedPos2D      { vec2  sortedPos2D[];      };
@@ -26,18 +34,13 @@ layout(push_constant) uniform PushConstants {
     float screenHeight;
 } pushConstants;
 
-// Shared memory batches: load per-field for coalesced global reads
+// Shared memory batch — one slot per thread in the workgroup.
 struct GaussBatch {
     vec2 pos2D;
     vec4 covInv;
     vec4 colorAlpha;
 };
 shared GaussBatch sharedGauss[WORKGROUP_SIZE];
-
-float evaluateGaussian(vec2 x, vec2 mu, mat2 sigmaInv) {
-    vec2 diff = x - mu;
-    return exp(-0.5 * dot(diff, sigmaInv * diff));
-}
 
 void main() {
     ivec2 binOffset;
@@ -51,12 +54,12 @@ void main() {
 
     const StartAndEnd range = startAndEnd[
         pushConstants.binIndexY * pushConstants.gridSize + pushConstants.binIndexX];
-    const uint start = range.start;
-    const uint end   = range.end;
+    const uint start    = range.start;
+    const uint end      = range.end;
     const uint stepsize = WORKGROUP_SIZE;
     const uint preend   = start + ((end - start) / stepsize) * stepsize;
 
-    vec4  finalColor   = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4  finalColor    = vec4(0.0, 0.0, 0.0, 1.0);
     float accum_opacity = 1.0;
 
     for (uint i = start; i < preend; i += stepsize) {
@@ -66,14 +69,19 @@ void main() {
         sharedGauss[gl_LocalInvocationIndex].colorAlpha = sortedColorAlpha[li];
         barrier();
 
-        for (uint j = 0; j < stepsize; j++) {
-            vec2 mu       = sharedGauss[j].pos2D;
-            vec4 ci       = sharedGauss[j].covInv;
-            mat2 covInvMat = mat2(ci.x, ci.y, ci.z, ci.w);
-            vec4 rgba     = sharedGauss[j].colorAlpha;
+        for (uint j = 0u; j < stepsize; j++) {
+            vec2 mu   = sharedGauss[j].pos2D;
+            vec4 ci   = sharedGauss[j].covInv;
+            vec4 rgba = sharedGauss[j].colorAlpha;
 
-            float a = evaluateGaussian(pixelCoordF, mu, covInvMat) * rgba.a;
-            finalColor   += vec4(rgba.rgb * a * accum_opacity, 0.0);
+            // Inline Gaussian: exp(-0.5 * diff^T * covInv * diff)
+            // Avoids mat2 construction + matrix-vector multiply.
+            // covInv is symmetric: ci.y == ci.z, so cross term = 2*ci.y*dx*dy.
+            vec2  d  = pixelCoordF - mu;
+            float q  = ci.x * d.x * d.x + 2.0 * ci.y * d.x * d.y + ci.w * d.y * d.y;
+            float a  = exp(-0.5 * q) * rgba.a;
+
+            finalColor   += vec4(rgba.rgb * (a * accum_opacity), 0.0);
             accum_opacity *= (1.0 - a);
         }
         barrier();
@@ -81,15 +89,17 @@ void main() {
         if (accum_opacity <= 1.0 - 0.9999) break;
     }
 
-    // Tail loop
+    // Tail loop for the remainder (< stepsize elements)
     for (uint i = preend; i < end; i++) {
-        vec2 mu       = sortedPos2D[i];
-        vec4 ci       = sortedCovInv[i];
-        mat2 covInvMat = mat2(ci.x, ci.y, ci.z, ci.w);
-        vec4 rgba     = sortedColorAlpha[i];
+        vec2 mu   = sortedPos2D[i];
+        vec4 ci   = sortedCovInv[i];
+        vec4 rgba = sortedColorAlpha[i];
 
-        float a = evaluateGaussian(pixelCoordF, mu, covInvMat) * rgba.a;
-        finalColor   += vec4(rgba.rgb * a * accum_opacity, 0.0);
+        vec2  d = pixelCoordF - mu;
+        float q = ci.x * d.x * d.x + 2.0 * ci.y * d.x * d.y + ci.w * d.y * d.y;
+        float a = exp(-0.5 * q) * rgba.a;
+
+        finalColor   += vec4(rgba.rgb * (a * accum_opacity), 0.0);
         accum_opacity *= (1.0 - a);
 
         if (accum_opacity <= 1.0 - 0.9999) break;

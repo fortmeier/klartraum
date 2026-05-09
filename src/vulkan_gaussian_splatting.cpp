@@ -17,29 +17,33 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(
     VulkanContext& vulkanContext,
     std::shared_ptr<ImageViewSrc> _imageViewSrc,
     std::shared_ptr<CameraUboType> _cameraUBO,
-    std::string path)
+    std::string path,
+    GsplatConfig config)
 {
     loadSPZModel(path);
-    initialize(vulkanContext, _imageViewSrc, _cameraUBO);
+    initialize(vulkanContext, _imageViewSrc, _cameraUBO, config);
 }
 
 VulkanGaussianSplatting::VulkanGaussianSplatting(
     VulkanContext& vulkanContext,
     std::shared_ptr<ImageViewSrc> _imageViewSrc,
     std::shared_ptr<CameraUboType> _cameraUBO,
-    std::vector<Gaussian3D> gaussians)
+    std::vector<Gaussian3D> gaussians,
+    GsplatConfig config)
 {
     gaussians3DData     = std::move(gaussians);
     number_of_gaussians = static_cast<uint32_t>(gaussians3DData.size());
-    initialize(vulkanContext, _imageViewSrc, _cameraUBO);
+    initialize(vulkanContext, _imageViewSrc, _cameraUBO, config);
 }
 
 void VulkanGaussianSplatting::initialize(
     VulkanContext& vulkanContext,
     std::shared_ptr<ImageViewSrc> _imageViewSrc,
-    std::shared_ptr<CameraUboType> _cameraUBO)
+    std::shared_ptr<CameraUboType> _cameraUBO,
+    GsplatConfig config)
 {
     this->vulkanContext = &vulkanContext;
+    this->config_       = config;
     this->setInput(_imageViewSrc, 0);
     this->setInput(_cameraUBO,    1);
 
@@ -53,10 +57,17 @@ void VulkanGaussianSplatting::initialize(
     const uint32_t gridSize   = 4;
     const uint32_t numBins    = gridSize * gridSize;
     const uint32_t tpg        = 128;
-    const uint32_t maxMod     = 2;
+    const uint32_t maxMod     = config.maxMod;
     const uint32_t maxBinned  = N * maxMod;
     const uint32_t numBinWGs  = N / tpg + 1;
-    const uint32_t numSortWGs = std::max(1u, std::min(320u, maxBinned / tpg + 1));
+    const uint32_t numSortWGs = std::max(1u, std::min(config.numSortWGsCap, maxBinned / tpg + 1));
+    const float    spreadMul  = config.spreadMultiplier;
+
+    std::cout << "[GsplatConfig] spreadMultiplier=" << spreadMul
+              << " maxMod=" << maxMod
+              << " numSortWGsCap=" << config.numSortWGsCap
+              << " splatTile=" << config.splatTileX << "x" << config.splatTileY
+              << " -> numSortWGs=" << numSortWGs << " maxBinned=" << maxBinned << "\n";
 
     // Convert AoS → SoA and upload to GPU (single-path, static)
     std::vector<glm::vec3> pos3d(N), scale3d(N);
@@ -150,7 +161,7 @@ void VulkanGaussianSplatting::initialize(
     binCount->setInput(binHistogram,  3);
     binCount->setInput(binOffsets,    4);
     binCount->setGroupCountX(numBinWGs);
-    binCount->setPushConstants({{N, gridSize, W, H}});
+    binCount->setPushConstants({{N, gridSize, W, H, spreadMul}});
 
     // Stage 3: binning prefix sum
     binPrefixSum = std::make_shared<GeneralComputation<>>(
@@ -173,7 +184,7 @@ void VulkanGaussianSplatting::initialize(
     binColAlpha->setName("BinCA");    binColAlpha->setRecordToZero(false);
 
     // Stage 4: binning scatter
-    BinningScatterPushConstants scatterPC{N, gridSize, W, H, maxBinned};
+    BinningScatterPushConstants scatterPC{N, gridSize, W, H, maxBinned, spreadMul};
     binScatter = std::make_shared<GaussianBinningScatter>(
         vulkanContext, "shaders/gsplat/gsplat_binning_scatter.comp.spv");
     binScatter->setName("GaussianBinningScatter");
@@ -296,7 +307,8 @@ void VulkanGaussianSplatting::initialize(
     splat->setInput(computeBounds, 4, 2);   // scratchBounds
     splat->setInput(_imageViewSrc, 5);
 
-    const uint32_t tbX  = 8, tbY = 8;
+    const uint32_t tbX  = config.splatTileX;
+    const uint32_t tbY  = config.splatTileY;
     const uint32_t gpbX = uint32_t((W / tbX) / gridSize);
     const uint32_t gpbY = uint32_t((H / tbY) / gridSize);
     splat->setGroupCountX(gpbX);
