@@ -28,25 +28,39 @@ layout(push_constant) uniform PC {
     float screenWidth;
     float screenHeight;
     uint  maxOutput;
+    float spreadMultiplier;   // tunable: Gaussian footprint radius multiplier (default 2.5)
 } pc;
 
 shared uint sharedScan[128];
 shared uint sharedBinCounts[16];
 
-bool overlapsWithBin(vec2 position, mat2 covarianceInv, uint binIdx) {
+// Compute per-thread overlap bitmask for ALL bins in one pass.
+// Avoids calling inverse() 16× per thread — instead computes the spread once
+// directly from covInv (ci stored column-major: m00=ci.x, m10=ci.y, m01=ci.z, m11=ci.w).
+// For symmetric covInv:  det = m00*m11 - m01*m10
+//   cov[0][0] = m11/det,  cov[1][1] = m00/det
+uint computeOverlapMask(vec2 position, vec4 ci) {
+    float det     = ci.x * ci.w - ci.y * ci.z;
+    vec2  spread  = sqrt(vec2(ci.w, ci.x) / det) * pc.spreadMultiplier;
+    vec2  gMin    = position - spread;
+    vec2  gMax    = position + spread;
+
     float cellW = pc.screenWidth  / float(pc.gridSize);
     float cellH = pc.screenHeight / float(pc.gridSize);
-    uint gridX = binIdx % pc.gridSize;
-    uint gridY = binIdx / pc.gridSize;
-    vec2 binMin = vec2(gridX * cellW, gridY * cellH);
-    vec2 binMax = vec2((gridX + 1) * cellW, (gridY + 1) * cellH);
-    mat2 cov = inverse(covarianceInv);
-    float spreadX = sqrt(cov[0][0]) * 2.5;
-    float spreadY = sqrt(cov[1][1]) * 2.5;
-    vec2 gMin = position - vec2(spreadX, spreadY);
-    vec2 gMax = position + vec2(spreadX, spreadY);
-    return !(gMax.x < binMin.x || gMin.x > binMax.x ||
-             gMax.y < binMin.y || gMin.y > binMax.y);
+
+    uint numBins = pc.gridSize * pc.gridSize;
+    uint mask = 0u;
+    for (uint b = 0u; b < numBins; b++) {
+        uint gridX = b % pc.gridSize;
+        uint gridY = b / pc.gridSize;
+        vec2 binMin = vec2(float(gridX)      * cellW, float(gridY)      * cellH);
+        vec2 binMax = vec2(float(gridX + 1u) * cellW, float(gridY + 1u) * cellH);
+        if (!(gMax.x < binMin.x || gMin.x > binMax.x ||
+              gMax.y < binMin.y || gMin.y > binMax.y)) {
+            mask |= (1u << b);
+        }
+    }
+    return mask;
 }
 
 void main() {
@@ -71,10 +85,11 @@ void main() {
         validZ      = (gZ >= 0.0 && gZ <= 1.0);
     }
 
-    mat2 covInvMat = mat2(gCovInv.x, gCovInv.y, gCovInv.z, gCovInv.w);
+    // Compute overlap bitmask ONCE (replaces 16× overlapsWithBin calls each with inverse())
+    uint overlapMask = (validZ) ? computeOverlapMask(gPos, gCovInv) : 0u;
 
     for (uint b = 0u; b < numBins; b++) {
-        bool overlaps = validZ && overlapsWithBin(gPos, covInvMat, b);
+        bool overlaps = (overlapMask >> b & 1u) != 0u;
 
         sharedScan[lid] = overlaps ? 1u : 0u;
         barrier();

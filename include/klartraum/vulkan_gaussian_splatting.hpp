@@ -23,13 +23,15 @@ public:
         VulkanContext& vulkanContext,
         std::shared_ptr<ImageViewSrc> imageViewSrc,
         std::shared_ptr<CameraUboType> cameraUBO,
-        std::string path);
+        std::string path,
+        GsplatConfig config = GsplatConfig{});
 
     VulkanGaussianSplatting(
         VulkanContext& vulkanContext,
         std::shared_ptr<ImageViewSrc> imageViewSrc,
         std::shared_ptr<CameraUboType> cameraUBO,
-        std::vector<Gaussian3D> gaussians);
+        std::vector<Gaussian3D> gaussians,
+        GsplatConfig config = GsplatConfig{});
 
     ~VulkanGaussianSplatting();
 
@@ -43,7 +45,10 @@ private:
     void loadSPZModel(std::string path);
     void initialize(VulkanContext& vulkanContext,
                     std::shared_ptr<ImageViewSrc> imageViewSrc,
-                    std::shared_ptr<CameraUboType> cameraUBO);
+                    std::shared_ptr<CameraUboType> cameraUBO,
+                    GsplatConfig config);
+
+    GsplatConfig config_;
 
     VulkanContext* vulkanContext = nullptr;
     uint32_t number_of_gaussians = 0;

@@ -7,23 +7,22 @@ layout(local_size_x = 128) in;
 shared uint sharedOffsets[16];
 shared uint sharedBins[128];
 shared uint localBinBase[16];
+shared uint localRanks[128];   // precomputed stable ranks (avoids O(n²) scan)
 
 void main() {
-    /* This shader scatters the elements of the input buffer into the output buffer
-     * based on the histograms and their prefix sum computed in the previous shader.
+    /* This shader scatters elements into output based on histograms + prefix sums.
      *
-     * Stability requirement: elements with the same bin must preserve their relative
-     * input order across passes. We achieve this by processing one batch of
-     * workGroupSize elements at a time and computing each thread's rank within its
-     * bin using a sequential scan over shared memory (ordered by thread ID, which
-     * corresponds to input order within the batch).
+     * Stability: elements with the same bin preserve their relative input order.
+     * We compute stable local ranks in O(n) using a single-thread sequential pass
+     * (thread 0 walks sharedBins[] and assigns ranks), replacing the previous
+     * O(n²) approach where each thread scanned all earlier threads.
      */
 
-    uint binIdx = gl_LocalInvocationIndex.x;
+    uint lid = gl_LocalInvocationID.x;
 
-    if (binIdx < 16) {
-        uint offsetIdx = gl_NumWorkGroups.x * binIdx + gl_WorkGroupID.x;
-        sharedOffsets[binIdx] = inputBuffer3.histogram[offsetIdx];
+    if (lid < 16) {
+        uint offsetIdx = gl_NumWorkGroups.x * lid + gl_WorkGroupID.x;
+        sharedOffsets[lid] = inputBuffer3.histogram[offsetIdx];
     }
     barrier();
 
@@ -34,12 +33,11 @@ void main() {
     uint baseIdx = gl_WorkGroupID.x * itemsPerWorkGroup;
     uint endIdx  = baseIdx + itemsPerWorkGroup;
 
-    // Process one batch of workGroupSize elements at a time
     for (uint groupStart = baseIdx; groupStart < endIdx; groupStart += gl_WorkGroupSize.x) {
-        uint elemIdx = groupStart + gl_LocalInvocationID.x;
-        bool isActive  = (elemIdx < pushConstants.numElements);
+        uint elemIdx  = groupStart + lid;
+        bool isActive = (elemIdx < pushConstants.numElements);
 
-        uint value = 0, index = 0, bin = 0;
+        uint value = 0u, index = 0u, bin = 0u;
         if (isActive) {
             if (pushConstants.pass % 2 == 0) {
                 value = radixValuesA[elemIdx];
@@ -48,42 +46,47 @@ void main() {
                 value = radixValuesB[elemIdx];
                 index = indexesB[elemIdx];
             }
-            bin = (value >> (pushConstants.pass * 4)) & 0xF;
-            sharedBins[gl_LocalInvocationID.x] = bin;
+            bin = (value >> (pushConstants.pass * 4)) & 0xFu;
+            sharedBins[lid] = bin;
         } else {
-            sharedBins[gl_LocalInvocationID.x] = 0xFFFFFFFFu; // sentinel for inisActive
+            sharedBins[lid] = 0xFFFFFFFFu;
         }
         barrier();
 
-        // Sequential scan: count how many earlier threads in this batch share the same bin.
-        // This gives a stable, deterministic local rank (ordered by thread/input index).
-        uint localRank = 0;
-        if (isActive) {
-            for (uint j = 0; j < gl_LocalInvocationID.x; j++) {
-                if (sharedBins[j] == bin) localRank++;
+        // Thread 0 assigns stable local ranks in O(n) total work.
+        // Walking sharedBins[] in thread-index order preserves input order within each bin.
+        if (lid == 0u) {
+            uint binCount[16];
+            for (int b = 0; b < 16; b++) binCount[b] = 0u;
+            for (uint j = 0u; j < gl_WorkGroupSize.x; j++) {
+                uint b = sharedBins[j];
+                if (b < 16u) {
+                    localRanks[j] = binCount[b]++;
+                }
             }
         }
+        barrier();
 
-        // The first thread (smallest ID) with each bin atomically reserves a block
-        // of slots and records the base position for that bin in this batch.
-        if (isActive && localRank == 0) {
-            uint count = 0;
-            for (uint j = 0; j < gl_WorkGroupSize.x; j++) {
+        uint localRank = isActive ? localRanks[lid] : 0u;
+
+        // First thread per bin atomically reserves its block of output slots.
+        if (isActive && localRank == 0u) {
+            uint count = 0u;
+            for (uint j = 0u; j < gl_WorkGroupSize.x; j++) {
                 if (sharedBins[j] == bin) count++;
             }
             localBinBase[bin] = atomicAdd(sharedOffsets[bin], count);
         }
         barrier();
 
-        // Write each element to its stable output position
         if (isActive) {
             uint pos = localBinBase[bin] + localRank;
             if (pushConstants.pass % 2 == 0) {
                 radixValuesB[pos] = value;
-                indexesB[pos] = index;
+                indexesB[pos]     = index;
             } else {
                 radixValuesA[pos] = value;
-                indexesA[pos] = index;
+                indexesA[pos]     = index;
             }
         }
         barrier();
