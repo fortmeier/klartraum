@@ -481,33 +481,35 @@ private:
 
     
         
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        
+        // combinedLayouts must outlive vkCreatePipelineLayout — declare it here,
+        // not inside the if constexpr block, to avoid a dangling stack pointer.
+        std::vector<VkDescriptorSetLayout> combinedLayouts;
         if constexpr (!std::is_void<U>::value) {
-            pipelineLayoutInfo.setLayoutCount = 2;
-            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, uboPtr->getDescriptorSetLayout()};
-            pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+            combinedLayouts = {computeDescriptorSetLayout, uboPtr->getDescriptorSetLayout()};
         } else {
-            pipelineLayoutInfo.setLayoutCount = 1;
-            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout};
-            pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+            combinedLayouts = {computeDescriptorSetLayout};
         }
 
+        VkPushConstantRange pushConstantRange{};
         if constexpr (!std::is_void<P>::value) {
-            VkPushConstantRange pushConstantRange{};
             pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
             pushConstantRange.offset = 0;
             pushConstantRange.size = sizeof(P);
-            pipelineLayoutInfo.pushConstantRangeCount = 1;
-            pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
         }
-        
+
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = (uint32_t)combinedLayouts.size();
+        pipelineLayoutInfo.pSetLayouts    = combinedLayouts.data();
+        if constexpr (!std::is_void<P>::value) {
+            pipelineLayoutInfo.pushConstantRangeCount = 1;
+            pipelineLayoutInfo.pPushConstantRanges    = &pushConstantRange;
+        }
+
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline layout!");
         }
-    
-    
+
         std::vector<VkComputePipelineCreateInfo> pipelineInfos(computeShaderStages.size());
         for (size_t i = 0; i < computeShaderStages.size(); i++) {
             VkComputePipelineCreateInfo& pipelineInfo = pipelineInfos[i];
@@ -520,6 +522,10 @@ private:
         if (vkCreateComputePipelines(device, VK_NULL_HANDLE, (uint32_t)computeShaderStages.size(), pipelineInfos.data(), nullptr, computePipelines.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline!");
         }
+
+        // Shader modules are no longer needed once the pipeline is compiled.
+        for (auto& mod : computeShaderModules)
+            vkDestroyShaderModule(device, mod, nullptr);
 
         for (size_t i = 0; i < computeShaderModules.size(); i++) {
             vkDestroyShaderModule(device, computeShaderModules[i], nullptr);

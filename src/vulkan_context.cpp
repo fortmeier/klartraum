@@ -456,22 +456,42 @@ void VulkanContext::pickPhysicalDevice() {
         throw std::runtime_error("failed to find GPUs with Vulkan support!");
     }
 
-
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
+    // Score each candidate and pick the highest.
+    // Discrete GPU > integrated GPU > virtual GPU > other > CPU (LavaPipe).
+    // This ensures a real GPU is preferred over software renderers in Release mode.
+    auto deviceScore = [](VkPhysicalDevice dev) -> int {
+        VkPhysicalDeviceProperties p;
+        vkGetPhysicalDeviceProperties(dev, &p);
+        switch (p.deviceType) {
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   return 4;
+            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 3;
+            case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    return 2;
+            case VK_PHYSICAL_DEVICE_TYPE_OTHER:          return 1;
+            default:                                     return 0; // CPU / LavaPipe
+        }
+    };
 
-
+    int bestScore = -1;
     for (const auto& device : devices) {
         if (isDeviceSuitable(device)) {
-            physicalDevice = device;
-            break;
+            int score = deviceScore(device);
+            if (score > bestScore) {
+                bestScore    = score;
+                physicalDevice = device;
+            }
         }
     }
 
     if (physicalDevice == VK_NULL_HANDLE) {
         throw std::runtime_error("failed to find a suitable GPU!");
     }
+
+    VkPhysicalDeviceProperties chosen;
+    vkGetPhysicalDeviceProperties(physicalDevice, &chosen);
+    std::cout << "Selected Vulkan device: " << chosen.deviceName << "\n";
 }
 
 void VulkanContext::createLogicalDevice() {
