@@ -80,22 +80,19 @@ public:
         createDescriptorPool();
         createComputeDescriptorSetLayout();
         createComputePipeline();
-        
+
         uint32_t inputSize = getInput().getSize();
         if (inputSize == 0) {
             throw std::runtime_error("input size is 0!");
         }
 
-        // If groupCountX is 0, use input size, otherwise use groupCountX
-        groupCountX = groupCountX > 0 ? groupCountX : inputSize; 
+        groupCountX = groupCountX > 0 ? groupCountX : inputSize;
 
         computeDescriptorSets.resize(numberPaths);
         for(uint32_t i = 0; i < numberPaths; i++) {
-            // Use custom output size if set, otherwise use input size
             uint32_t outputSize = customOutputSize > 0 ? customOutputSize : inputSize;
             outputBuffers.emplace_back(vulkanContext, outputSize);
             createComputeDescriptorSets(i);
-            
             if constexpr (!std::is_void<U>::value) {
                 uboPtr->update(i);
             }
@@ -466,11 +463,10 @@ private:
         auto& device = vulkanContext->getDevice();
 
         std::vector<VkShaderModule> computeShaderModules(shaderPaths.size());
-        std::vector<VkPipelineShaderStageCreateInfo> computeShaderStages(shaderPaths.size()); 
+        std::vector<VkPipelineShaderStageCreateInfo> computeShaderStages(shaderPaths.size());
 
         for (size_t i = 0; i < shaderPaths.size(); i++) {
             auto computeShaderCode = readFile(shaderPaths[i]);
-
             computeShaderModules[i] = createShaderModule(computeShaderCode, vulkanContext->getDevice());
 
             computeShaderStages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -479,8 +475,6 @@ private:
             computeShaderStages[i].pName = "main";
         }
 
-    
-        
         // combinedLayouts must outlive vkCreatePipelineLayout — declare it here,
         // not inside the if constexpr block, to avoid a dangling stack pointer.
         std::vector<VkDescriptorSetLayout> combinedLayouts;
@@ -513,9 +507,11 @@ private:
         std::vector<VkComputePipelineCreateInfo> pipelineInfos(computeShaderStages.size());
         for (size_t i = 0; i < computeShaderStages.size(); i++) {
             VkComputePipelineCreateInfo& pipelineInfo = pipelineInfos[i];
-            pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-            pipelineInfo.layout = computePipelineLayout;
-            pipelineInfo.stage = computeShaderStages[i];
+            pipelineInfo.sType              = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            pipelineInfo.layout             = computePipelineLayout;
+            pipelineInfo.stage              = computeShaderStages[i];
+            pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+            pipelineInfo.basePipelineIndex  = -1;
         }
 
         computePipelines.resize(computeShaderStages.size());
@@ -526,10 +522,6 @@ private:
         // Shader modules are no longer needed once the pipeline is compiled.
         for (auto& mod : computeShaderModules)
             vkDestroyShaderModule(device, mod, nullptr);
-
-        for (size_t i = 0; i < computeShaderModules.size(); i++) {
-            vkDestroyShaderModule(device, computeShaderModules[i], nullptr);
-        }
     }
 
     void recordScratchToZero(VkCommandBuffer commandBuffer, uint32_t pathId) {
