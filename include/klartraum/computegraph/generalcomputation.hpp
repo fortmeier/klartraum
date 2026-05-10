@@ -420,30 +420,36 @@ private:
             computeShaderStages[i].pName = "main";
         }
     
+        // pushConstantRange must outlive vkCreatePipelineLayout — declare outside the
+        // if constexpr block to avoid a dangling pointer in pPushConstantRanges.
+        VkPushConstantRange pushConstantRange{};
+        if constexpr (!std::is_void<P>::value) {
+            pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            pushConstantRange.offset = 0;
+            pushConstantRange.size = sizeof(P);
+        }
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
-
         if constexpr (!std::is_void<P>::value) {
-            VkPushConstantRange pushConstantRange{};
-            pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-            pushConstantRange.offset = 0;
-            pushConstantRange.size = sizeof(P);
             pipelineLayoutInfo.pushConstantRangeCount = 1;
             pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
         }
-        
+
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline layout!");
         }
-    
+
         std::vector<VkComputePipelineCreateInfo> pipelineInfos(computeShaderStages.size());
         for (size_t i = 0; i < computeShaderStages.size(); i++) {
             VkComputePipelineCreateInfo& pipelineInfo = pipelineInfos[i];
-            pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-            pipelineInfo.layout = computePipelineLayout;
-            pipelineInfo.stage = computeShaderStages[i];
+            pipelineInfo.sType              = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            pipelineInfo.layout             = computePipelineLayout;
+            pipelineInfo.stage              = computeShaderStages[i];
+            pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+            pipelineInfo.basePipelineIndex  = -1;
         }
 
         computePipelines.resize(computeShaderStages.size());

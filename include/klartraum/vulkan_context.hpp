@@ -175,6 +175,8 @@ public:
 
     VkInstance& getInstance();
 
+    VkPhysicalDevice getPhysicalDevice() const { return physicalDevice; }
+
     VkDevice& getDevice();
     VkSwapchainKHR& getSwapChain();
 

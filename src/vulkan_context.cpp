@@ -567,6 +567,23 @@ void VulkanContext::createLogicalDevice() {
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
         throw std::runtime_error("failed to create logical device!");
 
+    // --- Device creation diagnostics ---
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &props);
+    VkPhysicalDeviceFeatures enabledFeatures{};
+    vkGetPhysicalDeviceFeatures(physicalDevice, &enabledFeatures); // what the device supports
+    std::cout << "[VulkanContext] device: " << props.deviceName
+              << " (apiVersion=" << VK_VERSION_MAJOR(props.apiVersion) << "."
+              << VK_VERSION_MINOR(props.apiVersion) << "."
+              << VK_VERSION_PATCH(props.apiVersion) << ")\n";
+    std::cout << "[VulkanContext] validation layers: "
+              << (enableValidationLayers ? "ON" : "OFF") << "\n";
+    std::cout << "[VulkanContext] enabled device extensions:";
+    for (auto& ext : deviceExtensions) std::cout << " " << ext;
+    std::cout << "\n";
+    std::cout << "[VulkanContext] requested features:"
+              << " pipelineStatisticsQuery=" << deviceFeatures.pipelineStatisticsQuery
+              << " scalarBlockLayout=1\n";
     if (perfQueryPresent)
         std::cout << "[VulkanContext] VK_KHR_performance_query enabled\n";
 
