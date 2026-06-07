@@ -18,6 +18,7 @@ layout(set = 0, binding = 7) uniform UBO {
     mat4 model;
     mat4 view;
     mat4 proj;
+    vec4 cameraWorldPos;
 } ubo;
 
 // --- Gaussian2D SoA outputs ---
@@ -156,8 +157,7 @@ void main() {
 
     // Spherical harmonics colour — SH coefficients are defined in world space,
     // so the view direction must be the world-space camera→Gaussian vector.
-    vec3 cameraWorldPos = (inverse(ubo.model * ubo.view))[3].xyz;
-    vec3 dir = normalize(p - cameraWorldPos);
+    vec3 dir = normalize(p - ubo.cameraWorldPos.xyz);
     vec3 color = vec3(
         computeSH(ca.r, shRc, dir),
         computeSH(ca.g, shGc, dir),

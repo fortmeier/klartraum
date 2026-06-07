@@ -53,6 +53,10 @@ void InterfaceCameraOrbit::update(CameraMVP &mvp)
 
     // Vulkan has inverted Y coordinates compared to OpenGL
     mvp.proj[1][1] *= -1;
+
+    // World-space camera position, derived the same way shaders need it
+    // (camera→Gaussian direction for SH must be in world space).
+    mvp.cameraWorldPos = glm::inverse(mvp.model * mvp.view)[3];
 }
 
 void InterfaceCameraOrbit::updatePosition(float deltaTime)
