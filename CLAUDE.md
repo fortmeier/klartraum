@@ -50,7 +50,11 @@ General
 =======
 If the user asks a question, don't eagerly start to implement stuff. Only make a rough plan and check if the users agrees if you want to implement something.
 
-Do not create commits unless you are asked too.
+Do not create commits unless you are asked to — except: once a feature or fix has
+been implemented and successfully validated (tests pass, reference-image diffs
+match), it can and should be committed. Use Conventional Commits
+(https://www.conventionalcommits.org) for commit messages, e.g.
+`fix: ...`, `feat: ...`, `refactor: ...`, `test: ...`.
 
 
 Build & Test Commands
