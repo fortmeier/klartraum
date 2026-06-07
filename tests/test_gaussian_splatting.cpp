@@ -853,6 +853,17 @@ TEST_F(GaussianSplattingTest, classWithRaccoonScene) {
         vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
     }
 
+    // Expected appearance of the rendered frame (camera: azimuth 0.9, elevation -0.5,
+    // position (-0.5, 0, 0.5), distance 1.0 — see orbit setup above):
+    //   A tree trunk fills the centre-right of the frame, its bark showing rough,
+    //   ridged brown/grey texture. Near its base is a dark hollow containing the
+    //   raccoon family (grey/brown fur, faces and eyes visible). The foreground is
+    //   grass in muted green/yellow-green tones with visible blade texture. In the
+    //   upper-left background, partly out of focus, a light-coloured car is visible
+    //   against pavement. Overall the image should look like an outdoor daylight photo,
+    //   not a uniform colour wash or a field of disconnected blobs.
+    // If this changes noticeably, compare visually against test_gsplatting_ground_truth.ppm
+    // (a known-good reference render) before assuming a regression.
     VkExtent2D ext = vulkanContext->getSwapChainExtent();
     auto pixels = readImageToHost(*vulkanContext, imgs[0], ext.width, ext.height);
     writePPM("test_gaussian_splatting_render.ppm", pixels.data(), ext.width, ext.height);
@@ -915,6 +926,12 @@ TEST_F(GaussianSplattingTest, classWithRaccoonTwoFrames) {
     engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
     auto frame4 = readImageToHost(*vulkanContext, imgs[1], ext.width, ext.height);
 
+    // Same camera/scene as classWithRaccoonScene, so all four frames should show the
+    // same expected appearance described there: tree trunk with bark texture centre-right,
+    // dark hollow with raccoon family near its base, grassy foreground, blurred light
+    // car in the upper-left background. frame1 == frame3 and frame2 == frame4 pixel-for-
+    // pixel (checked below); compare against test_gsplatting_ground_truth.ppm if unsure
+    // whether a visual change is a regression or an intended effect of a code change.
     writePPM("test_gsplatting_frame1.ppm", frame1.data(), ext.width, ext.height);
     writePPM("test_gsplatting_frame2.ppm", frame2.data(), ext.width, ext.height);
     writePPM("test_gsplatting_frame3.ppm", frame3.data(), ext.width, ext.height);
