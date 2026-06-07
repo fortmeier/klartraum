@@ -66,7 +66,7 @@ mat2 computeCovarianceMatrix2D(vec3 p, vec4 rotation, vec3 gscale) {
     const float limx = 1.3 * tanFovX;
     const float limy = 1.3 * tanFovY;
     t.x = min(limx,  max(-limx,  t.x / t.z)) * t.z;
-    t.y = max(limy,  min(-limy,  t.y / t.z)) * t.z;
+    t.y = min(limy,  max(-limy,  t.y / t.z)) * t.z;
 
     mat3 J = mat3(
         focalX / t.z, 0.0, -(focalX * t.x) / (t.z * t.z),
@@ -140,17 +140,24 @@ void main() {
     zBuf[idx]       = depth;
     binMaskBuf[idx] = uint(-1); // downstream binning pass fills real value
 
-    // Compute projected covariance and its inverse
+    // Compute projected covariance and its inverse.
+    // The Jacobian maps NDC (which spans 2 units) to pixels anisotropically:
+    // x by (screenWidth/2)² and y by (screenHeight/2)²
     mat2 cov = computeCovarianceMatrix2D(p, r, s);
-    cov *= 512.0 * 512.0;
+    cov[0][0] *= swh * swh;
+    cov[0][1] *= swh * shh;
+    cov[1][0] *= swh * shh;
+    cov[1][1] *= shh * shh;
     cov[0][0] += 0.3;
     cov[1][1] += 0.3;
     mat2 covI = inverse(cov);
     // Store as vec4 (column-major: col0.x, col0.y, col1.x, col1.y)
     covInvBuf[idx] = vec4(covI[0][0], covI[0][1], covI[1][0], covI[1][1]);
 
-    // Spherical harmonics colour
-    vec3 dir = normalize((ubo.model * ubo.view * vec4(p, 1.0)).xyz);
+    // Spherical harmonics colour — SH coefficients are defined in world space,
+    // so the view direction must be the world-space camera→Gaussian vector.
+    vec3 cameraWorldPos = (inverse(ubo.model * ubo.view))[3].xyz;
+    vec3 dir = normalize(p - cameraWorldPos);
     vec3 color = vec3(
         computeSH(ca.r, shRc, dir),
         computeSH(ca.g, shGc, dir),
