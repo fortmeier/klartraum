@@ -108,6 +108,14 @@ public:
         vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, 0);
     }
 
+    // Fills the whole buffer with a repeating 32-bit pattern each frame — e.g.
+    // resetting a uint sort-key buffer to 0xFFFFFFFF (a sentinel guaranteed to
+    // sort after any encoded depth key) so stale entries from a previous
+    // frame's larger visible-splat count never contaminate this frame's sort.
+    void _recordFill(VkCommandBuffer commandBuffer, uint32_t value) {
+        vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, value);
+    }
+
     // Zeroes only [byteOffset, byteOffset + byteSize) — e.g. to reset a single
     // field of a struct buffer (such as VkDrawIndirectCommand::instanceCount)
     // each frame while leaving the rest of the buffer untouched.

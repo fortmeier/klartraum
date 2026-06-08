@@ -4,6 +4,8 @@
  *   holding a VkDrawIndirectCommand
  * - setRecordToZeroRange resets only the targeted byte range (instanceCount) on each
  *   submission while leaving the rest of the struct (vertexCount) untouched
+ * - setRecordToFill overwrites the whole buffer with a repeating 32-bit sentinel
+ *   pattern (0xFFFFFFFF) on each submission, replacing previously seeded data
  **/
 #include <gtest/gtest.h>
 
@@ -48,4 +50,36 @@ TEST(DrawIndirectCommandBufferElement, partialResetPreservesVertexCount) {
     EXPECT_EQ(result[0].instanceCount, 0u);
     EXPECT_EQ(result[0].firstVertex, 0u);
     EXPECT_EQ(result[0].firstInstance, 0u);
+}
+
+TEST(BufferElement, fillOverwritesBufferWithSentinelPatternEachFrame) {
+    klartraum::HeadlessFrontend frontend;
+
+    auto& core = frontend.getKlartraumEngine();
+    auto& vulkanContext = core.getVulkanContext();
+
+    const uint32_t numElements = 8;
+    auto keys = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numElements,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+    // Sentinel guaranteed to sort after any encoded depth key (guide §5 Stage B
+    // sizing scheme): each frame the whole keys buffer is reset to it before the
+    // compute stage writes real keys for the visible splats.
+    keys->setRecordToFill(0xFFFFFFFFu);
+
+    auto computegraph = ComputeGraph(vulkanContext, 1);
+    computegraph.compileFrom(keys);
+
+    // Simulate a previous frame having written real (smaller) key values.
+    std::vector<uint32_t> previousFrameData(numElements, 0x12345678u);
+    keys->getBuffer(0).memcopyFrom(previousFrameData);
+
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
+
+    std::vector<uint32_t> result(numElements);
+    keys->getBuffer(0).memcopyTo(result);
+
+    for (uint32_t i = 0; i < numElements; i++) {
+        EXPECT_EQ(result[i], 0xFFFFFFFFu);
+    }
 }
