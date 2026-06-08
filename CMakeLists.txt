@@ -219,6 +219,9 @@ add_executable(
 
   tests/test_headless_frontend.cpp
   tests/test_glfw_frontend.cpp
+  tests/test_glyph_atlas.cpp
+  tests/test_simple_text_renderer.cpp
+  tests/test_text_rendering.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -237,6 +240,9 @@ set(KLARTRAUM_LIB_SRC
   src/draw_basics.cpp
   src/gaussian_splat_rasterizer.cpp
   src/onnx_network.cpp
+  src/glyph_atlas.cpp
+  src/simple_text_renderer.cpp
+  src/text_draw_component.cpp
   ${SPZ_SRC}
   )
 
