@@ -108,6 +108,13 @@ public:
         vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, 0);
     }
 
+    // Zeroes only [byteOffset, byteOffset + byteSize) — e.g. to reset a single
+    // field of a struct buffer (such as VkDrawIndirectCommand::instanceCount)
+    // each frame while leaving the rest of the buffer untouched.
+    void _recordZero(VkCommandBuffer commandBuffer, VkDeviceSize byteOffset, VkDeviceSize byteSize) {
+        vkCmdFillBuffer(commandBuffer, vertexBuffer, byteOffset, byteSize, 0);
+    }
+
     VkBuffer& getBuffer() {
         return vertexBuffer;
     }
