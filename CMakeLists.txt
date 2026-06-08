@@ -205,6 +205,7 @@ add_executable(
   tests/test_gaussian_splat_rasterizer.cpp
   tests/test_gaussian_dist.cpp
   tests/test_gaussian_splatting_raster.cpp
+  tests/test_gaussian_splatting_factory.cpp
   tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
@@ -228,6 +229,7 @@ set(KLARTRAUM_LIB_SRC
   src/headless_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_gaussian_splatting_raster.cpp
+  src/gaussian_splatting_factory.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp
   src/klartraum_engine.cpp
