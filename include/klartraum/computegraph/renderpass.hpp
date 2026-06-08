@@ -190,6 +190,27 @@ public:
         drawComponents.push_back(drawComponent);
     }
 
+    // Makes `element` a scheduling dependency of this render pass: Kahn
+    // ordering (and the per-edge semaphore the graph creates for it) then
+    // guarantees `element`'s command buffer is submitted — and signals
+    // completion — before this render pass's. This is how compute work that
+    // a DrawComponent consumes (e.g. a sort/cull sub-graph feeding an
+    // indirect draw, bridged through a BufferToGraphicsBarrier) gets ordered
+    // ahead of the render pass, alongside the existing ImageViewSrc/camera
+    // inputs at indices 0/1.
+    void addComputeDependency(ComputeGraphElementPtr element) {
+        computeDependencies.push_back(element);
+    }
+
+    virtual std::map<int, ComputeGraphElementPtr> getInputs() const override {
+        auto allInputs = inputs;
+        int index = (int)inputs.size();
+        for (auto& dependency : computeDependencies) {
+            allInputs[index++] = dependency;
+        }
+        return allInputs;
+    }
+
     VkImageView& getImageView(uint32_t pathId) override {
         if(inputs.size() == 0) {
             throw std::runtime_error("no input!");
@@ -232,6 +253,8 @@ private:
     std::vector<VkFramebuffer> framebuffers;
 
     std::vector<std::shared_ptr<DrawComponent> > drawComponents;
+
+    std::vector<ComputeGraphElementPtr> computeDependencies;
 
 };
 
