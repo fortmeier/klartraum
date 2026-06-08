@@ -202,6 +202,7 @@ add_executable(
   tests/test_buffertransformation.cpp
   tests/test_drawindirectbuffer.cpp
   tests/test_buffertographicsbarrier.cpp
+  tests/test_gaussian_splat_rasterizer.cpp
   tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
@@ -229,6 +230,7 @@ set(KLARTRAUM_LIB_SRC
   src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
+  src/gaussian_splat_rasterizer.cpp
   src/onnx_network.cpp
   ${SPZ_SRC}
   )
