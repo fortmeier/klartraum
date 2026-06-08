@@ -6,10 +6,12 @@
  * - classWithSingleRedGaussian: VulkanGaussianSplatting class renders a single red gaussian, checks pixel colors
  * - classWithRaccoonScene: VulkanGaussianSplatting class renders raccoon SPZ scene and profiles GPU timing
  * - classWithRaccoonTwoFrames: VulkanGaussianSplatting class renders 4 frames, checks bit-exact determinism and bin coverage
+ * - covarianceJacobianMatchesNumericalDerivative: Validates computeCovarianceMatrix2D's world->pixel projection Jacobian against a finite-difference numerical derivative, using an arbitrary symmetric PD 3D covariance (independent of the cov3d/rotation convention)
  **/
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -193,6 +195,83 @@ TEST_F(GaussianSplattingTest, projection) {
         std::cout << "  " << name << ": " << ms << " ms\n";
 
     SUCCEED();
+}
+
+// ----------------------------------------------------------------
+// Test: covarianceJacobianMatchesNumericalDerivative
+// Validates computeCovarianceMatrix2D's world->pixel projection
+// Jacobian against a finite-difference numerical derivative, using
+// an arbitrary symmetric positive-definite 3D covariance (so the
+// check is independent of the cov3d/rotation convention).
+// ----------------------------------------------------------------
+TEST_F(GaussianSplattingTest, covarianceJacobianMatchesNumericalDerivative) {
+    std::shared_ptr<CameraUboType> cameraUBO;
+    makeCameraUBO(cameraUBO);
+    const CameraMVP& mvp = cameraUBO->ubo;
+
+    const float swh = BackendConfig::WIDTH  * 0.5f;
+    const float shh = BackendConfig::HEIGHT * 0.5f;
+
+    // World->pixel projection, mirroring the shader's clip/NDC/pixel mapping exactly.
+    auto worldToPixel = [&](const glm::vec3& pos) -> glm::vec2 {
+        glm::vec4 clipPos = mvp.proj * mvp.view * mvp.model * glm::vec4(pos, 1.0f);
+        glm::vec2 normPos = glm::vec2(clipPos.x, clipPos.y) / clipPos.w;
+        return glm::vec2((normPos.x + 1.0f) * swh, (normPos.y + 1.0f) * shh);
+    };
+
+    // Off-centre, in-frustum world position.
+    const glm::vec3 p0(0.6f, 0.4f, -0.3f);
+
+    // Numerical Jacobian d(pixel)/d(worldPos) via central differences.
+    const float eps = 1e-3f;
+    glm::vec2 dpdx = (worldToPixel(p0 + glm::vec3(eps, 0.f, 0.f)) - worldToPixel(p0 - glm::vec3(eps, 0.f, 0.f))) / (2.0f * eps);
+    glm::vec2 dpdy = (worldToPixel(p0 + glm::vec3(0.f, eps, 0.f)) - worldToPixel(p0 - glm::vec3(0.f, eps, 0.f))) / (2.0f * eps);
+    glm::vec2 dpdz = (worldToPixel(p0 + glm::vec3(0.f, 0.f, eps)) - worldToPixel(p0 - glm::vec3(0.f, 0.f, eps))) / (2.0f * eps);
+    glm::mat3x2 Jnum(dpdx, dpdy, dpdz);
+
+    // Arbitrary symmetric positive-definite 3D covariance (sidesteps the
+    // cov3d/rotation-convention question — any SPD matrix propagates the same way).
+    glm::mat3 A(0.7f, 0.2f, -0.1f,
+                0.0f, 0.5f, 0.15f,
+                0.0f, 0.0f, 0.9f);
+    glm::mat3 Sigma = glm::transpose(A) * A;
+
+    // Reference: standard covariance propagation through the numerical Jacobian.
+    glm::mat2 covReference = Jnum * Sigma * glm::transpose(Jnum);
+
+    // Analytic covariance mirroring computeCovarianceMatrix2D: Sigma' = J W Sigma W^T J^T
+    // (Kerbl et al. 2023, Eq. 5) with the Jacobian of NDC x/y w.r.t. the camera-space
+    // position, evaluated at the mean. The camera looks down -z, so ndc = -f * t.xy / t.z.
+    const glm::mat4 modelView = mvp.model * mvp.view;
+    const glm::mat3 W(modelView);
+    const glm::vec3 t = glm::vec3(modelView * glm::vec4(p0, 1.0f));
+    const float fx = mvp.proj[0][0];
+    const float fy = mvp.proj[1][1];
+
+    // The test point lies inside the [-1.3, 1.3] NDC guard band, so the shader's
+    // clamp of t.xy / t.z is inactive and the Jacobian is the plain one.
+    const float tx = t.x / t.z;
+    const float ty = t.y / t.z;
+    ASSERT_LT(std::abs(tx), 1.3f / std::abs(fx));
+    ASSERT_LT(std::abs(ty), 1.3f / std::abs(fy));
+
+    const glm::mat3 J(-fx / t.z, 0.0f, 0.0f, 0.0f, -fy / t.z, 0.0f, fx * tx / t.z, fy * ty / t.z, 0.0f);
+    const glm::mat3 T = J * W;
+    glm::mat2 covAnalytic(T * Sigma * glm::transpose(T));
+
+    // NDC -> pixels, as the shader's caller does (without the 0.3 px^2 dilation).
+    covAnalytic[0][0] *= swh * swh;
+    covAnalytic[0][1] *= swh * shh;
+    covAnalytic[1][0] *= swh * shh;
+    covAnalytic[1][1] *= shh * shh;
+
+    const float tol = 0.02f;
+    EXPECT_NEAR(covAnalytic[0][0], covReference[0][0], tol * std::abs(covReference[0][0]));
+    EXPECT_NEAR(covAnalytic[1][1], covReference[1][1], tol * std::abs(covReference[1][1]));
+    EXPECT_NEAR(covAnalytic[0][1], covReference[0][1],
+                tol * std::sqrt(std::abs(covReference[0][0] * covReference[1][1])));
+    EXPECT_NEAR(covAnalytic[1][0], covReference[1][0],
+                tol * std::sqrt(std::abs(covReference[0][0] * covReference[1][1])));
 }
 
 // ----------------------------------------------------------------
