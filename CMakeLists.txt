@@ -201,6 +201,7 @@ add_executable(
   tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
   tests/test_drawindirectbuffer.cpp
+  tests/test_buffertographicsbarrier.cpp
   tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
