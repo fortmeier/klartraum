@@ -300,4 +300,18 @@ KlartraumEngine& GlfwFrontend::getKlartraumEngine()
     return *klartraumEngine;
 }
 
+void GlfwFrontend::attachTextOverlay(RenderPassPtr renderPass)
+{
+    textOverlay = std::make_shared<TextDrawComponent>();
+    renderPass->addDrawComponent(textOverlay);
+}
+
+void GlfwFrontend::renderText(const std::string& text, float x, float y, float scale, float r, float g, float b, float a)
+{
+    if (!textOverlay) {
+        throw std::runtime_error("renderText() called without a text overlay; call attachTextOverlay() first");
+    }
+    textOverlay->setText(text, x, y, scale, r, g, b, a);
+}
+
 } // namespace klartraum
