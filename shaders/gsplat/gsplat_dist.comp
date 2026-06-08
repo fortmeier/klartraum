@@ -1,0 +1,63 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+layout(local_size_x = 256) in;
+
+layout(scalar, set = 0, binding = 0) readonly buffer Positions { vec3 positions[]; };
+
+layout(set = 0, binding = 1) uniform UBO {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+    vec4 cameraWorldPos;
+} ubo;
+
+layout(scalar, set = 0, binding = 2) buffer Keys    { uint keys[]; };
+layout(scalar, set = 0, binding = 3) buffer Indices { uint indices[]; };
+
+layout(scalar, set = 0, binding = 4) buffer DrawArgs {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+} drawArgs;
+
+layout(push_constant) uniform PC {
+    uint  numSplats;
+    float frustumDilation;
+} pc;
+
+// Order-preserving float -> uint mapping: non-negative floats keep their
+// IEEE-754 bit pattern (already monotonic), negative floats get all bits
+// flipped so larger-magnitude negatives map to smaller uints. This lets an
+// ascending uint radix sort reproduce ascending float order.
+uint encodeDepthKey(float z) {
+    uint b = floatBitsToUint(z);
+    uint mask = (b & 0x80000000u) != 0u ? 0xFFFFFFFFu : 0x80000000u;
+    return b ^ mask;
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.numSplats) {
+        return;
+    }
+
+    vec4 viewPos = ubo.view * ubo.model * vec4(positions[id], 1.0);
+    vec4 ndc = ubo.proj * viewPos;
+    ndc /= ndc.w;
+
+    // Frustum-cull on the (dilated) splat center; the dilation keeps splats
+    // whose footprint still overlaps the screen near the edges.
+    float clip = 1.0 + pc.frustumDilation;
+    if (abs(ndc.x) > clip || abs(ndc.y) > clip || ndc.z < -pc.frustumDilation || ndc.z > 1.0) {
+        return;
+    }
+
+    // Compaction: claim the next output slot for this visible splat. Negating
+    // the view-space depth before encoding makes the ascending sort in stage B
+    // produce a back-to-front order, as required for premultiplied "over" blending.
+    uint slot = atomicAdd(drawArgs.instanceCount, 1u);
+    indices[slot] = id;
+    keys[slot]    = encodeDepthKey(-viewPos.z);
+}

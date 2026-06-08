@@ -87,6 +87,12 @@ struct SplatPushConstants {
   float screenHeight;
 };
 
+struct DistPushConstants {
+    uint32_t numSplats;
+    float    frustumDilation;  // dilates the cull frustum so near-edge splat footprints survive
+};
+typedef GeneralComputation<DistPushConstants> GaussianDist;
+
 struct SortPushConstants {
   uint32_t pass;
   uint32_t numElements;
