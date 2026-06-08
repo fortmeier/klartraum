@@ -61,6 +61,8 @@ public:
             buffers[pathId]._recordZero(commandBuffer, zeroRangeOffset, zeroRangeSize);
         } else if (recordToZero) {
             buffers[pathId]._recordZero(commandBuffer);
+        } else if (recordToFill) {
+            buffers[pathId]._recordFill(commandBuffer, fillValue);
         }
     };
 
@@ -96,6 +98,16 @@ public:
         zeroRangeSize = byteSize;
     }
 
+    // Fill the whole buffer with a repeating 32-bit pattern each frame, e.g.
+    // resetting a uint key buffer to a sentinel (0xFFFFFFFF) that is guaranteed
+    // to sort after any real key, so a fixed-size sort can run over a
+    // GPU-determined visible-count without stale tail entries from a larger
+    // previous frame leaking into the result.
+    void setRecordToFill(uint32_t value) {
+        recordToFill = true;
+        fillValue = value;
+    }
+
     virtual VkBuffer& getVkBuffer(uint32_t pathId) {
         return buffers[pathId].getBuffer();
     };
@@ -109,6 +121,8 @@ private:
     bool recordToZeroRange = false;
     VkDeviceSize zeroRangeOffset = 0;
     VkDeviceSize zeroRangeSize = 0;
+    bool recordToFill = false;
+    uint32_t fillValue = 0;
     VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM;
 
 };
