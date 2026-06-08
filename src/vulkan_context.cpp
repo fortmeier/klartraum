@@ -126,7 +126,7 @@ void VulkanContext::createInstance() {
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Klartraum Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_3;
+    appInfo.apiVersion = VK_API_VERSION_1_4;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -617,7 +617,6 @@ void VulkanContext::initializeDevice(VkSurfaceKHR surface) {
         deviceExtensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-            VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
 #ifdef __APPLE__
             "VK_KHR_portability_subset",
 #endif
@@ -655,7 +654,6 @@ void VulkanContext::initialize(VkSurfaceKHR& surface) {
         deviceExtensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-            VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
 #ifdef __APPLE__
             "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
 #endif
@@ -697,7 +695,6 @@ void VulkanContext::initialize() {
 
         deviceExtensions = {
             VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-            VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
 #ifdef __APPLE__
             "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
 #endif
