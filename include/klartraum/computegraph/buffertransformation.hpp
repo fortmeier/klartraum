@@ -13,6 +13,7 @@
 namespace klartraum {
 
 using DispatchIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
+using DrawIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDrawIndirectCommand>>;
 
 
 template <typename A, typename R, typename U = void, typename P = void>

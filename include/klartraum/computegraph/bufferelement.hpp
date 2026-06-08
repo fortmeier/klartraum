@@ -57,7 +57,9 @@ public:
     };
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
-        if (recordToZero) {
+        if (recordToZeroRange) {
+            buffers[pathId]._recordZero(commandBuffer, zeroRangeOffset, zeroRangeSize);
+        } else if (recordToZero) {
             buffers[pathId]._recordZero(commandBuffer);
         }
     };
@@ -84,6 +86,16 @@ public:
         recordToZero = _setToZero;
     }
 
+    // Reset only a byte range each frame (e.g. VkDrawIndirectCommand::instanceCount)
+    // instead of blanket-zeroing the whole buffer, so other fields (vertexCount,
+    // firstVertex, firstInstance) survive across frames. Takes precedence over
+    // setRecordToZero().
+    void setRecordToZeroRange(VkDeviceSize byteOffset, VkDeviceSize byteSize) {
+        recordToZeroRange = true;
+        zeroRangeOffset = byteOffset;
+        zeroRangeSize = byteSize;
+    }
+
     virtual VkBuffer& getVkBuffer(uint32_t pathId) {
         return buffers[pathId].getBuffer();
     };
@@ -94,6 +106,9 @@ private:
     uint32_t numberElements = 0;
     std::vector<BufferType> buffers;
     bool recordToZero = false;
+    bool recordToZeroRange = false;
+    VkDeviceSize zeroRangeOffset = 0;
+    VkDeviceSize zeroRangeSize = 0;
     VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM;
 
 };
