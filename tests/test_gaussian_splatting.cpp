@@ -826,10 +826,13 @@ static std::vector<uint8_t> readImageToHost(VulkanContext& vc, VkImage image,
 }
 
 // Helper: write BGRA pixels to a binary PPM file (B↔R swapped for PPM RGB).
-static void writePPM(const std::string& path, const uint8_t* bgra,
+// Output goes to build/TestingOutput/ so test artifacts don't clutter the repo root.
+static void writePPM(const std::string& filename, const uint8_t* bgra,
                      uint32_t W, uint32_t H)
 {
-    std::ofstream f(path, std::ios::binary);
+    const std::filesystem::path outDir = "build/TestingOutput";
+    std::filesystem::create_directories(outDir);
+    std::ofstream f(outDir / filename, std::ios::binary);
     f << "P6\n" << W << " " << H << "\n255\n";
     for (uint32_t y = 0; y < H; ++y)
         for (uint32_t x = 0; x < W; ++x) {
