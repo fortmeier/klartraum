@@ -8,7 +8,7 @@
 #endif
 
 #include "klartraum/glfw_frontend.hpp"
-#include "klartraum/vulkan_gaussian_splatting.hpp"
+#include "klartraum/gaussian_splatting_factory.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 
@@ -22,13 +22,27 @@ int main(int argc, char** argv) {
 #endif
 
     // Parse args:  --frames N   (close after N frames)
+    //              --backend compute|raster   (select the rendering backend, default compute)
     int maxFrames = -1;
+    klartraum::GsplatBackend backend = klartraum::GsplatBackend::Compute;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--frames" && i + 1 < argc) {
+        std::string arg = argv[i];
+        if (arg == "--frames" && i + 1 < argc) {
             try { maxFrames = std::stoi(argv[i + 1]); } catch (...) {}
+        } else if (arg == "--backend" && i + 1 < argc) {
+            std::string value = argv[++i];
+            if (value == "compute") {
+                backend = klartraum::GsplatBackend::Compute;
+            } else if (value == "raster") {
+                backend = klartraum::GsplatBackend::Raster;
+            } else {
+                std::cerr << "Unknown --backend value '" << value << "' (expected 'compute' or 'raster')" << std::endl;
+                return 1;
+            }
         }
     }
     std::cout << "Gaussian Splatting example";
+    std::cout << " (backend: " << (backend == klartraum::GsplatBackend::Raster ? "raster" : "compute") << ")";
     if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
     std::cout << std::endl;
 
@@ -60,8 +74,8 @@ int main(int argc, char** argv) {
 
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
 
-    auto splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(
-        imageViewSrc, cameraUBO, spzFile);
+    auto splatting = klartraum::createGaussianSplatting(
+        vulkanContext, backend, imageViewSrc, cameraUBO, spzFile);
     engine.add(splatting);
 
     auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
