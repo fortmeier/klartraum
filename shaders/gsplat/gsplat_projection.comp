@@ -61,8 +61,11 @@ mat2 computeCovarianceMatrix2D(vec3 p, vec4 rotation, vec3 gscale) {
 
     float focalX  = ubo.proj[0][0];
     float focalY  = ubo.proj[1][1];
-    float tanFovX = 1.0 / focalX;
-    float tanFovY = 1.0 / focalY;
+    // Clamp bounds must be positive regardless of axis-flip sign baked into
+    // proj (Vulkan's Y-flip makes focalY negative); J below still uses the
+    // signed focal lengths so the projection direction stays correct.
+    float tanFovX = 1.0 / abs(focalX);
+    float tanFovY = 1.0 / abs(focalY);
 
     const float limx = 1.3 * tanFovX;
     const float limy = 1.3 * tanFovY;
