@@ -54,10 +54,12 @@ void main() {
         return;
     }
 
-    // Compaction: claim the next output slot for this visible splat. Negating
-    // the view-space depth before encoding makes the ascending sort in stage B
-    // produce a back-to-front order, as required for premultiplied "over" blending.
+    // Compaction: claim the next output slot for this visible splat. View space
+    // here is right-handed (camera looks down -Z), so farther splats have more
+    // negative viewPos.z; encoding it directly maps them to smaller keys, and
+    // the ascending sort in stage B then yields back-to-front draw order, as
+    // required for premultiplied "over" blending.
     uint slot = atomicAdd(drawArgs.instanceCount, 1u);
     indices[slot] = id;
-    keys[slot]    = encodeDepthKey(-viewPos.z);
+    keys[slot]    = encodeDepthKey(viewPos.z);
 }
