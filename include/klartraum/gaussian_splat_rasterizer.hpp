@@ -19,6 +19,7 @@ struct GaussianSplatRasterPushConstants {
     glm::vec2 focal;
     float splatScale;
     int32_t shDegree;
+    uint32_t numSplats;
 };
 
 // DrawComponent for the sort-once + hardware-rasterization Gaussian-splatting

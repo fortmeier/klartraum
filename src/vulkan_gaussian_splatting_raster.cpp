@@ -230,13 +230,18 @@ void VulkanGaussianSplattingRaster::initialize(
     auto extent = imageViewSrc->getImageExtent(0);
     rasterizer = std::make_shared<GaussianSplatRasterizer>(
         std::vector<std::shared_ptr<BufferElementInterface>>{
-            buf3DPos, buf3DColAlpha, indicesA },
+            buf3DPos, buf3DRot, buf3DScale, buf3DColAlpha,
+            buf3DShR, buf3DShG, buf3DShB, indicesA },
         drawArgs);
     GaussianSplatRasterPushConstants pushConstants{};
     pushConstants.resolution = glm::vec2((float)extent.width, (float)extent.height);
     pushConstants.focal      = glm::vec2(1000.0f, 1000.0f);
-    pushConstants.splatScale = 50.0f;
+    // Sigma multiplier for the EWA-covariance quad extent — 3.0 covers ~99.7%
+    // of each Gaussian (guide §5C), the fragment shader's per-pixel conic
+    // evaluation handles the exact falloff within that quad.
+    pushConstants.splatScale = 3.0f;
     pushConstants.shDegree   = 0;
+    pushConstants.numSplats  = N;
     rasterizer->setPushConstants(pushConstants);
 
     renderPass = std::make_shared<RenderPass>(vulkanContext.getSwapChainImageFormat(), extent);
