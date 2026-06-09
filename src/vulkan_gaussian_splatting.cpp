@@ -169,7 +169,7 @@ void VulkanGaussianSplatting::initialize(
     binPrefixSum->setName("GaussianBinningPrefixSum");
     binPrefixSum->setInput(binCount, 0, 3);  // binHistogram
     binPrefixSum->setInput(binCount, 1, 4);  // binOffsets
-    binPrefixSum->setGroupCountX(numBinWGs);
+    binPrefixSum->setGroupCountX(1);
 
     // Binned buffers
     auto binPos2D   = std::make_shared<BufferElement<VulkanBuffer<glm::vec2>>>(vulkanContext, maxBinned);
