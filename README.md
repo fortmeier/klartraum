@@ -62,7 +62,8 @@ int main() {
     cameraUBO->setName("CameraUBO");
     
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
-    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(renderpass, cameraUBO, spzFile);
+    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile);
+    std::shared_ptr<klartraum::VulkanGaussianSplatting> splatting = vulkanContext.create<klartraum::VulkanGaussianSplatting>(renderpass, cameraUBO, model);
     
     engine.add(splatting);
 

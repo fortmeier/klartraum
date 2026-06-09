@@ -9,6 +9,7 @@
 
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 
@@ -74,8 +75,10 @@ int main(int argc, char** argv) {
 
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
 
+    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile);
+
     auto splatting = klartraum::createGaussianSplatting(
-        vulkanContext, backend, imageViewSrc, cameraUBO, spzFile);
+        vulkanContext, backend, imageViewSrc, cameraUBO, model);
     engine.add(splatting);
 
     auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(

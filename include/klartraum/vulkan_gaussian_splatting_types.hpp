@@ -2,11 +2,14 @@
 #define VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
 
 #include <array>
+#include <memory>
 
 #include <glm/glm.hpp>
 
 #include "klartraum/computegraph/buffertransformation.hpp"
+#include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/vulkan_buffer.hpp"
 
 #include "klartraum/draw_component.hpp" // for CameraUboType, TODO: remove this dependency
 
@@ -65,6 +68,22 @@ struct Gaussian3D {
 };
 
 typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
+
+// SoA GPU storage for a 3D Gaussian model: the seven static input buffers both
+// splatting backends read (position, rotation, scale, colour+alpha, and the
+// three SH streams) plus the splat count. A plain handle bundle with no loading
+// logic — decoupled from how the buffers are produced/owned (e.g.
+// GaussianDataStandard), so a backend can be wired to buffers from any source.
+struct GaussianSoABuffers {
+    uint32_t count = 0;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec3>>> pos;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec4>>> rot;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec3>>> scale;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec4>>> colAlpha;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     shR;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     shG;
+    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     shB;
+};
 
 struct ProjectionPushConstants {
   uint32_t numElements;

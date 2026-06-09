@@ -2,6 +2,7 @@
 
 #include "klartraum/gaussian_splatting_factory.hpp"
 
+#include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/vulkan_gaussian_splatting_raster.hpp"
 
@@ -12,31 +13,14 @@ std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
     GsplatBackend backend,
     std::shared_ptr<ImageViewSrc> imageViewSrc,
     std::shared_ptr<CameraUboType> cameraUBO,
-    std::string path,
+    std::shared_ptr<GaussianDataStandard> model,
     GsplatConfig config)
 {
     switch (backend) {
         case GsplatBackend::Compute:
-            return vulkanContext.create<VulkanGaussianSplatting>(imageViewSrc, cameraUBO, path, config);
+            return vulkanContext.create<VulkanGaussianSplatting>(imageViewSrc, cameraUBO, model->buffers(), config);
         case GsplatBackend::Raster:
-            return vulkanContext.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, path, config);
-    }
-    throw std::runtime_error("createGaussianSplatting: unknown GsplatBackend");
-}
-
-std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
-    VulkanContext& vulkanContext,
-    GsplatBackend backend,
-    std::shared_ptr<ImageViewSrc> imageViewSrc,
-    std::shared_ptr<CameraUboType> cameraUBO,
-    std::vector<Gaussian3D> gaussians,
-    GsplatConfig config)
-{
-    switch (backend) {
-        case GsplatBackend::Compute:
-            return vulkanContext.create<VulkanGaussianSplatting>(imageViewSrc, cameraUBO, std::move(gaussians), config);
-        case GsplatBackend::Raster:
-            return vulkanContext.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, std::move(gaussians), config);
+            return vulkanContext.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, model->buffers(), config);
     }
     throw std::runtime_error("createGaussianSplatting: unknown GsplatBackend");
 }
