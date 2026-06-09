@@ -7,7 +7,8 @@
 // buffer so the sort processes only the visible range instead of the full N.
 // The two dispatches share dist's descriptor set and are separated by the
 // inter-pipeline memory barrier GeneralComputation inserts, so instanceCount is
-// final and visible here. Only bindings 4 (drawArgs) and 5 (count) are used.
+// final and visible here. Only bindings 4 (drawArgs) and 6 (count) are used
+// (binding 5 is dist's colorsAlpha, unused here).
 layout(local_size_x = 256) in;
 
 layout(scalar, set = 0, binding = 4) buffer DrawArgs {
@@ -17,7 +18,7 @@ layout(scalar, set = 0, binding = 4) buffer DrawArgs {
     uint firstInstance;
 } drawArgs;
 
-layout(scalar, set = 0, binding = 5) buffer CountBuf {
+layout(scalar, set = 0, binding = 6) buffer CountBuf {
     uint numberTotalGaussians;
 } cnt;
 

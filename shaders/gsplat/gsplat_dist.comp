@@ -22,9 +22,13 @@ layout(scalar, set = 0, binding = 4) buffer DrawArgs {
     uint firstInstance;
 } drawArgs;
 
+// (r, g, b, post-activation alpha). Used only for the opacity cull below.
+layout(scalar, set = 0, binding = 5) readonly buffer ColorsAlpha { vec4 colorsAlpha[]; };
+
 layout(push_constant) uniform PC {
     uint  numSplats;
     float frustumDilation;
+    float alphaThreshold;  // drop splats with post-activation alpha below this (0 = off)
 } pc;
 
 // Order-preserving float -> uint mapping: non-negative floats keep their
@@ -51,6 +55,15 @@ void main() {
     // whose footprint still overlaps the screen near the edges.
     float clip = 1.0 + pc.frustumDilation;
     if (abs(ndc.x) > clip || abs(ndc.y) > clip || ndc.z < -pc.frustumDilation || ndc.z > 1.0) {
+        return;
+    }
+
+    // Opacity cull (perf plan R4): a splat with post-activation alpha below the
+    // threshold contributes less than that alpha even at its centre, so at
+    // ~1/255 it is invisible. Dropping it here removes its vertex, fragment and
+    // sort work and raises the cull rate that the visible-count sort benefits
+    // from. threshold 0 disables the cull.
+    if (colorsAlpha[id].a < pc.alphaThreshold) {
         return;
     }
 
