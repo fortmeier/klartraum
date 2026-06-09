@@ -45,6 +45,11 @@ struct GsplatConfig {
     // is below this are dropped before sort/draw. 1/255 is near-bit-preserving
     // (such splats contribute < 1/255 even at their centre). 0 disables it.
     float alphaCullThreshold = 1.0f / 255.0f;
+
+    // Raster backend: use the VK_EXT_mesh_shader draw path instead of the vertex
+    // path. Only takes effect when the device supports mesh shaders; otherwise
+    // the raster backend falls back to the vertex path. Default off (portable).
+    bool useMeshShader = false;
 };
 
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
@@ -128,6 +133,9 @@ struct SortPushConstants {
 typedef GeneralComputation<SortPushConstants> RadixSort;
 
 typedef GeneralComputation<SplatPushConstants> GaussianSplatting;
+
+// Push-constant-less compute (e.g. the raster mesh-dispatch-args fill).
+typedef GeneralComputation<> MeshArgsFill;
 
 } // namespace klartraum
 

@@ -562,10 +562,58 @@ void VulkanContext::createLogicalDevice() {
     if (perfQueryPresent)
         scalarBlockLayoutFeatures.pNext = &perfQueryFeatures;
 
+    // Optionally enable VK_EXT_mesh_shader (with the meshShader feature) when the
+    // physical device exposes both. Additive: the mesh-shader draw path is opt-in
+    // and gated on isMeshShaderSupported(); when absent the vertex path is used.
+    VkPhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatures{};
+    meshShaderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+    // The mesh shader (SPIR-V 1.6) uses the LocalSizeId execution mode, which
+    // requires the maintenance4 feature (core in Vulkan 1.3). Enabled together
+    // with the mesh-shader extension below.
+    VkPhysicalDeviceMaintenance4Features maintenance4Features{};
+    maintenance4Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES;
+    {
+        uint32_t cnt = 0;
+        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &cnt, nullptr);
+        std::vector<VkExtensionProperties> avail(cnt);
+        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &cnt, avail.data());
+        bool extPresent = false;
+        for (auto& e : avail)
+            if (strcmp(e.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0) { extPresent = true; break; }
+
+        if (extPresent) {
+            // Confirm the meshShader feature itself is supported before enabling.
+            VkPhysicalDeviceMeshShaderFeaturesEXT probe{};
+            probe.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+            VkPhysicalDeviceFeatures2 features2{};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2.pNext = &probe;
+            vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+            if (probe.meshShader) {
+                deviceExtensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+                createInfo.enabledExtensionCount   = static_cast<uint32_t>(deviceExtensions.size());
+                createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+                meshShaderFeatures.meshShader = VK_TRUE;
+                maintenance4Features.maintenance4 = VK_TRUE;
+                maintenance4Features.pNext = scalarBlockLayoutFeatures.pNext;
+                meshShaderFeatures.pNext   = &maintenance4Features;
+                scalarBlockLayoutFeatures.pNext = &meshShaderFeatures;
+                meshShaderSupported_ = true;
+            }
+        }
+    }
+
     createInfo.pNext = &scalarBlockLayoutFeatures;
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
         throw std::runtime_error("failed to create logical device!");
+
+    if (meshShaderSupported_) {
+        vkCmdDrawMeshTasksIndirectEXT_ = reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectEXT>(
+            vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksIndirectEXT"));
+        if (vkCmdDrawMeshTasksIndirectEXT_ == nullptr)
+            meshShaderSupported_ = false;  // entry point missing — fall back to vertex path
+    }
 
     // --- Device creation diagnostics ---
     VkPhysicalDeviceProperties props{};
@@ -586,6 +634,8 @@ void VulkanContext::createLogicalDevice() {
               << " scalarBlockLayout=1\n";
     if (perfQueryPresent)
         std::cout << "[VulkanContext] VK_KHR_performance_query enabled\n";
+    if (meshShaderSupported_)
+        std::cout << "[VulkanContext] VK_EXT_mesh_shader enabled\n";
 
     vkGetDeviceQueue(device, indices.graphicsAndComputeFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
