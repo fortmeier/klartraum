@@ -1,18 +1,22 @@
 #version 450
 
-layout(local_size_x = 16) in;
+layout(local_size_x = 256) in;
 
 #extension GL_EXT_scalar_block_layout : enable
 
 // Pass 2 of the three-pass deterministic binning pipeline.
 // Converts the per-workgroup histogram produced by gsplat_binning_count.comp
-// into exclusive prefix sums using the same chained-scan algorithm as
-// gsplat_radix_sort_hist_prefix_sum.comp.
+// into exclusive prefix sums over the whole linear histogram array.
 //
 // Buffer layout: histogram[numCountWorkGroups * binIdx + countWorkGroupID]
 // After this pass each entry holds the total number of (gaussian,bin) pairs
-// that precede this workgroup for this bin across all earlier workgroups.
-// The scatter shader uses these values as base write offsets.
+// that precede it in linear (bin-major) order. The scatter shader reads
+// histogram[numCountWorkGroups * binIdx + countWorkGroupID] as the base write
+// offset for that (bin, count-workgroup) group.
+//
+// A single workgroup scans the entire array: each thread serially reduces a
+// contiguous segment, the segment sums are scanned in shared memory, then each
+// thread writes the exclusive prefix back over its own (disjoint) segment.
 
 layout(scalar, binding = 0) buffer HistogramBuf {
     uint histogram[];
@@ -22,41 +26,38 @@ layout(scalar, binding = 1) buffer OffsetBuf {
     uint offsets[];
 } offsetBuf;
 
-shared uint sharedHisto[16];
-shared uint prev_sum;
+shared uint segmentSums[256];
 
 void main() {
-    // Each workgroup handles one column of the histogram (one count-workgroup).
-    // Each of the 16 threads within handles one bin (row).
-    uint globalIdx = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    if (gl_WorkGroupID.x != 0u) return;
 
-    sharedHisto[gl_LocalInvocationID.x] = histoBuf.histogram[globalIdx];
+    uint tid      = gl_LocalInvocationID.x;
+    uint nthreads = gl_WorkGroupSize.x;
+    uint L        = histoBuf.histogram.length();
+
+    uint seg   = (L + nthreads - 1u) / nthreads;
+    uint start = tid * seg;
+    uint end   = min(start + seg, L);
+
+    uint localSum = 0u;
+    for (uint i = start; i < end; ++i) localSum += histoBuf.histogram[i];
+    segmentSums[tid] = localSum;
     barrier();
 
-    // Thread 0 computes the inclusive per-bin prefix sum within this column
-    uint sum = 0u;
-    if (gl_LocalInvocationID.x == 0) {
-        for (uint i = 0; i < 16u; ++i) {
-            uint temp = sharedHisto[i];
-            sharedHisto[i] = sum;   // exclusive: store OLD sum before adding
-            sum += temp;
-        }
+    // Inclusive Hillis-Steele scan of the per-thread segment sums.
+    for (uint stride = 1u; stride < nthreads; stride <<= 1u) {
+        uint add = 0u;
+        if (tid >= stride) add = segmentSums[tid - stride];
+        barrier();
+        segmentSums[tid] += add;
+        barrier();
     }
-    barrier();
 
-    // Chain across count-workgroups: spin until the previous workgroup has
-    // written its running total, then publish ours.
-    if (gl_LocalInvocationID.x == 0) {
-        prev_sum = 0xFFFFFFFFu;
-        do {
-            prev_sum = atomicAdd(offsetBuf.offsets[gl_WorkGroupID.x], 0u);
-        } while (prev_sum == 0xFFFFFFFFu);
-
-        uint total_sum = prev_sum + sum;
-        atomicAdd(offsetBuf.offsets[gl_WorkGroupID.x + 1u], total_sum + 1u);
+    // Exclusive base for this thread's segment = inclusive sum minus own contribution.
+    uint running = segmentSums[tid] - localSum;
+    for (uint i = start; i < end; ++i) {
+        uint v = histoBuf.histogram[i];
+        histoBuf.histogram[i] = running;
+        running += v;
     }
-    barrier();
-
-    // Write exclusive prefix sum back: local exclusive + global running total
-    histoBuf.histogram[globalIdx] = sharedHisto[gl_LocalInvocationID.x] + prev_sum;
 }
