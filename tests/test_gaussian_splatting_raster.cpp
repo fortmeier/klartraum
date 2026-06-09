@@ -7,7 +7,10 @@
  *   and confirms it submits cleanly across all swapchain paths (no
  *   validation-layer errors — the debug callback throws on VK_ERROR severity)
  *   and that the rendered image is not all-black (the cull/sort/indirect-draw
- *   chain actually produced and drew visible splats end to end)
+ *   chain actually produced and drew visible splats end to end). Enables GPU
+ *   timestamp profiling and prints the per-stage mean split (dist -> sort ->
+ *   render pass) so the raster backend's per-stage cost can be tracked across
+ *   perf changes, mirroring GaussianSplattingTest.classWithRaccoonScene
  **/
 #include <gtest/gtest.h>
 
@@ -90,6 +93,7 @@ TEST(GaussianSplattingRaster, classWithRaccoonScene) {
 
     HeadlessFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
+    engine.enableProfiling();
     auto& vc = engine.getVulkanContext();
 
     uint32_t numImages = vc.getNumberOfSwapChainImages();
@@ -129,6 +133,10 @@ TEST(GaussianSplattingRaster, classWithRaccoonScene) {
 
     uint8_t maxVal = *std::max_element(pixels.begin(), pixels.end());
     std::cout << "\n  classWithRaccoonScene (raster backend): image max=" << (int)maxVal << "\n";
+
+    std::cout << "--- GPU profiling (mean over " << FRAMES << " frames) ---\n";
+    for (auto& [name, ms] : engine.getProfilingResults())
+        std::cout << "  " << name << ": " << ms << " ms\n";
 
     EXPECT_GT(maxVal, uint8_t(10)) << "Rendered image is all-black — pipeline drew nothing";
 }
