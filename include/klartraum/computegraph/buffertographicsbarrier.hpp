@@ -28,6 +28,13 @@ public:
         buffers.push_back(buffer);
     }
 
+    // Include the mesh-shader stage in the destination scope, for backends whose
+    // render pass consumes these buffers from a mesh shader (VK_EXT_mesh_shader)
+    // rather than the vertex shader. Only call when the extension is enabled.
+    void setIncludeMeshShaderStage(bool include) {
+        includeMeshShaderStage = include;
+    }
+
     // This node is a pure ordering/sync edge — it accepts any producer as its
     // input purely so the graph schedules that producer before this barrier
     // (and thus before the RenderPass that depends on this barrier).
@@ -60,10 +67,16 @@ public:
             return;
         }
 
+        VkPipelineStageFlags dstStage =
+            VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+        if (includeMeshShaderStage) {
+            dstStage |= VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT;
+        }
+
         vkCmdPipelineBarrier(
             commandBuffer,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+            dstStage,
             0,
             0, nullptr,
             (uint32_t)barriers.size(), barriers.data(),
@@ -73,6 +86,7 @@ public:
 
 private:
     std::vector<std::shared_ptr<BufferElementInterface>> buffers;
+    bool includeMeshShaderStage = false;
 };
 
 typedef std::shared_ptr<BufferToGraphicsBarrier> BufferToGraphicsBarrierPtr;

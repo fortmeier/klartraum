@@ -94,13 +94,28 @@ list(FILTER GLSL_SOURCE_FILES EXCLUDE REGEX "/_[^/]+\\.comp$")
 
 foreach(GLSL ${GLSL_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
-  
+
   set(SPIRV "${SHADER_BASE_DIR}/${FILE_NAME}.spv")
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${GLSLC} -o ${SPIRV} ${GLSL}
     DEPENDS ${GLSL}
     COMMENT "Compiling ${GLSL} to ${SPIRV}"
+  )
+  list(APPEND SPIRV_BINARY_FILES ${SPIRV})
+endforeach()
+
+# Mesh shaders (VK_EXT_mesh_shader) need a SPIR-V 1.4+ target, so compile them
+# separately with --target-env=vulkan1.3 (glslc infers the stage from .mesh).
+file(GLOB_RECURSE MESH_SOURCE_FILES "${SHADER_BASE_DIR}/*.mesh")
+foreach(GLSL ${MESH_SOURCE_FILES})
+  file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
+  set(SPIRV "${SHADER_BASE_DIR}/${FILE_NAME}.spv")
+  add_custom_command(
+    OUTPUT ${SPIRV}
+    COMMAND ${GLSLC} --target-env=vulkan1.3 -o ${SPIRV} ${GLSL}
+    DEPENDS ${GLSL}
+    COMMENT "Compiling mesh ${GLSL} to ${SPIRV}"
   )
   list(APPEND SPIRV_BINARY_FILES ${SPIRV})
 endforeach()
@@ -239,6 +254,7 @@ set(KLARTRAUM_LIB_SRC
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
   src/gaussian_splat_rasterizer.cpp
+  src/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp

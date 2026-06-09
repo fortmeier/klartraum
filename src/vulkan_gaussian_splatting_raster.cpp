@@ -276,28 +276,62 @@ void VulkanGaussianSplattingRaster::initialize(
 
     // --- Stage C: instanced indirect draw, hardware rasterized ---
     auto extent = imageViewSrc->getImageExtent(0);
-    // The vertex shader reads only the precomputed Splat2D buffer (binding 0)
-    // dereferenced through the sorted-index permutation (binding 1) — all the
-    // per-splat SoA inputs are now consumed by the project pass instead.
-    rasterizer = std::make_shared<GaussianSplatRasterizer>(
-        std::vector<std::shared_ptr<BufferElementInterface>>{ splat2D, indicesA },
-        drawArgs);
-    GaussianSplatRasterPushConstants pushConstants{};
-    pushConstants.resolution = glm::vec2((float)extent.width, (float)extent.height);
-    pushConstants.focal      = glm::vec2(1000.0f, 1000.0f);
-    // Sigma multiplier for the EWA-covariance quad extent — 3.0 covers ~99.7%
-    // of each Gaussian (guide §5C), the fragment shader's per-pixel conic
-    // evaluation handles the exact falloff within that quad.
-    pushConstants.splatScale = 3.0f;
-    pushConstants.shDegree   = 0;
-    pushConstants.numSplats  = N;
-    rasterizer->setPushConstants(pushConstants);
 
     renderPass = std::make_shared<RenderPass>(vulkanContext.getSwapChainImageFormat(), extent);
     renderPass->setName("RasterRenderPass");
     renderPass->setInput(imageViewSrc, 0);
     renderPass->setInput(cameraUBO,    1);
-    renderPass->addDrawComponent(rasterizer);
+
+    // Mesh-shader path (perf plan R5) is selected only when requested and the
+    // device supports VK_EXT_mesh_shader; otherwise fall back to the vertex path.
+    const bool useMesh = config.useMeshShader && vulkanContext.isMeshShaderSupported();
+
+    if (useMesh) {
+        // VkDrawMeshTasksIndirectCommandEXT filled from the visible count by
+        // gsplat_mesh_args.comp (groupCountX = ceil(visible / WG_SPLATS)).
+        meshArgs = std::make_shared<BufferElement<VulkanBuffer<VkDrawMeshTasksIndirectCommandEXT>>>(
+            vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst);
+        meshArgs->setName("RasterMeshArgs");
+
+        meshArgsOp = vulkanContext.create<MeshArgsFill>("shaders/gsplat/gsplat_mesh_args.comp.spv");
+        meshArgsOp->setName("RasterMeshArgsFill");
+        meshArgsOp->setInput(dist,     0, 6);  // totalCount (visible count) — edge orders after dist
+        meshArgsOp->setInput(meshArgs, 1);
+        meshArgsOp->setGroupCountX(1);
+
+        // The mesh shader reads splat2D/indicesA/totalCount and the draw reads
+        // meshArgs; extend the barrier to cover them and the mesh-shader stage.
+        barrier->addBuffer(meshArgs);
+        barrier->addBuffer(totalCount);
+        barrier->setInput(meshArgsOp, 3, 1);  // meshArgs (indirect draw args)
+        barrier->setInput(dist,       4, 6);  // totalCount (read in the mesh shader)
+        barrier->setIncludeMeshShaderStage(true);
+
+        // set 1: Splat2D (0), sorted indices (1), visible count (2).
+        meshRasterizer = std::make_shared<GaussianSplatMeshRasterizer>(
+            std::vector<std::shared_ptr<BufferElementInterface>>{ splat2D, indicesA, totalCount },
+            meshArgs);
+        renderPass->addDrawComponent(meshRasterizer);
+    } else {
+        // The vertex shader reads only the precomputed Splat2D buffer (binding 0)
+        // dereferenced through the sorted-index permutation (binding 1) — all the
+        // per-splat SoA inputs are now consumed by the project pass instead.
+        rasterizer = std::make_shared<GaussianSplatRasterizer>(
+            std::vector<std::shared_ptr<BufferElementInterface>>{ splat2D, indicesA },
+            drawArgs);
+        GaussianSplatRasterPushConstants pushConstants{};
+        pushConstants.resolution = glm::vec2((float)extent.width, (float)extent.height);
+        pushConstants.focal      = glm::vec2(1000.0f, 1000.0f);
+        // Sigma multiplier for the EWA-covariance quad extent — 3.0 covers ~99.7%
+        // of each Gaussian (guide §5C), the fragment shader's per-pixel conic
+        // evaluation handles the exact falloff within that quad.
+        pushConstants.splatScale = 3.0f;
+        pushConstants.shDegree   = 0;
+        pushConstants.numSplats  = N;
+        rasterizer->setPushConstants(pushConstants);
+        renderPass->addDrawComponent(rasterizer);
+    }
+
     renderPass->addComputeDependency(barrier);
 
     outputElements[0] = renderPass;

@@ -11,6 +11,13 @@
  *   timestamp profiling and prints the per-stage mean split (dist -> sort ->
  *   render pass) so the raster backend's per-stage cost can be tracked across
  *   perf changes, mirroring GaussianSplattingTest.classWithRaccoonScene
+ * - meshShaderPathMatchesVertexPath: renders the raccoon scene through the
+ *   optional VK_EXT_mesh_shader draw path (GsplatConfig::useMeshShader) and the
+ *   default vertex path and diffs them. The mesh path emits the same quads from
+ *   the same precomputed Splat2D records in the same sorted order, so the images
+ *   must match within a tight tolerance. When the device lacks mesh shaders the
+ *   backend falls back to the vertex path, so the two renders are byte-identical
+ *   — verifying the device-support gate / fallback (perf plan R5)
  **/
 #include <gtest/gtest.h>
 
@@ -139,4 +146,84 @@ TEST(GaussianSplattingRaster, classWithRaccoonScene) {
         std::cout << "  " << name << ": " << ms << " ms\n";
 
     EXPECT_GT(maxVal, uint8_t(10)) << "Rendered image is all-black — pipeline drew nothing";
+}
+
+TEST(GaussianSplattingRaster, meshShaderPathMatchesVertexPath) {
+    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
+    if (!std::filesystem::exists(spzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+    }
+
+    // Renders the raccoon scene with the given config and returns image 0.
+    // Sets meshActuallyUsed to whether the mesh path was actually selected
+    // (requested AND device-supported).
+    auto render = [&](bool useMeshShader, bool& meshActuallyUsed) -> std::vector<uint8_t> {
+        HeadlessFrontend frontend;
+        auto& engine = frontend.getKlartraumEngine();
+        auto& vc = engine.getVulkanContext();
+        meshActuallyUsed = useMeshShader && vc.isMeshShaderSupported();
+
+        uint32_t numImages = vc.getNumberOfSwapChainImages();
+        VkExtent2D ext = vc.getSwapChainExtent();
+        std::vector<VkImageView> views(numImages);
+        std::vector<VkImage>     imgs(numImages);
+        std::vector<VkExtent2D>  exts(numImages, ext);
+        for (uint32_t i = 0; i < numImages; ++i) {
+            views[i] = vc.getImageView(i);
+            imgs[i]  = vc.getSwapChainImage(i);
+        }
+        auto imageViewSrc = std::make_shared<ImageViewSrc>(views, imgs, exts);
+        for (uint32_t i = 0; i < numImages; ++i)
+            imageViewSrc->setWaitFor(i, vc.imageAvailableSemaphoresPerImage[i]);
+
+        auto cameraUBO = std::make_shared<CameraUboType>();
+        InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+        orbit.initialize(vc);
+        orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
+        orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+        orbit.update(cameraUBO->ubo);
+
+        GsplatConfig config;
+        config.useMeshShader = useMeshShader;
+        auto splatting = vc.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, spzPath, config);
+        engine.add(splatting);
+
+        for (uint32_t i = 0; i < numImages; ++i)
+            cameraUBO->update(i);
+        for (int f = 0; f < 5; ++f) {
+            engine.step();
+            vkQueueWaitIdle(vc.getGraphicsQueue());
+        }
+        return readImageToHost(vc, imgs[0], ext.width, ext.height);
+    };
+
+    bool dummy = false, meshUsed = false;
+    auto vertexPixels = render(false, dummy);
+    auto meshPixels   = render(true,  meshUsed);
+    ASSERT_EQ(vertexPixels.size(), meshPixels.size());
+
+    double sumAbsDiff = 0.0;
+    uint32_t maxAbsDiff = 0;
+    for (size_t i = 0; i < vertexPixels.size(); ++i) {
+        uint32_t d = static_cast<uint32_t>(std::abs(
+            static_cast<int>(vertexPixels[i]) - static_cast<int>(meshPixels[i])));
+        sumAbsDiff += d;
+        maxAbsDiff = std::max(maxAbsDiff, d);
+    }
+    double meanAbsDiff = sumAbsDiff / static_cast<double>(vertexPixels.size());
+    std::cout << "\n  meshShaderPathMatchesVertexPath: meshUsed=" << (meshUsed ? "yes" : "no")
+              << " meanAbsDiff=" << meanAbsDiff << " maxAbsDiff=" << maxAbsDiff << "\n";
+
+    if (meshUsed) {
+        // Same quads, same Splat2D records, same sorted (back-to-front) order —
+        // only the primitive submission path differs, so the result should match
+        // closely (a small tolerance covers any rasterization-rule differences).
+        EXPECT_LT(meanAbsDiff, 2.0) << "mesh path diverges from the vertex path";
+        uint8_t maxVal = *std::max_element(meshPixels.begin(), meshPixels.end());
+        EXPECT_GT(maxVal, uint8_t(10)) << "mesh path produced an all-black image";
+    } else {
+        // No mesh-shader support: useMeshShader falls back to the vertex path, so
+        // the two renders are identical — confirms the gate / fallback.
+        EXPECT_EQ(meanAbsDiff, 0.0) << "fallback should reproduce the vertex path exactly";
+    }
 }
