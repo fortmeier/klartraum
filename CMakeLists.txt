@@ -247,6 +247,7 @@ set(KLARTRAUM_LIB_SRC
   src/headless_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
   src/vulkan_gaussian_splatting_raster.cpp
+  src/gaussian_data_standard.cpp
   src/gaussian_splatting_factory.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp

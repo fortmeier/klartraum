@@ -1,6 +1,7 @@
 #ifndef VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
 #define VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -36,14 +37,7 @@ public:
         VulkanContext& vulkanContext,
         std::shared_ptr<ImageViewSrc> imageViewSrc,
         std::shared_ptr<CameraUboType> cameraUBO,
-        std::string path,
-        GsplatConfig config = GsplatConfig{});
-
-    VulkanGaussianSplattingRaster(
-        VulkanContext& vulkanContext,
-        std::shared_ptr<ImageViewSrc> imageViewSrc,
-        std::shared_ptr<CameraUboType> cameraUBO,
-        std::vector<Gaussian3D> gaussians,
+        GaussianSoABuffers buffers,
         GsplatConfig config = GsplatConfig{});
 
     ~VulkanGaussianSplattingRaster();
@@ -58,7 +52,6 @@ public:
     }
 
 private:
-    void loadSPZModel(std::string path);
     void initialize(VulkanContext& vulkanContext,
                     std::shared_ptr<ImageViewSrc> imageViewSrc,
                     std::shared_ptr<CameraUboType> cameraUBO,
@@ -67,18 +60,11 @@ private:
     GsplatConfig config_;
 
     VulkanContext* vulkanContext = nullptr;
-    uint32_t number_of_gaussians = 0;
 
-    std::vector<Gaussian3D> gaussians3DData;
-
-    // SoA 3D input buffers (single-path: static data), uploaded once.
-    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec3>>> buf3DPos;
-    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec4>>> buf3DRot;
-    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec3>>> buf3DScale;
-    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<glm::vec4>>> buf3DColAlpha;
-    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     buf3DShR;
-    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     buf3DShG;
-    std::shared_ptr<BufferElementSinglePath<VulkanBuffer<float>>>     buf3DShB;
+    // Static SoA input buffers (position, rotation, scale, colour+alpha, SH
+    // R/G/B) + splat count, injected by the caller. Held as shared handles so a
+    // single upload can be shared across backends/viewports without reloading.
+    GaussianSoABuffers buffers;
 
     // Stage A: cull + depth-key + compaction
     std::shared_ptr<GaussianDist> dist;

@@ -31,6 +31,7 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/vulkan_gaussian_splatting_raster.hpp"
+#include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 using namespace klartraum;
@@ -123,7 +124,8 @@ TEST(GaussianSplattingRaster, classWithRaccoonScene) {
     orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
     orbit.update(cameraUBO->ubo);
 
-    auto splatting = vc.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, spzPath);
+    auto model = std::make_shared<GaussianDataStandard>(vc, spzPath);
+    auto splatting = vc.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, model->buffers());
     engine.add(splatting);
 
     for (uint32_t i = 0; i < numImages; ++i)
@@ -185,7 +187,8 @@ TEST(GaussianSplattingRaster, meshShaderPathMatchesVertexPath) {
 
         GsplatConfig config;
         config.useMeshShader = useMeshShader;
-        auto splatting = vc.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, spzPath, config);
+        auto model = std::make_shared<GaussianDataStandard>(vc, spzPath);
+        auto splatting = vc.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, model->buffers(), config);
         engine.add(splatting);
 
         for (uint32_t i = 0; i < numImages; ++i)

@@ -4,35 +4,19 @@
 
 #include <glm/glm.hpp>
 
-#include "load-spz.h"
-
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 
 namespace klartraum {
 
-static float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
-
 VulkanGaussianSplatting::VulkanGaussianSplatting(
     VulkanContext& vulkanContext,
     std::shared_ptr<ImageViewSrc> _imageViewSrc,
     std::shared_ptr<CameraUboType> _cameraUBO,
-    std::string path,
+    GaussianSoABuffers buffers,
     GsplatConfig config)
 {
-    loadSPZModel(path);
-    initialize(vulkanContext, _imageViewSrc, _cameraUBO, config);
-}
-
-VulkanGaussianSplatting::VulkanGaussianSplatting(
-    VulkanContext& vulkanContext,
-    std::shared_ptr<ImageViewSrc> _imageViewSrc,
-    std::shared_ptr<CameraUboType> _cameraUBO,
-    std::vector<Gaussian3D> gaussians,
-    GsplatConfig config)
-{
-    gaussians3DData     = std::move(gaussians);
-    number_of_gaussians = static_cast<uint32_t>(gaussians3DData.size());
+    this->buffers = std::move(buffers);
     initialize(vulkanContext, _imageViewSrc, _cameraUBO, config);
 }
 
@@ -53,7 +37,7 @@ void VulkanGaussianSplatting::initialize(
     VkExtent2D ext = imageViewSrc->getImageExtent(0);
     const float W  = static_cast<float>(ext.width);
     const float H  = static_cast<float>(ext.height);
-    const uint32_t N          = number_of_gaussians;
+    const uint32_t N          = buffers.count;
     const uint32_t gridSize   = 4;
     const uint32_t numBins    = gridSize * gridSize;
     const uint32_t tpg        = 128;
@@ -68,48 +52,6 @@ void VulkanGaussianSplatting::initialize(
               << " numSortWGsCap=" << config.numSortWGsCap
               << " splatTile=" << config.splatTileX << "x" << config.splatTileY
               << " -> numSortWGs=" << numSortWGs << " maxBinned=" << maxBinned << "\n";
-
-    // Convert AoS → SoA and upload to GPU (single-path, static)
-    std::vector<glm::vec3> pos3d(N), scale3d(N);
-    std::vector<glm::vec4> rot3d(N), colAlpha3d(N);
-    std::vector<float>     shR(15*N), shG(15*N), shB(15*N);
-
-    for (uint32_t i = 0; i < N; i++) {
-        const auto& g = gaussians3DData[i];
-        pos3d[i]     = {g.position[0], g.position[1], g.position[2]};
-        rot3d[i]     = {g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3]};
-        scale3d[i]   = {g.scale[0],    g.scale[1],    g.scale[2]};
-        colAlpha3d[i]= {g.color[0],    g.color[1],    g.color[2],    g.alpha};
-        for (int b = 0; b < 15; b++) {
-            shR[b * N + i] = g.shR[b];
-            shG[b * N + i] = g.shG[b];
-            shB[b * N + i] = g.shB[b];
-        }
-    }
-
-    buf3DPos      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
-    buf3DRot      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
-    buf3DScale    = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
-    buf3DColAlpha = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
-    buf3DShR      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-    buf3DShG      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-    buf3DShB      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-
-    buf3DPos->setName("Pos3D");
-    buf3DRot->setName("Rot3D");
-    buf3DScale->setName("Scale3D");
-    buf3DColAlpha->setName("ColAlpha3D");
-    buf3DShR->setName("ShR");
-    buf3DShG->setName("ShG");
-    buf3DShB->setName("ShB");
-
-    buf3DPos->getBuffer().memcopyFrom(pos3d);
-    buf3DRot->getBuffer().memcopyFrom(rot3d);
-    buf3DScale->getBuffer().memcopyFrom(scale3d);
-    buf3DColAlpha->getBuffer().memcopyFrom(colAlpha3d);
-    buf3DShR->getBuffer().memcopyFrom(shR);
-    buf3DShG->getBuffer().memcopyFrom(shG);
-    buf3DShB->getBuffer().memcopyFrom(shB);
 
     // Projected 2D outputs (per-path)
     auto proj2DPos2D   = std::make_shared<BufferElement<VulkanBuffer<glm::vec2>>>(vulkanContext, N);
@@ -127,13 +69,13 @@ void VulkanGaussianSplatting::initialize(
     project3Dto2D = vulkanContext.create<GaussianProjection>(
         "shaders/gsplat/gsplat_projection.comp.spv");
     project3Dto2D->setName("GaussianProjection");
-    project3Dto2D->setInput(buf3DPos,       0);
-    project3Dto2D->setInput(buf3DRot,       1);
-    project3Dto2D->setInput(buf3DScale,     2);
-    project3Dto2D->setInput(buf3DColAlpha,  3);
-    project3Dto2D->setInput(buf3DShR,       4);
-    project3Dto2D->setInput(buf3DShG,       5);
-    project3Dto2D->setInput(buf3DShB,       6);
+    project3Dto2D->setInput(buffers.pos,       0);
+    project3Dto2D->setInput(buffers.rot,       1);
+    project3Dto2D->setInput(buffers.scale,     2);
+    project3Dto2D->setInput(buffers.colAlpha,  3);
+    project3Dto2D->setInput(buffers.shR,       4);
+    project3Dto2D->setInput(buffers.shG,       5);
+    project3Dto2D->setInput(buffers.shB,       6);
     project3Dto2D->setInput(_cameraUBO,     7);
     project3Dto2D->setInput(proj2DPos2D,    8);
     project3Dto2D->setInput(proj2DZ,        9);
@@ -401,26 +343,6 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
     vkCmdPipelineBarrier(commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
-}
-
-void VulkanGaussianSplatting::loadSPZModel(std::string path) {
-    spz::PackedGaussians packed = spz::loadSpzPacked(path);
-    gaussians3DData.clear();
-    gaussians3DData.reserve(packed.numPoints);
-    spz::CoordinateConverter conv;
-
-    for (int i = 0; i < packed.numPoints; i++) {
-        spz::UnpackedGaussian ug = packed.unpack(i, conv);
-        Gaussian3D g;
-        memcpy(&g, &ug, sizeof(spz::UnpackedGaussian));
-        g.alpha    = sigmoid(ug.alpha);
-        g.scale[0] = std::exp(ug.scale[0]);
-        g.scale[1] = std::exp(ug.scale[1]);
-        g.scale[2] = std::exp(ug.scale[2]);
-        gaussians3DData.push_back(g);
-    }
-    number_of_gaussians = static_cast<uint32_t>(gaussians3DData.size());
-    std::cout << "Loaded " << number_of_gaussians << " gaussians from " << path << "\n";
 }
 
 } // namespace klartraum

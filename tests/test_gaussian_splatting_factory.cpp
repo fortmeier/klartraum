@@ -27,6 +27,7 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
@@ -108,7 +109,8 @@ std::vector<uint8_t> renderRaccoonSceneWithBackend(GsplatBackend backend) {
     orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
     orbit.update(cameraUBO->ubo);
 
-    auto splatting = createGaussianSplatting(vc, backend, imageViewSrc, cameraUBO, kSpzPath);
+    auto model = std::make_shared<GaussianDataStandard>(vc, kSpzPath);
+    auto splatting = createGaussianSplatting(vc, backend, imageViewSrc, cameraUBO, model);
     engine.add(splatting);
 
     for (uint32_t i = 0; i < numImages; ++i)
@@ -166,7 +168,8 @@ TEST(GaussianSplattingFactory, createGaussianSplattingSelectsRequestedBackend) {
         orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
         orbit.update(cameraUBO->ubo);
 
-        auto splatting = createGaussianSplatting(vc, backend, imageViewSrc, cameraUBO, kSpzPath);
+        auto model = std::make_shared<GaussianDataStandard>(vc, kSpzPath);
+        auto splatting = createGaussianSplatting(vc, backend, imageViewSrc, cameraUBO, model);
         expectMatchesRequestedBackendType(splatting, backend);
 
         engine.add(splatting);

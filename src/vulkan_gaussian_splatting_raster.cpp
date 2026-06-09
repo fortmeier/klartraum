@@ -5,35 +5,19 @@
 
 #include <glm/glm.hpp>
 
-#include "load-spz.h"
-
 #include "klartraum/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/draw_basics.hpp"
 
 namespace klartraum {
 
-static float sigmoidRaster(float x) { return 1.0f / (1.0f + std::exp(-x)); }
-
 VulkanGaussianSplattingRaster::VulkanGaussianSplattingRaster(
     VulkanContext& vulkanContext,
     std::shared_ptr<ImageViewSrc> imageViewSrc,
     std::shared_ptr<CameraUboType> cameraUBO,
-    std::string path,
+    GaussianSoABuffers buffers,
     GsplatConfig config)
 {
-    loadSPZModel(path);
-    initialize(vulkanContext, imageViewSrc, cameraUBO, config);
-}
-
-VulkanGaussianSplattingRaster::VulkanGaussianSplattingRaster(
-    VulkanContext& vulkanContext,
-    std::shared_ptr<ImageViewSrc> imageViewSrc,
-    std::shared_ptr<CameraUboType> cameraUBO,
-    std::vector<Gaussian3D> gaussians,
-    GsplatConfig config)
-{
-    gaussians3DData     = std::move(gaussians);
-    number_of_gaussians = static_cast<uint32_t>(gaussians3DData.size());
+    this->buffers = std::move(buffers);
     initialize(vulkanContext, imageViewSrc, cameraUBO, config);
 }
 
@@ -95,50 +79,7 @@ void VulkanGaussianSplattingRaster::initialize(
     this->setInput(imageViewSrc, 0);
     this->setInput(cameraUBO,    1);
 
-    const uint32_t N = number_of_gaussians;
-
-    // Convert AoS -> SoA and upload to GPU (single-path, static), exactly as
-    // the compute-tile backend does — both backends draw from the same model.
-    std::vector<glm::vec3> pos3d(N), scale3d(N);
-    std::vector<glm::vec4> rot3d(N), colAlpha3d(N);
-    std::vector<float>     shR(15*N), shG(15*N), shB(15*N);
-
-    for (uint32_t i = 0; i < N; i++) {
-        const auto& g = gaussians3DData[i];
-        pos3d[i]      = {g.position[0], g.position[1], g.position[2]};
-        rot3d[i]      = {g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3]};
-        scale3d[i]    = {g.scale[0],    g.scale[1],    g.scale[2]};
-        colAlpha3d[i] = {g.color[0],    g.color[1],    g.color[2],    g.alpha};
-        for (int b = 0; b < 15; b++) {
-            shR[b * N + i] = g.shR[b];
-            shG[b * N + i] = g.shG[b];
-            shB[b * N + i] = g.shB[b];
-        }
-    }
-
-    buf3DPos      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
-    buf3DRot      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
-    buf3DScale    = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
-    buf3DColAlpha = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
-    buf3DShR      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-    buf3DShG      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-    buf3DShB      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-
-    buf3DPos->setName("RasterPos3D");
-    buf3DRot->setName("RasterRot3D");
-    buf3DScale->setName("RasterScale3D");
-    buf3DColAlpha->setName("RasterColAlpha3D");
-    buf3DShR->setName("RasterShR");
-    buf3DShG->setName("RasterShG");
-    buf3DShB->setName("RasterShB");
-
-    buf3DPos->getBuffer().memcopyFrom(pos3d);
-    buf3DRot->getBuffer().memcopyFrom(rot3d);
-    buf3DScale->getBuffer().memcopyFrom(scale3d);
-    buf3DColAlpha->getBuffer().memcopyFrom(colAlpha3d);
-    buf3DShR->getBuffer().memcopyFrom(shR);
-    buf3DShG->getBuffer().memcopyFrom(shG);
-    buf3DShB->getBuffer().memcopyFrom(shB);
+    const uint32_t N = buffers.count;
 
     // --- Stage A: cull + depth-key + compaction (gsplat_dist.comp) ---
     const VkBufferUsageFlags storageDst =
@@ -171,12 +112,12 @@ void VulkanGaussianSplattingRaster::initialize(
         "shaders/gsplat/gsplat_dist.comp.spv",
         "shaders/gsplat/gsplat_dist_count.comp.spv"});
     dist->setName("GaussianDist");
-    dist->setInput(buf3DPos,      0);
-    dist->setInput(cameraUBO,     1);
-    dist->setInput(keysA,         2);
-    dist->setInput(indicesA,      3);
-    dist->setInput(drawArgs,      4);
-    dist->setInput(buf3DColAlpha, 5);  // alpha for the opacity cull
+    dist->setInput(buffers.pos,      0);
+    dist->setInput(cameraUBO,        1);
+    dist->setInput(keysA,            2);
+    dist->setInput(indicesA,         3);
+    dist->setInput(drawArgs,         4);
+    dist->setInput(buffers.colAlpha, 5);  // alpha for the opacity cull
     dist->setGroupCountX((N + 255) / 256);
     dist->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
 
@@ -192,15 +133,15 @@ void VulkanGaussianSplattingRaster::initialize(
     project = vulkanContext.create<GaussianRasterProject>(
         "shaders/gsplat/gsplat_raster_project.comp.spv");
     project->setName("RasterProject");
-    project->setInput(buf3DPos,      0);
-    project->setInput(buf3DRot,      1);
-    project->setInput(buf3DScale,    2);
-    project->setInput(buf3DColAlpha, 3);
-    project->setInput(buf3DShR,      4);
-    project->setInput(buf3DShG,      5);
-    project->setInput(buf3DShB,      6);
-    project->setInput(cameraUBO,     7);
-    project->setInput(splat2D,       8);
+    project->setInput(buffers.pos,      0);
+    project->setInput(buffers.rot,      1);
+    project->setInput(buffers.scale,    2);
+    project->setInput(buffers.colAlpha, 3);
+    project->setInput(buffers.shR,      4);
+    project->setInput(buffers.shG,      5);
+    project->setInput(buffers.shB,      6);
+    project->setInput(cameraUBO,        7);
+    project->setInput(splat2D,          8);
     project->setGroupCountX((N + 255) / 256);
     project->setPushConstants({{N,
         (float)imageViewSrc->getImageExtent(0).width,
@@ -335,26 +276,6 @@ void VulkanGaussianSplattingRaster::initialize(
     renderPass->addComputeDependency(barrier);
 
     outputElements[0] = renderPass;
-}
-
-void VulkanGaussianSplattingRaster::loadSPZModel(std::string path) {
-    spz::PackedGaussians packed = spz::loadSpzPacked(path);
-    gaussians3DData.clear();
-    gaussians3DData.reserve(packed.numPoints);
-    spz::CoordinateConverter conv;
-
-    for (int i = 0; i < packed.numPoints; i++) {
-        spz::UnpackedGaussian ug = packed.unpack(i, conv);
-        Gaussian3D g;
-        memcpy(&g, &ug, sizeof(spz::UnpackedGaussian));
-        g.alpha    = sigmoidRaster(ug.alpha);
-        g.scale[0] = std::exp(ug.scale[0]);
-        g.scale[1] = std::exp(ug.scale[1]);
-        g.scale[2] = std::exp(ug.scale[2]);
-        gaussians3DData.push_back(g);
-    }
-    number_of_gaussians = static_cast<uint32_t>(gaussians3DData.size());
-    std::cout << "Loaded " << number_of_gaussians << " gaussians from " << path << "\n";
 }
 
 } // namespace klartraum

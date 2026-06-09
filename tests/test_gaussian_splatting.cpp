@@ -23,6 +23,7 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/vulkan_context.hpp"
 #include "klartraum/vulkan_gaussian_splatting.hpp"
+#include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/bufferelement.hpp"
@@ -886,8 +887,9 @@ TEST_F(GaussianSplattingTest, classWithSingleRedGaussian) {
     g.color    = {1.772f, -1.772f, -1.772f};
     g.alpha    = 1.0f;
 
+    auto model = std::make_shared<GaussianDataStandard>(*vulkanContext, std::vector<Gaussian3D>{g});
     auto splatting = vulkanContext->create<VulkanGaussianSplatting>(
-        imageViewSrc, cameraUBO, std::vector<Gaussian3D>{g});
+        imageViewSrc, cameraUBO, model->buffers());
     engine.add(splatting);
 
     for (uint32_t i = 0; i < vulkanContext->getNumberOfSwapChainImages(); ++i)
@@ -941,8 +943,9 @@ TEST_F(GaussianSplattingTest, classWithRaccoonScene) {
     orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
     orbit.update(cameraUBO->ubo);
 
+    auto model = std::make_shared<GaussianDataStandard>(*vulkanContext, spzPath);
     auto splatting = vulkanContext->create<VulkanGaussianSplatting>(
-        imageViewSrc, cameraUBO, spzPath);
+        imageViewSrc, cameraUBO, model->buffers());
     engine.add(splatting);
 
     for (uint32_t i = 0; i < vulkanContext->getNumberOfSwapChainImages(); ++i)
@@ -1006,8 +1009,9 @@ TEST_F(GaussianSplattingTest, classWithRaccoonTwoFrames) {
     orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
     orbit.update(cameraUBO->ubo);
 
+    auto model = std::make_shared<GaussianDataStandard>(*vulkanContext, spzPath);
     auto splatting = vulkanContext->create<VulkanGaussianSplatting>(
-        imageViewSrc, cameraUBO, spzPath);
+        imageViewSrc, cameraUBO, model->buffers());
     engine.add(splatting);
 
     for (uint32_t i = 0; i < vulkanContext->getNumberOfSwapChainImages(); ++i)
