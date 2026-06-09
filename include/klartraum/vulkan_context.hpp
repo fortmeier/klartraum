@@ -217,8 +217,21 @@ public:
     bool hasSurface() const { return surface != VK_NULL_HANDLE; }
     float getTimestampPeriod() const;   // nanoseconds per GPU timestamp unit
 
+    // VK_EXT_mesh_shader is enabled opportunistically at device creation when the
+    // physical device supports it (with the meshShader feature). Consumers gate
+    // the optional mesh-shader draw path on this and fall back to the vertex path
+    // when false. vkCmdDrawMeshTasksIndirectEXT is loaded via vkGetDeviceProcAddr
+    // since it is an extension entry point.
+    bool isMeshShaderSupported() const { return meshShaderSupported_; }
+    PFN_vkCmdDrawMeshTasksIndirectEXT getCmdDrawMeshTasksIndirectEXT() const {
+        return vkCmdDrawMeshTasksIndirectEXT_;
+    }
+
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
+
+    bool meshShaderSupported_ = false;
+    PFN_vkCmdDrawMeshTasksIndirectEXT vkCmdDrawMeshTasksIndirectEXT_ = nullptr;
 };
 
 } // namespace klartraum

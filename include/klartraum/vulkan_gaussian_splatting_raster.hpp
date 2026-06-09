@@ -14,6 +14,7 @@
 #include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
 #include "klartraum/gaussian_splat_rasterizer.hpp"
+#include "klartraum/gaussian_splat_mesh_rasterizer.hpp"
 
 namespace klartraum {
 
@@ -105,6 +106,15 @@ private:
     std::shared_ptr<BufferToGraphicsBarrier> barrier;
     std::shared_ptr<RenderPass> renderPass;
     std::shared_ptr<GaussianSplatRasterizer> rasterizer;
+
+    // Optional VK_EXT_mesh_shader draw path (perf plan R5), selected when
+    // config.useMeshShader && the device supports mesh shaders; otherwise the
+    // vertex `rasterizer` above is used. meshArgs holds the
+    // VkDrawMeshTasksIndirectCommandEXT filled by meshArgsOp from the visible
+    // count.
+    std::shared_ptr<BufferElement<VulkanBuffer<VkDrawMeshTasksIndirectCommandEXT>>> meshArgs;
+    std::shared_ptr<MeshArgsFill> meshArgsOp;
+    std::shared_ptr<GaussianSplatMeshRasterizer> meshRasterizer;
 };
 
 } // namespace klartraum
