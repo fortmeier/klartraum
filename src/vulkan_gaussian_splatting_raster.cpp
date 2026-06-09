@@ -171,13 +171,14 @@ void VulkanGaussianSplattingRaster::initialize(
         "shaders/gsplat/gsplat_dist.comp.spv",
         "shaders/gsplat/gsplat_dist_count.comp.spv"});
     dist->setName("GaussianDist");
-    dist->setInput(buf3DPos,  0);
-    dist->setInput(cameraUBO, 1);
-    dist->setInput(keysA,     2);
-    dist->setInput(indicesA,  3);
-    dist->setInput(drawArgs,  4);
+    dist->setInput(buf3DPos,      0);
+    dist->setInput(cameraUBO,     1);
+    dist->setInput(keysA,         2);
+    dist->setInput(indicesA,      3);
+    dist->setInput(drawArgs,      4);
+    dist->setInput(buf3DColAlpha, 5);  // alpha for the opacity cull
     dist->setGroupCountX((N + 255) / 256);
-    dist->setPushConstants({{N, 0.1f}});
+    dist->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
 
     // --- Stage A2: per-splat 2D attribute precompute (perf plan R1+R2) ---
     // Projects covariance, eigendecomposes, and evaluates SH once per splat into
@@ -231,10 +232,10 @@ void VulkanGaussianSplattingRaster::initialize(
     scratchOffsets->setName("RasterSortScratchOffsets");
     totalCount->setName("RasterSortTotalCount");
 
-    // Wire the count buffer as dist's binding 5 so gsplat_dist_count.comp writes
+    // Wire the count buffer as dist's binding 6 so gsplat_dist_count.comp writes
     // the visible count into it; the existing dist -> sort edge then makes that
     // write visible to the sort, which reads it as binding 6 (inputBuffer2).
-    dist->setInput(totalCount, 5);
+    dist->setInput(totalCount, 6);
 
     sortOp = std::make_shared<RadixSort>(vulkanContext, std::vector<std::string>{
         "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",

@@ -40,6 +40,11 @@ struct GsplatConfig {
     // model carries degree-3 SH, so 3 reproduces the reference colour; lower
     // degrees skip band loads + evaluation for speed at a colour-fidelity cost.
     int shDegree = 3;
+
+    // Raster backend dist-side opacity cull: splats whose post-activation alpha
+    // is below this are dropped before sort/draw. 1/255 is near-bit-preserving
+    // (such splats contribute < 1/255 even at their centre). 0 disables it.
+    float alphaCullThreshold = 1.0f / 255.0f;
 };
 
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
@@ -96,6 +101,7 @@ struct SplatPushConstants {
 struct DistPushConstants {
     uint32_t numSplats;
     float    frustumDilation;  // dilates the cull frustum so near-edge splat footprints survive
+    float    alphaThreshold = 0.0f;  // drop splats with post-activation alpha below this (0 = off)
 };
 typedef GeneralComputation<DistPushConstants> GaussianDist;
 
