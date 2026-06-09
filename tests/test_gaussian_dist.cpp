@@ -68,16 +68,22 @@ TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto indices = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, numSplats,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    // dist binding 5: (r,g,b,alpha). The opacity cull is disabled here
+    // (alphaThreshold 0), so alpha=1 keeps every splat — this test exercises
+    // frustum culling only.
+    auto colorsAlpha = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vc, numSplats,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(vc, 1,
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
     auto dist = std::make_shared<GaussianDist>(vc, "shaders/gsplat/gsplat_dist.comp.spv");
-    dist->setInput(positions, 0);
-    dist->setInput(cameraUBO, 1);
-    dist->setInput(keys,      2);
-    dist->setInput(indices,   3);
-    dist->setInput(drawArgs,  4);
+    dist->setInput(positions,   0);
+    dist->setInput(cameraUBO,   1);
+    dist->setInput(keys,        2);
+    dist->setInput(indices,     3);
+    dist->setInput(drawArgs,    4);
+    dist->setInput(colorsAlpha, 5);
     dist->setGroupCountX((numSplats + 255) / 256);
     dist->setPushConstants({{numSplats, 0.0f}});
 
@@ -85,6 +91,7 @@ TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
     computegraph.compileFrom(dist);
 
     positions->getBuffer(0).memcopyFrom(positionData);
+    colorsAlpha->getBuffer(0).memcopyFrom(std::vector<glm::vec4>(numSplats, glm::vec4(1.0f)));
     cameraUBO->update(0);
 
     computegraph.submitAndWait(vc.getGraphicsQueue(), 0);
@@ -177,12 +184,18 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
+    // dist binding 5: (r,g,b,alpha). Opacity cull disabled (alphaThreshold 0),
+    // alpha=1 keeps every visible splat — this test exercises the sort chain.
+    auto colorsAlpha = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vc, numSplats,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
     auto dist = std::make_shared<GaussianDist>(vc, "shaders/gsplat/gsplat_dist.comp.spv");
-    dist->setInput(positions, 0);
-    dist->setInput(cameraUBO, 1);
-    dist->setInput(keysA,     2);
-    dist->setInput(indicesA,  3);
-    dist->setInput(drawArgs,  4);
+    dist->setInput(positions,   0);
+    dist->setInput(cameraUBO,   1);
+    dist->setInput(keysA,       2);
+    dist->setInput(indicesA,    3);
+    dist->setInput(drawArgs,    4);
+    dist->setInput(colorsAlpha, 5);
     dist->setGroupCountX((numSplats + 255) / 256);
     dist->setPushConstants({{numSplats, 0.0f}});
 
@@ -225,6 +238,7 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
     computegraph.compileFrom(sortOp);
 
     positions->getBuffer(0).memcopyFrom(positionData);
+    colorsAlpha->getBuffer(0).memcopyFrom(std::vector<glm::vec4>(numSplats, glm::vec4(1.0f)));
     cameraUBO->update(0);
 
     computegraph.submitAndWait(vc.getGraphicsQueue(), 0);
