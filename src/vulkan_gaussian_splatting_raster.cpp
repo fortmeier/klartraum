@@ -153,18 +153,23 @@ void VulkanGaussianSplattingRaster::initialize(
     keysB->setName("RasterKeysB");
     indicesB->setName("RasterIndicesB");
 
-    // Sentinel sizing scheme (RASTER_BACKEND_STATUS.md): reset keysA to
-    // 0xFFFFFFFF (> any encodeDepthKey output) each frame so the fixed-N sort
-    // below pushes culled/garbage slots to the tail, beyond instanceCount,
-    // where the indirect draw never reads them.
-    keysA->setRecordToFill(0xFFFFFFFFu);
+    // The sort below runs only over the visible count dist compacts into the
+    // front of these buffers (slots [0, instanceCount)), so no sentinel fill of
+    // the tail is needed — the sort never reads past instanceCount.
 
     drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(vulkanContext, 1,
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst);
     drawArgs->setName("RasterDrawArgs");
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
-    dist = vulkanContext.create<GaussianDist>("shaders/gsplat/gsplat_dist.comp.spv");
+    // dist runs two sub-shaders: gsplat_dist.comp (cull + depth-key + compaction)
+    // then gsplat_dist_count.comp, which copies the finalized instanceCount into
+    // the sort's count buffer (binding 5) so the sort processes only the visible
+    // range (perf plan R3). The count buffer (totalCount) is wired below once it
+    // is created. GeneralComputation's inter-pipeline barrier orders the two.
+    dist = vulkanContext.create<GaussianDist>(std::vector<std::string>{
+        "shaders/gsplat/gsplat_dist.comp.spv",
+        "shaders/gsplat/gsplat_dist_count.comp.spv"});
     dist->setName("GaussianDist");
     dist->setInput(buf3DPos,  0);
     dist->setInput(cameraUBO, 1);
@@ -201,10 +206,12 @@ void VulkanGaussianSplattingRaster::initialize(
         (float)imageViewSrc->getImageExtent(0).height,
         3.0f, config.shDegree}});
 
-    // --- Stage B: radix sort over the fixed full count N (reused, unmodified —
-    // see RASTER_BACKEND_STATUS.md: it already operates on plain (uint key,
-    // uint index) pairs). 8 passes x 4 bits sorts the full 32-bit key; an even
-    // pass count returns the result to the A buffers dist already wrote into. ---
+    // --- Stage B: radix sort over the visible count (perf plan R3). The reused
+    // sort operates on plain (uint key, uint index) pairs; 8 passes x 4 bits
+    // sorts the full 32-bit key, and an even pass count returns the result to
+    // the A buffers dist wrote into. The dispatch group count stays fixed at
+    // numSortWGs (so the histogram stride is consistent), but the per-workgroup
+    // item count is driven by the visible count read from the count buffer. ---
     const uint32_t numBins    = 16;
     const uint32_t tpg        = 256;
     const uint32_t numSortWGs = std::max(1u, std::min(config.numSortWGsCap, N / tpg + 1));
@@ -216,11 +223,18 @@ void VulkanGaussianSplattingRaster::initialize(
     scratchHist->setRecordToZero(true);
     scratchCounts->setRecordToZero(true);
     scratchOffsets->setRecordToZero(true);
-    totalCount->setRecordToZero(true);
+    // totalCount holds the visible count, fully written each frame by dist's
+    // count sub-shader — no per-frame zeroing.
+    totalCount->setRecordToZero(false);
     scratchHist->setName("RasterSortScratchHist");
     scratchCounts->setName("RasterSortScratchCounts");
     scratchOffsets->setName("RasterSortScratchOffsets");
     totalCount->setName("RasterSortTotalCount");
+
+    // Wire the count buffer as dist's binding 5 so gsplat_dist_count.comp writes
+    // the visible count into it; the existing dist -> sort edge then makes that
+    // write visible to the sort, which reads it as binding 6 (inputBuffer2).
+    dist->setInput(totalCount, 5);
 
     sortOp = std::make_shared<RadixSort>(vulkanContext, std::vector<std::string>{
         "shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
@@ -238,9 +252,13 @@ void VulkanGaussianSplattingRaster::initialize(
     sortOp->addScratchBufferElement(scratchHist,    true);
     sortOp->setGroupCountX(numSortWGs);
     {
+        // useCountBuffer = 1: the sort reads the active count from totalCount
+        // (the visible count dist wrote) instead of N, so it sorts only the
+        // visible range. The group count stays numSortWGs, keeping the
+        // histogram's bin-major stride consistent across the three passes.
         std::vector<SortPushConstants> pcs;
         for (uint32_t i = 0; i < 32 / 4; ++i)
-            pcs.push_back({i, N, numBins});
+            pcs.push_back({i, N, numBins, 1u});
         sortOp->setPushConstants(pcs);
     }
 

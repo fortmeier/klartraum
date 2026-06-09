@@ -1,0 +1,28 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+// Second sub-shader of the raster backend's dist element (perf plan R3). After
+// gsplat_dist.comp has compacted the visible splats and finalized
+// drawArgs.instanceCount, this copies that count into the radix sort's count
+// buffer so the sort processes only the visible range instead of the full N.
+// The two dispatches share dist's descriptor set and are separated by the
+// inter-pipeline memory barrier GeneralComputation inserts, so instanceCount is
+// final and visible here. Only bindings 4 (drawArgs) and 5 (count) are used.
+layout(local_size_x = 256) in;
+
+layout(scalar, set = 0, binding = 4) buffer DrawArgs {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+} drawArgs;
+
+layout(scalar, set = 0, binding = 5) buffer CountBuf {
+    uint numberTotalGaussians;
+} cnt;
+
+void main() {
+    if (gl_GlobalInvocationID.x == 0u) {
+        cnt.numberTotalGaussians = drawArgs.instanceCount;
+    }
+}
