@@ -170,8 +170,18 @@ void main() {
         : ((covA >= covD) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
     vec2 minorDir = vec2(-majorDir.y, majorDir.x);
 
-    float majorRadiusPx = pc.splatScale * sqrt(lambda1);
-    float minorRadiusPx = pc.splatScale * sqrt(lambda2);
+    // Opacity-aware quad extent (perf plan R4): shrink the quad to the radius
+    // where the splat's actual contribution alpha*exp(-0.5*q) drops to 1/255,
+    // instead of always using splatScale sigma. At an s-sigma edge the
+    // Mahalanobis distance q = s^2, so the cutoff is s = sqrt(2*ln(255*alpha)).
+    // Clamp to splatScale so opaque splats keep the original footprint and only
+    // low-opacity splats get smaller quads (cutting fragment overdraw). Splats
+    // with alpha <= 1/255 yield a zero-size quad (they contribute < 1/255
+    // everywhere, so the fragment shader would discard them anyway).
+    float aCutoff  = 2.0 * log(255.0 * max(colorAlpha.a, 1e-8));
+    float effScale = min(pc.splatScale, sqrt(max(aCutoff, 0.0)));
+    float majorRadiusPx = effScale * sqrt(lambda1);
+    float minorRadiusPx = effScale * sqrt(lambda2);
 
     // SH colour — coefficients live in world space, so the view direction is the
     // world-space camera->Gaussian vector. Only the requested degree's bands are
