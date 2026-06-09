@@ -4,18 +4,16 @@
 
 layout(local_size_x = 128) in;
 
-shared uint sharedOffsets[16];
-shared uint sharedBins[128];
-shared uint localBinBase[16];
-shared uint localRanks[128];   // precomputed stable ranks (avoids O(n²) scan)
+shared uint sharedOffsets[16];   // per-bin global write cursor (seeded from histogram)
+shared uint localBinBase[16];    // per-bin base offset reserved for the current chunk
+shared uint scan[128];           // scratch for the per-bin rank scan
 
 void main() {
-    /* This shader scatters elements into output based on histograms + prefix sums.
-     *
-     * Stability: elements with the same bin preserve their relative input order.
-     * We compute stable local ranks in O(n) using a single-thread sequential pass
-     * (thread 0 walks sharedBins[] and assigns ranks), replacing the previous
-     * O(n²) approach where each thread scanned all earlier threads.
+    /* Scatters elements into the output buffers based on the prefix-summed
+     * histogram. Stability: elements with the same bin keep their relative
+     * input order — within each 128-element chunk the rank inside a bin is a
+     * parallel prefix scan over thread index (= input order), and the per-bin
+     * cursor advances chunk by chunk.
      */
 
     uint lid = gl_LocalInvocationID.x;
@@ -37,7 +35,7 @@ void main() {
         uint elemIdx  = groupStart + lid;
         bool isActive = (elemIdx < pushConstants.numElements);
 
-        uint value = 0u, index = 0u, bin = 0u;
+        uint value = 0u, index = 0u, bin = 0xFFFFFFFFu;
         if (isActive) {
             if (pushConstants.pass % 2 == 0) {
                 value = radixValuesA[elemIdx];
@@ -47,40 +45,35 @@ void main() {
                 index = indexesB[elemIdx];
             }
             bin = (value >> (pushConstants.pass * 4)) & 0xFu;
-            sharedBins[lid] = bin;
-        } else {
-            sharedBins[lid] = 0xFFFFFFFFu;
         }
-        barrier();
 
-        // Thread 0 assigns stable local ranks in O(n) total work.
-        // Walking sharedBins[] in thread-index order preserves input order within each bin.
-        if (lid == 0u) {
-            uint binCount[16];
-            for (int b = 0; b < 16; b++) binCount[b] = 0u;
-            for (uint j = 0u; j < gl_WorkGroupSize.x; j++) {
-                uint b = sharedBins[j];
-                if (b < 16u) {
-                    localRanks[j] = binCount[b]++;
-                }
+        // Rank within the element's bin, computed in parallel one bin at a time.
+        uint myRank = 0u;
+        for (uint b = 0u; b < 16u; b++) {
+            uint pred = (bin == b) ? 1u : 0u;
+            scan[lid] = pred;
+            barrier();
+
+            // Inclusive Hillis-Steele scan over the 128 threads.
+            for (uint stride = 1u; stride < gl_WorkGroupSize.x; stride <<= 1u) {
+                uint add = (lid >= stride) ? scan[lid - stride] : 0u;
+                barrier();
+                scan[lid] += add;
+                barrier();
             }
-        }
-        barrier();
 
-        uint localRank = isActive ? localRanks[lid] : 0u;
+            uint total = scan[gl_WorkGroupSize.x - 1u];
+            if (pred == 1u) myRank = scan[lid] - 1u;
 
-        // First thread per bin atomically reserves its block of output slots.
-        if (isActive && localRank == 0u) {
-            uint count = 0u;
-            for (uint j = 0u; j < gl_WorkGroupSize.x; j++) {
-                if (sharedBins[j] == bin) count++;
+            // First thread reserves this chunk's block of slots for bin b.
+            if (lid == 0u && total > 0u) {
+                localBinBase[b] = atomicAdd(sharedOffsets[b], total);
             }
-            localBinBase[bin] = atomicAdd(sharedOffsets[bin], count);
+            barrier();
         }
-        barrier();
 
         if (isActive) {
-            uint pos = localBinBase[bin] + localRank;
+            uint pos = localBinBase[bin] + myRank;
             if (pushConstants.pass % 2 == 0) {
                 radixValuesB[pos] = value;
                 indexesB[pos]     = index;

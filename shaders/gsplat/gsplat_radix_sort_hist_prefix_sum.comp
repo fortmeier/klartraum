@@ -2,99 +2,50 @@
 
 #include "gsplat_radix_sort_include.glsl"
 
-layout(local_size_x = 16) in;
+layout(local_size_x = 256) in;
 
-shared uint histogram[16];
+// Computes the exclusive prefix sum over the whole linear histogram array
+// (bin-major layout: histogram[numWorkGroups * bin + workGroupID]). The scatter
+// pass reads histogram[numWorkGroups * bin + workGroupID] as the base output
+// offset for that (bin, count-workgroup) group, so an exclusive scan over the
+// linear array yields exactly those bases.
+//
+// A single workgroup scans the entire array: each thread serially reduces a
+// contiguous segment, the segment sums are scanned in shared memory, then each
+// thread writes the exclusive prefix back over its own (disjoint) segment.
 
-shared uint prev_sum;
+shared uint segmentSums[256];
 
 void main() {
-    /* This shader computes the prefix sum of the histogram bins.
-     * It takes the local histograms computed in the previous shader
-     * and computes the cumulative sum for each bin.
-     * The result is stored in a shared buffer which is then used
-     * to compute the offsets for scattering elements into their
-     * final positions.
-     * Note that the total offset of each bin is stored in the
-     * offsetBuffer.offsets array and has to be used in the next shader
-     * to scatter the elements to the right positions in the output buffer.
-     */
+    if (gl_WorkGroupID.x != 0u) return;
 
-    // uint binIdx = gl_LocalInvocationID.x;
+    uint tid      = gl_LocalInvocationID.x;
+    uint nthreads = gl_WorkGroupSize.x;
+    uint L        = inputBuffer3.histogram.length();
 
-    // cumulativeSum[binIdx] = 0;
+    uint seg   = (L + nthreads - 1u) / nthreads;
+    uint start = tid * seg;
+    uint end   = min(start + seg, L);
 
-    // if (gl_WorkGroupID.x > 0) {
-    //     return;
-    // }
-
-    // coop loading
-    uint globalBinIdx = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
-
-    histogram[gl_LocalInvocationID.x] = inputBuffer3.histogram[globalBinIdx];
-
+    uint localSum = 0u;
+    for (uint i = start; i < end; ++i) localSum += inputBuffer3.histogram[i];
+    segmentSums[tid] = localSum;
     barrier();
 
-    uint sum = 0; 
-    if(gl_LocalInvocationID.x == 0) {
-        for(uint i = 0; i < 16; ++i) {
-            uint temp = histogram[i];
-            histogram[i] = sum;
-            sum += temp;
-        }
-
-    }
-    barrier();
-
-
-
-    if(gl_LocalInvocationID.x == 0 /* && gl_WorkGroupID.x < 3*/) {
-        prev_sum = -1;
-        //debugPrintfEXT("entering loop workgroup %u \n", gl_WorkGroupID.x);
-        do {
-            //memoryBarrier();
-            prev_sum = atomicAdd(offsetBuffer.offsets[gl_WorkGroupID.x], 0);
-
-        } while(prev_sum == -1);
-
-        uint total_sum = prev_sum + sum;
-        atomicAdd(offsetBuffer.offsets[gl_WorkGroupID.x+1], total_sum + 1);
-
-        //memoryBarrier();
-
-        // debugPrintfEXT("workgroup %u offset: %u\n", gl_WorkGroupID.x, prev_sum);
+    // Inclusive Hillis-Steele scan of the per-thread segment sums.
+    for (uint stride = 1u; stride < nthreads; stride <<= 1u) {
+        uint add = 0u;
+        if (tid >= stride) add = segmentSums[tid - stride];
+        barrier();
+        segmentSums[tid] += add;
+        barrier();
     }
 
-    barrier();
-
-    inputBuffer3.histogram[globalBinIdx] = histogram[gl_LocalInvocationID.x] + prev_sum;
-
-    // inputBuffer3.histogram[0] = 0;
-
-    // for(uint i = 1; i < gl_NumWorkGroups.x * 16; ++i) {
-    //     inputBuffer3.histogram[i] = inputBuffer3.histogram[i - 1] + inputBuffer3.histogram[i];
-    // }
-
-    // uint totalNumberHistograms = gl_NumWorkGroups.x * 1024 / 128;
-
-    // uint oldValue = 0;
-    // for (uint idx = 0; idx < totalNumberHistograms; idx++) {
-    //     uint globalBinIdx = idx * 16 + binIdx;
-    //     uint newValue = inputBuffer3.histogram[globalBinIdx];
-
-    //     inputBuffer3.histogram[globalBinIdx] = oldValue;
-    //     oldValue += newValue;
-    // }
-
-    // cumulativeSum[binIdx] = oldValue;
-
-    // barrier();
-
-    // offsetBuffer.offsets[0] = 0;
-
-    // if (gl_LocalInvocationID.x == 0) {
-    //     for (uint i = 1; i < 16; i++) {
-    //         offsetBuffer.offsets[i] = offsetBuffer.offsets[i-1] + cumulativeSum[i-1];
-    //     }
-    // }
+    // Exclusive base for this thread's segment = inclusive sum minus own contribution.
+    uint running = segmentSums[tid] - localSum;
+    for (uint i = start; i < end; ++i) {
+        uint v = inputBuffer3.histogram[i];
+        inputBuffer3.histogram[i] = running;
+        running += v;
+    }
 }
