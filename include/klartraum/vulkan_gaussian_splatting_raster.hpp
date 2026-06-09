@@ -82,6 +82,11 @@ private:
     // Stage A: cull + depth-key + compaction
     std::shared_ptr<GaussianDist> dist;
 
+    // Per-splat 2D attribute precompute (project once per splat, not 4x per
+    // vertex): writes the Splat2D buffer the vertex shader reads verbatim.
+    std::shared_ptr<GaussianRasterProject> project;
+    std::shared_ptr<BufferElement<VulkanBuffer<float>>> splat2D;
+
     // Stage B: ping-pong key/index buffers (A holds dist's output and, after
     // an even pass count, the final sorted result the rasterizer reads) plus
     // the existing radix sort's scratch buffers.

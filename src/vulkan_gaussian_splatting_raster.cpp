@@ -174,6 +174,33 @@ void VulkanGaussianSplattingRaster::initialize(
     dist->setGroupCountX((N + 255) / 256);
     dist->setPushConstants({{N, 0.1f}});
 
+    // --- Stage A2: per-splat 2D attribute precompute (perf plan R1+R2) ---
+    // Projects covariance, eigendecomposes, and evaluates SH once per splat into
+    // the Splat2D buffer the vertex shader reads verbatim (16 floats / splat,
+    // 64-byte stride matching gsplat_raster_project.comp's scalar struct). Keyed
+    // by splat id; the vertex shader dereferences it through the sorted index.
+    splat2D = std::make_shared<BufferElement<VulkanBuffer<float>>>(
+        vulkanContext, 16 * N, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    splat2D->setName("RasterSplat2D");
+
+    project = vulkanContext.create<GaussianRasterProject>(
+        "shaders/gsplat/gsplat_raster_project.comp.spv");
+    project->setName("RasterProject");
+    project->setInput(buf3DPos,      0);
+    project->setInput(buf3DRot,      1);
+    project->setInput(buf3DScale,    2);
+    project->setInput(buf3DColAlpha, 3);
+    project->setInput(buf3DShR,      4);
+    project->setInput(buf3DShG,      5);
+    project->setInput(buf3DShB,      6);
+    project->setInput(cameraUBO,     7);
+    project->setInput(splat2D,       8);
+    project->setGroupCountX((N + 255) / 256);
+    project->setPushConstants({{N,
+        (float)imageViewSrc->getImageExtent(0).width,
+        (float)imageViewSrc->getImageExtent(0).height,
+        3.0f, config.shDegree}});
+
     // --- Stage B: radix sort over the fixed full count N (reused, unmodified —
     // see RASTER_BACKEND_STATUS.md: it already operates on plain (uint key,
     // uint index) pairs). 8 passes x 4 bits sorts the full 32-bit key; an even
@@ -223,15 +250,18 @@ void VulkanGaussianSplattingRaster::initialize(
     barrier->setName("RasterBarrier");
     barrier->addBuffer(indicesA);
     barrier->addBuffer(drawArgs);
+    barrier->addBuffer(splat2D);
     barrier->setInput(sortOp,   0, 1);  // indicesA, sorted back into A by the even pass count
     barrier->setInput(dist,     1, 4);  // drawArgs (instanceCount written by dist's atomicAdd)
+    barrier->setInput(project,  2, 8);  // splat2D (per-splat attributes), output binding 8
 
     // --- Stage C: instanced indirect draw, hardware rasterized ---
     auto extent = imageViewSrc->getImageExtent(0);
+    // The vertex shader reads only the precomputed Splat2D buffer (binding 0)
+    // dereferenced through the sorted-index permutation (binding 1) — all the
+    // per-splat SoA inputs are now consumed by the project pass instead.
     rasterizer = std::make_shared<GaussianSplatRasterizer>(
-        std::vector<std::shared_ptr<BufferElementInterface>>{
-            buf3DPos, buf3DRot, buf3DScale, buf3DColAlpha,
-            buf3DShR, buf3DShG, buf3DShB, indicesA },
+        std::vector<std::shared_ptr<BufferElementInterface>>{ splat2D, indicesA },
         drawArgs);
     GaussianSplatRasterPushConstants pushConstants{};
     pushConstants.resolution = glm::vec2((float)extent.width, (float)extent.height);

@@ -1,0 +1,204 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+// Per-splat 2D attribute precompute for the raster backend (perf plan R1+R2).
+// Runs once per splat and writes a compact Splat2D record the vertex shader
+// reads verbatim — moving the covariance projection, 2x2 eigendecomposition and
+// SH evaluation out of the vertex stage, where the same math previously ran four
+// times per splat (once per quad corner). The math is identical to the prior
+// gsplat_raster.vert / gsplat_projection.comp implementation.
+
+layout(local_size_x = 256) in;
+
+// set 0: per-splat SoA inputs (band-major SH: shX[band * numSplats + idx]),
+// the camera UBO, and the Splat2D output buffer.
+layout(scalar, set = 0, binding = 0) readonly buffer Positions   { vec3  positions[];   };
+layout(scalar, set = 0, binding = 1) readonly buffer Rotations   { vec4  rotations[];   };
+layout(scalar, set = 0, binding = 2) readonly buffer Scales      { vec3  scales[];      };
+layout(scalar, set = 0, binding = 3) readonly buffer ColorsAlpha { vec4  colorsAlpha[]; };
+layout(scalar, set = 0, binding = 4) readonly buffer ShR         { float shR[];         };
+layout(scalar, set = 0, binding = 5) readonly buffer ShG         { float shG[];         };
+layout(scalar, set = 0, binding = 6) readonly buffer ShB         { float shB[];         };
+
+layout(set = 0, binding = 7) uniform UBO {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+    vec4 cameraWorldPos;
+} ubo;
+
+// Splat2D record consumed by gsplat_raster.vert (scalar layout: 16 floats,
+// 64-byte stride). color is premultiplied (rgb already scaled by alpha).
+struct Splat2D {
+    vec4  color;      // premultiplied rgb, alpha
+    vec3  conic;      // inverse projected covariance (a, b, c) for [[a,b],[b,c]]
+    vec2  centerPx;   // splat centre in pixels (fragment-shader falloff origin)
+    vec2  ndcCenter;  // splat centre in NDC
+    vec2  ndcAxis1;   // major eigen-axis * radius, in NDC (quad corner.x basis)
+    vec2  ndcAxis2;   // minor eigen-axis * radius, in NDC (quad corner.y basis)
+    float depth;      // clip.z / clip.w
+};
+layout(scalar, set = 0, binding = 8) writeonly buffer Splat2DBuf { Splat2D splat2D[]; };
+
+layout(push_constant) uniform PC {
+    uint  numSplats;
+    float screenWidth;
+    float screenHeight;
+    float splatScale;
+    int   shDegree;
+} pc;
+
+mat3 quatToMat3(vec4 q) {
+    float x = q.x, y = q.y, z = q.z, w = q.w;
+    float xx = x*x, yy = y*y, zz = z*z;
+    float xy = x*y, xz = x*z, yz = y*z;
+    float wx = w*x, wy = w*y, wz = w*z;
+    return mat3(
+        1.0 - 2.0*(yy+zz),  2.0*(xy-wz),        2.0*(xz+wy),
+        2.0*(xy+wz),        1.0 - 2.0*(xx+zz),  2.0*(yz-wx),
+        2.0*(xz-wy),        2.0*(yz+wx),        1.0 - 2.0*(xx+yy)
+    );
+}
+
+// EWA covariance projection — identical to gsplat_projection.comp's validated
+// implementation. The clamp bound is derived from 1/abs(focal) since Vulkan's
+// Y-flip makes focalY negative, while the Jacobian J keeps the signed focal
+// lengths for correct direction.
+mat2 computeCovarianceMatrix2D(vec3 p, vec4 rotation, vec3 gscale) {
+    mat3 S = mat3(gscale.x, 0.0, 0.0,
+                  0.0, gscale.y, 0.0,
+                  0.0, 0.0, gscale.z);
+    mat3 R = quatToMat3(rotation);
+    mat3 M = S * R;
+    mat3 cov3d = transpose(M) * M;
+
+    vec4 t4 = ubo.model * ubo.view * vec4(p, 1.0);
+    vec3 t = t4.xyz;
+
+    float focalX  = ubo.proj[0][0];
+    float focalY  = ubo.proj[1][1];
+    float tanFovX = 1.0 / abs(focalX);
+    float tanFovY = 1.0 / abs(focalY);
+
+    const float limx = 1.3 * tanFovX;
+    const float limy = 1.3 * tanFovY;
+    t.x = min(limx,  max(-limx,  t.x / t.z)) * t.z;
+    t.y = min(limy,  max(-limy,  t.y / t.z)) * t.z;
+
+    mat3 J = mat3(
+        focalX / t.z, 0.0, -(focalX * t.x) / (t.z * t.z),
+        0.0, focalY / t.z, -(focalY * t.y) / (t.z * t.z),
+        0.0, 0.0, 0.0);
+
+    mat4 W4 = ubo.model * ubo.view;
+    mat3 W = mat3(
+        W4[0][0], W4[1][0], W4[2][0],
+        W4[0][1], W4[1][1], W4[2][1],
+        W4[0][2], W4[1][2], W4[2][2]);
+
+    mat3 T = W * J;
+    mat3 cov3dCam = transpose(T) * transpose(cov3d) * T;
+
+    return mat2(cov3dCam[0][0], cov3dCam[0][1],
+                cov3dCam[1][0], cov3dCam[1][1]);
+}
+
+// World-space SH evaluation, gated on `deg`: bands beyond the requested degree
+// are neither read from memory nor evaluated (perf plan R2). For deg == 3 the
+// accumulation order matches the prior unconditional degree-3 loop, so a
+// full-degree scene reproduces the previous result.
+float computeSH(float base, float c[15], vec3 dir, int deg) {
+    float value = 0.5 + base * 0.282095;
+    if (deg < 1) return value;
+
+    float x = dir.x, y = dir.y, z = dir.z;
+    value += c[0] * (-0.488603 * y);
+    value += c[1] * (-0.488603 * z);
+    value += c[2] * (-0.488603 * x);
+    if (deg < 2) return value;
+
+    float x2 = x*x, y2 = y*y, z2 = z*z;
+    value += c[3] * (1.092548 * x * y);
+    value += c[4] * (-1.092548 * y * z);
+    value += c[5] * (0.315392 * (2.0*z2 - x2 - y2));
+    value += c[6] * (-1.092548 * x * z);
+    value += c[7] * (0.546274 * (x2 - y2));
+    if (deg < 3) return value;
+
+    value += c[8]  * (-0.590044 * y * (3.0*x2 - y2));
+    value += c[9]  * (2.890611 * x * y * z);
+    value += c[10] * (-0.457046 * y * (4.0*z2 - x2 - y2));
+    value += c[11] * (0.373176 * z * (2.0*z2 - 3.0*x2 - 3.0*y2));
+    value += c[12] * (-0.457046 * x * (4.0*z2 - x2 - y2));
+    value += c[13] * (1.445306 * z * (x2 - y2));
+    value += c[14] * (-0.590044 * x * (x2 - 3.0*y2));
+    return value;
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.numSplats) return;
+
+    vec3 position   = positions[id];
+    vec4 rotation   = rotations[id];
+    vec3 scale      = scales[id];
+    vec4 colorAlpha = colorsAlpha[id];
+
+    vec4 clip = ubo.proj * ubo.view * ubo.model * vec4(position, 1.0);
+    vec2 ndcCenter = clip.xy / clip.w;
+
+    float swh = pc.screenWidth  * 0.5;
+    float shh = pc.screenHeight * 0.5;
+
+    // Projected covariance in pixels, with the same dilation both backends use.
+    mat2 cov = computeCovarianceMatrix2D(position, rotation, scale);
+    float covA = cov[0][0] * swh * swh + 0.3;
+    float covB = cov[0][1] * swh * shh;
+    float covD = cov[1][1] * shh * shh + 0.3;
+
+    // Closed-form eigendecomposition of the symmetric 2x2 covariance: the
+    // eigenvectors are the ellipse's major/minor axes, sqrt(eigenvalue) the axis
+    // sigma — orienting and sizing the quad to the splat's actual footprint.
+    float trace = covA + covD;
+    float det   = covA * covD - covB * covB;
+    float disc  = sqrt(max(trace * trace * 0.25 - det, 0.0));
+    float lambda1 = trace * 0.5 + disc;
+    float lambda2 = max(trace * 0.5 - disc, 0.0);
+
+    vec2 majorDir = (abs(covB) > 1e-6)
+        ? normalize(vec2(covB, lambda1 - covA))
+        : ((covA >= covD) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+    vec2 minorDir = vec2(-majorDir.y, majorDir.x);
+
+    float majorRadiusPx = pc.splatScale * sqrt(lambda1);
+    float minorRadiusPx = pc.splatScale * sqrt(lambda2);
+
+    // SH colour — coefficients live in world space, so the view direction is the
+    // world-space camera->Gaussian vector. Only the requested degree's bands are
+    // loaded and evaluated.
+    int nc = pc.shDegree * (pc.shDegree + 2); // 0, 3, 8 or 15
+    float shRc[15], shGc[15], shBc[15];
+    for (int i = 0; i < nc; i++) {
+        shRc[i] = shR[i * pc.numSplats + id];
+        shGc[i] = shG[i * pc.numSplats + id];
+        shBc[i] = shB[i * pc.numSplats + id];
+    }
+    vec3 dir = normalize(position - ubo.cameraWorldPos.xyz);
+    vec3 color = vec3(
+        computeSH(colorAlpha.r, shRc, dir, pc.shDegree),
+        computeSH(colorAlpha.g, shGc, dir, pc.shDegree),
+        computeSH(colorAlpha.b, shBc, dir, pc.shDegree));
+
+    float invDet = 1.0 / max(det, 1e-12);
+    float alpha  = colorAlpha.a;
+
+    Splat2D rec;
+    rec.color     = vec4(color * alpha, alpha);
+    rec.conic     = vec3(covD, -covB, covA) * invDet;
+    rec.centerPx  = vec2((ndcCenter.x + 1.0) * swh, (ndcCenter.y + 1.0) * shh);
+    rec.ndcCenter = ndcCenter;
+    rec.ndcAxis1  = majorDir * majorRadiusPx / vec2(swh, shh);
+    rec.ndcAxis2  = minorDir * minorRadiusPx / vec2(swh, shh);
+    rec.depth     = clip.z / clip.w;
+    splat2D[id]   = rec;
+}

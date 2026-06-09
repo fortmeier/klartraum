@@ -34,6 +34,12 @@ struct GsplatConfig {
     // Must divide the per-bin tile count evenly.
     uint32_t splatTileX = 8u;
     uint32_t splatTileY = 8u;
+
+    // Spherical-harmonics degree evaluated by the raster backend's per-splat
+    // attribute precompute. 0 = DC only, 3 = full degree-3 (all 15 bands). The
+    // model carries degree-3 SH, so 3 reproduces the reference colour; lower
+    // degrees skip band loads + evaluation for speed at a colour-fidelity cost.
+    int shDegree = 3;
 };
 
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
@@ -92,6 +98,17 @@ struct DistPushConstants {
     float    frustumDilation;  // dilates the cull frustum so near-edge splat footprints survive
 };
 typedef GeneralComputation<DistPushConstants> GaussianDist;
+
+// Per-splat 2D attribute precompute (raster backend, gsplat_raster_project.comp).
+// All-scalar (4-byte) members so std430 packing matches the GLSL push block.
+struct RasterProjectPushConstants {
+    uint32_t numSplats;
+    float    screenWidth;
+    float    screenHeight;
+    float    splatScale;
+    int32_t  shDegree;
+};
+typedef GeneralComputation<RasterProjectPushConstants> GaussianRasterProject;
 
 struct SortPushConstants {
   uint32_t pass;
