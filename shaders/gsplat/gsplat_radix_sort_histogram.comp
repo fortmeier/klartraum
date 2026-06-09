@@ -23,14 +23,14 @@ void main() {
 
     barrier(); 
 
-    uint itemsPerWorkGroup0 = pushConstants.numElements / gl_NumWorkGroups.x;
+    uint numElements = activeNumElements();
+    uint itemsPerWorkGroup0 = numElements / gl_NumWorkGroups.x;
     uint iterationsPerWorkGroup = (itemsPerWorkGroup0 + gl_WorkGroupSize.x - 1) / gl_WorkGroupSize.x;
     uint itemsPerWorkGroup = iterationsPerWorkGroup * gl_WorkGroupSize.x;
-    
-    //uint itemsPerWorkGroup = (pushConstants.numElements + gl_NumWorkGroups.x - 1) / gl_NumWorkGroups.x;
+
     uint idx = gl_WorkGroupID.x * itemsPerWorkGroup + gl_LocalInvocationID.x;
     uint endIdx = idx + itemsPerWorkGroup;
-    while ((idx < endIdx) && (idx < pushConstants.numElements)) {
+    while ((idx < endIdx) && (idx < numElements)) {
         uint value;
         uint index;
         if (pushConstants.pass % 2 == 0) {

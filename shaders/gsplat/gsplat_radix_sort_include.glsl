@@ -40,8 +40,21 @@ layout(push_constant) uniform PushConstants {
     uint pass;
     uint numElements;
     uint numBins;
-
+    uint useCountBuffer; // 1 = take the active element count from inputBuffer2
+                         // (binding 6) instead of numElements, so the sort
+                         // processes only a GPU-determined visible count
 } pushConstants;
+
+// Active element count for this dispatch. When useCountBuffer is set the count
+// comes from inputBuffer2.numberTotalGaussians (written on the GPU before the
+// sort runs); otherwise it is the static push-constant numElements. Keeping the
+// work-distribution math driven by this value while the dispatch group count
+// stays fixed preserves the histogram's bin-major stride (= numWorkGroups).
+uint activeNumElements() {
+    return (pushConstants.useCountBuffer != 0u)
+        ? inputBuffer2.numberTotalGaussians
+        : pushConstants.numElements;
+}
 
 bool debug = false;
 

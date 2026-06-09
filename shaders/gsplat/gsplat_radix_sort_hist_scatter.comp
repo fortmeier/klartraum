@@ -24,7 +24,8 @@ void main() {
     }
     barrier();
 
-    uint itemsPerWorkGroup0 = pushConstants.numElements / gl_NumWorkGroups.x;
+    uint numElements = activeNumElements();
+    uint itemsPerWorkGroup0 = numElements / gl_NumWorkGroups.x;
     uint iterationsPerWorkGroup = (itemsPerWorkGroup0 + gl_WorkGroupSize.x - 1) / gl_WorkGroupSize.x;
     uint itemsPerWorkGroup = iterationsPerWorkGroup * gl_WorkGroupSize.x;
 
@@ -33,7 +34,7 @@ void main() {
 
     for (uint groupStart = baseIdx; groupStart < endIdx; groupStart += gl_WorkGroupSize.x) {
         uint elemIdx  = groupStart + lid;
-        bool isActive = (elemIdx < pushConstants.numElements);
+        bool isActive = (elemIdx < numElements);
 
         uint value = 0u, index = 0u, bin = 0xFFFFFFFFu;
         if (isActive) {

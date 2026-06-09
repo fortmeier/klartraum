@@ -114,6 +114,10 @@ struct SortPushConstants {
   uint32_t pass;
   uint32_t numElements;
   uint32_t numBins;
+  // 1 = read the active element count from the sort's count buffer (binding 6)
+  // instead of numElements, so a fixed-dispatch sort processes only a
+  // GPU-determined visible count. Default 0 keeps the static-count behaviour.
+  uint32_t useCountBuffer = 0;
 };
 typedef GeneralComputation<SortPushConstants> RadixSort;
 
