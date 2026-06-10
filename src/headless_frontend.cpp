@@ -34,6 +34,7 @@ void HeadlessFrontend::shutdown() {
     
     vulkanContext.stopRender();
     klartraumEngine->clearComputeGraphs();
+    klartraumEngine->clearWindow();
     vulkanContext.shutdown();
 
     //vkDestroySurfaceKHR(instance, surface, nullptr);

@@ -2,6 +2,7 @@
 #define KLARTRAUM_COMPUTEGRAPH_FRAMEBUFFERSRC_HPP
 
 #include <map>
+#include <optional>
 #include <vector>
 
 #include <vulkan/vulkan.h>
@@ -19,6 +20,16 @@ public:
     virtual VkImageView& getImageView(uint32_t pathId) = 0;
     virtual VkImage& getImage(uint32_t pathId) = 0;
     virtual VkExtent2D& getImageExtent(uint32_t pathId) = 0;
+
+    // The layout an image-writing consumer (gsplat backends, RenderPass) should
+    // leave this target in after writing it. nullopt means "no opinion" — the
+    // consumer falls back to its default (PRESENT_SRC for a presentable
+    // swapchain image, GENERAL otherwise). Offscreen viewport targets return
+    // TRANSFER_SRC_OPTIMAL so the Window composite can blit straight from them
+    // (PRESENT_SRC is illegal on a non-swapchain image).
+    virtual std::optional<VkImageLayout> getFinalLayoutOverride() const {
+        return std::nullopt;
+    }
 };
 
 class ImageViewSrc : public virtual ImageViewSrcInterface {
@@ -72,7 +83,18 @@ public:
         }
         return imageExtents[pathId];
     }
-    
+
+protected:
+    // For subclasses (e.g. OffscreenTarget) that allocate their own images and
+    // populate the handle vectors after construction.
+    void setResources(std::vector<VkImageView> views,
+                      std::vector<VkImage> imgs,
+                      std::vector<VkExtent2D> exts) {
+        imageViews   = std::move(views);
+        images       = std::move(imgs);
+        imageExtents = std::move(exts);
+    }
+
 private:
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;

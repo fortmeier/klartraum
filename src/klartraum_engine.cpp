@@ -39,21 +39,39 @@ void KlartraumEngine::step() {
 
     auto& graphicsQueue = vulkanContext.getGraphicsQueue();
 
-    VkSemaphore renderFinishedSemaphore;
+    if (window_ && window_->hasViewports()) {
+        // Viewport mode: each graph renders into its own offscreen target (no
+        // swapchain wait); the window composite blits them into the one
+        // swapchain image and is the single submission that touches it.
+        std::vector<VkSemaphore> graphFinished;
+        graphFinished.reserve(computeGraphs.size());
+        for (auto& cg : computeGraphs) {
+            graphFinished.push_back(cg->submitTo(graphicsQueue, imageIndex));
+        }
+        // The composite alone reads the freshly acquired swapchain image, so it
+        // waits on image-available in addition to every viewport scene.
+        graphFinished.push_back(vulkanContext.imageAvailableSemaphoresPerImage[imageIndex]);
 
-    for(auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
-        // only the last computegraph submits the fence and returns the renderFinishedSemaphore
-        // should be done somewhat different
-        if (it == computeGraphs.end() - 1) {
-            renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
+        VkSemaphore compositeFinished =
+            window_->submitComposite(graphicsQueue, imageIndex, graphFinished, fence);
+        vulkanContext.endRender(imageIndex, compositeFinished);
+    } else {
+        VkSemaphore renderFinishedSemaphore;
+
+        for(auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
+            // only the last computegraph submits the fence and returns the renderFinishedSemaphore
+            // should be done somewhat different
+            if (it == computeGraphs.end() - 1) {
+                renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
+            }
+            else {
+                (*it)->submitTo(graphicsQueue, imageIndex);
+            }
         }
-        else {
-            (*it)->submitTo(graphicsQueue, imageIndex);
-        }
+
+        // finish frame rendering
+        vulkanContext.endRender(imageIndex, renderFinishedSemaphore);
     }
-
-    // finish frame rendering
-    vulkanContext.endRender(imageIndex, renderFinishedSemaphore);
 
     // When profiling is enabled, wait for the GPU to finish this frame so we
     // can read back the timestamp queries.  This makes each step() synchronous
@@ -81,6 +99,14 @@ void KlartraumEngine::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera
 VulkanContext& KlartraumEngine::getVulkanContext()
 {
     return vulkanContext;
+}
+
+Window& KlartraumEngine::getWindow()
+{
+    if (!window_) {
+        window_ = std::make_unique<Window>(vulkanContext);
+    }
+    return *window_;
 }
 
 void KlartraumEngine::add(ComputeGraphElementPtr element)
