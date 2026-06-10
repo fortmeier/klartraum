@@ -233,6 +233,7 @@ add_executable(
   tests/test_onnx_transpose.cpp
 
   tests/test_headless_frontend.cpp
+  tests/test_multi_viewport_window.cpp
   tests/test_glfw_frontend.cpp
   tests/test_glyph_atlas.cpp
   tests/test_simple_text_renderer.cpp
@@ -251,6 +252,7 @@ set(KLARTRAUM_LIB_SRC
   src/gaussian_splatting_factory.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp
+  src/window.cpp
   src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp

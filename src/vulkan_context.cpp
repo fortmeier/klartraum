@@ -316,7 +316,11 @@ void VulkanContext::createSwapChain() {
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    // TRANSFER_DST lets the Window composite blit viewport offscreen images into
+    // the swapchain image; STORAGE/COLOR_ATTACHMENT serve the single-target
+    // compute/raster paths that write the swapchain directly.
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT
+                          | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
     uint32_t queueFamilyIndices[] = { indices.graphicsAndComputeFamily.value(), indices.presentFamily.value() };
@@ -372,7 +376,7 @@ void VulkanContext::createSwapImagesHeadless() {
     createInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     createInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     createInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT
-                     | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                     | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
     for(size_t i = 0; i < swapChainImages.size(); i++) {
         if (vkCreateImage(device, &createInfo, nullptr, &swapChainImages[i]) != VK_SUCCESS) {

@@ -62,11 +62,17 @@ public:
 
         // For windowed rendering the image must be in PRESENT_SRC_KHR after
         // the renderpass so vkQueuePresentKHR accepts it.  For headless
-        // offscreen rendering GENERAL is fine.
+        // offscreen rendering GENERAL is fine. A viewport target overrides this
+        // with TRANSFER_SRC_OPTIMAL so the Window composite can blit from it.
         colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        colorAttachment.finalLayout   = vulkanContext.hasSurface()
-                                         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-                                         : VK_IMAGE_LAYOUT_GENERAL;
+        VkImageLayout defaultFinal = vulkanContext.hasSurface()
+                                     ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                     : VK_IMAGE_LAYOUT_GENERAL;
+        if (auto* ivs = std::dynamic_pointer_cast<ImageViewSrcInterface>(getInputElement(0)).get()) {
+            colorAttachment.finalLayout = ivs->getFinalLayoutOverride().value_or(defaultFinal);
+        } else {
+            colorAttachment.finalLayout = defaultFinal;
+        }
 
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;

@@ -18,6 +18,7 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
+#include "klartraum/window.hpp"
 
 
 namespace klartraum {
@@ -38,12 +39,24 @@ public:
 
     VulkanContext& getVulkanContext();
 
+    // The window's viewport compositor (lazily created). makeViewport() hands out
+    // offscreen render targets that step() composites into the single swapchain
+    // image before presenting. See examples/multi_viewports_single_camera_example.cpp.
+    Window& getWindow();
+
     void add(ComputeGraphElementPtr element);
 
     RenderPassPtr createRenderPass();
 
     void clearComputeGraphs() {
         computeGraphs.clear();
+    }
+
+    // Release the window and its viewport offscreen images. Frontends must call
+    // this before VulkanContext::shutdown() so the images are freed while the
+    // device is still valid.
+    void clearWindow() {
+        window_.reset();
     }
 
     void clearInterfaceCamera() {
@@ -79,6 +92,8 @@ private:
     std::queue<std::unique_ptr<Event> > eventQueue;
 
     std::vector<std::unique_ptr<ComputeGraph>> computeGraphs;
+
+    std::unique_ptr<Window> window_;
 
 };
 
