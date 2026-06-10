@@ -33,6 +33,10 @@ public:
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) override;
 
+    // The extent of the render target this draws into. Must be set to the
+    // viewport/offscreen extent; if left zero the swapchain extent is used.
+    void setTargetExtent(VkExtent2D extent) { targetExtent = extent; }
+
 private:
     void createSplatDescriptorSetLayout();
     void createDescriptorPool();
@@ -48,6 +52,8 @@ private:
 
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
+
+    VkExtent2D targetExtent{};
 };
 
 } // namespace klartraum

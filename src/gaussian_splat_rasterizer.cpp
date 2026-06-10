@@ -261,22 +261,29 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
 }
 
 void GaussianSplatRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) {
-    auto& swapChainExtent = vulkanContext->getSwapChainExtent();
+    // The viewport/scissor must match the render target this pass draws into,
+    // which is the (possibly sub-window) render-target extent — carried in
+    // pushConstants.resolution — not the full swapchain. They coincide for a
+    // full-window target but differ for a viewport offscreen image.
+    VkExtent2D targetExtent = {
+        static_cast<uint32_t>(pushConstants.resolution.x),
+        static_cast<uint32_t>(pushConstants.resolution.y)
+    };
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = static_cast<float>(swapChainExtent.width);
-    viewport.height = static_cast<float>(swapChainExtent.height);
+    viewport.width = static_cast<float>(targetExtent.width);
+    viewport.height = static_cast<float>(targetExtent.height);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor{};
     scissor.offset = { 0, 0 };
-    scissor.extent = swapChainExtent;
+    scissor.extent = targetExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     auto& cameraDescriptorSets = cameraUBO->getDescriptorSets();

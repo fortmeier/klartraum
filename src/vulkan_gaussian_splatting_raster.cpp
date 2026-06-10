@@ -252,6 +252,7 @@ void VulkanGaussianSplattingRaster::initialize(
         meshRasterizer = std::make_shared<GaussianSplatMeshRasterizer>(
             std::vector<std::shared_ptr<BufferElementInterface>>{ splat2D, indicesA, totalCount },
             meshArgs);
+        meshRasterizer->setTargetExtent(extent);
         renderPass->addDrawComponent(meshRasterizer);
     } else {
         // The vertex shader reads only the precomputed Splat2D buffer (binding 0)
