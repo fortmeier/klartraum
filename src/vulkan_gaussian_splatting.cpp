@@ -325,8 +325,9 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
     auto* ivs = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
     VkImage image = ivs->getImage(pathId);
 
-    const VkImageLayout finalLayout = vulkanContext->hasSurface()
-        ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL;
+    const VkImageLayout finalLayout = ivs->getFinalLayoutOverride().value_or(
+        vulkanContext->hasSurface()
+            ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL);
 
     VkImageMemoryBarrier barrier{};
     barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;

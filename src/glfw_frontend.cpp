@@ -114,6 +114,7 @@ void GlfwFrontend::shutdown() {
     // before device shutdown so their VkBuffer destructors run while device is valid.
     klartraumEngine->setCameraUBO(nullptr);
     klartraumEngine->clearInterfaceCamera();
+    klartraumEngine->clearWindow();
 
     // VulkanContext::shutdown() destroys swapchain → surface → device → instance
     // in the correct Vulkan teardown order.
