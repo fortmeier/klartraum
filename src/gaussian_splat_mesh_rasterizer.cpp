@@ -235,20 +235,23 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
 }
 
 void GaussianSplatMeshRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) {
-    auto& swapChainExtent = vulkanContext->getSwapChainExtent();
+    // Viewport/scissor must match the render target (viewport offscreen extent),
+    // not the full swapchain; fall back to the swapchain when no target was set.
+    VkExtent2D extent = (targetExtent.width != 0)
+        ? targetExtent : vulkanContext->getSwapChainExtent();
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkViewport viewport{};
     viewport.x = 0.0f; viewport.y = 0.0f;
-    viewport.width = static_cast<float>(swapChainExtent.width);
-    viewport.height = static_cast<float>(swapChainExtent.height);
+    viewport.width = static_cast<float>(extent.width);
+    viewport.height = static_cast<float>(extent.height);
     viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor{};
     scissor.offset = { 0, 0 };
-    scissor.extent = swapChainExtent;
+    scissor.extent = extent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     auto& cameraDescriptorSets = cameraUBO->getDescriptorSets();
