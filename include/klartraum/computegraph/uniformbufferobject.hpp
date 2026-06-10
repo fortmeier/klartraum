@@ -23,9 +23,21 @@ class UniformBufferObject : public UniformBufferObjectInterface {
 public:
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override
     {
+        // A UBO element may be shared across several compute graphs — e.g. one
+        // camera feeding multiple viewport scenes. The buffers and descriptors
+        // are built once; later graphs reuse the same buffers so a single
+        // update(pathId) is visible to every graph that reads this UBO.
+        if (initialized) {
+            if (numberOfPaths != numberPaths) {
+                throw std::runtime_error(
+                    "UniformBufferObject shared across graphs with differing path counts");
+            }
+            return;
+        }
+
         this->vulkanContext = &vulkanContext;
         numberOfPaths = numberPaths;
-        
+
         createDescriptorSetLayout();
         createUniformBuffers();
         createDescriptorPool();
