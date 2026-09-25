@@ -289,24 +289,19 @@ VkExtent2D VulkanContext::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capab
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return capabilities.currentExtent;
     }
-    else {
-        throw std::runtime_error("Not implemented / Failed to choose swap extent!");
-        /*int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
 
-        VkExtent2D actualExtent = {
-            static_cast<uint32_t>(width),
-            static_cast<uint32_t>(height)
-        };
-
-        actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-        actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
-
-        return actualExtent;*/
+    // The surface leaves the size to the application (e.g. Wayland): use the
+    // window's framebuffer size, or the configured size if none was provided.
+    VkExtent2D actualExtent = framebufferExtent;
+    if (actualExtent.width == 0 || actualExtent.height == 0) {
+        actualExtent = { config.WIDTH, config.HEIGHT };
     }
+    actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+    actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+    return actualExtent;
 }
 
-void VulkanContext::createSwapChain() {
+void VulkanContext::createSwapChain(VkSwapchainKHR oldSwapChain) {
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
@@ -356,7 +351,7 @@ void VulkanContext::createSwapChain() {
     createInfo.presentMode = presentMode;
     createInfo.clipped = VK_TRUE;
 
-    createInfo.oldSwapchain = VK_NULL_HANDLE;
+    createInfo.oldSwapchain = oldSwapChain;
 
     if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
         throw std::runtime_error("failed to create swap chain!");
@@ -800,16 +795,8 @@ void VulkanContext::shutdown() {
     stopRender();
 
     vkDestroyCommandPool(device, commandPool, nullptr);
-    
-    for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        vkDestroySemaphore(device, imageAvailableSemaphoresPerFrame[i], nullptr);
-        vkDestroyFence(device, inFlightFences[i], nullptr);
-    }
-    
-    for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-        vkDestroySemaphore(device, imageAvailableSemaphoresPerImage[i], nullptr);
-    }
+
+    destroySyncObjects();
 
     if (surface != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(device, swapChain, nullptr);
@@ -985,6 +972,71 @@ void VulkanContext::createSyncObjects()
 
 }
 
+void VulkanContext::destroySyncObjects()
+{
+    for (auto semaphore : imageAvailableSemaphoresPerFrame) {
+        vkDestroySemaphore(device, semaphore, nullptr);
+    }
+    for (auto fence : inFlightFences) {
+        vkDestroyFence(device, fence, nullptr);
+    }
+    for (auto semaphore : imageAvailableSemaphoresPerImage) {
+        vkDestroySemaphore(device, semaphore, nullptr);
+    }
+    imageAvailableSemaphoresPerFrame.clear();
+    inFlightFences.clear();
+    imageAvailableSemaphoresPerImage.clear();
+}
+
+void VulkanContext::setFramebufferExtent(VkExtent2D extent)
+{
+    if (extent.width != framebufferExtent.width || extent.height != framebufferExtent.height) {
+        // The first report only records the initial size; later changes mean
+        // the swapchain no longer matches the window.
+        if (framebufferExtent.width != 0 || framebufferExtent.height != 0) {
+            swapChainOutOfDate = true;
+        }
+        framebufferExtent = extent;
+    }
+}
+
+bool VulkanContext::recreateSwapChain()
+{
+    if (surface == VK_NULL_HANDLE) {
+        return false;
+    }
+
+    VkSurfaceCapabilitiesKHR capabilities;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
+    VkExtent2D extent = chooseSwapExtent(capabilities);
+    if (extent.width == 0 || extent.height == 0) {
+        // Minimized: a swapchain cannot have zero size. Stay outdated and retry later.
+        swapChainOutOfDate = true;
+        return false;
+    }
+
+    vkDeviceWaitIdle(device);
+
+    // Sync objects are recreated rather than reused: a skipped frame can leave
+    // a semaphore signaled or a fence unsignaled with nothing pending on it.
+    destroySyncObjects();
+    for (auto imageView : swapChainImageViews) {
+        vkDestroyImageView(device, imageView, nullptr);
+    }
+    swapChainImageViews.clear();
+
+    VkSwapchainKHR oldSwapChain = swapChain;
+    createSwapChain(oldSwapChain);
+    vkDestroySwapchainKHR(device, oldSwapChain, nullptr);
+
+    createImageViews();
+    createSyncObjects();
+
+    currentFrame = 0;
+    swapChainOutOfDate = false;
+    return true;
+}
+
 uint32_t VulkanContext::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
 
     VkPhysicalDeviceMemoryProperties memProperties;
@@ -999,6 +1051,15 @@ uint32_t VulkanContext::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
 }
 
 std::tuple<uint32_t, VkFence&> VulkanContext::beginRender() {
+    uint32_t imageIndex;
+    VkFence* fence;
+    if (!tryBeginRender(imageIndex, fence)) {
+        throw std::runtime_error("swap chain is out of date, call recreateSwapChain()!");
+    }
+    return {imageIndex, *fence};
+}
+
+bool VulkanContext::tryBeginRender(uint32_t& imageIndex, VkFence*& fencePtr) {
     VkFence& fence = inFlightFences[currentFrame];
     const uint64_t one_second = 1000'000'000; // 1 second timeout
     VkResult waitResult = VK_TIMEOUT;
@@ -1011,18 +1072,21 @@ std::tuple<uint32_t, VkFence&> VulkanContext::beginRender() {
         }
     }
 
-    if (vkResetFences(device, 1, &fence) != VK_SUCCESS) {
-        throw std::runtime_error("failed to reset inFlightFence");
-    }
-
-    uint32_t imageIndex;
-
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        
+
     if(surface != VK_NULL_HANDLE) {
         VkResult acquireResult = vkAcquireNextImageKHR(device, swapChain, one_second, imageAvailableSemaphoresPerFrame[currentFrame], VK_NULL_HANDLE, &imageIndex);
-        if (acquireResult != VK_SUCCESS) {
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+            // Nothing was acquired and the fence is still signaled, so the
+            // frame can be skipped without leaving anything pending.
+            swapChainOutOfDate = true;
+            return false;
+        }
+        if (acquireResult == VK_SUBOPTIMAL_KHR) {
+            // The image is acquired and usable; render this frame and rebuild after.
+            swapChainOutOfDate = true;
+        } else if (acquireResult != VK_SUCCESS) {
             throw std::runtime_error("failed to acquire swap chain image!");
         }
 
@@ -1038,6 +1102,11 @@ std::tuple<uint32_t, VkFence&> VulkanContext::beginRender() {
     }
 
 
+    // Reset only once this frame is certain to submit work that signals the fence.
+    if (vkResetFences(device, 1, &fence) != VK_SUCCESS) {
+        throw std::runtime_error("failed to reset inFlightFence");
+    }
+
     static VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.signalSemaphoreCount = 1;
@@ -1050,7 +1119,8 @@ std::tuple<uint32_t, VkFence&> VulkanContext::beginRender() {
         throw std::runtime_error("image available delegate semaphore failed to submit!");
     }
 
-    return {imageIndex, fence};
+    fencePtr = &fence;
+    return true;
 }
 
 void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
@@ -1069,7 +1139,9 @@ void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSe
         presentInfo.pResults = nullptr; // Optional
         
         VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
-        if (presentResult != VK_SUCCESS) {
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+            swapChainOutOfDate = true;
+        } else if (presentResult != VK_SUCCESS) {
             throw std::runtime_error("failed to present swap chain image!");
         }
     } else {
