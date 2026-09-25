@@ -27,6 +27,8 @@ public:
 
     KlartraumEngine& getKlartraumEngine();
 
+    GLFWwindow* getGlfwWindow() { return window; }
+
     void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
     // Registers a debug-text overlay on `renderPass`, added after any draw
