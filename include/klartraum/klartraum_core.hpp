@@ -1,6 +1,7 @@
 #ifndef KLARTRAUM_CORE_HPP
 #define KLARTRAUM_CORE_HPP
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,6 +47,20 @@ public:
 
     void add(ComputeGraphElementPtr element);
 
+    // Builds everything that depends on the swapchain: the builder creates the
+    // swapchain-backed elements (ImageViewSrc, render backends, camera UBO) and
+    // registers them via add()/setCameraUBO(). It runs once immediately and
+    // again whenever the swapchain is recreated after a window resize, with
+    // all previously added compute graphs already released. Data that should
+    // survive a resize (e.g. a GaussianDataStandard) belongs outside the
+    // builder, captured by it. Setting a builder makes the window resizable.
+    using GraphBuilder = std::function<void(KlartraumEngine&)>;
+    void setGraphBuilder(GraphBuilder builder);
+
+    // A window can be resized when a graph builder rebuilds the graphs for the
+    // new swapchain. Viewport mode (getWindow().makeViewport()) is not covered.
+    bool isResizable() const;
+
     RenderPassPtr createRenderPass();
 
     void clearComputeGraphs() {
@@ -80,6 +95,12 @@ public:
     std::vector<std::pair<std::string, float>> getProfilingResults();
 
 private:
+    // Recreates the swapchain and rebuilds all graphs via graphBuilder_.
+    // Returns false when the surface currently has zero size (minimized).
+    bool rebuildForSwapChain();
+
+    GraphBuilder graphBuilder_;
+
     bool profilingEnabled_            = false;
     bool perfProfilingEnabled_        = false;
     std::vector<std::string> perfProfilingNameFilter_;

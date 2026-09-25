@@ -20,8 +20,23 @@ KlartraumEngine::~KlartraumEngine() {
 
 void KlartraumEngine::step() {
 
-    // start frame rendering
-    auto [imageIndex, fence] = vulkanContext.beginRender();
+    uint32_t imageIndex;
+    VkFence* fencePtr;
+    if (isResizable()) {
+        if (vulkanContext.isSwapChainOutOfDate() && !rebuildForSwapChain()) {
+            return; // minimized: nothing to render into
+        }
+        if (!vulkanContext.tryBeginRender(imageIndex, fencePtr)) {
+            return; // outdated since the last frame; rebuilt on the next step
+        }
+    } else {
+        // Without a builder the graphs cannot follow a new swapchain, so an
+        // outdated swapchain is an error (beginRender() throws).
+        auto [index, fence] = vulkanContext.beginRender();
+        imageIndex = index;
+        fencePtr = &fence;
+    }
+    VkFence& fence = *fencePtr;
 
     // process event queue,
     // this currently only updates the camera
@@ -117,6 +132,32 @@ void KlartraumEngine::add(ComputeGraphElementPtr element)
     if (profilingEnabled_) computeGraph->enableProfiling();
     if (perfProfilingEnabled_) computeGraph->enablePerformanceProfiling(perfProfilingNameFilter_);
     computeGraph->compileFrom(element);
+}
+
+void KlartraumEngine::setGraphBuilder(GraphBuilder builder)
+{
+    graphBuilder_ = std::move(builder);
+    computeGraphs.clear();
+    if (graphBuilder_) {
+        graphBuilder_(*this);
+    }
+}
+
+bool KlartraumEngine::isResizable() const
+{
+    return graphBuilder_ && !(window_ && window_->hasViewports());
+}
+
+bool KlartraumEngine::rebuildForSwapChain()
+{
+    // Waits for the device to be idle before anything is destroyed.
+    if (!vulkanContext.recreateSwapChain()) {
+        return false;
+    }
+    // The graphs recorded the old swapchain's image views and semaphores.
+    computeGraphs.clear();
+    graphBuilder_(*this);
+    return true;
 }
 
 std::vector<std::pair<std::string, float>> KlartraumEngine::getProfilingResults()
