@@ -45,6 +45,12 @@ When the user asks to cleanup a unit test file, you should bring the unit tests 
 
 You are not allowed to delete unit tests as you wish.
 
+Tests that write image artifacts (e.g. rendered `.ppm` frames for visual
+comparison) must write them to `build/TestingOutput/`, not the repo root —
+that directory is covered by the `build` entry in `.gitignore`. Use
+`std::filesystem::create_directories("build/TestingOutput")` before opening
+the output file, since the directory may not exist on a fresh checkout.
+
 
 General
 =======
@@ -55,6 +61,42 @@ been implemented and successfully validated (tests pass, reference-image diffs
 match), it can and should be committed. Use Conventional Commits
 (https://www.conventionalcommits.org) for commit messages, e.g.
 `fix: ...`, `feat: ...`, `refactor: ...`, `test: ...`.
+
+Work-planning and execution files (status trackers, improvement plans, checklists,
+progress summaries, and similar documents you write to track or report on your own
+work) are not part of the source code and must not be committed to git. Put them
+in `.claude/plans/` — that directory is listed in `.gitignore`, so files placed
+there stay out of `git status` automatically.
+
+
+Creating and Documenting Plans
+==============================
+When the user asks to create a plan for a feature or improvement:
+
+1. Write a markdown file in `.claude/plans/` with a clear structure:
+   - **Status** section (e.g., "Planning Phase", "In Progress", "Complete")
+   - **Overview** of the feature/change
+   - **Requirements** listing scope and constraints
+   - **Core Components** describing the main pieces
+   - **Implementation Steps** with clear ordering and dependencies
+   - **Testing Strategy** describing how the feature will be verified and which
+     unit tests will be implemented — this is one of the most important parts
+     of a plan and must be worked out before implementation starts, not as an
+     afterthought
+   - **Notes** on dependencies, design decisions, or risks
+
+   For "visual" features (rendering, shaders, layout, anything whose correctness
+   shows up on screen), the Testing Strategy must favor verification methods that
+   do not require a human to look at the result — e.g. golden-image diffs,
+   pixel/metric assertions, geometry/UV checks — rather than relying on someone
+   visually inspecting screenshots.
+
+2. Present the plan to the user for approval before implementing.
+
+3. Update the plan's status as work progresses (mark sections as complete once implemented).
+
+4. Use the plan to track progress and avoid scope creep — refer back to it during
+   implementation to stay focused on agreed-upon goals.
 
 
 Build & Test Commands
