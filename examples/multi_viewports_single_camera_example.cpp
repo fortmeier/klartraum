@@ -32,8 +32,7 @@ int main(int /*argc*/, char** /*argv*/) {
     auto& vulkanContext  = engine.getVulkanContext();
 
     // ---- The single shared camera -----------------------------------------
-    // One view, shared by both viewports.  (Open question below about the
-    // projection aspect ratio, since each viewport is half-width.)
+    // One view and projection, shared by both equally sized viewports.
     auto cameraUBO = std::make_shared<klartraum::CameraUboType>();
     cameraUBO->setName("CameraUBO");
 
@@ -73,6 +72,9 @@ int main(int /*argc*/, char** /*argv*/) {
     auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
         klartraum::InterfaceCameraOrbit::UpDirection::Y);
     cameraOrbit->initialize(vulkanContext);
+    auto viewportExtent = leftViewport->getImageExtent(0);
+    cameraOrbit->setProjectionAspectRatio(
+        viewportExtent.width / static_cast<float>(viewportExtent.height));
     cameraOrbit->setAzimuth(0.9f);
     cameraOrbit->setElevation(-0.5f);
     cameraOrbit->setPosition({-0.5f, 0.0f, 0.5f});

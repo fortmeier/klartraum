@@ -8,6 +8,9 @@
  *   swapchain; readback confirms red in the left half and blue in the right.
  * - gapsAreClearedBlack: a single viewport covering only the left quarter; the
  *   uncovered region reads back black (verifies the composite's clear).
+ * - sharedCameraCanUseViewportAspectRatio: verifies that a shared orbit camera
+ *   can encode the viewport aspect ratio rather than the full-window ratio in
+ *   its projection matrix.
  * - twoBackendsCompositeEndToEnd: drives the real example path (compute splat in
  *   the left viewport, raster splat in the right, shared camera UBO) through
  *   KlartraumEngine::step(); confirms both halves render non-black and differ,
@@ -196,6 +199,23 @@ TEST(MultiViewportWindow, gapsAreClearedBlack) {
 
     EXPECT_GT(covered.g, 200);  // viewport region is green
     EXPECT_LT(gap.r, 20); EXPECT_LT(gap.g, 20); EXPECT_LT(gap.b, 20); // gap is black
+}
+
+TEST(MultiViewportWindow, sharedCameraCanUseViewportAspectRatio) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    VkExtent2D windowExtent = vc.getSwapChainExtent();
+    float viewportAspect = (windowExtent.width / 2) / static_cast<float>(windowExtent.height);
+
+    InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+    orbit.initialize(vc);
+    orbit.setProjectionAspectRatio(viewportAspect);
+
+    CameraMVP mvp{};
+    orbit.update(mvp);
+
+    float matrixAspect = std::abs(mvp.proj[1][1] / mvp.proj[0][0]);
+    EXPECT_NEAR(matrixAspect, viewportAspect, 1e-5f);
 }
 
 TEST(MultiViewportWindow, twoBackendsCompositeEndToEnd) {
