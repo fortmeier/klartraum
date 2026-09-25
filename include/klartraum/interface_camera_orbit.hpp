@@ -1,6 +1,7 @@
 #ifndef KLARTRAUM_INTERFACE_CAMERA_ORBIT_HPP
 #define KLARTRAUM_INTERFACE_CAMERA_ORBIT_HPP
 
+#include <optional>
 #include <unordered_map>
 
 #include "klartraum/interface_camera.hpp"
@@ -52,6 +53,14 @@ public:
         this->farPlane = farPlane;
     }
 
+    void setProjectionAspectRatio(float aspectRatio) {
+        projectionAspectRatio = aspectRatio;
+    }
+
+    void useSwapChainAspectRatio() {
+        projectionAspectRatio.reset();
+    }
+
     float getNearPlane() const {
         return nearPlane;
     }
@@ -71,6 +80,7 @@ private:
 
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;
+    std::optional<float> projectionAspectRatio;
 
     bool leftButtonDown = false;
 
