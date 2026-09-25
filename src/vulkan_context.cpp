@@ -55,11 +55,19 @@ std::vector<const char*> VulkanContext::getRequiredExtensions() {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
     
-    // macOS/MoltenVK specific extensions
-#ifdef __APPLE__
-    extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-    extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-#endif
+    // Portability drivers (e.g. MoltenVK) are only enumerated when the instance
+    // opts in. Conformant drivers (e.g. KosmicKrisp) are listed either way, so
+    // the extension is requested whenever the loader offers it, on any platform.
+    uint32_t availableCount = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, nullptr);
+    std::vector<VkExtensionProperties> available(availableCount);
+    vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, available.data());
+    for (const auto& ext : available) {
+        if (strcmp(ext.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0) {
+            extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+            break;
+        }
+    }
 
     return extensions;
 }
@@ -132,12 +140,7 @@ void VulkanContext::createInstance() {
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
-    // macOS/MoltenVK specific flags
-#ifdef __APPLE__
-    createInfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-#else
     createInfo.flags = 0;
-#endif
 
     std::vector<VkValidationFeatureEnableEXT>  validation_feature_enables = {};
     if (enableValidationLayers && enableGPUPrintf)
@@ -159,6 +162,11 @@ void VulkanContext::createInstance() {
     }
 
     auto extensions = getRequiredExtensions();
+    for (const char* ext : extensions) {
+        if (strcmp(ext, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0) {
+            createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+        }
+    }
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
 
