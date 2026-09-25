@@ -1,3 +1,5 @@
 build
+.cache
 
 shaders/**/*.spv
+.DS_Store
