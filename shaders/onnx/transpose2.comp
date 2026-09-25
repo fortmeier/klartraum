@@ -18,13 +18,13 @@ void main() {
     uint x = gl_GlobalInvocationID.x;
     uint y = gl_GlobalInvocationID.y;
 
-    debugPrintfEXT("x: %d, y: %d\n", x, y);
+    // debugPrintfEXT("x: %d, y: %d\n", x, y);
 
     uint output_dim0 = dimOutput[0];
     uint output_dim1 = dimOutput[1];
 
     if (x >= output_dim1 || y >= output_dim0) {
-        debugPrintfEXT("Invalid output coordinates: (%d, %d), output_dim0: %d, output_dim1: %d\n", x, y, output_dim0, output_dim1);
+        // debugPrintfEXT("Invalid output coordinates: (%d, %d), output_dim0: %d, output_dim1: %d\n", x, y, output_dim0, output_dim1);
         return;
     }
 
@@ -39,7 +39,7 @@ void main() {
         in_idx = out_idx; // No permutation
     }
 
-    debugPrintfEXT("out_idx: %d, in_idx: %d\n", out_idx, in_idx);
+    // debugPrintfEXT("out_idx: %d, in_idx: %d\n", out_idx, in_idx);
 
     output_data[out_idx] = input_data[in_idx];
 }
