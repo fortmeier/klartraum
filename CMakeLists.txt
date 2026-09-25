@@ -32,26 +32,12 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 
 add_subdirectory(3rdparty/glfw)
 
+# Link only the Vulkan loader. The loader selects the driver (ICD) at runtime,
+# e.g. KosmicKrisp or MoltenVK on macOS; set VULKAN_SDK to choose the SDK.
 find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIRS})
 
-# macOS Vulkan support via MoltenVK
 if(APPLE)
-    # Try to find MoltenVK
-    find_library(MOLTENVK_LIBRARY MoltenVK PATHS
-        /usr/local/lib
-        /opt/homebrew/lib
-        $ENV{VULKAN_SDK}/lib
-        $ENV{VULKAN_SDK}/MoltenVK/dylib/macOS
-    )
-    
-    if(MOLTENVK_LIBRARY)
-        message(STATUS "Found MoltenVK: ${MOLTENVK_LIBRARY}")
-        list(APPEND Vulkan_LIBRARIES ${MOLTENVK_LIBRARY})
-    else()
-        message(WARNING "MoltenVK not found. Please install Vulkan SDK for macOS.")
-    endif()
-    
     # macOS system frameworks required for graphics applications
     find_library(COCOA_LIBRARY Cocoa REQUIRED)
     find_library(IOKIT_LIBRARY IOKit REQUIRED)
@@ -84,7 +70,13 @@ add_subdirectory(examples)
 
 
 
-find_program(GLSLC glslc REQUIRED)
+# Prefer the glslc that belongs to the Vulkan SDK found above.
+if(Vulkan_GLSLC_EXECUTABLE)
+    set(GLSLC ${Vulkan_GLSLC_EXECUTABLE})
+else()
+    find_program(GLSLC glslc REQUIRED)
+endif()
+message(STATUS "Using glslc: ${GLSLC}")
 
 set(SHADER_BASE_DIR "${PROJECT_SOURCE_DIR}/shaders")
 
