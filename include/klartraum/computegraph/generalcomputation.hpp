@@ -10,6 +10,7 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
+#include "klartraum/computegraph/uniformbufferobject.hpp"
 
 namespace klartraum {
 

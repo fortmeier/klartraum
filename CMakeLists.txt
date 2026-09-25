@@ -154,11 +154,28 @@ FetchContent_MakeAvailable(protobuf)
 
 add_subdirectory(${protobuf_SOURCE_DIR} ${protobuf_BINARY_DIR})
 
-# find protoc
-find_program(protobuf_PROTOC_EXE 
-    NAMES protoc protoc.exe
-    PATHS "${CMAKE_CURRENT_SOURCE_DIR}/build/_deps/protobuf-build/Debug"
-)
+# Abseil (bundled with protobuf) passes its Randen HWAES flags on Apple as
+# "-Xarch_x86_64 -maes -Xarch_x86_64 -msse4.1 ...". CMake de-duplicates the
+# repeated -Xarch_* tokens, leaving x86-only flags unguarded on arm64. Re-add
+# each flag as an indivisible SHELL: group so it stays bound to its arch.
+if(APPLE)
+    foreach(_absl_alias absl::random_internal_randen_hwaes absl::random_internal_randen_hwaes_impl)
+        if(TARGET ${_absl_alias})
+            get_target_property(_absl_target ${_absl_alias} ALIASED_TARGET)
+            get_target_property(_absl_opts ${_absl_target} COMPILE_OPTIONS)
+            list(REMOVE_ITEM _absl_opts -Xarch_x86_64 -Xarch_arm64 -maes -msse4.1 -march=armv8-a+crypto)
+            list(APPEND _absl_opts
+                "SHELL:-Xarch_x86_64 -maes"
+                "SHELL:-Xarch_x86_64 -msse4.1"
+                "SHELL:-Xarch_arm64 -march=armv8-a+crypto")
+            set_target_properties(${_absl_target} PROPERTIES COMPILE_OPTIONS "${_absl_opts}")
+        endif()
+    endforeach()
+endif()
+
+# protoc is built as part of protobuf above; use that binary so the generated
+# code always matches the linked libprotobuf version.
+set(protobuf_PROTOC_EXE $<TARGET_FILE:protobuf::protoc>)
 
 # ONNX Protobuf Generation
 set(ONNX_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/onnx/onnx")
@@ -183,7 +200,7 @@ foreach(proto_file ${ONNX_PROTO_FILES})
     add_custom_command(
         OUTPUT ${generated_cpp} ${generated_h}
         COMMAND ${protobuf_PROTOC_EXE} --cpp_out=${ONNX_GENERATED_DIR} --proto_path=${ONNX_PROTO_DIR} ${proto_file}
-        DEPENDS ${proto_file}
+        DEPENDS ${proto_file} protobuf::protoc
         COMMENT "Generating C++ code from ${proto_file}"
     )
     
