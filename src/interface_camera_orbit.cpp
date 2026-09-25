@@ -49,7 +49,9 @@ void InterfaceCameraOrbit::update(CameraMVP &mvp)
         break;
     }
     
-    mvp.proj = glm::perspective(glm::radians(45.0f), vulkanContext->getSwapChainExtent().width / (float) swapChainExtent.height, nearPlane, farPlane);
+    float aspectRatio = projectionAspectRatio.value_or(
+        swapChainExtent.width / static_cast<float>(swapChainExtent.height));
+    mvp.proj = glm::perspective(glm::radians(45.0f), aspectRatio, nearPlane, farPlane);
 
     // Vulkan has inverted Y coordinates compared to OpenGL
     mvp.proj[1][1] *= -1;
