@@ -56,30 +56,36 @@ int main(int argc, char** argv) {
         engine.enablePerformanceProfiling({"SM"});
     }
 
-    uint32_t numImages = vulkanContext.getNumberOfSwapChainImages();
-    auto extent = vulkanContext.getSwapChainExtent();
-    std::vector<VkImageView> imageViews(numImages);
-    std::vector<VkImage>     images(numImages);
-    std::vector<VkExtent2D>  extents(numImages, extent);
-    for (uint32_t i = 0; i < numImages; ++i) {
-        imageViews[i] = vulkanContext.getImageView(i);
-        images[i]     = vulkanContext.getSwapChainImage(i);
-    }
-    auto imageViewSrc = std::make_shared<klartraum::ImageViewSrc>(imageViews, images, extents);
-    for (uint32_t i = 0; i < numImages; ++i) {
-        imageViewSrc->setWaitFor(i, vulkanContext.imageAvailableSemaphoresPerImage[i]);
-    }
-
-    auto cameraUBO = std::make_shared<klartraum::CameraUboType>();
-    cameraUBO->setName("CameraUBO");
-
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
 
+    // Loaded once; the graph builder below reuses it on every rebuild.
     auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile);
 
-    auto splatting = klartraum::createGaussianSplatting(
-        vulkanContext, backend, imageViewSrc, cameraUBO, model);
-    engine.add(splatting);
+    // Everything tied to the swapchain is created in the graph builder, which
+    // the engine runs now and again after each window resize.
+    engine.setGraphBuilder([backend, model](klartraum::KlartraumEngine& e) {
+        auto& vc = e.getVulkanContext();
+        uint32_t numImages = vc.getNumberOfSwapChainImages();
+        std::vector<VkImageView> imageViews(numImages);
+        std::vector<VkImage>     images(numImages);
+        std::vector<VkExtent2D>  extents(numImages, vc.getSwapChainExtent());
+        for (uint32_t i = 0; i < numImages; ++i) {
+            imageViews[i] = vc.getImageView(i);
+            images[i]     = vc.getSwapChainImage(i);
+        }
+        auto imageViewSrc = std::make_shared<klartraum::ImageViewSrc>(imageViews, images, extents);
+        for (uint32_t i = 0; i < numImages; ++i) {
+            imageViewSrc->setWaitFor(i, vc.imageAvailableSemaphoresPerImage[i]);
+        }
+
+        auto cameraUBO = std::make_shared<klartraum::CameraUboType>();
+        cameraUBO->setName("CameraUBO");
+
+        auto splatting = klartraum::createGaussianSplatting(
+            vc, backend, imageViewSrc, cameraUBO, model);
+        e.add(splatting);
+        e.setCameraUBO(cameraUBO);
+    });
 
     auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
         klartraum::InterfaceCameraOrbit::UpDirection::Y);
@@ -89,7 +95,6 @@ int main(int argc, char** argv) {
     cameraOrbit->setPosition({-0.5f, 0.0f, 0.5f});
     cameraOrbit->setDistance(1.0f);
     engine.setInterfaceCamera(cameraOrbit);
-    engine.setCameraUBO(cameraUBO);
 
     frontend.loop(maxFrames);
 
