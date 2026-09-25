@@ -3,3 +3,11 @@ build
 
 shaders/**/*.spv
 .DS_Store
+
+# Regenerable ONNX pipeline intermediates
+data/onnx/tmp/
+scripts/onnx/.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
