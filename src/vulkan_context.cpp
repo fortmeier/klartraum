@@ -522,8 +522,12 @@ void VulkanContext::createLogicalDevice() {
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    vkGetPhysicalDeviceFeatures(physicalDevice, &supportedFeatures);
+
     VkPhysicalDeviceFeatures deviceFeatures{};
-    deviceFeatures.pipelineStatisticsQuery = VK_TRUE;
+    deviceFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
+    pipelineStatisticsQuerySupported_ = supportedFeatures.pipelineStatisticsQuery == VK_TRUE;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -549,6 +553,14 @@ void VulkanContext::createLogicalDevice() {
         for (auto& e : avail) {
             if (strcmp(e.extensionName, VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME) == 0) {
                 deviceExtensions.push_back(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME);
+                break;
+            }
+        }
+        // The spec requires VK_KHR_portability_subset to be enabled whenever the
+        // device exposes it (e.g. MoltenVK). Conformant drivers do not expose it.
+        for (auto& e : avail) {
+            if (strcmp(e.extensionName, "VK_KHR_portability_subset") == 0) {
+                deviceExtensions.push_back("VK_KHR_portability_subset");
                 break;
             }
         }
@@ -679,9 +691,6 @@ void VulkanContext::initializeDevice(VkSurfaceKHR surface) {
         deviceExtensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-#ifdef __APPLE__
-            "VK_KHR_portability_subset",
-#endif
         };
         std::cout << "=== Creating Device & Swapchain ===" << std::endl;
         pickPhysicalDevice();
@@ -716,9 +725,6 @@ void VulkanContext::initialize(VkSurfaceKHR& surface) {
         deviceExtensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-#ifdef __APPLE__
-            "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
-#endif
         };
 
         std::cout << "=== Phase 2: Creating Device & Swapchain ===" << std::endl;
@@ -757,9 +763,6 @@ void VulkanContext::initialize() {
 
         deviceExtensions = {
             VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-#ifdef __APPLE__
-            "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
-#endif
         };
 
         std::cout << "=== Headless Mode: Creating Device & Offscreen Images ===" << std::endl;

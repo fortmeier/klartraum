@@ -312,6 +312,11 @@ public:
 
         if (!pfnEnum || !pfnPasses || !pfn_AcquireLock_ || !pfn_ReleaseLock_) {
             // VK_KHR_performance_query not available — fall back to pipeline statistics.
+            if (!vulkanContext.isPipelineStatisticsQuerySupported()) {
+                std::cout << "[ComputeGraph] Neither VK_KHR_performance_query nor pipeline"
+                             " statistics queries are supported; perf profiling disabled.\n";
+                return;
+            }
             std::cout << "[ComputeGraph] VK_KHR_performance_query unavailable;"
                          " using pipeline statistics (CS invocations) instead.\n"
                          "              (Enable Windows Developer Mode for hardware SM counters.)\n";

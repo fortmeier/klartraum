@@ -227,10 +227,15 @@ public:
         return vkCmdDrawMeshTasksIndirectEXT_;
     }
 
+    // The pipelineStatisticsQuery feature is enabled when the physical device
+    // supports it. Apple GPUs (MoltenVK, KosmicKrisp) do not.
+    bool isPipelineStatisticsQuerySupported() const { return pipelineStatisticsQuerySupported_; }
+
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 
     bool meshShaderSupported_ = false;
+    bool pipelineStatisticsQuerySupported_ = false;
     PFN_vkCmdDrawMeshTasksIndirectEXT vkCmdDrawMeshTasksIndirectEXT_ = nullptr;
 };
 
