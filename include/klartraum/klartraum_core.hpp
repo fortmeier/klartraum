@@ -16,6 +16,7 @@
 #include "klartraum/camera.hpp"
 #include "klartraum/interface_camera.hpp"
 #include "klartraum/events.hpp"
+#include "klartraum/frame_overlay.hpp"
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
@@ -78,6 +79,14 @@ public:
         interfaceCamera = nullptr;
     }
 
+    // Registers per-frame work drawn on top of each finished frame (e.g. a
+    // GUI); see FrameOverlay. Pass nullptr to remove it. Frontends must remove
+    // the overlay before VulkanContext::shutdown() so its GPU resources are
+    // freed while the device is still valid.
+    void setOverlay(std::shared_ptr<FrameOverlay> overlay) {
+        overlay_ = std::move(overlay);
+    }
+
     // Call before add() to enable GPU timestamp profiling on all subsequent
     // compute graphs.  Results accumulate across frames and are averaged.
     void enableProfiling() { profilingEnabled_ = true; }
@@ -115,6 +124,8 @@ private:
     std::vector<std::unique_ptr<ComputeGraph>> computeGraphs;
 
     std::unique_ptr<Window> window_;
+
+    std::shared_ptr<FrameOverlay> overlay_;
 
 };
 

@@ -1,0 +1,194 @@
+#include <iostream>
+#include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <crtdbg.h>
+#endif
+
+#include <imgui.h>
+
+#include "klartraum/imgui_frontend.hpp"
+#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/interface_camera_orbit.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
+
+namespace {
+
+// Initial window size in screen coordinates; the default window is too small
+// to leave room for the GUI next to the scene.
+constexpr int kWindowWidth = 1024;
+constexpr int kWindowHeight = 640;
+
+struct CameraDefaults {
+    float azimuth = 0.9f;
+    float elevation = -0.5f;
+    glm::vec3 position = {-0.5f, 0.0f, 0.5f};
+    float distance = 1.0f;
+};
+
+void resetCamera(klartraum::InterfaceCameraOrbit& camera) {
+    const CameraDefaults defaults;
+    camera.setAzimuth(defaults.azimuth);
+    camera.setElevation(defaults.elevation);
+    camera.setPosition(defaults.position);
+    camera.setDistance(defaults.distance);
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportMode(_CRT_ERROR,  _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportFile(_CRT_ERROR,  _CRTDBG_FILE_STDERR);
+#endif
+
+    // Parse args:  --frames N   (close after N frames)
+    //              --spz PATH   (scene to load, default: raccoon sample)
+    int maxFrames = -1;
+    std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--frames" && i + 1 < argc) {
+            try { maxFrames = std::stoi(argv[++i]); } catch (...) {}
+        } else if (arg == "--spz" && i + 1 < argc) {
+            spzFile = argv[++i];
+        }
+    }
+    std::cout << "ImGui Gaussian Splatting example (backend: raster)";
+    if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
+    std::cout << std::endl;
+
+    klartraum::ImGuiFrontend frontend;
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vulkanContext = engine.getVulkanContext();
+
+    // Loaded once; the graph builder below reuses it on every rebuild.
+    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile);
+
+    // Changing the config needs new pipelines, so the GUI edits `pendingConfig`
+    // and the graphs are rebuilt with it (see "Apply" below).
+    klartraum::GsplatConfig config;
+    klartraum::GsplatConfig pendingConfig = config;
+
+    // Everything tied to the swapchain is created in the graph builder, which
+    // the engine runs now and again after each window resize.
+    auto graphBuilder = [&config, model](klartraum::KlartraumEngine& e) {
+        auto& vc = e.getVulkanContext();
+        uint32_t numImages = vc.getNumberOfSwapChainImages();
+        std::vector<VkImageView> imageViews(numImages);
+        std::vector<VkImage>     images(numImages);
+        std::vector<VkExtent2D>  extents(numImages, vc.getSwapChainExtent());
+        for (uint32_t i = 0; i < numImages; ++i) {
+            imageViews[i] = vc.getImageView(i);
+            images[i]     = vc.getSwapChainImage(i);
+        }
+        auto imageViewSrc = std::make_shared<klartraum::ImageViewSrc>(imageViews, images, extents);
+        for (uint32_t i = 0; i < numImages; ++i) {
+            imageViewSrc->setWaitFor(i, vc.imageAvailableSemaphoresPerImage[i]);
+        }
+
+        auto cameraUBO = std::make_shared<klartraum::CameraUboType>();
+        cameraUBO->setName("CameraUBO");
+
+        auto splatting = klartraum::createGaussianSplatting(
+            vc, klartraum::GsplatBackend::Raster, imageViewSrc, cameraUBO, model, config);
+        e.add(splatting);
+        e.setCameraUBO(cameraUBO);
+    };
+    engine.setGraphBuilder(graphBuilder);
+
+    auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
+        klartraum::InterfaceCameraOrbit::UpDirection::Y);
+    cameraOrbit->initialize(vulkanContext);
+    resetCamera(*cameraOrbit);
+    engine.setInterfaceCamera(cameraOrbit);
+
+    // The resize is picked up by the first frame's event processing, which
+    // rebuilds the graphs for the larger swapchain.
+    glfwSetWindowSize(frontend.getGlfwWindow(), kWindowWidth, kWindowHeight);
+
+    bool showDemoWindow = false;
+
+    frontend.setGui([&]() {
+        const ImGuiIO& io = ImGui::GetIO();
+
+        ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("Gaussian Splatting");
+
+        if (ImGui::CollapsingHeader("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const VkExtent2D extent = vulkanContext.getSwapChainExtent();
+            ImGui::Text("%.1f FPS (%.2f ms)", io.Framerate, 1000.0f / io.Framerate);
+            ImGui::Text("Resolution: %u x %u", extent.width, extent.height);
+            ImGui::Text("Gaussians: %u", model->count());
+            ImGui::Text("Backend: raster");
+        }
+
+        if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // The camera also follows mouse input, so show its current state
+            // and write back only what the user edits here.
+            float azimuth = static_cast<float>(cameraOrbit->getAzimuth());
+            float elevation = static_cast<float>(cameraOrbit->getElevation());
+            float distance = static_cast<float>(cameraOrbit->getDistance());
+            glm::vec3 position = cameraOrbit->getPosition();
+
+            if (ImGui::SliderFloat("Azimuth", &azimuth, -3.1416f, 3.1416f)) {
+                cameraOrbit->setAzimuth(azimuth);
+            }
+            if (ImGui::SliderFloat("Elevation", &elevation, -1.5f, 1.5f)) {
+                cameraOrbit->setElevation(elevation);
+            }
+            if (ImGui::SliderFloat("Distance", &distance, 0.05f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+                cameraOrbit->setDistance(distance);
+            }
+            if (ImGui::DragFloat3("Target", &position.x, 0.01f)) {
+                cameraOrbit->setPosition(position);
+            }
+            if (ImGui::Button("Reset camera")) {
+                resetCamera(*cameraOrbit);
+            }
+        }
+
+        if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SliderInt("SH degree", &pendingConfig.shDegree, 0, 3);
+            ImGui::SliderFloat("Alpha cull", &pendingConfig.alphaCullThreshold, 0.0f, 0.2f, "%.4f",
+                               ImGuiSliderFlags_Logarithmic);
+
+            ImGui::BeginDisabled(!vulkanContext.isMeshShaderSupported());
+            ImGui::Checkbox("Mesh shader path", &pendingConfig.useMeshShader);
+            ImGui::EndDisabled();
+
+            const bool changed = pendingConfig.shDegree != config.shDegree
+                              || pendingConfig.alphaCullThreshold != config.alphaCullThreshold
+                              || pendingConfig.useMeshShader != config.useMeshShader;
+            ImGui::BeginDisabled(!changed);
+            if (ImGui::Button("Apply")) {
+                // The GUI runs between frames; once the GPU is idle the old
+                // graphs can be released and rebuilt with the new config.
+                vkDeviceWaitIdle(vulkanContext.getDevice());
+                config = pendingConfig;
+                engine.setGraphBuilder(graphBuilder);
+            }
+            ImGui::EndDisabled();
+        }
+
+        ImGui::Separator();
+        ImGui::Checkbox("Show ImGui demo window", &showDemoWindow);
+        ImGui::TextDisabled("Left drag: orbit, wheel: zoom");
+
+        ImGui::End();
+
+        if (showDemoWindow) {
+            ImGui::ShowDemoWindow(&showDemoWindow);
+        }
+    });
+
+    frontend.loop(maxFrames);
+
+    return 0;
+}

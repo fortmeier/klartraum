@@ -61,6 +61,22 @@ public:
         projectionAspectRatio.reset();
     }
 
+    double getDistance() const {
+        return distance;
+    }
+
+    double getAzimuth() const {
+        return azimuth;
+    }
+
+    double getElevation() const {
+        return elevation;
+    }
+
+    const glm::vec3& getPosition() const {
+        return position;
+    }
+
     float getNearPlane() const {
         return nearPlane;
     }

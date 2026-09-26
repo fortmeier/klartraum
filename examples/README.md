@@ -29,6 +29,29 @@ A basic example that demonstrates:
 ./build/gaussian_splatting_example
 ```
 
+### ImGui Gaussian Splatting Example
+**File**: `imgui_gaussian_splatting_example.cpp`
+
+Renders a Gaussian splat scene with the raster backend and a Dear ImGui user
+interface on top, using `ImGuiFrontend`:
+- Statistics: frame rate, resolution, number of Gaussians
+- Camera: azimuth, elevation, distance and target sliders (kept in sync with
+  mouse orbiting), reset button
+- Rendering: SH degree, alpha-cull threshold and the mesh-shader path; "Apply"
+  rebuilds the raster pipeline with the new settings
+- Optional ImGui demo window
+
+Mouse input over a GUI window goes to the GUI, not the camera. The window is
+resizable.
+
+#### Usage:
+```bash
+# From project root (shaders are loaded relative to it)
+./build/examples/imgui_gaussian_splatting_example
+./build/examples/imgui_gaussian_splatting_example --spz path/to/scene.spz
+./build/examples/imgui_gaussian_splatting_example --frames 120   # close after 120 frames
+```
+
 ## Building Examples
 
 Examples are built automatically when you build the main project.
