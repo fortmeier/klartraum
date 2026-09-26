@@ -24,6 +24,11 @@
  *   along the right/bottom image edges than they do on average, i.e. every
  *   pixel is shaded with the Gaussians of the bin it lies in (no seams, no
  *   unwritten strips)
+ * - bothBackendsRenderInSinglePathGraph: builds each backend into a standalone
+ *   ComputeGraph with a single path (fewer paths than swapchain images) that
+ *   renders into a one-image OffscreenTarget, runs it once with
+ *   submitAndWait() and checks the image is not black, i.e. the backends size
+ *   their per-path resources by the graph's paths, not the swapchain
  **/
 #include <gtest/gtest.h>
 
@@ -132,6 +137,49 @@ std::vector<uint8_t> renderRaccoonSceneWithBackend(GsplatBackend backend) {
     return readSwapchainImageToHost(vc);
 }
 
+// Reads an OffscreenTarget image back as tightly-packed BGRA bytes. Both
+// backends leave an OffscreenTarget in its final-layout override
+// (TRANSFER_SRC_OPTIMAL).
+std::vector<uint8_t> readOffscreenImageToHost(VulkanContext& vc, VkImage image, VkExtent2D extent) {
+    const VkDeviceSize bytes = VkDeviceSize(extent.width) * extent.height * 4;
+    VkBuffer buf; VkDeviceMemory mem;
+    vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    buf, mem);
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = vc.getCommandPool(); ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {extent.width, extent.height, 1};
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           buf, 1, &region);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vc.getGraphicsQueue());
+    vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
+
+    void* data;
+    vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
+                                static_cast<const uint8_t*>(data) + bytes);
+    vkUnmapMemory(vc.getDevice(), mem);
+    vkFreeMemory(vc.getDevice(), mem, nullptr);
+    vkDestroyBuffer(vc.getDevice(), buf, nullptr);
+
+    return result;
+}
+
 // Renders the raccoon scene through `backend` into an OffscreenTarget of the
 // given extent and reads image 0 back as tightly-packed BGRA bytes.
 std::vector<uint8_t> renderRaccoonSceneIntoTarget(GsplatBackend backend, VkExtent2D extent) {
@@ -164,42 +212,7 @@ std::vector<uint8_t> renderRaccoonSceneIntoTarget(GsplatBackend backend, VkExten
         vkQueueWaitIdle(vc.getGraphicsQueue());
     }
 
-    const VkDeviceSize bytes = VkDeviceSize(extent.width) * extent.height * 4;
-    VkBuffer buf; VkDeviceMemory mem;
-    vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    buf, mem);
-    VkCommandBufferAllocateInfo ai{};
-    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = vc.getCommandPool(); ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
-    VkCommandBufferBeginInfo bi{};
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &bi);
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {extent.width, extent.height, 1};
-    // Both backends leave an OffscreenTarget in its final-layout override.
-    vkCmdCopyImageToBuffer(cmd, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           buf, 1, &region);
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
-    vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
-    vkQueueWaitIdle(vc.getGraphicsQueue());
-    vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
-
-    void* data;
-    vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
-    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + bytes);
-    vkUnmapMemory(vc.getDevice(), mem);
-    vkFreeMemory(vc.getDevice(), mem, nullptr);
-    vkDestroyBuffer(vc.getDevice(), buf, nullptr);
+    auto result = readOffscreenImageToHost(vc, target->getImage(0), extent);
 
     engine.clearComputeGraphs();
     splatting.reset();
@@ -354,4 +367,43 @@ TEST(GaussianSplattingFactory, backendsAgreeAtBinBordersForUnalignedSize) {
     // bin borders would make the border bands differ far more than that.
     EXPECT_LT(borderMean, otherMean * 1.5 + 2.0)
         << "compute backend deviates at its bin borders — seams or unwritten pixels";
+}
+
+TEST(GaussianSplattingFactory, bothBackendsRenderInSinglePathGraph) {
+    if (!std::filesystem::exists(kSpzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    }
+
+    const VkExtent2D extent{96, 96};
+    for (GsplatBackend backend : {GsplatBackend::Compute, GsplatBackend::Raster}) {
+        SCOPED_TRACE(backend == GsplatBackend::Raster ? "raster" : "compute");
+        HeadlessFrontend frontend;
+        auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+        ASSERT_GT(vc.getNumberOfSwapChainImages(), 1u) << "the test needs more swapchain images than graph paths";
+
+        auto target = std::make_shared<OffscreenTarget>(vc, extent, 1u);
+        auto cameraUBO = std::make_shared<CameraUboType>();
+        InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+        orbit.initialize(vc);
+        orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
+        orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+        orbit.setProjectionAspectRatio(1.0f);
+        orbit.update(cameraUBO->ubo);
+
+        auto model = std::make_shared<GaussianDataStandard>(vc, kSpzPath);
+        auto splatting = createGaussianSplatting(vc, backend, target, cameraUBO, model);
+
+        {
+            ComputeGraph graph(vc, 1);
+            graph.compileFrom(splatting);
+            cameraUBO->update(0);
+            graph.submitAndWait(vc.getGraphicsQueue(), 0);
+
+            auto pixels = readOffscreenImageToHost(vc, target->getImage(0), extent);
+            const uint8_t maxVal = *std::max_element(pixels.begin(), pixels.end());
+            EXPECT_GT(maxVal, uint8_t(10)) << "rendered image is all-black";
+        }
+        splatting.reset();
+        target.reset();
+    }
 }

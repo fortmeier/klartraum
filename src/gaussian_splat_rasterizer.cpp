@@ -52,7 +52,6 @@ void GaussianSplatRasterizer::createSplatDescriptorSetLayout() {
 
 void GaussianSplatRasterizer::createDescriptorPool() {
     auto& device = vulkanContext->getDevice();
-    uint32_t numberPaths = vulkanContext->getNumberOfSwapChainImages();
 
     VkDescriptorPoolSize poolSize{};
     poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -71,7 +70,6 @@ void GaussianSplatRasterizer::createDescriptorPool() {
 
 void GaussianSplatRasterizer::createDescriptorSets() {
     auto& device = vulkanContext->getDevice();
-    uint32_t numberPaths = vulkanContext->getNumberOfSwapChainImages();
 
     std::vector<VkDescriptorSetLayout> layouts(numberPaths, splatDescriptorSetLayout);
 
