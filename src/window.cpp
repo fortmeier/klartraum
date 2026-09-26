@@ -20,16 +20,22 @@ Window::~Window() {
 }
 
 std::shared_ptr<ImageViewSrc> Window::makeViewport(int x, int y, uint32_t width, uint32_t height) {
+    return makeViewport(x, y, width, height, width, height);
+}
+
+std::shared_ptr<ImageViewSrc> Window::makeViewport(int x, int y,
+                                                   uint32_t displayWidth, uint32_t displayHeight,
+                                                   uint32_t renderWidth, uint32_t renderHeight) {
     if (finalized_) {
         throw std::runtime_error("Window::makeViewport called after the composite was built!");
     }
     uint32_t numImages = vulkanContext_.getNumberOfSwapChainImages();
     auto target = std::make_shared<OffscreenTarget>(
-        vulkanContext_, VkExtent2D{ width, height }, numImages);
+        vulkanContext_, VkExtent2D{ renderWidth, renderHeight }, numImages);
 
     VkRect2D rect{};
     rect.offset = { x, y };
-    rect.extent = { width, height };
+    rect.extent = { displayWidth, displayHeight };
     viewports_.push_back({ target, rect });
     return target;
 }
@@ -123,8 +129,9 @@ void Window::finalize() {
             blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             blit.srcSubresource.layerCount = 1;
             blit.srcOffsets[0] = { 0, 0, 0 };
-            blit.srcOffsets[1] = { (int32_t)vp.rect.extent.width,
-                                   (int32_t)vp.rect.extent.height, 1 };
+            const auto sourceExtent = vp.target->extent();
+            blit.srcOffsets[1] = { (int32_t)sourceExtent.width,
+                                   (int32_t)sourceExtent.height, 1 };
             blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             blit.dstSubresource.layerCount = 1;
             blit.dstOffsets[0] = { vp.rect.offset.x, vp.rect.offset.y, 0 };

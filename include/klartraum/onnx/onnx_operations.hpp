@@ -210,6 +210,11 @@ ComputeGraphElementPtr createRelu(VulkanContext* vulkanContext, const onnx::Node
 
     auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
+    uint32_t elementCount = 1;
+    for (const auto dimension : inputDim) {
+        elementCount *= dimension;
+    }
+    operation->setGroupCountX((elementCount + 63) / 64);
 
     return operation;
 }

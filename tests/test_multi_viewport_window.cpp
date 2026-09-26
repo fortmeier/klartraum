@@ -150,6 +150,29 @@ TEST(MultiViewportWindow, makeViewportProducesIndependentTargets) {
     EXPECT_EQ(right->getImageExtent(0).width, ext.width - halfW);
 }
 
+TEST(MultiViewportWindow, scaledViewportUsesIndependentRenderResolution) {
+    HeadlessFrontend frontend;
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vc = engine.getVulkanContext();
+    const auto displayExtent = vc.getSwapChainExtent();
+
+    auto target = engine.getWindow().makeViewport(
+        0, 0, displayExtent.width, displayExtent.height, 32, 24);
+    EXPECT_EQ(target->getImageExtent(0).width, 32u);
+    EXPECT_EQ(target->getImageExtent(0).height, 24u);
+
+    fillOffscreen(vc, target->getImage(0), {1.0f, 0.0f, 0.0f, 1.0f});
+    engine.getWindow().submitComposite(vc.getGraphicsQueue(), 0, {}, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vc.getGraphicsQueue());
+
+    const auto image = readSwapchainImage0(vc);
+    const auto corner = pixelAt(image, displayExtent,
+                                displayExtent.width - 1, displayExtent.height - 1);
+    EXPECT_GT(corner.r, 200);
+    EXPECT_LT(corner.g, 50);
+    EXPECT_LT(corner.b, 50);
+}
+
 TEST(MultiViewportWindow, compositePlacesViewportsInCorrectRegions) {
     HeadlessFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();

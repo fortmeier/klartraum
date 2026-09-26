@@ -31,6 +31,12 @@ public:
     // before the first composite submission.
     std::shared_ptr<ImageViewSrc> makeViewport(int x, int y, uint32_t width, uint32_t height);
 
+    // Create a viewport whose offscreen render resolution differs from its
+    // displayed size. The composite scales the source image to the destination.
+    std::shared_ptr<ImageViewSrc> makeViewport(int x, int y,
+                                               uint32_t displayWidth, uint32_t displayHeight,
+                                               uint32_t renderWidth, uint32_t renderHeight);
+
     bool hasViewports() const { return !viewports_.empty(); }
 
     // Submit the composite for swapchain image `imageIndex`, waiting on every
