@@ -290,6 +290,7 @@ add_executable(
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
   tests/test_tensorelement.cpp
+  tests/test_image_resample.cpp
 
   tests/test_onnx_network.cpp
   tests/test_onnx_conv.cpp
