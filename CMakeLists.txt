@@ -244,6 +244,7 @@ add_executable(
   tests/test_headless_frontend.cpp
   tests/test_multi_viewport_window.cpp
   tests/test_glfw_frontend.cpp
+  tests/test_window_resize.cpp
   tests/test_glyph_atlas.cpp
   tests/test_simple_text_renderer.cpp
   tests/test_text_rendering.cpp

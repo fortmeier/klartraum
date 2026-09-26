@@ -44,6 +44,20 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
     frontend->keyCallback(window, key, scancode, action, mods);
 }
 
+static void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+    auto frontend = static_cast<GlfwFrontend*>(glfwGetWindowUserPointer(window));
+    frontend->getKlartraumEngine().getVulkanContext().setFramebufferExtent(
+        { static_cast<uint32_t>(width), static_cast<uint32_t>(height) });
+    frontend->renderFromEventCallback();
+}
+
+static void window_refresh_callback(GLFWwindow* window)
+{
+    auto frontend = static_cast<GlfwFrontend*>(glfwGetWindowUserPointer(window));
+    frontend->renderFromEventCallback();
+}
+
 void GlfwFrontend::initialize() {
     // Initialize the glfw window
 
@@ -71,6 +85,8 @@ void GlfwFrontend::initialize() {
     // set GLFW event callbacks
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetWindowRefreshCallback(window, window_refresh_callback);
 
     // Two-step windowed init:
     // 1. Create the VkInstance so GLFW can create the surface against it.
@@ -82,6 +98,13 @@ void GlfwFrontend::initialize() {
         throw std::runtime_error("failed to create window surface!");
     }
 
+    // Initial framebuffer size, for surfaces that leave the swapchain size to
+    // the application.
+    int fbWidth, fbHeight;
+    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+    klartraumEngine->getVulkanContext().setFramebufferExtent(
+        { static_cast<uint32_t>(fbWidth), static_cast<uint32_t>(fbHeight) });
+
     // 3. Create device + real swapchain with VK_KHR_swapchain enabled.
     klartraumEngine->getVulkanContext().initializeDevice(surface);
 }
@@ -89,9 +112,22 @@ void GlfwFrontend::initialize() {
 
 void GlfwFrontend::loop(int maxFrames) {
 
+    // Resizing is offered only when the engine can rebuild its graphs for a
+    // new swapchain (see KlartraumEngine::setGraphBuilder).
+    glfwSetWindowAttrib(window, GLFW_RESIZABLE, klartraumEngine->isResizable() ? GLFW_TRUE : GLFW_FALSE);
+
     int frameCount = 0;
     while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
+        pollEvents();
+
+        // While minimized the framebuffer has zero size and nothing can be
+        // presented; block until the window is restored.
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        while ((fbWidth == 0 || fbHeight == 0) && !glfwWindowShouldClose(window)) {
+            glfwWaitEvents();
+            glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        }
 
         processGLFWEvents();
 
@@ -108,6 +144,8 @@ void GlfwFrontend::shutdown() {
     auto& vulkanContext = klartraumEngine->getVulkanContext();
 
     vulkanContext.stopRender();
+    // The graph builder may hold GPU resources (e.g. a captured model).
+    klartraumEngine->setGraphBuilder(nullptr);
     klartraumEngine->clearComputeGraphs();
 
     // Release all engine-owned GPU resource holders (camera UBO, interface camera)
@@ -284,6 +322,30 @@ constexpr EventKey::Key translateKey(int glfwKey) {
         case GLFW_KEY_RIGHT_SUPER: return EventKey::Key::RightSuper;
         case GLFW_KEY_MENU: return EventKey::Key::Menu;
         default: return EventKey::Key::Unknown;
+    }
+}
+
+void GlfwFrontend::pollEvents()
+{
+    glfwPollEvents();
+    if (callbackError) {
+        std::exception_ptr error = callbackError;
+        callbackError = nullptr;
+        std::rethrow_exception(error);
+    }
+}
+
+void GlfwFrontend::renderFromEventCallback()
+{
+    // Only a resizable engine can follow the new size; the check also keeps
+    // callbacks fired during window/device setup from rendering.
+    if (callbackError || !klartraumEngine || !klartraumEngine->isResizable()) {
+        return;
+    }
+    try {
+        klartraumEngine->step();
+    } catch (...) {
+        callbackError = std::current_exception();
     }
 }
 
