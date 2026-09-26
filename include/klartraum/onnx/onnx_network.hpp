@@ -82,6 +82,12 @@ public:
     std::vector<float> getFloatInitializerData(const std::string& name) const;
     ComputeGraphElementPtr getOutputElement(const std::string& name) const;
 
+    // Replace a declared ONNX graph input with a tensor produced elsewhere in
+    // the compute graph. When outputSlot is specified, the producer remains a
+    // graph dependency while that output tensor is bound to the ONNX operation.
+    void setInputTensor(const std::string& name, ComputeGraphElementPtr producer,
+                        int outputSlot = -1);
+
 private:
     // Load ONNX model from file
     bool loadModel(const std::string& modelPath);

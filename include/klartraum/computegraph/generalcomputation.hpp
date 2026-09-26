@@ -104,6 +104,19 @@ public:
         this->dynamicGroupDispatchParams = params;
     }
 
+    void setImageLayoutTransition(int inputIndex,
+                                  VkImageLayout oldLayout,
+                                  VkImageLayout newLayout,
+                                  VkPipelineStageFlags srcStageMask,
+                                  VkPipelineStageFlags dstStageMask,
+                                  VkAccessFlags srcAccessMask,
+                                  VkAccessFlags dstAccessMask) {
+        imageLayoutTransitions[inputIndex] = {
+            oldLayout, newLayout, srcStageMask, dstStageMask,
+            srcAccessMask, dstAccessMask,
+        };
+    }
+
     void setPushConstants(const std::vector<P>& pushConstants) {
         if constexpr (!std::is_void<P>::value) {
             this->pushConstants = pushConstants;
@@ -120,10 +133,15 @@ public:
             ComputeGraphElementPtr input = getInputElement(i);
             ImageViewSrc* imageElement = dynamic_cast<ImageViewSrc*>(input.get());
             if (imageElement) {
+                ImageLayoutTransition transition{};
+                const auto configured = imageLayoutTransitions.find(i);
+                if (configured != imageLayoutTransitions.end()) {
+                    transition = configured->second;
+                }
                 VkImageMemoryBarrier imageBarrier{};
                 imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                imageBarrier.oldLayout = transition.oldLayout;
+                imageBarrier.newLayout = transition.newLayout;
                 imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 imageBarrier.image = imageElement->getImage(pathId);
@@ -132,13 +150,13 @@ public:
                 imageBarrier.subresourceRange.levelCount = 1;
                 imageBarrier.subresourceRange.baseArrayLayer = 0;
                 imageBarrier.subresourceRange.layerCount = 1;
-                imageBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-                imageBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                imageBarrier.srcAccessMask = transition.srcAccessMask;
+                imageBarrier.dstAccessMask = transition.dstAccessMask;
 
                 vkCmdPipelineBarrier(
                     commandBuffer,
-                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    transition.srcStageMask,
+                    transition.dstStageMask,
                     0,
                     0, nullptr,
                     0, nullptr,
@@ -192,6 +210,15 @@ public:
     }
 
 private:
+    struct ImageLayoutTransition {
+        VkImageLayout oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        VkAccessFlags srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        VkAccessFlags dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    };
+
     VkDescriptorPool descriptorPool;
     std::vector<VkDescriptorSet> computeDescriptorSets;
     VkDescriptorSetLayout computeDescriptorSetLayout;
@@ -219,6 +246,7 @@ private:
 
     std::vector<std::shared_ptr<BufferElementInterface>> otherInputs;
     std::vector<bool> otherInputsSetToZero; // whether to record the scratch buffers to zero
+    std::map<int, ImageLayoutTransition> imageLayoutTransitions;
 
     static VkDescriptorType getDescriptorType(const ComputeGraphElementPtr& input) {
         if (dynamic_cast<ImageViewSrc*>(input.get())) {
@@ -520,4 +548,4 @@ private:
 };
 
 } // namespace klartraum
-#endif // KLARTRAUM_GENERALCOMPUTATION_HPP 
+#endif // KLARTRAUM_GENERALCOMPUTATION_HPP
