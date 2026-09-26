@@ -14,8 +14,11 @@
  *   resized; the rebuilt graph sees the new swapchain extent, which matches
  *   the window's framebuffer size, and further frames render without error
  * - rasterBackendFollowsWindowResize: same as above for the raster backend
- * - consecutiveResizesRebuildOnce: two resizes between frames lead to a
- *   single rebuild at the final size
+ * - resizeRendersFromEventCallback: processing the resize event alone (no
+ *   step() call) already rebuilds for and renders at the new size, because
+ *   the OS may not return from event processing during an interactive drag
+ * - consecutiveResizesEndAtFinalSize: after two resizes in a row the most
+ *   recent rebuild and the swapchain match the final framebuffer size
  **/
 #include <gtest/gtest.h>
 
@@ -43,20 +46,21 @@ VkExtent2D framebufferSize(GLFWwindow* window) {
 
 // Renders `frames` frames the way GlfwFrontend::loop() does, but without
 // closing the window afterwards so the test can continue.
-void renderFrames(KlartraumEngine& engine, int frames) {
+void renderFrames(GlfwFrontend& frontend, int frames) {
     for (int i = 0; i < frames; ++i) {
-        glfwPollEvents();
-        engine.step();
+        frontend.pollEvents();
+        frontend.getKlartraumEngine().step();
     }
 }
 
 // Resizes the window (in screen coordinates) and waits until GLFW reports
 // the new framebuffer size, which is what triggers the swapchain rebuild.
-void resizeWindow(GLFWwindow* window, int width, int height) {
+void resizeWindow(GlfwFrontend& frontend, int width, int height) {
+    GLFWwindow* window = frontend.getGlfwWindow();
     VkExtent2D before = framebufferSize(window);
     glfwSetWindowSize(window, width, height);
     for (int i = 0; i < 100; ++i) {
-        glfwPollEvents();
+        frontend.pollEvents();
         VkExtent2D now = framebufferSize(window);
         if (now.width != before.width || now.height != before.height) {
             return;
@@ -120,16 +124,16 @@ void expectBackendFollowsResize(GsplatBackend backend) {
     GLFWwindow* window = frontend.getGlfwWindow();
 
     GsplatResizeScene scene(engine, backend);
-    renderFrames(engine, 3);
+    renderFrames(frontend, 3);
     ASSERT_EQ(scene.builtExtents.size(), 1u);
 
     int w = 0, h = 0;
     glfwGetWindowSize(window, &w, &h);
-    resizeWindow(window, w + 160, h + 96);
+    resizeWindow(frontend, w + 160, h + 96);
     VkExtent2D fb = framebufferSize(window);
     ASSERT_NE(fb.width, scene.builtExtents[0].width) << "window did not resize";
 
-    renderFrames(engine, 5);
+    renderFrames(frontend, 5);
 
     ASSERT_EQ(scene.builtExtents.size(), 2u) << "graph was not rebuilt after the resize";
     EXPECT_EQ(scene.builtExtents[1].width, fb.width);
@@ -186,7 +190,7 @@ TEST(WindowResize, graphBuilderRunsOnceWhenSet) {
     EXPECT_EQ(calls, 1);
     EXPECT_TRUE(engine.isResizable());
 
-    renderFrames(engine, 3);
+    renderFrames(frontend, 3);
     EXPECT_EQ(calls, 1);
 }
 
@@ -198,7 +202,7 @@ TEST(WindowResize, rasterBackendFollowsWindowResize) {
     expectBackendFollowsResize(GsplatBackend::Raster);
 }
 
-TEST(WindowResize, consecutiveResizesRebuildOnce) {
+TEST(WindowResize, resizeRendersFromEventCallback) {
     if (!std::filesystem::exists(kSpzPath)) {
         GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
     }
@@ -207,19 +211,44 @@ TEST(WindowResize, consecutiveResizesRebuildOnce) {
     GLFWwindow* window = frontend.getGlfwWindow();
 
     GsplatResizeScene scene(engine, GsplatBackend::Raster);
-    renderFrames(engine, 2);
+    renderFrames(frontend, 2);
+    ASSERT_EQ(scene.builtExtents.size(), 1u);
 
     int w = 0, h = 0;
     glfwGetWindowSize(window, &w, &h);
-    resizeWindow(window, w + 64, h + 64);
-    resizeWindow(window, w + 128, h + 32);
+    // Only event processing from here on, no engine.step().
+    resizeWindow(frontend, w + 96, h + 48);
     VkExtent2D fb = framebufferSize(window);
 
-    // One step performs the rebuild; the rest render normally.
-    engine.step();
-    renderFrames(engine, 3);
-
-    ASSERT_EQ(scene.builtExtents.size(), 2u);
+    ASSERT_EQ(scene.builtExtents.size(), 2u) << "no frame was rendered while processing the resize";
     EXPECT_EQ(scene.builtExtents[1].width, fb.width);
     EXPECT_EQ(scene.builtExtents[1].height, fb.height);
+    EXPECT_FALSE(engine.getVulkanContext().isSwapChainOutOfDate());
+}
+
+TEST(WindowResize, consecutiveResizesEndAtFinalSize) {
+    if (!std::filesystem::exists(kSpzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    }
+    GlfwFrontend frontend;
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vc = engine.getVulkanContext();
+    GLFWwindow* window = frontend.getGlfwWindow();
+
+    GsplatResizeScene scene(engine, GsplatBackend::Raster);
+    renderFrames(frontend, 2);
+
+    int w = 0, h = 0;
+    glfwGetWindowSize(window, &w, &h);
+    resizeWindow(frontend, w + 64, h + 64);
+    resizeWindow(frontend, w + 128, h + 32);
+    VkExtent2D fb = framebufferSize(window);
+
+    renderFrames(frontend, 3);
+
+    ASSERT_GE(scene.builtExtents.size(), 2u);
+    EXPECT_EQ(scene.builtExtents.back().width, fb.width);
+    EXPECT_EQ(scene.builtExtents.back().height, fb.height);
+    EXPECT_EQ(vc.getSwapChainExtent().width, fb.width);
+    EXPECT_EQ(vc.getSwapChainExtent().height, fb.height);
 }
