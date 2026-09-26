@@ -25,7 +25,14 @@ public:
 
     virtual void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) = 0;
 
+    // The number of paths of the graph the component is recorded into; per-path
+    // resources are sized by it. RenderPass sets it before initialize(). A
+    // graph may have fewer paths than there are swapchain images, e.g. a
+    // single-path graph rendering into an OffscreenTarget.
+    void setNumberPaths(uint32_t numberPaths) { this->numberPaths = numberPaths; }
+
 protected:
+    uint32_t numberPaths = 0;
     VulkanContext* vulkanContext = nullptr;
     VkRenderPass* renderPass = nullptr;
     std::shared_ptr<CameraUboType> cameraUBO;
