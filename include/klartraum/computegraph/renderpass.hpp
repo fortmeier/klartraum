@@ -135,6 +135,7 @@ public:
 
         auto cameraUBO = getCameraUBO();
         for(auto& drawComponent : drawComponents) {
+            drawComponent->setNumberPaths(numberPaths);
             drawComponent->initialize(vulkanContext, renderPass, cameraUBO);
         }
     };
