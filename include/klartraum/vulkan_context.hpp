@@ -107,7 +107,12 @@ private:
 
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
-    void createSwapChain();
+    void createSwapChain(VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE);
+
+    void destroySyncObjects();
+
+    bool swapChainOutOfDate = false;
+    VkExtent2D framebufferExtent{0, 0};
 
     void createSwapImagesHeadless();
 
@@ -211,6 +216,29 @@ public:
     std::tuple<uint32_t, VkFence&> beginRender();
     void endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore);
     void stopRender();
+
+    // Frame start that tolerates an outdated swapchain. Returns false (without
+    // consuming the in-flight fence) when the swapchain no longer matches the
+    // surface; the caller must skip the frame and call recreateSwapChain().
+    bool tryBeginRender(uint32_t& imageIndex, VkFence*& fence);
+
+    // True once acquire or present reported VK_ERROR_OUT_OF_DATE_KHR or
+    // VK_SUBOPTIMAL_KHR, or after setFramebufferExtent() changed the size.
+    bool isSwapChainOutOfDate() const { return swapChainOutOfDate; }
+
+    // Size in pixels of the window's framebuffer. Used as the swapchain extent
+    // on platforms where the surface leaves the size to the application
+    // (currentExtent == 0xFFFFFFFF, e.g. Wayland). Marks the swapchain as
+    // outdated when the size changes.
+    void setFramebufferExtent(VkExtent2D extent);
+
+    // Waits for the device to be idle, then rebuilds the swapchain, its image
+    // views and the frame sync objects for the current surface size. All
+    // handles previously returned by getImageView(), getSwapChainImage() and
+    // imageAvailableSemaphoresPerImage become invalid, so anything recorded
+    // against them (compute graphs) must be rebuilt. Returns false and keeps
+    // the swapchain outdated while the surface has zero size (minimized).
+    bool recreateSwapChain();
 
     void createCommandPool();
     VkCommandPool getCommandPool() const { return commandPool; }

@@ -17,6 +17,13 @@
  *   covariance/SH math (guide §5C, validated qualitatively in
  *   RASTER_BACKEND_STATUS.md item 4) reproduces the compute-tile backend's
  *   reference rendering quantitatively, not just "looks similar"
+ * - backendsAgreeAtBinBordersForUnalignedSize: renders both backends into an
+ *   offscreen target whose size is not a multiple of the compute backend's
+ *   bin/tile granularity (509x381) and checks that the backends differ no
+ *   more in narrow bands around the compute backend's 4x4 bin borders and
+ *   along the right/bottom image edges than they do on average, i.e. every
+ *   pixel is shaded with the Gaussians of the bin it lies in (no seams, no
+ *   unwritten strips)
  **/
 #include <gtest/gtest.h>
 
@@ -31,6 +38,7 @@
 #include "klartraum/vulkan_gaussian_splatting.hpp"
 #include "klartraum/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
+#include "klartraum/offscreen_target.hpp"
 
 using namespace klartraum;
 
@@ -122,6 +130,81 @@ std::vector<uint8_t> renderRaccoonSceneWithBackend(GsplatBackend backend) {
     }
 
     return readSwapchainImageToHost(vc);
+}
+
+// Renders the raccoon scene through `backend` into an OffscreenTarget of the
+// given extent and reads image 0 back as tightly-packed BGRA bytes.
+std::vector<uint8_t> renderRaccoonSceneIntoTarget(GsplatBackend backend, VkExtent2D extent) {
+    HeadlessFrontend frontend;
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vc = engine.getVulkanContext();
+
+    uint32_t numImages = vc.getNumberOfSwapChainImages();
+    auto target = std::make_shared<OffscreenTarget>(vc, extent, numImages);
+    // beginRender() signals the per-image semaphore every frame; the graph
+    // has to consume it just as it does for a swapchain-backed ImageViewSrc.
+    for (uint32_t i = 0; i < numImages; ++i)
+        target->setWaitFor(i, vc.imageAvailableSemaphoresPerImage[i]);
+
+    auto cameraUBO = std::make_shared<CameraUboType>();
+    InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+    orbit.initialize(vc);
+    orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
+    orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+    orbit.setProjectionAspectRatio(extent.width / static_cast<float>(extent.height));
+    orbit.update(cameraUBO->ubo);
+
+    auto model = std::make_shared<GaussianDataStandard>(vc, kSpzPath);
+    auto splatting = createGaussianSplatting(vc, backend, target, cameraUBO, model);
+    engine.add(splatting);
+    for (uint32_t i = 0; i < numImages; ++i)
+        cameraUBO->update(i);
+    for (int f = 0; f < 4; ++f) {
+        engine.step();
+        vkQueueWaitIdle(vc.getGraphicsQueue());
+    }
+
+    const VkDeviceSize bytes = VkDeviceSize(extent.width) * extent.height * 4;
+    VkBuffer buf; VkDeviceMemory mem;
+    vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    buf, mem);
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = vc.getCommandPool(); ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {extent.width, extent.height, 1};
+    // Both backends leave an OffscreenTarget in its final-layout override.
+    vkCmdCopyImageToBuffer(cmd, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           buf, 1, &region);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vc.getGraphicsQueue());
+    vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
+
+    void* data;
+    vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
+                                static_cast<const uint8_t*>(data) + bytes);
+    vkUnmapMemory(vc.getDevice(), mem);
+    vkFreeMemory(vc.getDevice(), mem, nullptr);
+    vkDestroyBuffer(vc.getDevice(), buf, nullptr);
+
+    engine.clearComputeGraphs();
+    splatting.reset();
+    target.reset();
+    return result;
 }
 
 void expectMatchesRequestedBackendType(std::shared_ptr<ComputeGraphElement> splatting, GsplatBackend backend) {
@@ -220,4 +303,55 @@ TEST(GaussianSplattingFactory, bothBackendsAgreeOnRaccoonScene) {
     // the blending-order noise.
     EXPECT_LT(meanAbsDiff, 20.0) << "Backends disagree more than expected on average — "
                                     "EWA covariance/SH math may have diverged";
+}
+
+TEST(GaussianSplattingFactory, backendsAgreeAtBinBordersForUnalignedSize) {
+    if (!std::filesystem::exists(kSpzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    }
+
+    // Neither dimension is a multiple of 32 (4x4 bins of 8x8 tiles).
+    const VkExtent2D extent{509, 381};
+    auto computePixels = renderRaccoonSceneIntoTarget(GsplatBackend::Compute, extent);
+    auto rasterPixels  = renderRaccoonSceneIntoTarget(GsplatBackend::Raster, extent);
+    ASSERT_EQ(computePixels.size(), rasterPixels.size());
+
+    // A pixel is "at a border" when it lies within 3 px of one of the
+    // compute backend's interior bin borders (k * size / 4, k = 1..3) or
+    // within 8 px of the right/bottom image edge.
+    auto nearBorder = [](uint32_t p, uint32_t size) {
+        for (uint32_t k = 1; k < 4; ++k) {
+            float border = k * size / 4.0f;
+            if (std::abs(float(p) - border) <= 3.0f) return true;
+        }
+        return p + 8 >= size;
+    };
+
+    double borderSum = 0.0, otherSum = 0.0;
+    uint64_t borderCount = 0, otherCount = 0;
+    for (uint32_t y = 0; y < extent.height; ++y) {
+        for (uint32_t x = 0; x < extent.width; ++x) {
+            bool border = nearBorder(x, extent.width) || nearBorder(y, extent.height);
+            size_t base = (size_t(y) * extent.width + x) * 4;
+            for (int c = 0; c < 3; ++c) {  // colour channels only
+                double diff = std::abs(int(computePixels[base + c]) - int(rasterPixels[base + c]));
+                if (border) { borderSum += diff; ++borderCount; }
+                else        { otherSum  += diff; ++otherCount;  }
+            }
+        }
+    }
+    double borderMean = borderSum / double(borderCount);
+    double otherMean  = otherSum / double(otherCount);
+
+    std::cout << "\n  backendsAgreeAtBinBordersForUnalignedSize: borderMeanAbsDiff=" << borderMean
+              << " otherMeanAbsDiff=" << otherMean << " (per colour byte, 0-255)\n";
+
+    uint8_t maxVal = *std::max_element(rasterPixels.begin(), rasterPixels.end());
+    ASSERT_GT(maxVal, uint8_t(10)) << "raster reference is all-black";
+
+    // Away from the borders the backends differ only by blending-order noise
+    // (see bothBackendsAgreeOnRaccoonScene). Seams or unwritten strips at the
+    // bin borders would make the border bands differ far more than that.
+    EXPECT_LT(borderMean, otherMean * 1.5 + 2.0)
+        << "compute backend deviates at its bin borders — seams or unwritten pixels";
 }

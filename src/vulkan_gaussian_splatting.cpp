@@ -251,8 +251,12 @@ void VulkanGaussianSplatting::initialize(
 
     const uint32_t tbX  = config.splatTileX;
     const uint32_t tbY  = config.splatTileY;
-    const uint32_t gpbX = uint32_t((W / tbX) / gridSize);
-    const uint32_t gpbY = uint32_t((H / tbY) / gridSize);
+    // A bin spans at most ceil(W / gridSize) pixels (the shader's bin ranges
+    // start at ceil(k * W / gridSize)); dispatch enough tiles to cover that.
+    const uint32_t binPixelsX = static_cast<uint32_t>(std::ceil(W / gridSize));
+    const uint32_t binPixelsY = static_cast<uint32_t>(std::ceil(H / gridSize));
+    const uint32_t gpbX = (binPixelsX + tbX - 1) / tbX;
+    const uint32_t gpbY = (binPixelsY + tbY - 1) / tbY;
     splat->setGroupCountX(gpbX);
     splat->setGroupCountY(gpbY);
     splat->setGroupCountZ(1);
