@@ -29,6 +29,9 @@
  *   renders into a one-image OffscreenTarget, runs it once with
  *   submitAndWait() and checks the image is not black, i.e. the backends size
  *   their per-path resources by the graph's paths, not the swapchain
+ * - uncompiledBackendsCanBeDestroyed: each backend is created and released
+ *   without ever being compiled into a graph (as when building the rest of a
+ *   graph fails), which must not touch Vulkan objects that were never created
  **/
 #include <gtest/gtest.h>
 
@@ -405,5 +408,21 @@ TEST(GaussianSplattingFactory, bothBackendsRenderInSinglePathGraph) {
         }
         splatting.reset();
         target.reset();
+    }
+}
+
+TEST(GaussianSplattingFactory, uncompiledBackendsCanBeDestroyed) {
+    if (!std::filesystem::exists(kSpzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    }
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto model = std::make_shared<GaussianDataStandard>(vc, kSpzPath);
+    for (GsplatBackend backend : {GsplatBackend::Compute, GsplatBackend::Raster}) {
+        SCOPED_TRACE(backend == GsplatBackend::Raster ? "raster" : "compute");
+        auto target = std::make_shared<OffscreenTarget>(vc, VkExtent2D{32, 32}, 1u);
+        auto cameraUBO = std::make_shared<CameraUboType>();
+        auto splatting = createGaussianSplatting(vc, backend, target, cameraUBO, model);
+        splatting.reset();
     }
 }
