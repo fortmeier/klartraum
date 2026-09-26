@@ -13,6 +13,10 @@ GaussianSplatMeshRasterizer::GaussianSplatMeshRasterizer(
 }
 
 GaussianSplatMeshRasterizer::~GaussianSplatMeshRasterizer() {
+    // Nothing was created if initialize() never ran.
+    if (vulkanContext == nullptr) {
+        return;
+    }
     auto& device = vulkanContext->getDevice();
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);

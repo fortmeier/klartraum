@@ -19,6 +19,10 @@ public:
     };
 
     ~RenderPass() {
+        // Nothing was created if the pass was never compiled into a graph.
+        if (vulkanContext == nullptr) {
+            return;
+        }
         auto& device = vulkanContext->getDevice();
         for (auto framebuffer : framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
