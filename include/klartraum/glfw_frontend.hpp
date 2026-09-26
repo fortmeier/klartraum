@@ -18,7 +18,7 @@ class GlfwFrontend {
  */
 public:
     GlfwFrontend();
-    ~GlfwFrontend();
+    virtual ~GlfwFrontend();
 
 
     // Run the render loop.  If maxFrames > 0 the window closes automatically
@@ -54,6 +54,16 @@ public:
     // glyphs' native pixel size (5x7); (r, g, b, a) tints the text.
     void renderText(const std::string& text, float x, float y, float scale = 1.0f, float r = 1.0f, float g = 1.0f,
                     float b = 1.0f, float a = 1.0f);
+
+protected:
+    // Called right before each frame is rendered, both from loop() and from
+    // window event callbacks (see pollEvents()).
+    virtual void beforeStep() {}
+
+    // While these return true, mouse (buttons, scroll) or keyboard input is
+    // not forwarded to the engine's event queue, e.g. because a GUI uses it.
+    virtual bool wantCaptureMouse() const { return false; }
+    virtual bool wantCaptureKeyboard() const { return false; }
 
 private:
     void initialize();
