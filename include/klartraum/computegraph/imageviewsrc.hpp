@@ -139,6 +139,14 @@ public:
     ImageViewSrcTransition(VkImageLayout oldLayout, VkImageLayout newLayout) 
         : oldLayout(oldLayout), newLayout(newLayout) {}
 
+    // With explicit synchronization scopes, e.g. for an image a raster pass
+    // wrote as a color attachment.
+    ImageViewSrcTransition(VkImageLayout oldLayout, VkImageLayout newLayout,
+                           VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                           VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask)
+        : oldLayout(oldLayout), newLayout(newLayout), srcStageMask(srcStageMask), dstStageMask(dstStageMask),
+          srcAccessMask(srcAccessMask), dstAccessMask(dstAccessMask) {}
+
     // create also default constructor
     ImageViewSrcTransition() = default;
 
@@ -173,13 +181,13 @@ public:
         barrierBack.subresourceRange.baseArrayLayer = 0;
         barrierBack.subresourceRange.layerCount = 1;
 
-        barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        barrierBack.srcAccessMask = srcAccessMask;
+        barrierBack.dstAccessMask = dstAccessMask;
 
         vkCmdPipelineBarrier(
             commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            srcStageMask,
+            dstStageMask,
             0,
             0, nullptr,
             0, nullptr,
@@ -189,6 +197,10 @@ public:
 private:
     VkImageLayout oldLayout = VK_IMAGE_LAYOUT_GENERAL;
     VkImageLayout newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    VkAccessFlags srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    VkAccessFlags dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
 
 };
 
