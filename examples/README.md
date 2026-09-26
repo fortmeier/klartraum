@@ -32,13 +32,16 @@ A basic example that demonstrates:
 ### ImGui Gaussian Splatting Example
 **File**: `imgui_gaussian_splatting_example.cpp`
 
-Renders a Gaussian splat scene with the raster backend and a Dear ImGui user
-interface on top, using `ImGuiFrontend`:
+Renders a Gaussian splat scene with a Dear ImGui user interface on top, using
+`ImGuiFrontend`. The rendering backend (raster or compute) can be switched at
+runtime from a dropdown:
 - Statistics: frame rate, resolution, number of Gaussians
 - Camera: azimuth, elevation, distance and target sliders (kept in sync with
   mouse orbiting), reset button
-- Rendering: SH degree, alpha-cull threshold and the mesh-shader path; "Apply"
-  rebuilds the raster pipeline with the new settings
+- Rendering: backend dropdown (raster/compute, switches immediately) and the
+  settings the selected backend uses — raster: SH degree, alpha-cull threshold,
+  mesh-shader path; compute: spread multiplier. "Apply" rebuilds the pipeline
+  with the new settings
 - Optional ImGui demo window
 
 Mouse input over a GUI window goes to the GUI, not the camera. The window is
@@ -49,6 +52,7 @@ resizable.
 # From project root (shaders are loaded relative to it)
 ./build/examples/imgui_gaussian_splatting_example
 ./build/examples/imgui_gaussian_splatting_example --spz path/to/scene.spz
+./build/examples/imgui_gaussian_splatting_example --backend compute   # start on the compute backend
 ./build/examples/imgui_gaussian_splatting_example --frames 120   # close after 120 frames
 ```
 

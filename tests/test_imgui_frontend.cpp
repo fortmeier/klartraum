@@ -12,6 +12,10 @@
  *   idle and re-sets the graph builder mid-loop (as a GUI "apply settings"
  *   button does); the scene is rebuilt once and the following frames render
  *   the new graphs with the GUI without a validation error
+ * - switchesBackendFromGuiCallback: the GUI callback switches the
+ *   Gaussian-splatting backend raster -> compute -> raster mid-loop (as the
+ *   example's backend dropdown does); each switch rebuilds the scene with the
+ *   selected backend and frames keep rendering without a validation error
  **/
 #include <gtest/gtest.h>
 
@@ -180,4 +184,46 @@ TEST(ImGuiFrontend, rebuildsSceneFromGuiCallback) {
 
     EXPECT_EQ(builds, 2);
     EXPECT_EQ(guiCalls, 8);
+}
+
+TEST(ImGuiFrontend, switchesBackendFromGuiCallback) {
+    if (!std::filesystem::exists(kSpzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    }
+    ImGuiFrontend frontend;
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vc = engine.getVulkanContext();
+
+    auto model = std::make_shared<GaussianDataStandard>(vc, kSpzPath);
+    auto camera = std::make_shared<InterfaceCameraOrbit>(InterfaceCameraOrbit::UpDirection::Y);
+    camera->setDistance(1.0f);
+    engine.setInterfaceCamera(camera);
+
+    GsplatBackend backend = GsplatBackend::Raster;
+    std::vector<GsplatBackend> builtBackends;
+    auto builder = [&backend, &builtBackends, model](KlartraumEngine& e) {
+        builtBackends.push_back(backend);
+        auto& ctx = e.getVulkanContext();
+        auto cameraUBO = std::make_shared<CameraUboType>();
+        e.add(createGaussianSplatting(ctx, backend, makeSwapChainImageViewSrc(ctx), cameraUBO, model));
+        e.setCameraUBO(cameraUBO);
+    };
+    engine.setGraphBuilder(builder);
+
+    int guiCalls = 0;
+    frontend.setGui([&] {
+        ++guiCalls;
+        buildTestWindow();
+        if (guiCalls == 3 || guiCalls == 6) {
+            backend = backend == GsplatBackend::Raster ? GsplatBackend::Compute : GsplatBackend::Raster;
+            vkDeviceWaitIdle(vc.getDevice());
+            engine.setGraphBuilder(builder);
+        }
+    });
+
+    frontend.loop(9);
+
+    const std::vector<GsplatBackend> expected = {GsplatBackend::Raster, GsplatBackend::Compute, GsplatBackend::Raster};
+    EXPECT_EQ(builtBackends, expected);
+    EXPECT_EQ(guiCalls, 9);
 }
