@@ -42,14 +42,25 @@ struct GaussBatch {
 };
 shared GaussBatch sharedGauss[WORKGROUP_SIZE];
 
-void main() {
-    ivec2 binOffset;
-    binOffset.x = int(pushConstants.binIndexX * gl_WorkGroupSize.x * gl_NumWorkGroups.x);
-    binOffset.y = int(pushConstants.binIndexY * gl_WorkGroupSize.y * gl_NumWorkGroups.y);
+// Number of threads that no longer need further batches, double-buffered by
+// batch parity: one slot is counted and read while the other is reset.
+shared uint sharedDoneCount[2];
 
-    const ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy) + binOffset;
-    if (pixelCoord.x >= int(pushConstants.screenWidth) ||
-        pixelCoord.y >= int(pushConstants.screenHeight)) return;
+void main() {
+    // The bin covers the pixels [binBegin, binEnd), i.e. exactly the pixels
+    // inside the rectangle [k * cell, (k + 1) * cell] that the binning passes
+    // test Gaussians against, so every pixel is shaded with its own bin's list.
+    const vec2 cell = vec2(pushConstants.screenWidth, pushConstants.screenHeight)
+                    / float(pushConstants.gridSize);
+    const uvec2 binIndex = uvec2(pushConstants.binIndexX, pushConstants.binIndexY);
+    const ivec2 binBegin = ivec2(ceil(vec2(binIndex) * cell));
+    const ivec2 binEnd   = ivec2(ceil(vec2(binIndex + 1u) * cell));
+
+    const ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy) + binBegin;
+    // Threads outside the bin still load their share of every batch into
+    // shared memory (the other threads read those slots); they only skip
+    // shading and the image write.
+    const bool insideBin = all(lessThan(pixelCoord, binEnd));
     const vec2 pixelCoordF = vec2(pixelCoord);
 
     const StartAndEnd range = startAndEnd[
@@ -62,14 +73,30 @@ void main() {
     vec4  finalColor    = vec4(0.0, 0.0, 0.0, 1.0);
     float accum_opacity = 1.0;
 
-    for (uint i = start; i < preend; i += stepsize) {
+    // A pixel stops accumulating once it is (nearly) opaque, but keeps loading
+    // its slot of each batch until the whole workgroup is done: the loop and
+    // its barriers must stay in uniform control flow.
+    bool accumulating = insideBin;
+    if (gl_LocalInvocationIndex == 0u) {
+        sharedDoneCount[0] = 0u;
+        sharedDoneCount[1] = 0u;
+    }
+
+    uint batch = 0u;
+    for (uint i = start; i < preend; i += stepsize, batch++) {
         uint li = i + gl_LocalInvocationIndex;
         sharedGauss[gl_LocalInvocationIndex].pos2D      = sortedPos2D[li];
         sharedGauss[gl_LocalInvocationIndex].covInv     = sortedCovInv[li];
         sharedGauss[gl_LocalInvocationIndex].colorAlpha = sortedColorAlpha[li];
         barrier();
 
-        for (uint j = 0u; j < stepsize; j++) {
+        // The other slot was last read before the barrier above and is next
+        // counted after the next batch's first barrier.
+        if (gl_LocalInvocationIndex == 0u) {
+            sharedDoneCount[(batch + 1u) & 1u] = 0u;
+        }
+
+        for (uint j = 0u; accumulating && j < stepsize; j++) {
             vec2 mu   = sharedGauss[j].pos2D;
             vec4 ci   = sharedGauss[j].covInv;
             vec4 rgba = sharedGauss[j].colorAlpha;
@@ -84,13 +111,15 @@ void main() {
             finalColor   += vec4(rgba.rgb * (a * accum_opacity), 0.0);
             accum_opacity *= (1.0 - a);
         }
+        if (accum_opacity <= 1.0 - 0.9999) accumulating = false;
+        if (!accumulating) atomicAdd(sharedDoneCount[batch & 1u], 1u);
         barrier();
 
-        if (accum_opacity <= 1.0 - 0.9999) break;
+        if (sharedDoneCount[batch & 1u] == uint(WORKGROUP_SIZE)) break;
     }
 
     // Tail loop for the remainder (< stepsize elements)
-    for (uint i = preend; i < end; i++) {
+    for (uint i = preend; accumulating && i < end; i++) {
         vec2 mu   = sortedPos2D[i];
         vec4 ci   = sortedCovInv[i];
         vec4 rgba = sortedColorAlpha[i];
@@ -110,5 +139,7 @@ void main() {
     // Coverage (output alpha) is 1 - T — do not rescale rgb by it again.
     vec4 outputColor = vec4(clamp(finalColor.rgb, vec3(0.0), vec3(1.0)),
                             clamp(1.0 - accum_opacity, 0.0, 1.0));
-    imageStore(outputImage, pixelCoord, outputColor);
+    if (insideBin) {
+        imageStore(outputImage, pixelCoord, outputColor);
+    }
 }
