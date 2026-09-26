@@ -131,6 +131,7 @@ void GlfwFrontend::loop(int maxFrames) {
 
         processGLFWEvents();
 
+        beforeStep();
         klartraumEngine->step();
 
         if (maxFrames > 0 && ++frameCount >= maxFrames)
@@ -180,7 +181,9 @@ void GlfwFrontend::processGLFWEvents() {
         old_mouse_y = new_mouse_y;
     }
 
-    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !leftButtonDown) {
+    // A press on the GUI never starts a camera drag; a release always ends one.
+    const bool mouseCaptured = wantCaptureMouse();
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !leftButtonDown && !mouseCaptured) {
         auto event = std::make_unique<EventMouseButton>(EventMouseButton::Button::Left, EventMouseButton::Action::Press);
         eventQueue.push(std::move(event));
         leftButtonDown = true;
@@ -191,6 +194,10 @@ void GlfwFrontend::processGLFWEvents() {
         leftButtonDown = false;
     }
 
+    if (mouseCaptured) {
+        scrollXAccum = 0.0;
+        scrollYAccum = 0.0;
+    }
     if (scrollXAccum != 0.0 || scrollYAccum != 0.0) {
         auto event = std::make_unique<EventMouseScroll>(scrollXAccum, scrollYAccum);
         eventQueue.push(std::move(event));
@@ -343,6 +350,7 @@ void GlfwFrontend::renderFromEventCallback()
         return;
     }
     try {
+        beforeStep();
         klartraumEngine->step();
     } catch (...) {
         callbackError = std::current_exception();
@@ -351,6 +359,9 @@ void GlfwFrontend::renderFromEventCallback()
 
 void GlfwFrontend::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
+    if (wantCaptureKeyboard()) {
+        return;
+    }
     auto& eventQueue = klartraumEngine->getEventQueue();
     EventKey::Key klartraumKey = translateKey(key);
 
