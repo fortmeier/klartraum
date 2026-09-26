@@ -91,6 +91,13 @@ public:
     // compute graphs.  Results accumulate across frames and are averaged.
     void enableProfiling() { profilingEnabled_ = true; }
 
+    // Stops the per-frame timestamp readback, which makes each step()
+    // synchronous, right away. Compute graphs added afterwards no longer
+    // record timestamps.
+    void disableProfiling() { profilingEnabled_ = false; }
+
+    bool isProfilingEnabled() const { return profilingEnabled_; }
+
     // Call before add() to enable VK_KHR_performance_query counter profiling.
     // nameFilter: sub-strings matched against counter name/description; empty = all counters.
     void enablePerformanceProfiling(std::vector<std::string> nameFilter = {}) {

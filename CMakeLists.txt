@@ -6,6 +6,16 @@ project(klartraum)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+# Tests and examples are only built by default when klartraum is the top-level
+# project, not when it is consumed via add_subdirectory()/FetchContent.
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(KLARTRAUM_IS_TOP_LEVEL ON)
+else()
+    set(KLARTRAUM_IS_TOP_LEVEL OFF)
+endif()
+option(KLARTRAUM_BUILD_TESTS "Build the klartraum unit tests" ${KLARTRAUM_IS_TOP_LEVEL})
+option(KLARTRAUM_BUILD_EXAMPLES "Build the klartraum examples" ${KLARTRAUM_IS_TOP_LEVEL})
+
 # macOS and Apple Silicon (M4) support
 if(APPLE)
     message(STATUS "Building for macOS")
@@ -66,7 +76,9 @@ set(SPZ_SRC
 )
 
 # Add examples
-add_subdirectory(examples)
+if(KLARTRAUM_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
 
 
 
@@ -206,6 +218,7 @@ target_include_directories(onnx_proto PUBLIC ${ONNX_GENERATED_DIR})
 
 
 
+if(KLARTRAUM_BUILD_TESTS)
 # Add Google Test
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
@@ -222,6 +235,7 @@ add_executable(
   tests/test_main.cpp
   tests/test_vulkan_buffers.cpp
   tests/test_vulkan_context.cpp
+  tests/test_vulkan_helpers.cpp
   tests/test_computegraph.cpp
   tests/test_buffertransformation.cpp
   tests/test_drawindirectbuffer.cpp
@@ -251,6 +265,7 @@ add_executable(
 )
 
 add_dependencies(klartraum_tests Shaders)
+endif()
 
 
 set(KLARTRAUM_LIB_SRC 
@@ -293,8 +308,16 @@ endif()
 
 target_link_libraries(klartraum_lib ${LIBRARIES})
 
+# Consumers only need to link klartraum_lib to get its headers.
+target_include_directories(klartraum_lib PUBLIC
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/3rdparty/spz/src/cc
+    ${Vulkan_INCLUDE_DIRS}
+)
+
 add_dependencies(klartraum_lib Shaders onnx_proto)
 
+if(KLARTRAUM_BUILD_TESTS)
 target_link_libraries(
   klartraum_tests
   gtest
@@ -303,3 +326,4 @@ target_link_libraries(
 
 include(GoogleTest)
 gtest_discover_tests(klartraum_tests)
+endif()
