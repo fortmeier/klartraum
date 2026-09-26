@@ -49,6 +49,13 @@ static void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     auto frontend = static_cast<GlfwFrontend*>(glfwGetWindowUserPointer(window));
     frontend->getKlartraumEngine().getVulkanContext().setFramebufferExtent(
         { static_cast<uint32_t>(width), static_cast<uint32_t>(height) });
+    frontend->renderFromEventCallback();
+}
+
+static void window_refresh_callback(GLFWwindow* window)
+{
+    auto frontend = static_cast<GlfwFrontend*>(glfwGetWindowUserPointer(window));
+    frontend->renderFromEventCallback();
 }
 
 void GlfwFrontend::initialize() {
@@ -79,6 +86,7 @@ void GlfwFrontend::initialize() {
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetWindowRefreshCallback(window, window_refresh_callback);
 
     // Two-step windowed init:
     // 1. Create the VkInstance so GLFW can create the surface against it.
@@ -110,7 +118,7 @@ void GlfwFrontend::loop(int maxFrames) {
 
     int frameCount = 0;
     while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
+        pollEvents();
 
         // While minimized the framebuffer has zero size and nothing can be
         // presented; block until the window is restored.
@@ -314,6 +322,30 @@ constexpr EventKey::Key translateKey(int glfwKey) {
         case GLFW_KEY_RIGHT_SUPER: return EventKey::Key::RightSuper;
         case GLFW_KEY_MENU: return EventKey::Key::Menu;
         default: return EventKey::Key::Unknown;
+    }
+}
+
+void GlfwFrontend::pollEvents()
+{
+    glfwPollEvents();
+    if (callbackError) {
+        std::exception_ptr error = callbackError;
+        callbackError = nullptr;
+        std::rethrow_exception(error);
+    }
+}
+
+void GlfwFrontend::renderFromEventCallback()
+{
+    // Only a resizable engine can follow the new size; the check also keeps
+    // callbacks fired during window/device setup from rendering.
+    if (callbackError || !klartraumEngine || !klartraumEngine->isResizable()) {
+        return;
+    }
+    try {
+        klartraumEngine->step();
+    } catch (...) {
+        callbackError = std::current_exception();
     }
 }
 
