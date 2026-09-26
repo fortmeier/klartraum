@@ -1,0 +1,27 @@
+[project]
+name = "klartraum-lantern-splat"
+version = "0.1.0"
+description = "Reproducible Nerfstudio Gaussian Splatting experiment for the lantern scene"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "imageio-ffmpeg==0.6.0",
+    "nerfstudio==1.1.5",
+    "numpy==1.26.4",
+    "opencv-python==4.10.0.84",
+    "setuptools==80.9.0",
+    "torch==2.7.1+cu128",
+    "torchvision==0.22.1+cu128",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
