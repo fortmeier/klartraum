@@ -29,7 +29,7 @@ A basic example that demonstrates:
 ./build/gaussian_splatting_example
 
 # Load a scene and set the world-space camera position; it looks at the origin
-./build/gaussian_splatting_example --file data/lantern.spz --camera-position 0.55 0.48 0.69 --flip-z
+./build/gaussian_splatting_example --file data/lantern.spz --camera-position 0.55 0.48 0.69 --flip-y
 ```
 
 ### ImGui Gaussian Splatting Example
