@@ -37,6 +37,8 @@ void KlartraumEngine::step() {
         fencePtr = &fence;
     }
     VkFence& fence = *fencePtr;
+    // endRender() advances currentFrame, so read the slot now.
+    const uint32_t frameIndex = vulkanContext.currentFrame;
 
     // process event queue,
     // this currently only updates the camera
@@ -67,21 +69,32 @@ void KlartraumEngine::step() {
         // waits on image-available in addition to every viewport scene.
         graphFinished.push_back(vulkanContext.imageAvailableSemaphoresPerImage[imageIndex]);
 
-        VkSemaphore compositeFinished =
-            window_->submitComposite(graphicsQueue, imageIndex, graphFinished, fence);
+        // With an overlay, the overlay is the frame's last submission and
+        // signals the fence instead.
+        VkSemaphore compositeFinished = window_->submitComposite(
+            graphicsQueue, imageIndex, graphFinished, overlay_ ? VK_NULL_HANDLE : fence);
+        if (overlay_) {
+            compositeFinished = overlay_->submit(graphicsQueue, imageIndex, frameIndex, compositeFinished, fence);
+        }
         vulkanContext.endRender(imageIndex, compositeFinished);
     } else {
-        VkSemaphore renderFinishedSemaphore;
+        // Without graphs, the frame just presents the acquired image.
+        VkSemaphore renderFinishedSemaphore = vulkanContext.imageAvailableSemaphoresPerImage[imageIndex];
 
         for(auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
-            // only the last computegraph submits the fence and returns the renderFinishedSemaphore
-            // should be done somewhat different
-            if (it == computeGraphs.end() - 1) {
+            // only the last submission of the frame signals the fence: the
+            // last computegraph, or the overlay if there is one
+            if (it == computeGraphs.end() - 1 && !overlay_) {
                 renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
             }
             else {
-                (*it)->submitTo(graphicsQueue, imageIndex);
+                renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex);
             }
+        }
+
+        if (overlay_) {
+            renderFinishedSemaphore =
+                overlay_->submit(graphicsQueue, imageIndex, frameIndex, renderFinishedSemaphore, fence);
         }
 
         // finish frame rendering
@@ -157,6 +170,9 @@ bool KlartraumEngine::rebuildForSwapChain()
     // The graphs recorded the old swapchain's image views and semaphores.
     computeGraphs.clear();
     graphBuilder_(*this);
+    if (overlay_) {
+        overlay_->onSwapChainRecreated();
+    }
     return true;
 }
 
