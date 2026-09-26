@@ -475,7 +475,6 @@ void TextDrawComponent::createIndexBuffer() {
 
 void TextDrawComponent::createVertexBuffers() {
     auto& device = vulkanContext->getDevice();
-    const uint32_t numberPaths = vulkanContext->getNumberOfSwapChainImages();
     const VkDeviceSize bufferSize = sizeof(TextVertex) * static_cast<VkDeviceSize>(maxCharacters) * 4;
 
     vertexBuffers.resize(numberPaths);
