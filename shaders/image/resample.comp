@@ -1,0 +1,44 @@
+#version 450
+
+// Resamples one image into another of any size. Pixel centres are mapped
+// onto each other (align_corners = false) and reads are clamped to the edge.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint srcWidth;
+    uint srcHeight;
+    uint dstWidth;
+    uint dstHeight;
+    uint filterMode;  // 0: nearest, 1: bilinear
+} pc;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D inputImage;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outputImage;
+
+vec4 load(ivec2 p) {
+    return imageLoad(inputImage, clamp(p, ivec2(0), ivec2(pc.srcWidth - 1, pc.srcHeight - 1)));
+}
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= pc.dstWidth || pixel.y >= pc.dstHeight) {
+        return;
+    }
+
+    vec2 scale = vec2(pc.srcWidth, pc.srcHeight) / vec2(pc.dstWidth, pc.dstHeight);
+    vec2 src = (vec2(pixel) + 0.5) * scale;
+
+    vec4 color;
+    if (pc.filterMode == 0u) {
+        color = load(ivec2(floor(src)));
+    } else {
+        vec2 p = src - 0.5;
+        ivec2 p0 = ivec2(floor(p));
+        vec2 f = p - vec2(p0);
+        vec4 top = mix(load(p0), load(p0 + ivec2(1, 0)), f.x);
+        vec4 bottom = mix(load(p0 + ivec2(0, 1)), load(p0 + ivec2(1, 1)), f.x);
+        color = mix(top, bottom, f.y);
+    }
+    imageStore(outputImage, ivec2(pixel), color);
+}
