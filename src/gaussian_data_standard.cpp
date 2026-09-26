@@ -12,8 +12,9 @@ namespace klartraum {
 
 static float sigmoidStandard(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 
-GaussianDataStandard::GaussianDataStandard(VulkanContext& vulkanContext, const std::string& path) {
-    loadSPZModel(path);
+GaussianDataStandard::GaussianDataStandard(
+    VulkanContext& vulkanContext, const std::string& path, bool flipZ) {
+    loadSPZModel(path, flipZ);
     uploadSoA(vulkanContext);
 }
 
@@ -69,11 +70,13 @@ void GaussianDataStandard::uploadSoA(VulkanContext& vulkanContext) {
     buffers_.shB->getBuffer().memcopyFrom(shB);
 }
 
-void GaussianDataStandard::loadSPZModel(const std::string& path) {
+void GaussianDataStandard::loadSPZModel(const std::string& path, bool flipZ) {
     spz::PackedGaussians packed = spz::loadSpzPacked(path);
     gaussians3DData.clear();
     gaussians3DData.reserve(packed.numPoints);
-    spz::CoordinateConverter conv;
+    spz::CoordinateConverter conv = flipZ
+        ? spz::coordinateConverter(spz::CoordinateSystem::RUB, spz::CoordinateSystem::RUF)
+        : spz::CoordinateConverter{};
 
     for (int i = 0; i < packed.numPoints; i++) {
         spz::UnpackedGaussian ug = packed.unpack(i, conv);
@@ -93,7 +96,9 @@ void GaussianDataStandard::loadSPZModel(const std::string& path) {
         gaussians3DData.push_back(g);
     }
     buffers_.count = static_cast<uint32_t>(gaussians3DData.size());
-    std::cout << "Loaded " << buffers_.count << " gaussians from " << path << "\n";
+    std::cout << "Loaded " << buffers_.count << " gaussians from " << path;
+    if (flipZ) std::cout << " (Z axis flipped)";
+    std::cout << "\n";
 }
 
 } // namespace klartraum

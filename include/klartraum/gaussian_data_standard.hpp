@@ -17,7 +17,7 @@ namespace klartraum {
 class GaussianDataStandard {
 public:
     // Load + unpack an SPZ file, then upload the SoA buffers.
-    GaussianDataStandard(VulkanContext& vulkanContext, const std::string& path);
+    GaussianDataStandard(VulkanContext& vulkanContext, const std::string& path, bool flipZ = false);
     // Take an already-built AoS vector (moved in), then upload the SoA buffers.
     GaussianDataStandard(VulkanContext& vulkanContext, std::vector<Gaussian3D> gaussians);
 
@@ -27,7 +27,7 @@ public:
     const GaussianSoABuffers& buffers() const { return buffers_; }
 
 private:
-    void loadSPZModel(const std::string& path);
+    void loadSPZModel(const std::string& path, bool flipZ);
     void uploadSoA(VulkanContext& vulkanContext);
 
     std::vector<Gaussian3D> gaussians3DData;

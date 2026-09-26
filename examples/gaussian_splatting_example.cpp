@@ -27,10 +27,12 @@ int main(int argc, char** argv) {
     //              --backend compute|raster   (select the rendering backend, default compute)
     //              --file PATH   (load a specific .spz scene)
     //              --camera-position X Y Z   (world-space eye position, looking at the origin)
+    //              --flip-z   (mirror the loaded scene across the Z axis)
     int maxFrames = -1;
     klartraum::GsplatBackend backend = klartraum::GsplatBackend::Compute;
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
     glm::vec3 cameraPosition(0.55f, 0.48f, 0.69f);
+    bool flipZ = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--frames" && i + 1 < argc) {
@@ -60,6 +62,8 @@ int main(int argc, char** argv) {
                 std::cerr << "Invalid --camera-position (expected three numbers)" << std::endl;
                 return 1;
             }
+        } else if (arg == "--flip-z") {
+            flipZ = true;
         }
     }
 
@@ -77,6 +81,7 @@ int main(int argc, char** argv) {
     if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
     std::cout << std::endl;
     std::cout << "Loading scene: " << spzFile << std::endl;
+    if (flipZ) std::cout << "Flipping scene Z axis" << std::endl;
     std::cout << "Camera position: " << cameraPosition.x << " "
               << cameraPosition.y << " " << cameraPosition.z
               << " (looking at 0 0 0)" << std::endl;
@@ -91,7 +96,7 @@ int main(int argc, char** argv) {
     }
 
     // Loaded once; the graph builder below reuses it on every rebuild.
-    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile);
+    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile, flipZ);
 
     // Everything tied to the swapchain is created in the graph builder, which
     // the engine runs now and again after each window resize.
