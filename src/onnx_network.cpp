@@ -553,23 +553,68 @@ void OnnxNetwork::storeComputeGraphGroupOutputElements()
         outputNames.push_back(name);
     }
 
-    // all nodes that have outputs will be added the outputs elements of
-    // the compute graph group
-    uint32_t outputElementIndex = 0;
     std::cout << "Output elements: " << std::endl;
-    for (int i = 0; i < graph.node_size(); i++) {
-        const onnx::NodeProto& node = graph.node(i);
-        for (int j = 0; j < node.output_size(); j++) {
-            auto outputName = node.output(j);
-            // check if outputName is in output names
-            if (std::find(outputNames.begin(), outputNames.end(), outputName) != outputNames.end()) {
-                std::cout << " - Found output name: " << outputName << std::endl;
-                outputElements[outputElementIndex] = graphOperationElements.at(i);
-                std::cout << " - connected output " << outputName << " to operation " << i << std::endl;
-                outputElementIndex++;
+    for (uint32_t outputIndex = 0; outputIndex < outputNames.size(); ++outputIndex) {
+        const auto& outputName = outputNames[outputIndex];
+
+        const auto tensor = graphDataElements.at(outputName);
+        inputs[outputIndex] = tensor;
+        srcOutputSlots[outputIndex] = -1;
+
+        // Computed outputs depend on their producing operation. Frozen test
+        // fixtures may also expose graph inputs or initializers as outputs;
+        // those are direct tensor dependencies with no producing operation.
+        const auto producer = outputName2GraphElementAndSlot.find(outputName);
+        outputElements[outputIndex] = producer == outputName2GraphElementAndSlot.end()
+                                          ? tensor
+                                          : producer->second.first;
+
+        std::cout << " - connected output " << outputName
+                  << " at slot " << outputIndex << std::endl;
+    }
+}
+
+void OnnxNetwork::setInputTensor(const std::string& name,
+                                 ComputeGraphElementPtr producer,
+                                 int outputSlot) {
+    if (!producer) {
+        throw std::runtime_error("ONNX input producer must not be null");
+    }
+
+    const auto& graph = model->graph();
+    const auto graphInput = std::find_if(
+        graph.input().begin(), graph.input().end(),
+        [&name](const onnx::ValueInfoProto& value) { return value.name() == name; });
+    if (graphInput == graph.input().end()) {
+        throw std::runtime_error("ONNX graph input " + name + " not found");
+    }
+
+    auto tensor = outputSlot == -1 ? producer : producer->getInputElement(outputSlot);
+    auto tensorInterface = std::dynamic_pointer_cast<TensorElementInterface>(tensor);
+    if (!tensorInterface) {
+        throw std::runtime_error("Producer for ONNX graph input " + name + " is not a tensor");
+    }
+
+    auto expected = std::dynamic_pointer_cast<TensorElementInterface>(graphDataElements.at(name));
+    if (!expected || tensorInterface->getDimensions() != expected->getDimensions()) {
+        throw std::runtime_error("Tensor dimensions do not match ONNX graph input " + name);
+    }
+
+    bool connected = false;
+    for (int i = 0; i < graph.node_size(); ++i) {
+        const auto& node = graph.node(i);
+        for (int j = 0; j < node.input_size(); ++j) {
+            if (node.input(j) == name) {
+                graphOperationElements.at(i)->setInput(producer, j, outputSlot);
+                connected = true;
             }
         }
     }
+    if (!connected) {
+        throw std::runtime_error("ONNX graph input " + name + " is not consumed by a node");
+    }
+
+    graphDataElements[name] = tensor;
 }
 
 

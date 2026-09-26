@@ -39,17 +39,22 @@ train on only that many leading images for a quicker smoke run.
 
 Published fixtures are written to `data/onnx/`:
 
+- `simple_encoder.onnx`
 - `simple_decoder.onnx`
 - `simple_encoder_with_onnx_frozen_intermediates.onnx`
 - `simple_decoder_with_onnx_frozen_intermediates.onnx`
 
-Regenerable export intermediates are written to the ignored `data/onnx/tmp/`
-directory. The frozen-intermediate models intentionally contain captured tensor
-values as initializers so the C++ tests can compare Vulkan operator results with
-ONNX Runtime reference results. They use the protobuf `float_data` representation
+The encoder and decoder models include inferred intermediate shapes and parameter
+metadata required by Klartraum's loader, and are suitable for runtime graph
+composition. Regenerable raw exports and shape-inference intermediates are
+written to the ignored `data/onnx/tmp/` directory.
+
+The frozen-intermediate models intentionally contain captured tensor values as
+initializers so the C++ tests can compare Vulkan operator results with ONNX
+Runtime reference results. They use the protobuf `float_data` representation
 required by Klartraum's current loader. Because those captured initializers reuse
-graph value names, the frozen fixtures are test annotations rather than
-SSA-valid models for general ONNX Runtime execution.
+graph value names, the frozen fixtures are test annotations rather than SSA-valid
+models for general ONNX Runtime execution.
 
 ## Verify the C++ consumer
 

@@ -26,21 +26,20 @@ ONNX_DIR = DATA_DIR / "onnx"
 TMP_DIR = ONNX_DIR / "tmp"
 
 RAW_ENCODER = TMP_DIR / "simple_encoder.onnx"
-RAW_DECODER = ONNX_DIR / "simple_decoder.onnx"
+RAW_DECODER = TMP_DIR / "simple_decoder.onnx"
 ENCODER_WITH_SHAPES = TMP_DIR / "simple_encoder_with_value_info.onnx"
 DECODER_WITH_SHAPES = TMP_DIR / "simple_decoder_with_value_info.onnx"
-ENCODER_WITH_PARAMS = TMP_DIR / "simple_encoder_with_value_info_and_param_info.onnx"
-DECODER_WITH_PARAMS = TMP_DIR / "simple_decoder_with_value_info_and_param_info.onnx"
+ENCODER_WITH_PARAMS = ONNX_DIR / "simple_encoder.onnx"
+DECODER_WITH_PARAMS = ONNX_DIR / "simple_decoder.onnx"
 FROZEN_ENCODER = ONNX_DIR / "simple_encoder_with_onnx_frozen_intermediates.onnx"
 FROZEN_DECODER = ONNX_DIR / "simple_decoder_with_onnx_frozen_intermediates.onnx"
 
-PUBLISHED_ARTIFACTS = (RAW_DECODER, FROZEN_ENCODER, FROZEN_DECODER)
+PUBLISHED_ARTIFACTS = (ENCODER_WITH_PARAMS, DECODER_WITH_PARAMS, FROZEN_ENCODER, FROZEN_DECODER)
 INTERMEDIATE_ARTIFACTS = (
     RAW_ENCODER,
+    RAW_DECODER,
     ENCODER_WITH_SHAPES,
     DECODER_WITH_SHAPES,
-    ENCODER_WITH_PARAMS,
-    DECODER_WITH_PARAMS,
 )
 
 

@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -10,6 +12,55 @@
 #include "klartraum/onnx/onnx_push_constants.hpp"
 
 using namespace klartraum;
+
+namespace {
+
+void setTensorInfo(onnx::ValueInfoProto* value, const std::string& name) {
+    value->set_name(name);
+    auto* tensorType = value->mutable_type()->mutable_tensor_type();
+    tensorType->set_elem_type(onnx::TensorProto::FLOAT);
+    for (uint32_t dimension : {1u, 1u, 1u, 65u}) {
+        tensorType->mutable_shape()->add_dim()->set_dim_value(dimension);
+    }
+}
+
+std::filesystem::path writeReluModel(const std::string& filename, bool initializeInput) {
+    onnx::ModelProto model;
+    model.set_ir_version(8);
+    model.add_opset_import()->set_version(17);
+    auto* graph = model.mutable_graph();
+    graph->set_name(filename);
+    setTensorInfo(graph->add_input(), "input");
+    setTensorInfo(graph->add_output(), "output");
+
+    auto* node = graph->add_node();
+    node->set_name("relu");
+    node->set_op_type("Relu");
+    node->add_input("input");
+    node->add_output("output");
+
+    if (initializeInput) {
+        auto* initializer = graph->add_initializer();
+        initializer->set_name("input");
+        initializer->set_data_type(onnx::TensorProto::FLOAT);
+        for (int64_t dimension : {1, 1, 1, 65}) {
+            initializer->add_dims(dimension);
+        }
+        for (int i = 0; i < 65; ++i) {
+            initializer->add_float_data(i % 2 == 0 ? -static_cast<float>(i) : static_cast<float>(i));
+        }
+    }
+
+    const auto modelPath = std::filesystem::path("build/TestingOutput") / filename;
+    std::filesystem::create_directories(modelPath.parent_path());
+    std::ofstream output(modelPath, std::ios::binary);
+    if (!model.SerializeToOstream(&output)) {
+        throw std::runtime_error("Failed to write ONNX test model");
+    }
+    return modelPath;
+}
+
+} // namespace
 
 class OnnxReluTest : public ::testing::Test {
 protected:
@@ -148,4 +199,41 @@ TEST_F(OnnxReluTest, ReluGeneralComputationFullTest) {
                 << " (value: " << inputData[i] << ") should be unchanged, got " << outputData[i];
         }
     }
+}
+
+TEST_F(OnnxReluTest, NetworkDispatchesEveryTensorElement) {
+    const auto modelPath = writeReluModel("relu_65.onnx", true);
+
+    auto network = vulkanContext->create<OnnxNetwork>(modelPath.string());
+    ComputeGraph graphExecution(*vulkanContext, 1);
+    graphExecution.compileFrom(network);
+    graphExecution.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+
+    auto tensor = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("output"));
+    ASSERT_NE(tensor, nullptr);
+    std::vector<float> values(65);
+    tensor->getDataBuffer(0).memcopyTo(values);
+    EXPECT_FLOAT_EQ(values[63], 63.0f);
+    EXPECT_FLOAT_EQ(values[64], 0.0f);
+}
+
+TEST_F(OnnxReluTest, NetworkInputCanConsumeAnotherNetworkOutput) {
+    const auto producerPath = writeReluModel("relu_producer.onnx", true);
+    const auto consumerPath = writeReluModel("relu_consumer.onnx", false);
+
+    auto producer = vulkanContext->create<OnnxNetwork>(producerPath.string());
+    auto consumer = vulkanContext->create<OnnxNetwork>(consumerPath.string());
+    consumer->setInputTensor("input", producer, 0);
+
+    ComputeGraph graphExecution(*vulkanContext, 1);
+    graphExecution.compileFrom(consumer);
+    graphExecution.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+
+    auto tensor = std::dynamic_pointer_cast<TensorElement<float>>(consumer->getOutputElement("output"));
+    ASSERT_NE(tensor, nullptr);
+    std::vector<float> values(65);
+    tensor->getDataBuffer(0).memcopyTo(values);
+    EXPECT_FLOAT_EQ(values[1], 1.0f);
+    EXPECT_FLOAT_EQ(values[63], 63.0f);
+    EXPECT_FLOAT_EQ(values[64], 0.0f);
 }
