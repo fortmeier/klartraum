@@ -24,12 +24,14 @@ int main(int argc, char** argv) {
 
     // Parse args:  --frames N   (close after N frames)
     //              --backend compute|raster   (select the rendering backend, default compute)
+    //              --file PATH   (load a specific .spz scene)
     int maxFrames = -1;
     klartraum::GsplatBackend backend = klartraum::GsplatBackend::Compute;
+    std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--frames" && i + 1 < argc) {
-            try { maxFrames = std::stoi(argv[i + 1]); } catch (...) {}
+            try { maxFrames = std::stoi(argv[++i]); } catch (...) {}
         } else if (arg == "--backend" && i + 1 < argc) {
             std::string value = argv[++i];
             if (value == "compute") {
@@ -40,12 +42,15 @@ int main(int argc, char** argv) {
                 std::cerr << "Unknown --backend value '" << value << "' (expected 'compute' or 'raster')" << std::endl;
                 return 1;
             }
+        } else if (arg == "--file" && i + 1 < argc) {
+            spzFile = argv[++i];
         }
     }
     std::cout << "Gaussian Splatting example";
     std::cout << " (backend: " << (backend == klartraum::GsplatBackend::Raster ? "raster" : "compute") << ")";
     if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
     std::cout << std::endl;
+    std::cout << "Loading scene: " << spzFile << std::endl;
 
     klartraum::GlfwFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -55,8 +60,6 @@ int main(int argc, char** argv) {
         engine.enableProfiling();
         engine.enablePerformanceProfiling({"SM"});
     }
-
-    std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
 
     // Loaded once; the graph builder below reuses it on every rebuild.
     auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile);
