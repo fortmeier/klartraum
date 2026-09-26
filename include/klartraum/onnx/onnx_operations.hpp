@@ -132,11 +132,21 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
 
     std::string shaderFilename = "shaders/onnx/conv.comp.spv";
 
+    // One invocation per output element: x covers the output width, y the
+    // output height, z the output channels (see shaders/onnx/conv.comp, local
+    // size 8x8x1). The output size follows the same formula as the shader.
+    const uint32_t outputHeight =
+        (pushConstants.dimInput[2] + 2 * pushConstants.pads[0] - pushConstants.dilations[0] * (pushConstants.kernel_shape[0] - 1) - 1) /
+            pushConstants.strides[0] + 1;
+    const uint32_t outputWidth =
+        (pushConstants.dimInput[3] + 2 * pushConstants.pads[1] - pushConstants.dilations[1] * (pushConstants.kernel_shape[1] - 1) - 1) /
+            pushConstants.strides[1] + 1;
+
     auto operation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
-    operation->setGroupCountX(pushConstants.dimInput[2] / 8); // assuming local size x = 8
-    operation->setGroupCountY(pushConstants.dimInput[3] / 8); // assuming local size y = 8
-    operation->setGroupCountZ(pushConstants.dimWeights[3]);
+    operation->setGroupCountX((outputWidth + 7) / 8);
+    operation->setGroupCountY((outputHeight + 7) / 8);
+    operation->setGroupCountZ(pushConstants.dimWeights[0]);
 
     return operation;
 }
@@ -185,9 +195,12 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
 
     auto operation = vulkanContext->create<GeneralComputation<ConvTransposePushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
-    operation->setGroupCountX(pushConstants.dimOutput[2] / 8); // assuming local size x = 8
-    operation->setGroupCountY(pushConstants.dimOutput[3] / 8); // assuming local size y = 8
-    operation->setGroupCountZ(pushConstants.dimOutput[1]);     // output channels
+    // One invocation per output element: x covers the output width, y the
+    // output height, z the output channels (see shaders/onnx/conv_transpose.comp,
+    // local size 8x8x1).
+    operation->setGroupCountX((pushConstants.dimOutput[3] + 7) / 8);
+    operation->setGroupCountY((pushConstants.dimOutput[2] + 7) / 8);
+    operation->setGroupCountZ(pushConstants.dimOutput[1]);
 
     return operation;
 }
