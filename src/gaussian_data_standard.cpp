@@ -1,5 +1,5 @@
+#include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <iostream>
 
 #include <glm/glm.hpp>
@@ -78,7 +78,14 @@ void GaussianDataStandard::loadSPZModel(const std::string& path) {
     for (int i = 0; i < packed.numPoints; i++) {
         spz::UnpackedGaussian ug = packed.unpack(i, conv);
         Gaussian3D g;
-        memcpy(&g, &ug, sizeof(spz::UnpackedGaussian));
+        g.position = ug.position;
+        g.rotation = ug.rotation;
+        g.scale = ug.scale;
+        g.color = ug.color;
+        g.alpha = ug.alpha;
+        std::copy_n(ug.shR.begin(), g.shR.size(), g.shR.begin());
+        std::copy_n(ug.shG.begin(), g.shG.size(), g.shG.begin());
+        std::copy_n(ug.shB.begin(), g.shB.size(), g.shB.begin());
         g.alpha    = sigmoidStandard(ug.alpha);
         g.scale[0] = std::exp(ug.scale[0]);
         g.scale[1] = std::exp(ug.scale[1]);
