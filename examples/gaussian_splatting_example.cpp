@@ -1,3 +1,4 @@
+#include <cmath>
 #include <iostream>
 #include <filesystem>
 #include <string>
@@ -25,9 +26,11 @@ int main(int argc, char** argv) {
     // Parse args:  --frames N   (close after N frames)
     //              --backend compute|raster   (select the rendering backend, default compute)
     //              --file PATH   (load a specific .spz scene)
+    //              --camera-position X Y Z   (world-space eye position, looking at the origin)
     int maxFrames = -1;
     klartraum::GsplatBackend backend = klartraum::GsplatBackend::Compute;
     std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
+    glm::vec3 cameraPosition(0.55f, 0.48f, 0.69f);
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--frames" && i + 1 < argc) {
@@ -44,13 +47,39 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--file" && i + 1 < argc) {
             spzFile = argv[++i];
+        } else if (arg == "--camera-position") {
+            if (i + 3 >= argc) {
+                std::cerr << "--camera-position requires X Y Z" << std::endl;
+                return 1;
+            }
+            try {
+                cameraPosition.x = std::stof(argv[++i]);
+                cameraPosition.y = std::stof(argv[++i]);
+                cameraPosition.z = std::stof(argv[++i]);
+            } catch (...) {
+                std::cerr << "Invalid --camera-position (expected three numbers)" << std::endl;
+                return 1;
+            }
         }
     }
+
+    const double cameraDistance = std::sqrt(
+        cameraPosition.x * cameraPosition.x +
+        cameraPosition.y * cameraPosition.y +
+        cameraPosition.z * cameraPosition.z);
+    if (!std::isfinite(cameraDistance) || cameraDistance <= 0.0) {
+        std::cerr << "--camera-position must be finite and different from the origin" << std::endl;
+        return 1;
+    }
+
     std::cout << "Gaussian Splatting example";
     std::cout << " (backend: " << (backend == klartraum::GsplatBackend::Raster ? "raster" : "compute") << ")";
     if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
     std::cout << std::endl;
     std::cout << "Loading scene: " << spzFile << std::endl;
+    std::cout << "Camera position: " << cameraPosition.x << " "
+              << cameraPosition.y << " " << cameraPosition.z
+              << " (looking at 0 0 0)" << std::endl;
 
     klartraum::GlfwFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -93,10 +122,10 @@ int main(int argc, char** argv) {
     auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
         klartraum::InterfaceCameraOrbit::UpDirection::Y);
     cameraOrbit->initialize(vulkanContext);
-    cameraOrbit->setAzimuth(0.9f);
-    cameraOrbit->setElevation(-0.5f);
-    cameraOrbit->setPosition({-0.5f, 0.0f, 0.5f});
-    cameraOrbit->setDistance(1.0f);
+    cameraOrbit->setPosition({0.0f, 0.0f, 0.0f});
+    cameraOrbit->setAzimuth(std::atan2(cameraPosition.z, cameraPosition.x));
+    cameraOrbit->setElevation(-std::asin(cameraPosition.y / cameraDistance));
+    cameraOrbit->setDistance(cameraDistance);
     engine.setInterfaceCamera(cameraOrbit);
 
     frontend.loop(maxFrames);
