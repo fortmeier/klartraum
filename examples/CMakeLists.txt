@@ -20,6 +20,17 @@ target_link_libraries(gaussian_splatting_example
 
 add_dependencies(gaussian_splatting_example Shaders)
 
+# Gaussian Splatting (raster backend) with a Dear ImGui user interface
+add_executable(imgui_gaussian_splatting_example
+    imgui_gaussian_splatting_example.cpp
+)
+
+target_link_libraries(imgui_gaussian_splatting_example
+    klartraum_lib
+)
+
+add_dependencies(imgui_gaussian_splatting_example Shaders)
+
 # Gaussian splatting through the ONNX autoencoder
 add_executable(gaussian_autoencoder_example
     gaussian_autoencoder_example.cpp
