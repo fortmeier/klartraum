@@ -65,3 +65,14 @@ target_link_libraries(turntable_example
 )
 
 add_dependencies(turntable_example Shaders)
+
+# Stable Diffusion 1.5 VAE encoder/decoder example
+add_executable(sd15_vae_example
+    sd15_vae_example.cpp
+)
+
+target_link_libraries(sd15_vae_example
+    klartraum_lib
+)
+
+add_dependencies(sd15_vae_example Shaders)
