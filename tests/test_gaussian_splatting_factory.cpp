@@ -29,6 +29,9 @@
  *   renders into a one-image OffscreenTarget, runs it once with
  *   submitAndWait() and checks the image is not black, i.e. the backends size
  *   their per-path resources by the graph's paths, not the swapchain
+ * - rendersGaussiansFromPasses: the raccoon scene rendered from Gaussians that went through
+ *   an identity GaussianTransformPass, and from its two halves merged by a GaussianMergePass,
+ *   looks like the scene rendered from its upload directly
  * - uncompiledBackendsCanBeDestroyed: each backend is created and released
  *   without ever being compiled into a graph (as when building the rest of a
  *   graph fails), which must not touch Vulkan objects that were never created
@@ -47,6 +50,8 @@
 #include "klartraum/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/offscreen_target.hpp"
+#include "klartraum/computegraph/hostvalues.hpp"
+#include "klartraum/gaussian_passes.hpp"
 
 using namespace klartraum;
 
@@ -425,4 +430,59 @@ TEST(GaussianSplattingFactory, uncompiledBackendsCanBeDestroyed) {
         auto splatting = createGaussianSplatting(vc, backend, target, cameraUBO, model);
         splatting.reset();
     }
+}
+
+TEST(GaussianSplattingFactory, rendersGaussiansFromPasses) {
+    if (!std::filesystem::exists(kSpzPath)) {
+        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    }
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const VkExtent2D extent{128, 96};
+
+    auto render = [&](const GaussianSoABuffers& buffers) {
+        auto target = std::make_shared<OffscreenTarget>(vc, extent, 1u);
+        auto cameraUBO = std::make_shared<CameraUboType>();
+        InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+        orbit.initialize(vc);
+        orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
+        orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+        orbit.setProjectionAspectRatio(float(extent.width) / float(extent.height));
+        orbit.update(cameraUBO->ubo);
+        auto splatting = createGaussianSplatting(vc, GsplatBackend::Raster, target, cameraUBO, buffers);
+        ComputeGraph graph(vc, 1);
+        graph.compileFrom(splatting);
+        cameraUBO->update(0);
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        return readOffscreenImageToHost(vc, target->getImage(0), extent);
+    };
+    auto maxDifference = [](const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+        int result = 0;
+        for (size_t i = 0; i < a.size(); ++i) {
+            result = std::max(result, std::abs(int(a[i]) - int(b[i])));
+        }
+        return result;
+    };
+
+    auto gaussians = loadGaussiansSpz(kSpzPath);
+    auto whole = std::make_shared<GaussianDataStandard>(vc, gaussians);
+    const auto direct = render(whole->buffers());
+    ASSERT_GT(*std::max_element(direct.begin(), direct.end()), uint8_t(10)) << "rendered image is all-black";
+
+    std::vector<std::shared_ptr<HostValues>> parameters;
+    std::array<BufferRef, 7> refs;
+    for (int i = 0; i < 7; ++i) {
+        parameters.push_back(std::make_shared<HostValues>(vc, std::vector<float>{i == 6 ? 1.0f : 0.0f}));
+        refs[i] = BufferRef{parameters.back()};
+    }
+    const TransformBuffer identity = makeTransformBuffer(vc, refs);
+    const auto moved = transformGaussiansPass(vc, whole->buffers(), identity.transform);
+    EXPECT_LE(maxDifference(render(moved.output), direct), 2);
+
+    const auto half = gaussians.begin() + gaussians.size() / 2;
+    auto first = std::make_shared<GaussianDataStandard>(vc, std::vector<Gaussian3D>(gaussians.begin(), half));
+    auto second = std::make_shared<GaussianDataStandard>(vc, std::vector<Gaussian3D>(half, gaussians.end()));
+    const auto merged = mergeGaussiansPass(vc, first->buffers(), second->buffers());
+    // The same Gaussians in the same order; depth ties may still sort differently.
+    EXPECT_LE(maxDifference(render(merged.output), direct), 2);
 }
