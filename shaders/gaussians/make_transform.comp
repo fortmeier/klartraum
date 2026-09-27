@@ -1,6 +1,6 @@
 #version 450
 
-// Builds the transform buffer GaussianTransformPass reads from seven
+// Builds the transform buffer GaussianTransform reads from seven
 // scalars: translation, rotation (degrees about X, then Y, then Z) and a
 // uniform scale. Besides translation, scale and the rotation quaternion it
 // holds, per SH band, the matrix that rotates that band's coefficients. It is
