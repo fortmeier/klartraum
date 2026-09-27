@@ -11,6 +11,7 @@ From this directory:
 uv sync
 uv run python run_reference.py
 uv run python export_onnx.py
+uv run python export_denoiser.py
 ```
 
 Reference artifacts are written below `build/TestingOutput/sd15_onnx/`.
@@ -46,3 +47,21 @@ models and writes `build/TestingOutput/sd15_vae_klartraum.ppm`. Encoder and
 decoder execute sequentially, so their transient arenas are not resident at the
 same time. Use `--load-only` to parse both graphs without allocating or running
 their Vulkan buffers.
+
+`export_denoiser.py` exports a fixed 128x128, batch-two UNet invocation for one
+classifier-free-guided denoising step. It writes prompt embeddings, deterministic
+latent inputs, PyTorch/ONNX Runtime references, and an operator coverage report.
+These generated model and tensor files remain development artifacts and must not
+be committed.
+
+Run the matching Vulkan denoiser step and classifier-free guidance check with:
+
+```powershell
+.\build\examples\Debug\sd15_denoiser_example.exe
+```
+
+The current experiment deliberately stays at 128x128. It validates the complete
+SD1.5 UNet with a batch of two (negative and positive prompt conditioning), then
+combines the two predictions with guidance scale 7.5. Scheduler iteration and
+feeding the final latent into the VAE decoder are the remaining pipeline-level
+steps; the full denoiser network itself is executed by Klartraum.
