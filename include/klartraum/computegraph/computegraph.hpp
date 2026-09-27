@@ -1,7 +1,9 @@
 #ifndef KLARTRAUM_COMPUTEGRAPH_HPP
 #define KLARTRAUM_COMPUTEGRAPH_HPP
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <queue>
@@ -86,6 +88,10 @@ public:
         for (auto& element : ordered_elements) {
             element->_setup(vulkanContext, numberPaths);
         }
+
+        updatable_elements.clear();
+        std::copy_if(ordered_elements.begin(), ordered_elements.end(), std::back_inserter(updatable_elements),
+                     [](const ComputeGraphElementPtr& e) { return e->isUpdatable(); });
 
         commandBuffers.resize(ordered_elements.size() * numberPaths);
 
@@ -249,10 +255,12 @@ private:
     std::vector<VkCommandBuffer> commandBuffers;
 
     std::vector<ComputeGraphElementPtr> ordered_elements;
+    // The elements with a host-side update (isUpdatable()), collected once.
+    std::vector<ComputeGraphElementPtr> updatable_elements;
 
-    // Runs every element's host-side update for the path about to be submitted.
+    // Runs the host-side updates for the path about to be submitted.
     void updateElements(uint32_t pathId) {
-        for (auto& element : ordered_elements) {
+        for (auto& element : updatable_elements) {
             element->_update(pathId);
         }
     }
