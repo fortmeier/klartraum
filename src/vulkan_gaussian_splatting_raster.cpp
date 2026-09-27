@@ -112,12 +112,12 @@ void VulkanGaussianSplattingRaster::initialize(
         "shaders/gsplat/gsplat_dist.comp.spv",
         "shaders/gsplat/gsplat_dist_count.comp.spv"});
     dist->setName("GaussianDist");
-    dist->setInput(buffers.pos,      0);
+    buffers.pos.connectTo(*dist, 0);
     dist->setInput(cameraUBO,        1);
     dist->setInput(keysA,            2);
     dist->setInput(indicesA,         3);
     dist->setInput(drawArgs,         4);
-    dist->setInput(buffers.colAlpha, 5);  // alpha for the opacity cull
+    buffers.colAlpha.connectTo(*dist, 5);  // alpha for the opacity cull
     dist->setGroupCountX((N + 255) / 256);
     dist->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
 
@@ -133,13 +133,13 @@ void VulkanGaussianSplattingRaster::initialize(
     project = vulkanContext.create<GaussianRasterProject>(
         "shaders/gsplat/gsplat_raster_project.comp.spv");
     project->setName("RasterProject");
-    project->setInput(buffers.pos,      0);
-    project->setInput(buffers.rot,      1);
-    project->setInput(buffers.scale,    2);
-    project->setInput(buffers.colAlpha, 3);
-    project->setInput(buffers.shR,      4);
-    project->setInput(buffers.shG,      5);
-    project->setInput(buffers.shB,      6);
+    buffers.pos.connectTo(*project, 0);
+    buffers.rot.connectTo(*project, 1);
+    buffers.scale.connectTo(*project, 2);
+    buffers.colAlpha.connectTo(*project, 3);
+    buffers.shR.connectTo(*project, 4);
+    buffers.shG.connectTo(*project, 5);
+    buffers.shB.connectTo(*project, 6);
     project->setInput(cameraUBO,        7);
     project->setInput(splat2D,          8);
     project->setGroupCountX((N + 255) / 256);

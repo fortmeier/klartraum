@@ -69,13 +69,13 @@ void VulkanGaussianSplatting::initialize(
     project3Dto2D = vulkanContext.create<GaussianProjection>(
         "shaders/gsplat/gsplat_projection.comp.spv");
     project3Dto2D->setName("GaussianProjection");
-    project3Dto2D->setInput(buffers.pos,       0);
-    project3Dto2D->setInput(buffers.rot,       1);
-    project3Dto2D->setInput(buffers.scale,     2);
-    project3Dto2D->setInput(buffers.colAlpha,  3);
-    project3Dto2D->setInput(buffers.shR,       4);
-    project3Dto2D->setInput(buffers.shG,       5);
-    project3Dto2D->setInput(buffers.shB,       6);
+    buffers.pos.connectTo(*project3Dto2D, 0);
+    buffers.rot.connectTo(*project3Dto2D, 1);
+    buffers.scale.connectTo(*project3Dto2D, 2);
+    buffers.colAlpha.connectTo(*project3Dto2D, 3);
+    buffers.shR.connectTo(*project3Dto2D, 4);
+    buffers.shG.connectTo(*project3Dto2D, 5);
+    buffers.shB.connectTo(*project3Dto2D, 6);
     project3Dto2D->setInput(_cameraUBO,     7);
     project3Dto2D->setInput(proj2DPos2D,    8);
     project3Dto2D->setInput(proj2DZ,        9);

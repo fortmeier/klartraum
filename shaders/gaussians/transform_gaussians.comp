@@ -1,0 +1,80 @@
+#version 450
+
+// Writes transformed copies of Gaussians: p' = s R p + t, orientations turned
+// by R, sizes scaled by s, SH coefficients rotated per band. The transform
+// comes from make_transform.comp.
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint count;
+} pc;
+
+layout(scalar, set = 0, binding = 0) readonly buffer Pos { vec3 pos[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer Rot { vec4 rot[]; };
+layout(scalar, set = 0, binding = 2) readonly buffer Scale { vec3 scale[]; };
+layout(scalar, set = 0, binding = 3) readonly buffer ColAlpha { vec4 colAlpha[]; };
+layout(scalar, set = 0, binding = 4) readonly buffer ShR { float shR[]; };
+layout(scalar, set = 0, binding = 5) readonly buffer ShG { float shG[]; };
+layout(scalar, set = 0, binding = 6) readonly buffer ShB { float shB[]; };
+layout(scalar, set = 0, binding = 7) readonly buffer Transform { float t[]; };
+layout(scalar, set = 0, binding = 8) writeonly buffer OutPos { vec3 outPos[]; };
+layout(scalar, set = 0, binding = 9) writeonly buffer OutRot { vec4 outRot[]; };
+layout(scalar, set = 0, binding = 10) writeonly buffer OutScale { vec3 outScale[]; };
+layout(scalar, set = 0, binding = 11) writeonly buffer OutColAlpha { vec4 outColAlpha[]; };
+layout(scalar, set = 0, binding = 12) writeonly buffer OutShR { float outShR[]; };
+layout(scalar, set = 0, binding = 13) writeonly buffer OutShG { float outShG[]; };
+layout(scalar, set = 0, binding = 14) writeonly buffer OutShB { float outShB[]; };
+
+#include "gaussian_common.glsl"
+
+// Rotates one channel's 15 coefficients of Gaussian i (coefficient-major).
+#define ROTATE_SH(src, dst)                                                  \
+    {                                                                        \
+        float c[15];                                                         \
+        for (int k = 0; k < 15; ++k) {                                       \
+            c[k] = src[k * pc.count + i];                                    \
+        }                                                                    \
+        for (int row = 0; row < 3; ++row) {                                  \
+            float v = 0.0;                                                   \
+            for (int col = 0; col < 3; ++col) {                              \
+                v += t[kShBand1 + row * 3 + col] * c[col];                   \
+            }                                                                \
+            dst[row * pc.count + i] = v;                                     \
+        }                                                                    \
+        for (int row = 0; row < 5; ++row) {                                  \
+            float v = 0.0;                                                   \
+            for (int col = 0; col < 5; ++col) {                              \
+                v += t[kShBand2 + row * 5 + col] * c[3 + col];               \
+            }                                                                \
+            dst[(3 + row) * pc.count + i] = v;                               \
+        }                                                                    \
+        for (int row = 0; row < 7; ++row) {                                  \
+            float v = 0.0;                                                   \
+            for (int col = 0; col < 7; ++col) {                              \
+                v += t[kShBand3 + row * 7 + col] * c[8 + col];               \
+            }                                                                \
+            dst[(8 + row) * pc.count + i] = v;                               \
+        }                                                                    \
+    }
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) {
+        return;
+    }
+    vec3 translation = vec3(t[kTranslation], t[kTranslation + 1], t[kTranslation + 2]);
+    float s = t[kScale];
+    vec4 q = vec4(t[kRotation], t[kRotation + 1], t[kRotation + 2], t[kRotation + 3]);
+
+    outPos[i] = s * (quatToMat3(q) * pos[i]) + translation;
+    outRot[i] = normalize(quatMul(q, rot[i]));
+    outScale[i] = s * scale[i];
+    outColAlpha[i] = colAlpha[i];
+    ROTATE_SH(shR, outShR)
+    ROTATE_SH(shG, outShG)
+    ROTATE_SH(shB, outShB)
+}

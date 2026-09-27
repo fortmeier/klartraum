@@ -1,7 +1,9 @@
 #ifndef KLARTRAUM_COMPUTEGRAPH_HPP
 #define KLARTRAUM_COMPUTEGRAPH_HPP
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <queue>
@@ -87,6 +89,10 @@ public:
             element->_setup(vulkanContext, numberPaths);
         }
 
+        updatable_elements.clear();
+        std::copy_if(ordered_elements.begin(), ordered_elements.end(), std::back_inserter(updatable_elements),
+                     [](const ComputeGraphElementPtr& e) { return e->isUpdatable(); });
+
         commandBuffers.resize(ordered_elements.size() * numberPaths);
 
         // create the command buffers
@@ -168,6 +174,7 @@ public:
      * The submit infos will have to be prepared before by calling compile_from
      */
     VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId, VkFence fence = VK_NULL_HANDLE) {
+        updateElements(pathId);
         auto& submit_infos = all_path_submit_infos[pathId];
 
         // the following seems not to work if there are multiple paths in the graph
@@ -204,6 +211,7 @@ public:
             lockInfo.timeout = UINT64_MAX;
             pfn_AcquireLock_(device, &lockInfo);
 
+            updateElements(pathId);
             auto& origInfos = all_path_submit_infos[pathId];
             std::vector<VkPerformanceQuerySubmitInfoKHR> perfSubmits(origInfos.size());
             std::vector<VkSubmitInfo> infos = origInfos;
@@ -247,6 +255,15 @@ private:
     std::vector<VkCommandBuffer> commandBuffers;
 
     std::vector<ComputeGraphElementPtr> ordered_elements;
+    // The elements with a host-side update (isUpdatable()), collected once.
+    std::vector<ComputeGraphElementPtr> updatable_elements;
+
+    // Runs the host-side updates for the path about to be submitted.
+    void updateElements(uint32_t pathId) {
+        for (auto& element : updatable_elements) {
+            element->_update(pathId);
+        }
+    }
 
     typedef std::vector<VkSubmitInfo> SubmitInfoList;
     typedef std::vector<SubmitInfoWrapper> SubmitInfoWrapperList;
