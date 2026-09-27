@@ -48,20 +48,24 @@ decoder execute sequentially, so their transient arenas are not resident at the
 same time. Use `--load-only` to parse both graphs without allocating or running
 their Vulkan buffers.
 
-`export_denoiser.py` exports a fixed 128x128, batch-two UNet invocation for one
-classifier-free-guided denoising step. It writes prompt embeddings, deterministic
-latent inputs, PyTorch/ONNX Runtime references, and an operator coverage report.
-These generated model and tensor files remain development artifacts and must not
-be committed.
+`export_denoiser.py` exports a fixed 128x128, batch-two UNet and matching VAE
+decoder. Its default reference pipeline runs four deterministic DDIM steps with
+classifier-free guidance, then decodes the final latent. It writes prompt
+embeddings, scheduler coefficients, latent/image references, and an operator
+coverage report. These generated model and tensor files remain development
+artifacts and must not be committed.
 
-Run the matching Vulkan denoiser step and classifier-free guidance check with:
+Run the matching Vulkan pipeline with:
 
 ```powershell
 .\build\examples\Debug\sd15_denoiser_example.exe
 ```
 
-The current experiment deliberately stays at 128x128. It validates the complete
-SD1.5 UNet with a batch of two (negative and positive prompt conditioning), then
-combines the two predictions with guidance scale 7.5. Scheduler iteration and
-feeding the final latent into the VAE decoder are the remaining pipeline-level
-steps; the full denoiser network itself is executed by Klartraum.
+The example executes the complete SD1.5 UNet four times with a batch of two
+(negative and positive prompt conditioning), applies guidance scale 7.5 and the
+DDIM update on the CPU, and feeds the final latent into the Klartraum VAE decoder.
+It writes `build/TestingOutput/sd15_pipeline_klartraum.ppm` and checks the final
+latent and decoded pixels against the generated Python/ONNX Runtime reference.
+The current experiment deliberately stays at 128x128. Prompt tokenization and
+CLIP text encoding are still performed by the export script; moving those into
+the native runtime is the remaining step for accepting arbitrary prompt text.
