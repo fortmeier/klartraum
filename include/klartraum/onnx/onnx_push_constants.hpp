@@ -14,6 +14,65 @@ struct TensorOpPushConstants {
     uint32_t dimOutput[4];
 };
 
+struct UnaryPushConstants {
+    uint32_t elementCount;
+};
+
+struct BinaryBroadcastPushConstants {
+    uint32_t elementCount;
+    uint32_t rank;
+    uint32_t lhsDims[4];
+    uint32_t rhsDims[4];
+    uint32_t outputDims[4];
+};
+
+struct InstanceNormalizationPushConstants {
+    uint32_t batch;
+    uint32_t channels;
+    uint32_t spatialSize;
+    float epsilon;
+};
+
+struct MatMulPushConstants {
+    uint32_t batchCount;
+    uint32_t rows;
+    uint32_t columns;
+    uint32_t reduction;
+    uint32_t lhsBatchCount;
+    uint32_t rhsBatchCount;
+};
+
+struct SoftmaxPushConstants {
+    uint32_t outerCount;
+    uint32_t axisSize;
+};
+
+struct SplitPushConstants {
+    uint32_t outerCount;
+    uint32_t axisSize;
+    uint32_t innerSize;
+    uint32_t split0;
+    uint32_t split1;
+};
+
+struct ResizePushConstants {
+    uint32_t batch;
+    uint32_t channels;
+    uint32_t inputHeight;
+    uint32_t inputWidth;
+    uint32_t outputHeight;
+    uint32_t outputWidth;
+};
+
+struct SlicePushConstants {
+    uint32_t rank;
+    uint32_t axis;
+    uint32_t start;
+    uint32_t elementCount;
+    uint32_t inputDims[4];
+    uint32_t outputDims[4];
+};
+
 struct ConvPushConstants {
     // operation attributes
     uint32_t dilations[2];
@@ -26,6 +85,7 @@ struct ConvPushConstants {
     uint32_t dimInput[4];
     uint32_t dimWeights[4];
     uint32_t dimBias[1];
+    uint32_t dimOutput[4];
 };
 
 // struct ReshapePushConstants {

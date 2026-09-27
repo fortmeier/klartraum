@@ -1,0 +1,42 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint elementCount;
+    uint rank;
+    uint lhsDims[4];
+    uint rhsDims[4];
+    uint outputDims[4];
+} pc;
+
+layout(set = 0, binding = 0) restrict readonly buffer LhsBuffer { float lhs[]; };
+layout(set = 0, binding = 1) restrict readonly buffer RhsBuffer { float rhs[]; };
+layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+uint broadcastIndex(uint linear, uint dims[4]) {
+    uint coordinates[4];
+    uint remaining = linear;
+    for (int axis = 3; axis >= 0; --axis) {
+        coordinates[axis] = remaining % pc.outputDims[axis];
+        remaining /= pc.outputDims[axis];
+    }
+    uint index = 0;
+    uint stride = 1;
+    for (int axis = 3; axis >= 0; --axis) {
+        index += (dims[axis] == 1 ? 0 : coordinates[axis]) * stride;
+        stride *= dims[axis];
+    }
+    return index;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index < pc.elementCount) {
+        outputData[index] = lhs[broadcastIndex(index, pc.lhsDims)] * rhs[broadcastIndex(index, pc.rhsDims)];
+    }
+}
