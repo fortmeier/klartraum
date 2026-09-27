@@ -90,3 +90,14 @@ if(KLARTRAUM_WITH_FREETYPE)
 
   add_dependencies(title_morph_example Shaders)
 endif()
+
+# Stable Diffusion 1.5 VAE encoder/decoder example
+add_executable(sd15_vae_example
+    sd15_vae_example.cpp
+)
+
+target_link_libraries(sd15_vae_example
+    klartraum_lib
+)
+
+add_dependencies(sd15_vae_example Shaders)
