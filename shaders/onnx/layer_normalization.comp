@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants { uint outerCount; uint axisSize; float epsilon; } pc;
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer ScaleBuffer { float scale[]; };
+layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer { float bias[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+void main() {
+    uint row = gl_GlobalInvocationID.x;
+    if (row >= pc.outerCount) return;
+    uint offset = row * pc.axisSize;
+    float mean = 0.0;
+    for (uint i = 0; i < pc.axisSize; ++i) mean += inputData[offset + i];
+    mean /= float(pc.axisSize);
+    float variance = 0.0;
+    for (uint i = 0; i < pc.axisSize; ++i) { float delta = inputData[offset + i] - mean; variance += delta * delta; }
+    float inverseDeviation = inversesqrt(variance / float(pc.axisSize) + pc.epsilon);
+    for (uint i = 0; i < pc.axisSize; ++i) outputData[offset + i] = (inputData[offset + i] - mean) * inverseDeviation * scale[i] + bias[i];
+}
