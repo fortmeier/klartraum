@@ -1,14 +1,44 @@
+/**
+ * TESTS:
+ * - The simple encoder executes and matches every frozen intermediate.
+ * - The simple decoder executes and matches every frozen intermediate.
+ * - The Stable Diffusion 1.5 encoder graph loads with the expected output shape.
+ * - The Stable Diffusion 1.5 decoder graph loads with the expected output shape.
+ * - The Stable Diffusion 1.5 VAE encodes and decodes lantern.jpg within the ONNX reference tolerance.
+ **/
+
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "onnx.pb.h"
 
 using namespace klartraum;
+
+namespace {
+
+std::vector<float> readFloatTensor(const std::filesystem::path& path, size_t count) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input || static_cast<size_t>(input.tellg()) != count * sizeof(float)) {
+        throw std::runtime_error("Invalid float tensor fixture: " + path.string());
+    }
+    input.seekg(0);
+    std::vector<float> values(count);
+    input.read(reinterpret_cast<char*>(values.data()), values.size() * sizeof(float));
+    if (!input) throw std::runtime_error("Could not read float tensor fixture: " + path.string());
+    return values;
+}
+
+} // namespace
 
 
 void testLayer(std::shared_ptr<OnnxNetwork> onnxNetwork, std::string layerName)
@@ -91,3 +121,51 @@ TEST(OnnxNetworkTest, ExecuteWithValidDecoderModel) {
     return;
 }
 
+TEST(OnnxNetworkTest, LoadsStableDiffusion15Encoder) {
+    HeadlessFrontend frontend;
+    auto& context = frontend.getKlartraumEngine().getVulkanContext();
+    auto network = context.create<OnnxNetwork>("./data/onnx/sd15/sd15_vae_encoder.onnx");
+    auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("output"));
+    ASSERT_NE(output, nullptr);
+    EXPECT_EQ(output->getDimensions(), (std::vector<uint32_t>{1, 4, 8, 8}));
+}
+
+TEST(OnnxNetworkTest, LoadsStableDiffusion15Decoder) {
+    HeadlessFrontend frontend;
+    auto& context = frontend.getKlartraumEngine().getVulkanContext();
+    auto network = context.create<OnnxNetwork>("./data/onnx/sd15/sd15_vae_decoder.onnx");
+    auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("output"));
+    ASSERT_NE(output, nullptr);
+    EXPECT_EQ(output->getDimensions(), (std::vector<uint32_t>{1, 3, 64, 64}));
+}
+
+TEST(OnnxNetworkTest, ExecutesStableDiffusion15VaeOnLantern) {
+    constexpr size_t imageElementCount = 3 * 64 * 64;
+    const std::filesystem::path modelDirectory = "./data/onnx/sd15";
+
+    HeadlessFrontend frontend;
+    auto& context = frontend.getKlartraumEngine().getVulkanContext();
+    auto encoder = context.create<OnnxNetwork>((modelDirectory / "sd15_vae_encoder.onnx").string());
+    auto decoder = context.create<OnnxNetwork>((modelDirectory / "sd15_vae_decoder.onnx").string());
+    auto image = context.create<TensorElement<float>>(std::vector<uint32_t>{1, 3, 64, 64});
+    encoder->setInputTensor("input", image);
+    decoder->setInputTensor("input", encoder, 0);
+
+    ComputeGraph graph(context, 1);
+    graph.compileFrom(decoder);
+    image->setData(0, readFloatTensor(modelDirectory / "lantern_input_f32.bin", imageElementCount));
+    graph.submitAndWait(context.getGraphicsQueue(), 0);
+
+    auto output = std::dynamic_pointer_cast<TensorElement<float>>(decoder->getOutputElement("output"));
+    ASSERT_NE(output, nullptr);
+    std::vector<float> actual(output->getDataElementCount());
+    output->getDataBuffer(0).memcopyTo(actual);
+    const auto expected = readFloatTensor(modelDirectory / "lantern_reference_f32.bin", imageElementCount);
+    ASSERT_EQ(actual.size(), expected.size());
+
+    float maximumAbsoluteError = 0.0f;
+    for (size_t i = 0; i < actual.size(); ++i) {
+        maximumAbsoluteError = std::max(maximumAbsoluteError, std::abs(actual[i] - expected[i]));
+    }
+    EXPECT_LE(maximumAbsoluteError, 2e-3f);
+}

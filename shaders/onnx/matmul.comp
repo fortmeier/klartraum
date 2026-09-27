@@ -1,0 +1,30 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint batchCount;
+    uint rows;
+    uint columns;
+    uint reduction;
+    uint lhsBatchCount;
+    uint rhsBatchCount;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer LhsBuffer { float lhs[]; };
+layout(set = 0, binding = 1) restrict readonly buffer RhsBuffer { float rhs[]; };
+layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+void main() {
+    uint column = gl_GlobalInvocationID.x;
+    uint row = gl_GlobalInvocationID.y;
+    uint batch = gl_GlobalInvocationID.z;
+    if (column >= pc.columns || row >= pc.rows || batch >= pc.batchCount) return;
+    uint lhsBatch = pc.lhsBatchCount == 1 ? 0 : batch;
+    uint rhsBatch = pc.rhsBatchCount == 1 ? 0 : batch;
+    uint lhsOffset = lhsBatch * pc.rows * pc.reduction;
+    uint rhsOffset = rhsBatch * pc.reduction * pc.columns;
+    float value = 0.0;
+    for (uint k = 0; k < pc.reduction; ++k) {
+        value += lhs[lhsOffset + row * pc.reduction + k] * rhs[rhsOffset + k * pc.columns + column];
+    }
+    outputData[(batch * pc.rows + row) * pc.columns + column] = value;
+}
