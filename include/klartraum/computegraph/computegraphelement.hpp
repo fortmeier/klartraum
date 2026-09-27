@@ -121,7 +121,12 @@ public:
     // Host-side work right before a path of a compiled graph is submitted,
     // e.g. copying values the CPU set into that path's buffers. The path's
     // previous submission has finished by then, as for camera UBO updates.
+    // Only called for elements that return true from isUpdatable().
     virtual void _update(uint32_t pathId) {}
+
+    // Whether the element has a host-side update; ComputeGraph collects such
+    // elements when compiling and calls only their _update().
+    virtual bool isUpdatable() const { return false; }
 
     virtual const char* getType() const = 0;
 
