@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 
 #include "klartraum/computegraph/buffertransformation.hpp"
 #include "klartraum/computegraph/computegraphgroup.hpp"
@@ -45,6 +46,15 @@ struct TensorInfo {
 
 using TensorInfoMap = std::map<std::string, TensorInfo>;
 
+struct OnnxMemoryPlanStats {
+    size_t logicalBytes = 0;
+    size_t allocatedBytes = 0;
+    size_t peakLiveBytes = 0;
+    size_t slotCount = 0;
+    size_t tensorCount = 0;
+    size_t viewAliasCount = 0;
+};
+
 class OnnxNetwork : virtual public ComputeGraphElement, virtual public ComputeGraphGroup {
     /**
      * @brief ONNX Neural Network Graph Representation
@@ -74,6 +84,12 @@ public:
     // Helper methods to access model information
     std::vector<float> getFloatInitializerData(const std::string& name) const;
     ComputeGraphElementPtr getOutputElement(const std::string& name) const;
+    const OnnxMemoryPlanStats& getMemoryPlanStats() const { return memoryPlanStats; }
+
+    // Keep an intermediate tensor readable after execution. This must be
+    // called before the network is compiled/setup because transient tensors
+    // otherwise participate in storage reuse.
+    void retainTensor(const std::string& name);
 
     // Replace a declared ONNX graph input with a tensor produced elsewhere in
     // the compute graph. When outputSlot is specified, the producer remains a
@@ -89,6 +105,7 @@ private:
 
     void createGraphElementsFromNodes();
     void createGraphElementsFromOutputTensors();
+    void planTransientTensorStorage();
     void connectGraphElements();
     void storeComputeGraphGroupOutputElements();
 
@@ -120,6 +137,9 @@ private:
     std::map<std::string, ComputeGraphElementPtr> graphDataElements;
     std::map<uint32_t, ComputeGraphElementPtr> graphOperationElements;
     uint32_t numberOfPaths = 0;
+    OnnxMemoryPlanStats memoryPlanStats;
+    std::map<std::string, std::vector<std::string>> tensorViewGroups;
+    std::set<std::string> retainedTensorNames;
 };
 
 } // namespace klartraum
