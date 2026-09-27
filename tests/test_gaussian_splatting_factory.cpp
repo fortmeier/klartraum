@@ -30,7 +30,7 @@
  *   submitAndWait() and checks the image is not black, i.e. the backends size
  *   their per-path resources by the graph's paths, not the swapchain
  * - rendersGaussiansFromPasses: the raccoon scene rendered from Gaussians that went through
- *   an identity GaussianTransformPass, and from its two halves merged by a GaussianMergePass,
+ *   an identity GaussianTransform, and from its two halves merged by a GaussianMerge,
  *   looks like the scene rendered from its upload directly
  * - uncompiledBackendsCanBeDestroyed: each backend is created and released
  *   without ever being compiled into a graph (as when building the rest of a
@@ -51,7 +51,9 @@
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
-#include "klartraum/gaussian_passes.hpp"
+#include "klartraum/computegraph/gaussianmerge.hpp"
+#include "klartraum/computegraph/gaussiantransform.hpp"
+#include "klartraum/computegraph/transformbuffer.hpp"
 
 using namespace klartraum;
 
@@ -469,20 +471,20 @@ TEST(GaussianSplattingFactory, rendersGaussiansFromPasses) {
     const auto direct = render(whole->buffers());
     ASSERT_GT(*std::max_element(direct.begin(), direct.end()), uint8_t(10)) << "rendered image is all-black";
 
-    std::vector<std::shared_ptr<HostValues>> parameters;
+    std::vector<std::shared_ptr<HostFloat>> parameters;
     std::array<BufferRef, 7> refs;
     for (int i = 0; i < 7; ++i) {
-        parameters.push_back(std::make_shared<HostValues>(vc, std::vector<float>{i == 6 ? 1.0f : 0.0f}));
+        parameters.push_back(std::make_shared<HostFloat>(vc, std::vector<float>{i == 6 ? 1.0f : 0.0f}));
         refs[i] = BufferRef{parameters.back()};
     }
-    const TransformBuffer identity = makeTransformBuffer(vc, refs);
-    const auto moved = transformGaussiansPass(vc, whole->buffers(), identity.transform);
+    const TransformBufferResult identity = createTransformBuffer(vc, refs);
+    const auto moved = createGaussianTransform(vc, whole->buffers(), identity.transform);
     EXPECT_LE(maxDifference(render(moved.output), direct), 2);
 
     const auto half = gaussians.begin() + gaussians.size() / 2;
     auto first = std::make_shared<GaussianDataStandard>(vc, std::vector<Gaussian3D>(gaussians.begin(), half));
     auto second = std::make_shared<GaussianDataStandard>(vc, std::vector<Gaussian3D>(half, gaussians.end()));
-    const auto merged = mergeGaussiansPass(vc, first->buffers(), second->buffers());
+    const auto merged = createGaussianMerge(vc, first->buffers(), second->buffers());
     // The same Gaussians in the same order; depth ties may still sort differently.
     EXPECT_LE(maxDifference(render(merged.output), direct), 2);
 }
