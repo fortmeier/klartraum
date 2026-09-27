@@ -105,6 +105,33 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
     return dimensions;
 }
 
+uint32_t tensorElementCount(const std::vector<uint32_t>& dimensions) {
+    uint64_t count = 1;
+    for (const auto dimension : dimensions)
+        count *= dimension;
+    if (count > UINT32_MAX) {
+        throw std::runtime_error("Tensor is too large for a Vulkan dispatch");
+    }
+    return static_cast<uint32_t>(count);
+}
+
+void padDimensions(const std::vector<uint32_t>& source, uint32_t (&destination)[4]) {
+    if (source.size() > 4)
+        throw std::runtime_error("ONNX tensors with rank above four are unsupported");
+    std::fill(std::begin(destination), std::end(destination), 1u);
+    const size_t offset = 4 - source.size();
+    for (size_t i = 0; i < source.size(); ++i)
+        destination[offset + i] = source[i];
+}
+
+int64_t getIntegerAttribute(const onnx::NodeProto& node, const std::string& name, int64_t fallback) {
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == name && attribute.has_i())
+            return attribute.i();
+    }
+    return fallback;
+}
+
 ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                   const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
                                   const onnx::GraphProto& graph) {
@@ -139,23 +166,14 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
 
     std::string shaderFilename = "shaders/onnx/conv.comp.spv";
 
-    // One invocation per output element: x covers the output width, y the
-    // output height, z the output channels (see shaders/onnx/conv.comp, local
-    // size 8x8x1). The output size follows the same formula as the shader.
-    const uint32_t outputHeight = (pushConstants.dimInput[2] + 2 * pushConstants.pads[0] -
-                                   pushConstants.dilations[0] * (pushConstants.kernel_shape[0] - 1) - 1) /
-                                      pushConstants.strides[0] +
-                                  1;
-    const uint32_t outputWidth = (pushConstants.dimInput[3] + 2 * pushConstants.pads[1] -
-                                  pushConstants.dilations[1] * (pushConstants.kernel_shape[1] - 1) - 1) /
-                                     pushConstants.strides[1] +
-                                 1;
-
     auto operation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(shaderFilename);
+    const auto outputDim = getTensorDimensions(node.output(0), name2ValueInfoProto, graph);
+    for (size_t i = 0; i < 4; ++i)
+        pushConstants.dimOutput[i] = outputDim[i];
     operation->setPushConstants({pushConstants});
-    operation->setGroupCountX((outputWidth + 7) / 8);
-    operation->setGroupCountY((outputHeight + 7) / 8);
-    operation->setGroupCountZ(pushConstants.dimWeights[0]);
+    operation->setGroupCountX((outputDim[3] + 7) / 8);
+    operation->setGroupCountY((outputDim[2] + 7) / 8);
+    operation->setGroupCountZ(outputDim[1]);
 
     return operation;
 }
@@ -296,6 +314,15 @@ ComputeGraphElementPtr createTranspose(VulkanContext* vulkanContext, const onnx:
                                        const onnx::GraphProto& graph) {
     TransposePushConstants pushConstants;
 
+    const auto inputDimensions = getTensorDimensions(node.input(0), name2ValueInfoProto, graph);
+    const auto outputDimensions = getTensorDimensions(node.output(0), name2ValueInfoProto, graph);
+    pushConstants = {};
+    pushConstants.dims = static_cast<uint32_t>(inputDimensions.size());
+    for (size_t i = 0; i < inputDimensions.size(); ++i) {
+        pushConstants.dimInput[i] = inputDimensions[i];
+        pushConstants.dimOutput[i] = outputDimensions[i];
+    }
+
     // Parse the perm attribute
     parseAttributes<uint32_t>(node, "perm", pushConstants.dimPerm);
 
@@ -303,7 +330,173 @@ ComputeGraphElementPtr createTranspose(VulkanContext* vulkanContext, const onnx:
 
     auto operation = vulkanContext->create<GeneralComputation<TransposePushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
+    operation->setGroupCountX((tensorElementCount(outputDimensions) + 63) / 64);
 
+    return operation;
+}
+
+ComputeGraphElementPtr createBinaryBroadcast(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                             const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                             const onnx::GraphProto& graph, const std::string& shader) {
+    const auto lhs = getTensorDimensions(node.input(0), infos, graph);
+    const auto rhs = getTensorDimensions(node.input(1), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    BinaryBroadcastPushConstants constants{};
+    constants.rank = static_cast<uint32_t>(output.size());
+    constants.elementCount = tensorElementCount(output);
+    padDimensions(lhs, constants.lhsDims);
+    padDimensions(rhs, constants.rhsDims);
+    padDimensions(output, constants.outputDims);
+    auto operation = vulkanContext->create<GeneralComputation<BinaryBroadcastPushConstants>>(shader);
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((constants.elementCount + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr createUnary(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                   const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                   const onnx::GraphProto& graph, const std::string& shader) {
+    UnaryPushConstants constants{tensorElementCount(getTensorDimensions(node.output(0), infos, graph))};
+    auto operation = vulkanContext->create<GeneralComputation<UnaryPushConstants>>(shader);
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((constants.elementCount + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr createInstanceNormalization(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                                   const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                                   const onnx::GraphProto& graph) {
+    const auto dimensions = getTensorDimensions(node.input(0), infos, graph);
+    if (dimensions.size() < 3)
+        throw std::runtime_error("InstanceNormalization requires rank >= 3");
+    InstanceNormalizationPushConstants constants{};
+    constants.batch = dimensions[0];
+    constants.channels = dimensions[1];
+    constants.spatialSize = 1;
+    for (size_t i = 2; i < dimensions.size(); ++i)
+        constants.spatialSize *= dimensions[i];
+    constants.epsilon = 1e-5f;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == "epsilon")
+            constants.epsilon = attribute.f();
+    }
+    auto operation = vulkanContext->create<GeneralComputation<InstanceNormalizationPushConstants>>(
+        "shaders/onnx/instance_normalization.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((constants.batch * constants.channels + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr createMatMul(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                    const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                    const onnx::GraphProto& graph) {
+    const auto lhs = getTensorDimensions(node.input(0), infos, graph);
+    const auto rhs = getTensorDimensions(node.input(1), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (lhs.size() < 2 || rhs.size() < 2 || output.size() < 2) {
+        throw std::runtime_error("MatMul requires rank >= 2");
+    }
+    MatMulPushConstants constants{};
+    constants.rows = output[output.size() - 2];
+    constants.columns = output.back();
+    constants.reduction = lhs.back();
+    constants.batchCount = tensorElementCount(output) / (constants.rows * constants.columns);
+    constants.lhsBatchCount = tensorElementCount(lhs) / (constants.rows * constants.reduction);
+    constants.rhsBatchCount = tensorElementCount(rhs) / (constants.reduction * constants.columns);
+    if (constants.lhsBatchCount != 1 && constants.lhsBatchCount != constants.batchCount) {
+        throw std::runtime_error("Unsupported MatMul left batch broadcasting");
+    }
+    if (constants.rhsBatchCount != 1 && constants.rhsBatchCount != constants.batchCount) {
+        throw std::runtime_error("Unsupported MatMul right batch broadcasting");
+    }
+    auto operation = vulkanContext->create<GeneralComputation<MatMulPushConstants>>("shaders/onnx/matmul.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCount((constants.columns + 7) / 8, (constants.rows + 7) / 8, constants.batchCount);
+    return operation;
+}
+
+ComputeGraphElementPtr createSoftmax(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                     const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                     const onnx::GraphProto& graph) {
+    const auto dimensions = getTensorDimensions(node.input(0), infos, graph);
+    int64_t axis = getIntegerAttribute(node, "axis", -1);
+    if (axis < 0)
+        axis += static_cast<int64_t>(dimensions.size());
+    if (axis != static_cast<int64_t>(dimensions.size()) - 1) {
+        throw std::runtime_error("Only last-axis Softmax is supported");
+    }
+    SoftmaxPushConstants constants{tensorElementCount(dimensions) / dimensions.back(), dimensions.back()};
+    auto operation = vulkanContext->create<GeneralComputation<SoftmaxPushConstants>>("shaders/onnx/softmax.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((constants.outerCount + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr createSplit(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                   const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                   const onnx::GraphProto& graph) {
+    if (node.output_size() != 3)
+        throw std::runtime_error("Only three-way Split is supported");
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    int64_t axis = getIntegerAttribute(node, "axis", 0);
+    if (axis < 0)
+        axis += static_cast<int64_t>(input.size());
+    uint32_t outer = 1, inner = 1;
+    for (int64_t i = 0; i < axis; ++i)
+        outer *= input[i];
+    for (size_t i = static_cast<size_t>(axis) + 1; i < input.size(); ++i)
+        inner *= input[i];
+    const auto output0 = getTensorDimensions(node.output(0), infos, graph);
+    const auto output1 = getTensorDimensions(node.output(1), infos, graph);
+    SplitPushConstants constants{outer, input[axis], inner, output0[axis], output1[axis]};
+    auto operation = vulkanContext->create<GeneralComputation<SplitPushConstants>>("shaders/onnx/split3.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((tensorElementCount(input) + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr createResize(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                    const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                    const onnx::GraphProto& graph) {
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (input.size() != 4 || output.size() != 4)
+        throw std::runtime_error("Resize requires rank four");
+    ResizePushConstants constants{input[0], input[1], input[2], input[3], output[2], output[3]};
+    auto operation =
+        vulkanContext->create<GeneralComputation<ResizePushConstants>>("shaders/onnx/resize_nearest.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((tensorElementCount(output) + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr createSlice(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                   const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                   const onnx::GraphProto& graph) {
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (input.size() != output.size() || input.size() > 4)
+        throw std::runtime_error("Unsupported Slice rank");
+    SlicePushConstants constants{};
+    constants.rank = static_cast<uint32_t>(input.size());
+    constants.elementCount = tensorElementCount(output);
+    constants.start = 0;
+    bool foundAxis = false;
+    for (size_t i = 0; i < input.size(); ++i) {
+        constants.inputDims[i] = input[i];
+        constants.outputDims[i] = output[i];
+        if (input[i] != output[i]) {
+            if (foundAxis)
+                throw std::runtime_error("Only single-axis Slice is supported");
+            constants.axis = static_cast<uint32_t>(i);
+            foundAxis = true;
+        }
+    }
+    if (!foundAxis)
+        throw std::runtime_error("Slice must change one dimension");
+    auto operation = vulkanContext->create<GeneralComputation<SlicePushConstants>>("shaders/onnx/slice.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((constants.elementCount + 63) / 64);
     return operation;
 }
 
@@ -321,6 +514,24 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
 
     if (operationType == "Conv") {
         operation = createConv(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Add") {
+        operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, "shaders/onnx/add.comp.spv");
+    } else if (operationType == "Mul") {
+        operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, "shaders/onnx/mul.comp.spv");
+    } else if (operationType == "Sigmoid") {
+        operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, "shaders/onnx/sigmoid.comp.spv");
+    } else if (operationType == "InstanceNormalization") {
+        operation = createInstanceNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "MatMul") {
+        operation = createMatMul(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Softmax") {
+        operation = createSoftmax(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Split") {
+        operation = createSplit(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Resize") {
+        operation = createResize(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Slice") {
+        operation = createSlice(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Relu") {
         operation = createRelu(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Constant") {
