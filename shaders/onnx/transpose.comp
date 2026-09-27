@@ -1,0 +1,32 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+#include "transpose_include.glsl"
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+void main() {
+    uint outputIndex = gl_GlobalInvocationID.x;
+    uint total = 1;
+    for (uint axis = 0; axis < dims; ++axis) total *= dimOutput[axis];
+    if (outputIndex >= total) return;
+    uint outputCoordinates[8];
+    uint remaining = outputIndex;
+    for (int axis = int(dims) - 1; axis >= 0; --axis) {
+        outputCoordinates[axis] = remaining % dimOutput[axis];
+        remaining /= dimOutput[axis];
+    }
+    uint inputCoordinates[8];
+    for (uint axis = 0; axis < dims; ++axis) inputCoordinates[dimPerm[axis]] = outputCoordinates[axis];
+    uint inputIndex = 0;
+    uint stride = 1;
+    for (int axis = int(dims) - 1; axis >= 0; --axis) {
+        inputIndex += inputCoordinates[axis] * stride;
+        stride *= dimInput[axis];
+    }
+    outputData[outputIndex] = inputData[inputIndex];
+}
