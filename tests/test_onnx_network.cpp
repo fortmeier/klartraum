@@ -5,6 +5,8 @@
  * - The Stable Diffusion 1.5 encoder graph loads with the expected output shape.
  * - The Stable Diffusion 1.5 decoder graph loads with the expected output shape.
  * - The Stable Diffusion 1.5 VAE encodes and decodes lantern.jpg within the ONNX reference tolerance.
+ * - The Stable Diffusion 1.5 graphs reuse transient tensor storage.
+ * - Eligible ONNX Reshape tensors are zero-copy views of their inputs.
  **/
 
 #include <algorithm>
@@ -74,6 +76,12 @@ TEST(OnnxNetworkTest, ExecuteWithValidEncoderModel) {
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
 
+    for (const auto& layer : {"/conv1/Conv_output_0", "/relu/Relu_output_0",
+                              "/conv2/Conv_output_0", "/relu_1/Relu_output_0",
+                              "/conv3/Conv_output_0", "output"}) {
+        onnxNetwork->retainTensor(layer);
+    }
+
 
     /*
     STEP 2: use the render engine to execute the computegraph so it can be debugged with renderdoc
@@ -103,6 +111,12 @@ TEST(OnnxNetworkTest, ExecuteWithValidDecoderModel) {
     std::string modelPath = "./data/onnx/simple_decoder_with_onnx_frozen_intermediates.onnx";
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
+
+    for (const auto& layer : {"/deconv1/ConvTranspose_output_0", "/relu/Relu_output_0",
+                              "/deconv2/ConvTranspose_output_0", "/relu_1/Relu_output_0",
+                              "/deconv3/ConvTranspose_output_0", "output"}) {
+        onnxNetwork->retainTensor(layer);
+    }
 
     /*
     STEP 2: use the render engine to execute the computegraph so it can be debugged with renderdoc
@@ -137,6 +151,25 @@ TEST(OnnxNetworkTest, LoadsStableDiffusion15Decoder) {
     auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("output"));
     ASSERT_NE(output, nullptr);
     EXPECT_EQ(output->getDimensions(), (std::vector<uint32_t>{1, 3, 64, 64}));
+}
+
+TEST(OnnxNetworkTest, StableDiffusion15UsesTransientStoragePlan) {
+    HeadlessFrontend frontend;
+    auto& context = frontend.getKlartraumEngine().getVulkanContext();
+    auto network = context.create<OnnxNetwork>("./data/onnx/sd15/sd15_vae_decoder.onnx");
+    const auto& stats = network->getMemoryPlanStats();
+    EXPECT_GT(stats.tensorCount, stats.slotCount);
+    EXPECT_GT(stats.logicalBytes, stats.allocatedBytes);
+    EXPECT_GE(stats.allocatedBytes, stats.peakLiveBytes);
+    EXPECT_GT(stats.viewAliasCount, 0);
+
+    auto reshapeInput = std::dynamic_pointer_cast<TensorElementInterface>(
+        network->getOutputElement("/decoder/up_blocks.3/resnets.2/Add_output_0"));
+    auto reshapeOutput = std::dynamic_pointer_cast<TensorElementInterface>(
+        network->getOutputElement("/decoder/conv_norm_out/Reshape_output_0"));
+    ASSERT_NE(reshapeInput, nullptr);
+    ASSERT_NE(reshapeOutput, nullptr);
+    EXPECT_EQ(reshapeInput->getStorageIdentity(), reshapeOutput->getStorageIdentity());
 }
 
 TEST(OnnxNetworkTest, ExecutesStableDiffusion15VaeOnLantern) {
