@@ -43,29 +43,20 @@ void GaussianDataStandard::uploadSoA(VulkanContext& vulkanContext, const std::ve
         }
     }
 
-    buffers_.pos      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
-    buffers_.rot      = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
-    buffers_.scale    = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(vulkanContext, N);
-    buffers_.colAlpha = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(vulkanContext, N);
-    buffers_.shR      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-    buffers_.shG      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-    buffers_.shB      = std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 15*N);
-
-    buffers_.pos->setName("Pos3D");
-    buffers_.rot->setName("Rot3D");
-    buffers_.scale->setName("Scale3D");
-    buffers_.colAlpha->setName("ColAlpha3D");
-    buffers_.shR->setName("ShR");
-    buffers_.shG->setName("ShG");
-    buffers_.shB->setName("ShB");
-
-    buffers_.pos->getBuffer().memcopyFrom(pos3d);
-    buffers_.rot->getBuffer().memcopyFrom(rot3d);
-    buffers_.scale->getBuffer().memcopyFrom(scale3d);
-    buffers_.colAlpha->getBuffer().memcopyFrom(colAlpha3d);
-    buffers_.shR->getBuffer().memcopyFrom(shR);
-    buffers_.shG->getBuffer().memcopyFrom(shG);
-    buffers_.shB->getBuffer().memcopyFrom(shB);
+    auto upload = [&](const auto& data, uint32_t count, const char* name) {
+        using T = typename std::decay_t<decltype(data)>::value_type;
+        auto element = std::make_shared<BufferElementSinglePath<VulkanBuffer<T>>>(vulkanContext, count);
+        element->setName(name);
+        element->getBuffer().memcopyFrom(data);
+        return BufferRef{element};
+    };
+    buffers_.pos      = upload(pos3d, N, "Pos3D");
+    buffers_.rot      = upload(rot3d, N, "Rot3D");
+    buffers_.scale    = upload(scale3d, N, "Scale3D");
+    buffers_.colAlpha = upload(colAlpha3d, N, "ColAlpha3D");
+    buffers_.shR      = upload(shR, 15 * N, "ShR");
+    buffers_.shG      = upload(shG, 15 * N, "ShG");
+    buffers_.shB      = upload(shB, 15 * N, "ShB");
 }
 
 std::vector<Gaussian3D> loadGaussiansSpz(const std::string& path, bool flipY) {
