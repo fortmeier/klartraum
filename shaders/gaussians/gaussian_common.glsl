@@ -1,4 +1,4 @@
-// Shared by the Gaussian compute passes.
+// Shared by the Gaussian compute elements.
 
 // Quaternions are stored x, y, z, w.
 vec4 quatMul(vec4 a, vec4 b) {
