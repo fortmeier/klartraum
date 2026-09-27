@@ -5,11 +5,13 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iostream>
 
 #include "klartraum/computegraph/copybuffer.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/noop.hpp"
+#include "klartraum/computegraph/tensor_memory_planner.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/onnx/onnx_push_constants.hpp"
@@ -411,6 +413,10 @@ void OnnxNetwork::createComputeGraph() {
     // create klartraum graph elements
     createGraphElementsFromOutputTensors();
 
+    // Derive transient tensor lifetimes from the ONNX producer/consumer graph
+    // and assign non-overlapping tensors to shared physical storage.
+    planTransientTensorStorage();
+
     // finally, connect all operation inputs and outputs
     // in the klartraum compute graph, both inputs and outputs pass
     // through the compute element in the same fashion
@@ -547,6 +553,215 @@ void OnnxNetwork::storeComputeGraphGroupOutputElements() {
 
         std::cout << " - connected output " << outputName << " at slot " << outputIndex << std::endl;
     }
+}
+
+void OnnxNetwork::planTransientTensorStorage() {
+    const onnx::GraphProto& graph = model->graph();
+    const size_t graphEnd = static_cast<size_t>(graph.node_size());
+
+    struct Lifetime {
+        std::string name;
+        size_t producer;
+        size_t lastUse;
+        std::shared_ptr<TensorElementInterface> tensor;
+    };
+
+    std::map<std::string, Lifetime> lifetimes;
+    for (int nodeIndex = 0; nodeIndex < graph.node_size(); ++nodeIndex) {
+        const auto& node = graph.node(nodeIndex);
+        for (const auto& outputName : node.output()) {
+            const auto element = graphDataElements.find(outputName);
+            if (element == graphDataElements.end())
+                continue;
+            auto tensor = std::dynamic_pointer_cast<TensorElementInterface>(element->second);
+            if (!tensor || tensor->isSinglePathStorage())
+                continue;
+            lifetimes.emplace(outputName, Lifetime{
+                                              outputName,
+                                              static_cast<size_t>(nodeIndex),
+                                              static_cast<size_t>(nodeIndex),
+                                              tensor,
+                                          });
+        }
+    }
+
+    for (int nodeIndex = 0; nodeIndex < graph.node_size(); ++nodeIndex) {
+        const auto& node = graph.node(nodeIndex);
+        for (const auto& inputName : node.input()) {
+            const auto lifetime = lifetimes.find(inputName);
+            if (lifetime != lifetimes.end()) {
+                lifetime->second.lastUse = std::max(lifetime->second.lastUse, static_cast<size_t>(nodeIndex));
+            }
+        }
+    }
+    for (const auto& output : graph.output()) {
+        const auto lifetime = lifetimes.find(output.name());
+        if (lifetime != lifetimes.end())
+            lifetime->second.lastUse = graphEnd;
+    }
+
+    // Reshape changes tensor metadata only. Merge eligible input/output
+    // lifetimes so both logical tensors become views of the same storage.
+    std::map<std::string, std::string> parent;
+    for (const auto& [name, lifetime] : lifetimes)
+        parent[name] = name;
+    std::function<std::string(const std::string&)> findRoot = [&](const std::string& name) {
+        auto& value = parent.at(name);
+        if (value != name)
+            value = findRoot(value);
+        return value;
+    };
+
+    for (int nodeIndex = 0; nodeIndex < graph.node_size(); ++nodeIndex) {
+        const auto& node = graph.node(nodeIndex);
+        if (node.op_type() != "Reshape" || node.input_size() < 1 || node.output_size() < 1)
+            continue;
+        const auto input = lifetimes.find(node.input(0));
+        const auto output = lifetimes.find(node.output(0));
+        if (input == lifetimes.end() || output == lifetimes.end())
+            continue;
+        if (input->second.tensor->getBufferMemSize() != output->second.tensor->getBufferMemSize() ||
+            input->second.tensor->getElementType() != output->second.tensor->getElementType())
+            continue;
+
+        parent[findRoot(output->first)] = findRoot(input->first);
+        auto operation = vulkanContext->create<NoOp>();
+        operation->setName(graphOperationElements.at(nodeIndex)->getName());
+        graphOperationElements[nodeIndex] = operation;
+        for (const auto& outputName : node.output()) {
+            auto mapping = outputName2GraphElementAndSlot.find(outputName);
+            if (mapping != outputName2GraphElementAndSlot.end())
+                mapping->second.first = operation;
+        }
+        ++memoryPlanStats.viewAliasCount;
+    }
+
+    struct GroupLifetime {
+        std::string name;
+        size_t producer = graphEnd;
+        size_t lastUse = 0;
+        size_t bytes = 0;
+        std::type_index elementType = typeid(void);
+        std::vector<std::string> members;
+    };
+    std::map<std::string, GroupLifetime> groups;
+    size_t totalLogicalBytes = 0;
+    for (const auto& [name, lifetime] : lifetimes) {
+        const std::string root = findRoot(name);
+        auto [position, inserted] = groups.emplace(root, GroupLifetime{});
+        auto& group = position->second;
+        if (inserted) {
+            group.name = root;
+            group.elementType = lifetime.tensor->getElementType();
+        }
+        group.producer = std::min(group.producer, lifetime.producer);
+        group.lastUse = std::max(group.lastUse, lifetime.lastUse);
+        group.bytes = std::max(group.bytes, lifetime.tensor->getBufferMemSize());
+        group.members.push_back(name);
+        totalLogicalBytes += lifetime.tensor->getBufferMemSize();
+    }
+    for (const auto& [name, group] : groups) {
+        if (group.members.size() > 1) {
+            for (const auto& member : group.members)
+                tensorViewGroups[member] = group.members;
+        }
+    }
+
+    std::vector<TensorLifetimeRequest> requests;
+    requests.reserve(groups.size());
+    for (const auto& [name, group] : groups) {
+        requests.push_back({name, group.bytes, group.producer, group.lastUse, group.elementType});
+    }
+
+    const TensorMemoryPlan plan = TensorMemoryPlanner::plan(std::move(requests));
+    memoryPlanStats.logicalBytes = totalLogicalBytes;
+    memoryPlanStats.allocatedBytes = plan.allocatedBytes;
+    memoryPlanStats.peakLiveBytes = plan.peakLiveBytes;
+    memoryPlanStats.slotCount = plan.slotCapacities.size();
+    memoryPlanStats.tensorCount = lifetimes.size();
+
+    std::map<std::string, size_t> groupToSlot;
+    std::map<size_t, std::string> slotOwner;
+    for (const auto& assignment : plan.assignments) {
+        groupToSlot[assignment.name] = assignment.slot;
+        for (const auto& member : groups.at(assignment.name).members) {
+            const auto owner = slotOwner.find(assignment.slot);
+            if (owner == slotOwner.end() || lifetimes.at(member).tensor->getBufferMemSize() >
+                                                lifetimes.at(owner->second).tensor->getBufferMemSize()) {
+                slotOwner[assignment.slot] = member;
+            }
+        }
+    }
+
+    for (const auto& assignment : plan.assignments) {
+        const std::string& ownerName = slotOwner.at(assignment.slot);
+        for (const auto& member : groups.at(assignment.name).members) {
+            if (member != ownerName) {
+                lifetimes.at(member).tensor->shareDataStorageWith(*lifetimes.at(ownerName).tensor);
+            }
+        }
+    }
+
+    // Reusing a slot adds a write-after-read dependency between otherwise
+    // independent ONNX branches. The dependency affects scheduling only and
+    // is deliberately not exposed as a shader descriptor input.
+    std::map<size_t, std::vector<const GroupLifetime*>> slotLifetimes;
+    for (const auto& [name, group] : groups) {
+        slotLifetimes[groupToSlot.at(name)].push_back(&group);
+    }
+    for (auto& [slot, values] : slotLifetimes) {
+        std::sort(values.begin(), values.end(),
+                  [](const auto* lhs, const auto* rhs) { return lhs->producer < rhs->producer; });
+        for (size_t index = 1; index < values.size(); ++index) {
+            const GroupLifetime& previous = *values[index - 1];
+            const GroupLifetime& current = *values[index];
+            if (previous.lastUse < current.producer && previous.lastUse < graphEnd) {
+                graphOperationElements.at(static_cast<uint32_t>(current.producer))
+                    ->addDependency(graphOperationElements.at(static_cast<uint32_t>(previous.lastUse)));
+            }
+        }
+    }
+
+    std::cout << "OnnxNetwork: transient memory plan: " << memoryPlanStats.tensorCount << " tensors, "
+              << memoryPlanStats.slotCount << " slots, " << memoryPlanStats.logicalBytes << " logical bytes -> "
+              << memoryPlanStats.allocatedBytes << " allocated bytes" << std::endl;
+}
+
+void OnnxNetwork::retainTensor(const std::string& name) {
+    const auto element = graphDataElements.find(name);
+    if (element == graphDataElements.end()) {
+        throw std::runtime_error("ONNX tensor " + name + " not found");
+    }
+    if (retainedTensorNames.count(name))
+        return;
+
+    std::vector<std::string> members{name};
+    const auto viewGroup = tensorViewGroups.find(name);
+    if (viewGroup != tensorViewGroups.end())
+        members = viewGroup->second;
+
+    std::string ownerName = members.front();
+    auto owner = std::dynamic_pointer_cast<TensorElementInterface>(graphDataElements.at(ownerName));
+    if (!owner || owner->isSinglePathStorage()) {
+        retainedTensorNames.insert(name);
+        return;
+    }
+    for (const auto& member : members) {
+        auto tensor = std::dynamic_pointer_cast<TensorElementInterface>(graphDataElements.at(member));
+        if (tensor->getBufferMemSize() > owner->getBufferMemSize()) {
+            ownerName = member;
+            owner = tensor;
+        }
+    }
+
+    owner->makeDataStorageUnique();
+    for (const auto& member : members) {
+        auto tensor = std::dynamic_pointer_cast<TensorElementInterface>(graphDataElements.at(member));
+        if (member != ownerName)
+            tensor->shareDataStorageWith(*owner);
+        retainedTensorNames.insert(member);
+    }
+    memoryPlanStats.allocatedBytes += owner->getStorageCapacityBytes();
 }
 
 void OnnxNetwork::setInputTensor(const std::string& name, ComputeGraphElementPtr producer, int outputSlot) {
