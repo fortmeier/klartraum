@@ -296,6 +296,7 @@ add_executable(
   tests/test_onnx_relu.cpp
   tests/test_onnx_transpose.cpp
   tests/test_onnx_reference.cpp
+  tests/test_onnx_operations.cpp
   tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
