@@ -83,3 +83,14 @@ target_link_libraries(sd15_vae_example
 )
 
 add_dependencies(sd15_vae_example Shaders)
+
+# Stable Diffusion 1.5 fixed-size UNet denoiser example
+add_executable(sd15_denoiser_example
+    sd15_denoiser_example.cpp
+)
+
+target_link_libraries(sd15_denoiser_example
+    klartraum_lib
+)
+
+add_dependencies(sd15_denoiser_example Shaders)

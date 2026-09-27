@@ -7,6 +7,8 @@
  * - The Stable Diffusion 1.5 VAE encodes and decodes lantern.jpg within the ONNX reference tolerance.
  * - The Stable Diffusion 1.5 graphs reuse transient tensor storage.
  * - Eligible ONNX Reshape tensors are zero-copy views of their inputs.
+ * - The generated fixed-size SD1.5 UNet graph loads with complete operator coverage.
+ * - The generated fixed-size SD1.5 UNet executes one denoising prediction against ONNX Runtime.
  **/
 
 #include <algorithm>
@@ -37,6 +39,18 @@ std::vector<float> readFloatTensor(const std::filesystem::path& path, size_t cou
     std::vector<float> values(count);
     input.read(reinterpret_cast<char*>(values.data()), values.size() * sizeof(float));
     if (!input) throw std::runtime_error("Could not read float tensor fixture: " + path.string());
+    return values;
+}
+
+std::vector<int64_t> readInt64Tensor(const std::filesystem::path& path, size_t count) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input || static_cast<size_t>(input.tellg()) != count * sizeof(int64_t)) {
+        throw std::runtime_error("Invalid int64 tensor fixture: " + path.string());
+    }
+    input.seekg(0);
+    std::vector<int64_t> values(count);
+    input.read(reinterpret_cast<char*>(values.data()), values.size() * sizeof(int64_t));
+    if (!input) throw std::runtime_error("Could not read int64 tensor fixture: " + path.string());
     return values;
 }
 
@@ -170,6 +184,58 @@ TEST(OnnxNetworkTest, StableDiffusion15UsesTransientStoragePlan) {
     ASSERT_NE(reshapeInput, nullptr);
     ASSERT_NE(reshapeOutput, nullptr);
     EXPECT_EQ(reshapeInput->getStorageIdentity(), reshapeOutput->getStorageIdentity());
+}
+
+TEST(OnnxNetworkTest, LoadsStableDiffusion15Denoiser) {
+    const std::filesystem::path modelPath = "./data/onnx/sd15_denoiser_128/sd15_unet.onnx";
+    if (!std::filesystem::exists(modelPath)) GTEST_SKIP() << "Generate the denoiser with scripts/sd15_onnx/export_denoiser.py";
+    HeadlessFrontend frontend;
+    auto& context = frontend.getKlartraumEngine().getVulkanContext();
+    auto network = context.create<OnnxNetwork>(modelPath.string());
+    auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("noise_prediction"));
+    ASSERT_NE(output, nullptr);
+    EXPECT_EQ(output->getDimensions(), (std::vector<uint32_t>{2, 4, 16, 16}));
+    const auto& stats = network->getMemoryPlanStats();
+    EXPECT_GT(stats.tensorCount, stats.slotCount);
+    EXPECT_GT(stats.logicalBytes, stats.allocatedBytes);
+    EXPECT_GT(stats.viewAliasCount, 0);
+}
+
+TEST(OnnxNetworkTest, ExecutesStableDiffusion15DenoiserStep) {
+    constexpr size_t sampleElements = 2 * 4 * 16 * 16;
+    constexpr size_t embeddingElements = 2 * 77 * 768;
+    const std::filesystem::path modelDirectory = "./data/onnx/sd15_denoiser_128";
+    const auto modelPath = modelDirectory / "sd15_unet.onnx";
+    if (!std::filesystem::exists(modelPath)) GTEST_SKIP() << "Generate the denoiser with scripts/sd15_onnx/export_denoiser.py";
+
+    HeadlessFrontend frontend;
+    auto& context = frontend.getKlartraumEngine().getVulkanContext();
+    auto network = context.create<OnnxNetwork>(modelPath.string());
+    auto sample = context.create<TensorElement<float>>(std::vector<uint32_t>{2, 4, 16, 16});
+    auto timestep = context.create<TensorElement<int64_t>>(std::vector<uint32_t>{1});
+    auto embeddings = context.create<TensorElement<float>>(std::vector<uint32_t>{2, 77, 768});
+    network->setInputTensor("sample", sample);
+    network->setInputTensor("timestep", timestep);
+    network->setInputTensor("encoder_hidden_states", embeddings);
+
+    ComputeGraph graph(context, 1);
+    graph.compileFrom(network);
+    sample->setData(0, readFloatTensor(modelDirectory / "unet_sample_f32.bin", sampleElements));
+    timestep->setData(0, readInt64Tensor(modelDirectory / "unet_timestep_i64.bin", 1));
+    embeddings->setData(0, readFloatTensor(modelDirectory / "prompt_embeddings_f32.bin", embeddingElements));
+    graph.submitAndWait(context.getGraphicsQueue(), 0);
+
+    auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("noise_prediction"));
+    ASSERT_NE(output, nullptr);
+    std::vector<float> actual(output->getDataElementCount());
+    output->getDataBuffer(0).memcopyTo(actual);
+    const auto expected = readFloatTensor(modelDirectory / "unet_reference_f32.bin", sampleElements);
+    ASSERT_EQ(actual.size(), expected.size());
+    float maximumAbsoluteError = 0.0f;
+    for (size_t index = 0; index < actual.size(); ++index) {
+        maximumAbsoluteError = std::max(maximumAbsoluteError, std::abs(actual[index] - expected[index]));
+    }
+    EXPECT_LE(maximumAbsoluteError, 2e-2f);
 }
 
 TEST(OnnxNetworkTest, ExecutesStableDiffusion15VaeOnLantern) {
