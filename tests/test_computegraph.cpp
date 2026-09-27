@@ -5,6 +5,7 @@
  * - headlessSubmitTo: DrawBasics render graph over headless paths using beginRender/submitTo/endRender
  * - glfwSubmitAndWait: DrawBasics render graph over GLFW paths, simple path cycling with submitAndWait
  * - glfwSubmitTo: DrawBasics render graph over GLFW paths using beginRender/submitTo/endRender
+ * - executionOnlyDependenciesAreUnique: resource-order dependencies remain separate from shader inputs
  **/
 
 #include <map>
@@ -44,6 +45,19 @@ class CopyOp : public ComputeGraphElement {
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {}
     virtual void _record(VkCommandBuffer commandBuffer) {};
 };
+
+TEST(ComputeGraph, executionOnlyDependenciesAreUnique) {
+    auto producer = std::make_shared<BlurOp>();
+    auto consumer = std::make_shared<NoiseOp>();
+    consumer->addDependency(producer);
+    consumer->addDependency(producer);
+
+    ASSERT_EQ(consumer->getDependencies().size(), 1);
+    EXPECT_EQ(consumer->getDependencies().front(), producer);
+    EXPECT_TRUE(consumer->getInputs().empty());
+    EXPECT_THROW(consumer->addDependency(nullptr), std::invalid_argument);
+    EXPECT_THROW(consumer->addDependency(consumer), std::invalid_argument);
+}
 
 // Build a DrawBasics axes render graph from a VulkanContext.
 // withSemaphoreWait=true: sets imageAvailableSemaphoresPerImage on each path so

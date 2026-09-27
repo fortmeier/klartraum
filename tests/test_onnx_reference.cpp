@@ -53,6 +53,7 @@ std::vector<float> readTensor(const std::shared_ptr<OnnxNetwork>& network, const
 std::vector<std::vector<float>> runOnce(VulkanContext& vc, const std::shared_ptr<OnnxNetwork>& network,
                                         const std::vector<uint32_t>& inputShape, const std::vector<float>& input,
                                         const std::vector<std::string>& outputs) {
+    for (const auto& name : outputs) network->retainTensor(name);
     auto tensor = vc.create<TensorElement<float>>(inputShape);
     network->setInputTensor("input", tensor, -1);
     ComputeGraph graph(vc, 1);

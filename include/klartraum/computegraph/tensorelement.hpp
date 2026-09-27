@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
+#include <typeindex>
 #include <vector>
 
 #include "klartraum/computegraph/bufferelement.hpp"
@@ -50,6 +52,13 @@ public:
      */
     virtual void setDimensions(const std::vector<uint32_t>& newDimensions) = 0;
 
+    virtual void shareDataStorageWith(TensorElementInterface& source) = 0;
+    virtual void makeDataStorageUnique() = 0;
+    virtual size_t getStorageCapacityBytes() const = 0;
+    virtual const void* getStorageIdentity() const = 0;
+    virtual std::type_index getElementType() const = 0;
+    virtual bool isSinglePathStorage() const { return false; }
+
 private:
 };
 
@@ -65,6 +74,15 @@ private:
  */
 template <typename DataType>
 class TensorElement : public TensorElementInterface {
+    struct DataStorage {
+        DataStorage(uint32_t capacityElements, VkBufferUsageFlags usageFlags)
+            : capacityElements(capacityElements), usageFlags(usageFlags) {}
+
+        uint32_t capacityElements;
+        VkBufferUsageFlags usageFlags;
+        std::vector<VulkanBuffer<DataType>> buffers;
+    };
+
 public:
     /**
      * @brief Construct a TensorElement with specified dimensions
@@ -90,7 +108,8 @@ public:
           dimensions({width, height, depth, batch}),
           dataElements(batch * depth * height * width),
           dataUsageFlags(dataUsageFlags),
-          dimUsageFlags(dimUsageFlags) {
+          dimUsageFlags(dimUsageFlags),
+          dataStorage(std::make_shared<DataStorage>(dataElements, dataUsageFlags)) {
 
         validateDimensions(dimensions);
     }
@@ -113,7 +132,8 @@ public:
           dimensions(dimensions),
           dataElements(prod(dimensions)),
           dataUsageFlags(dataUsageFlags),
-          dimUsageFlags(dimUsageFlags) {
+          dimUsageFlags(dimUsageFlags),
+          dataStorage(std::make_shared<DataStorage>(dataElements, dataUsageFlags)) {
 
         validateDimensions(this->dimensions);
     }
@@ -123,25 +143,26 @@ public:
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
         this->numberOfPaths = numberPaths;
 
-        // Reserve space for buffers
-        dataBuffers.reserve(numberPaths);
-
         // Create dimensions buffer (always 4 elements: width, height, depth, batch)
         dimensionBuffer = std::make_unique<VulkanBuffer<uint32_t>>(vulkanContext, dimensions.size(), dimUsageFlags);
         // Initialize dimensions buffer with the tensor dimensions
         dimensionBuffer->memcopyFrom(dimensions);
 
-        // Create buffers for each path
-        for (uint32_t i = 0; i < numberPaths; ++i) {
-            // Create data buffer
-            dataBuffers.emplace_back(vulkanContext, dataElements, dataUsageFlags);
+        if (dataStorage->buffers.empty()) {
+            dataStorage->buffers.reserve(numberPaths);
+            for (uint32_t i = 0; i < numberPaths; ++i) {
+                dataStorage->buffers.emplace_back(
+                    vulkanContext, dataStorage->capacityElements, dataStorage->usageFlags);
+            }
+        } else if (dataStorage->buffers.size() != numberPaths) {
+            throw std::runtime_error("TensorElement: shared storage path count mismatch");
         }
     }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
         // Record buffer zeroing if requested
         if (recordDataToZero) {
-            dataBuffers[pathId]._recordZero(commandBuffer);
+            dataStorage->buffers[pathId]._recordZero(commandBuffer);
         }
 
         if (recordDimensionsToZero) {
@@ -162,7 +183,7 @@ public:
         if (pathId >= numberOfPaths) {
             throw std::runtime_error("TensorElement: Invalid pathId for data buffer access");
         }
-        return dataBuffers[pathId];
+        return dataStorage->buffers[pathId];
     }
 
     /**
@@ -204,14 +225,43 @@ public:
      */
     uint32_t getDataElementCount() const { return dataElements; }
 
+    void shareDataStorageWith(TensorElementInterface& source) override {
+        auto* typedSource = dynamic_cast<TensorElement<DataType>*>(&source);
+        if (!typedSource) {
+            throw std::invalid_argument("TensorElement: shared storage data type mismatch");
+        }
+        if (typedSource->dataStorage->capacityElements < dataElements) {
+            throw std::invalid_argument("TensorElement: shared storage is too small");
+        }
+        if (typedSource->dataStorage->usageFlags != dataUsageFlags) {
+            throw std::invalid_argument("TensorElement: shared storage usage flags mismatch");
+        }
+        if (!dataStorage->buffers.empty()) {
+            throw std::logic_error("TensorElement: storage cannot be replaced after setup");
+        }
+        dataStorage = typedSource->dataStorage;
+    }
+
+    void makeDataStorageUnique() override {
+        if (!dataStorage->buffers.empty()) {
+            throw std::logic_error("TensorElement: storage cannot be detached after setup");
+        }
+        dataStorage = std::make_shared<DataStorage>(dataElements, dataUsageFlags);
+    }
+
+    size_t getStorageCapacityBytes() const override {
+        return sizeof(DataType) * static_cast<size_t>(dataStorage->capacityElements);
+    }
+
+    const void* getStorageIdentity() const override { return dataStorage.get(); }
+
+    std::type_index getElementType() const override { return typeid(DataType); }
+
     /**
      * @brief Get total memory size for data buffers
      */
     size_t getDataBufferMemSize() const {
-        if (dataBuffers.empty()) {
-            return sizeof(DataType) * dataElements;
-        }
-        return dataBuffers[0].getBufferMemSize();
+        return sizeof(DataType) * static_cast<size_t>(dataElements);
     }
 
     /**
@@ -234,7 +284,7 @@ public:
                                      std::to_string(dataElements) + " but got " + std::to_string(data.size()));
         }
 
-        dataBuffers[pathId].memcopyFrom(data);
+        getDataBuffer(pathId).memcopyFrom(data);
     }
 
     /**
@@ -247,7 +297,7 @@ public:
 
     // overrides for BufferElementInterface
     virtual size_t getBufferMemSize() const override {
-        return dataBuffers[0].getBufferMemSize();
+        return getDataBufferMemSize();
     }
 
     virtual VkBuffer& getVkBuffer(uint32_t pathId) override {
@@ -264,8 +314,9 @@ private:
     VkBufferUsageFlags dataUsageFlags;
     VkBufferUsageFlags dimUsageFlags;
 
-    // Buffers for each path
-    std::vector<VulkanBuffer<DataType>> dataBuffers;
+    // Logical tensors can share this physical storage when their graph
+    // lifetimes do not overlap.
+    std::shared_ptr<DataStorage> dataStorage;
 
     // dimensions buffer is the same for each path
     std::unique_ptr<VulkanBuffer<uint32_t>> dimensionBuffer;
@@ -346,6 +397,8 @@ public:
     virtual const char* getType() const override {
         return "TensorElementSinglePath";
     }
+
+    bool isSinglePathStorage() const override { return true; }
 
     VulkanBuffer<DataType>& getDataBuffer(uint32_t pathId = -1) override {
         return TensorElement<DataType>::getDataBuffer(0);

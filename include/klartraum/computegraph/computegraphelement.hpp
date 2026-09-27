@@ -1,8 +1,11 @@
 #ifndef KLARTRAUM_COMPUTEGRAPHELEMENT_HPP
 #define KLARTRAUM_COMPUTEGRAPHELEMENT_HPP
 
+#include <algorithm>
 #include <map>
 #include <memory>
+#include <stdexcept>
+#include <vector>
 
 #include "klartraum/vulkan_context.hpp"
 
@@ -138,12 +141,33 @@ public:
         return inputs;
     }
 
+    /**
+     * Add an execution-only dependency which does not become a shader input.
+     * This is useful for ordering accesses to shared physical resources.
+     */
+    void addDependency(const ComputeGraphElementPtr& dependency) {
+        if (!dependency) {
+            throw std::invalid_argument("ComputeGraphElement: dependency must not be null");
+        }
+        if (dependency.get() == this) {
+            throw std::invalid_argument("ComputeGraphElement: element cannot depend on itself");
+        }
+        if (std::find(dependencies.begin(), dependencies.end(), dependency) == dependencies.end()) {
+            dependencies.push_back(dependency);
+        }
+    }
+
+    virtual std::vector<ComputeGraphElementPtr> getDependencies() const {
+        return dependencies;
+    }
+
     void setName(const std::string& name) {
         this->name = name;
     }
 
 protected:
     std::map<int, ComputeGraphElementPtr> inputs; //TODO: really should be private
+    std::vector<ComputeGraphElementPtr> dependencies;
     std::map<int, VkSemaphore> renderWaitSemaphores; //TODO: really should be private
     std::map<int, int> srcOutputSlots; //TODO: really should be private
     

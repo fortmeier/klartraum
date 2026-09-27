@@ -98,9 +98,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--onnx-dir", type=Path, default=DEFAULT_ONNX_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    # Klartraum currently keeps every intermediate tensor alive for the whole
-    # graph. Keep the checked-in smoke model small enough to execute on an 8 GB
-    # GPU; pass --size 512 to produce the canonical SD 1.5 VAE shape.
+    # Keep the default smoke model small and fast. Pass --size 512 with a
+    # separate --onnx-dir for canonical SD 1.5 VAE validation artifacts.
     parser.add_argument("--size", type=int, default=64)
     parser.add_argument("--model", default=MODEL_ID)
     return parser.parse_args()
