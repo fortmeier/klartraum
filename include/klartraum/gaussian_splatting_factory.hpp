@@ -37,8 +37,8 @@ std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
     GsplatConfig config = GsplatConfig{});
 
 // The same for Gaussians from any source, e.g. the outputs of a
-// GaussianTransformPass or GaussianMergePass; the backend then depends on the
-// passes producing the buffers.
+// GaussianTransform or GaussianMerge; the backend then depends on the
+// elements producing the buffers.
 std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
     VulkanContext& vulkanContext,
     GsplatBackend backend,

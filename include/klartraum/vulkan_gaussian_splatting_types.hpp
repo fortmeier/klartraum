@@ -70,8 +70,8 @@ struct Gaussian3D {
 typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
 
 // A buffer as a consumer connects to it: `element` itself (slot -1), or the
-// buffer at input `slot` of `element`, e.g. one a compute pass writes. In the
-// second case the consumer depends on the pass, so the pass runs first.
+// buffer at input `slot` of `element`, e.g. one a compute element writes. In
+// the second case the consumer depends on that element, so it runs first.
 struct BufferRef {
     ComputeGraphElementPtr element;
     int slot = -1;
@@ -88,8 +88,8 @@ struct BufferRef {
 // vec3, colour+alpha vec4, and the three SH streams of 15 floats per Gaussian,
 // coefficient-major: sh[b * count + i]) plus the splat count. A plain handle
 // bundle with no loading logic: the buffers may be static uploads (e.g.
-// GaussianDataStandard) or written every frame by compute passes (e.g.
-// GaussianTransformPass), so a backend can be wired to buffers from any source.
+// GaussianDataStandard) or written every frame by compute elements (e.g.
+// GaussianTransform), so a backend can be wired to buffers from any source.
 struct GaussianSoABuffers {
     uint32_t count = 0;
     BufferRef pos;
@@ -102,6 +102,37 @@ struct GaussianSoABuffers {
 
     std::array<const BufferRef*, 7> all() const { return {&pos, &rot, &scale, &colAlpha, &shR, &shG, &shB}; }
 };
+
+// Makes `gaussians` inputs `first` .. `first + 6` of `element`.
+inline void connectGaussians(ComputeGraphElement& element, const GaussianSoABuffers& gaussians, int first) {
+    int index = first;
+    for (const BufferRef* ref : gaussians.all()) {
+        ref->connectTo(element, index++);
+    }
+}
+
+// Per-path buffers for `count` Gaussians that `element` writes, made its
+// inputs `first` .. `first + 6`; returns them as the element's output.
+inline GaussianSoABuffers addGaussianOutputs(VulkanContext& vulkanContext, const ComputeGraphElementPtr& element,
+                                             uint32_t count, int first) {
+    GaussianSoABuffers output;
+    output.count = count;
+    int slot = first;
+    auto add = [&](auto buffer, const char* name) {
+        buffer->setName(name);
+        element->setInput(buffer, slot);
+        return BufferRef{element, slot++};
+    };
+    output.pos = add(std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vulkanContext, count), "Pos3D");
+    output.rot = add(std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, count), "Rot3D");
+    output.scale = add(std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vulkanContext, count), "Scale3D");
+    output.colAlpha =
+        add(std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, count), "ColAlpha3D");
+    output.shR = add(std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, 15 * count), "ShR");
+    output.shG = add(std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, 15 * count), "ShG");
+    output.shB = add(std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, 15 * count), "ShB");
+    return output;
+}
 
 struct ProjectionPushConstants {
   uint32_t numElements;
