@@ -8,6 +8,8 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/computegraphelement.hpp"
 
+#include <string>
+
 namespace klartraum {
 
 /**
@@ -54,7 +56,11 @@ public:
         size_t dstSize = getInputElement<BufferElementInterface>(dstIndex)->getBufferMemSize();
 
         if (srcSize != dstSize) {
-            throw std::runtime_error("Source and destination buffers must have the same size for CopyBuffer");
+            throw std::runtime_error(std::string("CopyBuffer ") + getName() +
+                                     " size mismatch: " + getInputElement<BufferElementInterface>(srcIndex)->getName() +
+                                     " has " + std::to_string(srcSize) + " bytes, " +
+                                     getInputElement<BufferElementInterface>(dstIndex)->getName() + " has " +
+                                     std::to_string(dstSize) + " bytes");
         }
 
         // Set up the copy region

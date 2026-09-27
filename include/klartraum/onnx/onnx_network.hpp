@@ -99,6 +99,7 @@ public:
 private:
     // Load ONNX model from file
     bool loadModel(const std::string& modelPath);
+    std::vector<char> readTensorData(const onnx::TensorProto& tensor) const;
 
     // Model parsing and graph creation
     void createComputeGraph();
