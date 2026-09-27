@@ -42,6 +42,41 @@ struct MatMulPushConstants {
     uint32_t rhsBatchCount;
 };
 
+struct GemmPushConstants {
+    uint32_t rows;
+    uint32_t columns;
+    uint32_t reduction;
+};
+
+struct LayerNormalizationPushConstants {
+    uint32_t outerCount;
+    uint32_t axisSize;
+    float epsilon;
+};
+
+struct ConcatPushConstants {
+    uint32_t outerCount;
+    uint32_t lhsAxisSize;
+    uint32_t rhsAxisSize;
+    uint32_t innerSize;
+    uint32_t elementCount;
+};
+
+struct ExpandPushConstants {
+    uint32_t elementCount;
+    uint32_t rank;
+    uint32_t inputDims[4];
+    uint32_t outputDims[4];
+};
+
+struct GatherPushConstants {
+    uint32_t outerCount;
+    uint32_t axisSize;
+    uint32_t innerSize;
+    uint32_t indexCount;
+    uint32_t outputCount;
+};
+
 struct SoftmaxPushConstants {
     uint32_t outerCount;
     uint32_t axisSize;

@@ -1,0 +1,13 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants { uint elementCount; } pc;
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer { float outputData[]; };
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index < pc.elementCount) outputData[index] = sqrt(inputData[index]);
+}
