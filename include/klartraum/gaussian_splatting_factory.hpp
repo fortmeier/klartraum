@@ -36,6 +36,17 @@ std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
     std::shared_ptr<GaussianDataStandard> model,
     GsplatConfig config = GsplatConfig{});
 
+// The same for Gaussians from any source, e.g. the outputs of a
+// GaussianTransform or GaussianMerge; the backend then depends on the
+// elements producing the buffers.
+std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
+    VulkanContext& vulkanContext,
+    GsplatBackend backend,
+    std::shared_ptr<ImageViewSrc> imageViewSrc,
+    std::shared_ptr<CameraUboType> cameraUBO,
+    const GaussianSoABuffers& buffers,
+    GsplatConfig config = GsplatConfig{});
+
 } // namespace klartraum
 
 #endif // KLARTRAUM_GAUSSIAN_SPLATTING_FACTORY_HPP
