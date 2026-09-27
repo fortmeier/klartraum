@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -14,10 +15,6 @@
 
 namespace {
 
-// The checked-in fixed-shape smoke models use 64x64 images so the current
-// graph allocator (which retains all intermediates) also works on 8 GB GPUs.
-constexpr uint32_t kImageSize = 64;
-
 std::vector<float> readFloats(const std::filesystem::path& path, size_t count) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) throw std::runtime_error("Could not open " + path.string());
@@ -31,12 +28,12 @@ std::vector<float> readFloats(const std::filesystem::path& path, size_t count) {
     return values;
 }
 
-void writePpm(const std::filesystem::path& path, const std::vector<float>& nchw) {
+void writePpm(const std::filesystem::path& path, const std::vector<float>& nchw, uint32_t imageSize) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path, std::ios::binary);
     if (!output) throw std::runtime_error("Could not create " + path.string());
-    output << "P6\n" << kImageSize << " " << kImageSize << "\n255\n";
-    const size_t plane = kImageSize * kImageSize;
+    output << "P6\n" << imageSize << " " << imageSize << "\n255\n";
+    const size_t plane = static_cast<size_t>(imageSize) * imageSize;
     for (size_t pixel = 0; pixel < plane; ++pixel) {
         for (size_t channel = 0; channel < 3; ++channel) {
             const float normalized = std::clamp(nchw[channel * plane + pixel], -1.0f, 1.0f);
@@ -46,12 +43,50 @@ void writePpm(const std::filesystem::path& path, const std::vector<float>& nchw)
     }
 }
 
+struct Options {
+    bool loadOnly = false;
+    uint32_t imageSize = 64;
+    std::filesystem::path modelDirectory = "./data/onnx/sd15";
+    std::filesystem::path outputPath = "build/TestingOutput/sd15_vae_klartraum.ppm";
+};
+
+Options parseOptions(int argc, char** argv) {
+    Options options;
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument = argv[index];
+        if (argument == "--load-only") {
+            options.loadOnly = true;
+        } else if (argument == "--size" && index + 1 < argc) {
+            options.imageSize = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (argument == "--model-dir" && index + 1 < argc) {
+            options.modelDirectory = argv[++index];
+        } else if (argument == "--output" && index + 1 < argc) {
+            options.outputPath = argv[++index];
+        } else {
+            throw std::runtime_error("Unknown or incomplete argument: " + argument);
+        }
+    }
+    if (options.imageSize == 0 || options.imageSize % 8 != 0) {
+        throw std::runtime_error("--size must be a positive multiple of 8");
+    }
+    return options;
+}
+
+void printMemoryPlan(const char* name, const klartraum::OnnxMemoryPlanStats& stats) {
+    constexpr double bytesPerMiB = 1024.0 * 1024.0;
+    std::cout << name << " transient storage: "
+              << stats.logicalBytes / bytesPerMiB << " logical MiB -> "
+              << stats.allocatedBytes / bytesPerMiB << " allocated MiB in "
+              << stats.slotCount << " slots (" << stats.viewAliasCount << " zero-copy views)"
+              << std::endl;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        const bool loadOnly = argc > 1 && std::string(argv[1]) == "--load-only";
-        const std::filesystem::path modelDirectory = "./data/onnx/sd15";
+        const Options options = parseOptions(argc, argv);
+        const auto& modelDirectory = options.modelDirectory;
         const auto encoderPath = modelDirectory / "sd15_vae_encoder.onnx";
         const auto decoderPath = modelDirectory / "sd15_vae_decoder.onnx";
         const auto inputPath = modelDirectory / "lantern_input_f32.bin";
@@ -61,29 +96,79 @@ int main(int argc, char** argv) {
 
         klartraum::HeadlessFrontend frontend;
         auto& context = frontend.getKlartraumEngine().getVulkanContext();
-        auto encoder = context.create<klartraum::OnnxNetwork>(encoderPath.string());
-        auto decoder = context.create<klartraum::OnnxNetwork>(decoderPath.string());
-        decoder->setInputTensor("input", encoder, 0);
-        if (loadOnly) {
-            std::cout << "Loaded and connected the SD 1.5 VAE encoder and decoder." << std::endl;
+        if (options.loadOnly) {
+            auto encoder = context.create<klartraum::OnnxNetwork>(encoderPath.string());
+            auto decoder = context.create<klartraum::OnnxNetwork>(decoderPath.string());
+            printMemoryPlan("Encoder", encoder->getMemoryPlanStats());
+            printMemoryPlan("Decoder", decoder->getMemoryPlanStats());
+            std::cout << "Loaded the SD 1.5 VAE encoder and decoder." << std::endl;
             return 0;
         }
 
-        auto image = context.create<klartraum::TensorElement<float>>(
-            std::vector<uint32_t>{1, 3, kImageSize, kImageSize});
-        encoder->setInputTensor("input", image);
-        klartraum::ComputeGraph graph(context, 1);
-        graph.compileFrom(decoder);
-        image->setData(0, readFloats(inputPath, 3 * kImageSize * kImageSize));
-        graph.submitAndWait(context.getGraphicsQueue(), 0);
+        const size_t imageElements = 3ull * options.imageSize * options.imageSize;
+        std::vector<float> latentValues;
+        {
+            auto encoder = context.create<klartraum::OnnxNetwork>(encoderPath.string());
+            printMemoryPlan("Encoder", encoder->getMemoryPlanStats());
+            auto image = context.create<klartraum::TensorElement<float>>(
+                std::vector<uint32_t>{1, 3, options.imageSize, options.imageSize});
+            encoder->setInputTensor("input", image);
+            klartraum::ComputeGraph graph(context, 1);
+            graph.compileFrom(encoder);
+            image->setData(0, readFloats(inputPath, imageElements));
+            graph.submitAndWait(context.getGraphicsQueue(), 0);
+            auto latent = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
+                encoder->getOutputElement("output"));
+            latentValues.resize(latent->getDataElementCount());
+            latent->getDataBuffer(0).memcopyTo(latentValues);
+        }
 
-        auto decoded = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
-            decoder->getOutputElement("output"));
-        std::vector<float> values(decoded->getDataElementCount());
-        decoded->getDataBuffer(0).memcopyTo(values);
-        const auto outputPath = std::filesystem::path("build/TestingOutput/sd15_vae_klartraum.ppm");
-        writePpm(outputPath, values);
-        std::cout << "Wrote " << outputPath << std::endl;
+        std::vector<float> values;
+        {
+            auto decoder = context.create<klartraum::OnnxNetwork>(decoderPath.string());
+            printMemoryPlan("Decoder", decoder->getMemoryPlanStats());
+            const uint32_t latentSize = options.imageSize / 8;
+            auto latent = context.create<klartraum::TensorElement<float>>(
+                std::vector<uint32_t>{1, 4, latentSize, latentSize});
+            decoder->setInputTensor("input", latent);
+            klartraum::ComputeGraph graph(context, 1);
+            graph.compileFrom(decoder);
+            latent->setData(0, latentValues);
+            graph.submitAndWait(context.getGraphicsQueue(), 0);
+            auto decoded = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
+                decoder->getOutputElement("output"));
+            values.resize(decoded->getDataElementCount());
+            decoded->getDataBuffer(0).memcopyTo(values);
+        }
+
+        const auto referencePath = modelDirectory / "lantern_reference_f32.bin";
+        if (std::filesystem::exists(referencePath)) {
+            const auto reference = readFloats(referencePath, imageElements);
+            float maximumAbsoluteError = 0.0f;
+            double absoluteErrorSum = 0.0;
+            double squaredErrorSum = 0.0;
+            for (size_t index = 0; index < values.size(); ++index) {
+                const float error = std::abs(values[index] - reference[index]);
+                maximumAbsoluteError = std::max(
+                    maximumAbsoluteError, error);
+                absoluteErrorSum += error;
+                squaredErrorSum += static_cast<double>(error) * error;
+            }
+            const double meanAbsoluteError = absoluteErrorSum / values.size();
+            const double rootMeanSquaredError = std::sqrt(squaredErrorSum / values.size());
+            std::cout << "Error versus ONNX Runtime: max=" << maximumAbsoluteError
+                      << ", mean=" << meanAbsoluteError
+                      << ", rmse=" << rootMeanSquaredError << std::endl;
+            // The 64x64 smoke graph remains tightly bounded. At 512x512 the
+            // attention reductions are much longer and legitimate Vulkan/CPU
+            // floating-point ordering differences accumulate by a few pixels.
+            const float maximumTolerance = options.imageSize >= 512 ? 3e-2f : 2e-3f;
+            if (maximumAbsoluteError > maximumTolerance) {
+                throw std::runtime_error("Klartraum output does not match the ONNX reference");
+            }
+        }
+        writePpm(options.outputPath, values, options.imageSize);
+        std::cout << "Wrote " << options.outputPath << std::endl;
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "SD 1.5 VAE example failed: " << error.what() << std::endl;
