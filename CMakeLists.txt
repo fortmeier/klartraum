@@ -296,6 +296,7 @@ add_executable(
   tests/test_gaussian_elements.cpp
 
   tests/test_onnx_network.cpp
+  tests/test_onnx_external_data.cpp
   tests/test_onnx_conv.cpp
   tests/test_onnx_conv_transpose.cpp
   tests/test_onnx_relu.cpp

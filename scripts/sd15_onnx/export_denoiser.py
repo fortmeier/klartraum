@@ -1,0 +1,439 @@
+"""Export and verify one classifier-free-guided SD1.5 UNet denoising step."""
+
+from __future__ import annotations
+
+import argparse
+import gc
+from collections import Counter
+from pathlib import Path
+
+import numpy as np
+import onnx
+import onnxruntime as ort
+import torch
+import torch.nn as nn
+from diffusers import PNDMScheduler, UNet2DConditionModel
+from onnx import helper, shape_inference
+from onnx import numpy_helper
+from transformers import CLIPTextModel, CLIPTokenizer
+
+from run_reference import MODEL_ID
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+DEFAULT_ONNX_DIR = REPO_ROOT / "data" / "onnx" / "sd15_denoiser_128"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "build" / "TestingOutput" / "sd15_denoiser_128"
+KLARTRAUM_OPERATIONS = {
+    "Add",
+    "Cast",
+    "Concat",
+    "Constant",
+    "Conv",
+    "ConvTranspose",
+    "Cos",
+    "Div",
+    "Erf",
+    "Expand",
+    "Gemm",
+    "InstanceNormalization",
+    "LayerNormalization",
+    "MatMul",
+    "Mul",
+    "Relu",
+    "Reshape",
+    "Resize",
+    "Sigmoid",
+    "Sin",
+    "Slice",
+    "Softmax",
+    "Sqrt",
+    "Split",
+    "Transpose",
+    "Unsqueeze",
+}
+
+
+class Denoiser(nn.Module):
+    def __init__(self, unet: UNet2DConditionModel):
+        super().__init__()
+        self.unet = unet
+
+    def forward(
+        self,
+        sample: torch.Tensor,
+        timestep: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.unet(
+            sample,
+            timestep,
+            encoder_hidden_states=encoder_hidden_states,
+            return_dict=False,
+        )[0]
+
+
+def add_initializer_value_info(model: onnx.ModelProto) -> onnx.ModelProto:
+    values = {value.name: value for value in model.graph.value_info}
+    graph_values = {value.name for value in model.graph.input}
+    graph_values.update(value.name for value in model.graph.output)
+    for tensor in model.graph.initializer:
+        if tensor.name in graph_values:
+            continue
+        tensor_info = helper.make_tensor_value_info(tensor.name, tensor.data_type, tensor.dims)
+        if tensor.name in values:
+            values[tensor.name].type.CopyFrom(tensor_info.type)
+        else:
+            model.graph.value_info.append(tensor_info)
+            values[tensor.name] = model.graph.value_info[-1]
+    return model
+
+
+def fold_fixed_shape_expressions(model: onnx.ModelProto) -> int:
+    """Evaluate small shape-only subgraphs for this fixed-size experiment."""
+    shapes: dict[str, tuple[int, ...]] = {}
+    dtypes: dict[str, np.dtype] = {}
+    for value in (*model.graph.input, *model.graph.output, *model.graph.value_info):
+        tensor_type = value.type.tensor_type
+        if tensor_type.elem_type:
+            dtypes[value.name] = np.dtype(helper.tensor_dtype_to_np_dtype(tensor_type.elem_type))
+        if tensor_type.HasField("shape") and all(d.HasField("dim_value") for d in tensor_type.shape.dim):
+            shapes[value.name] = tuple(d.dim_value for d in tensor_type.shape.dim)
+    for tensor in model.graph.initializer:
+        shapes[tensor.name] = tuple(tensor.dims)
+
+    constants: dict[str, np.ndarray] = {
+        tensor.name: numpy_helper.to_array(tensor)
+        for tensor in model.graph.initializer
+        if not tensor.external_data and np.prod(tensor.dims, dtype=np.int64) <= 1024
+    }
+    folded: dict[str, np.ndarray] = {}
+    retained_nodes = []
+    foldable = {"Add", "Cast", "Concat", "ConstantOfShape", "Div", "Equal", "Expand", "Gather", "Mul", "Unsqueeze", "Where"}
+
+    def attribute(node: onnx.NodeProto, name: str) -> object:
+        for item in node.attribute:
+            if item.name == name:
+                return helper.get_attribute_value(item)
+        raise KeyError(name)
+
+    for node in model.graph.node:
+        result: np.ndarray | None = None
+        if node.op_type == "Constant":
+            try:
+                result = numpy_helper.to_array(attribute(node, "value"))
+            except KeyError:
+                pass
+        elif node.op_type == "Shape" and node.input[0] in shapes:
+            source_shape = shapes[node.input[0]]
+            start = int(attribute(node, "start")) if any(a.name == "start" for a in node.attribute) else 0
+            end = int(attribute(node, "end")) if any(a.name == "end" for a in node.attribute) else len(source_shape)
+            result = np.asarray(source_shape[start:end], dtype=np.int64)
+        elif node.op_type in foldable and all(name in constants for name in node.input):
+            inputs = [constants[name] for name in node.input]
+            if sum(value.size for value in inputs) <= 4096:
+                if node.op_type == "Add": result = inputs[0] + inputs[1]
+                elif node.op_type == "Mul": result = inputs[0] * inputs[1]
+                elif node.op_type == "Div": result = inputs[0] / inputs[1]
+                elif node.op_type == "Cast": result = inputs[0].astype(helper.tensor_dtype_to_np_dtype(attribute(node, "to")))
+                elif node.op_type == "Concat": result = np.concatenate(inputs, axis=int(attribute(node, "axis")))
+                elif node.op_type == "ConstantOfShape":
+                    value = numpy_helper.to_array(attribute(node, "value")).reshape(-1)[0] if node.attribute else np.float32(0)
+                    result = np.full(tuple(int(v) for v in inputs[0]), value)
+                elif node.op_type == "Equal": result = np.equal(inputs[0], inputs[1])
+                elif node.op_type == "Expand": result = np.broadcast_to(inputs[0], tuple(int(v) for v in inputs[1])).copy()
+                elif node.op_type == "Gather": result = np.take(inputs[0], inputs[1], axis=int(attribute(node, "axis")) if node.attribute else 0)
+                elif node.op_type == "Unsqueeze": result = np.expand_dims(inputs[0], tuple(int(v) for v in inputs[1].reshape(-1)))
+                elif node.op_type == "Where": result = np.where(inputs[0], inputs[1], inputs[2])
+
+        if result is not None and result.size <= 4096 and len(node.output) == 1:
+            if node.output[0] in dtypes:
+                result = result.astype(dtypes[node.output[0]], copy=False)
+            result = np.ascontiguousarray(result)
+            constants[node.output[0]] = result
+            folded[node.output[0]] = result
+        else:
+            retained_nodes.append(node)
+
+    del model.graph.node[:]
+    model.graph.node.extend(retained_nodes)
+    existing_initializers = {tensor.name for tensor in model.graph.initializer}
+    for name, value in folded.items():
+        if name not in existing_initializers:
+            model.graph.initializer.append(numpy_helper.from_array(value, name=name))
+    return len(folded)
+
+
+def concretize_fixed_shapes(model: onnx.ModelProto) -> int:
+    """Propagate concrete dimensions from the fixed graph inputs."""
+    values = {value.name: value for value in (*model.graph.input, *model.graph.output, *model.graph.value_info)}
+    shapes: dict[str, tuple[int, ...]] = {
+        tensor.name: tuple(int(d) for d in tensor.dims) for tensor in model.graph.initializer
+    }
+    for name, value in values.items():
+        dimensions = value.type.tensor_type.shape.dim
+        if dimensions and all(d.HasField("dim_value") and d.dim_value > 0 for d in dimensions):
+            shapes[name] = tuple(int(d.dim_value) for d in dimensions)
+
+    constants: dict[str, np.ndarray] = {}
+    for tensor in model.graph.initializer:
+        if np.prod(tensor.dims, dtype=np.int64) <= 4096:
+            try:
+                constants[tensor.name] = numpy_helper.to_array(tensor)
+            except ValueError:
+                pass
+
+    def attrs(node: onnx.NodeProto) -> dict[str, object]:
+        return {item.name: helper.get_attribute_value(item) for item in node.attribute}
+
+    def broadcast(lhs: tuple[int, ...], rhs: tuple[int, ...]) -> tuple[int, ...]:
+        return tuple(np.broadcast_shapes(lhs, rhs))
+
+    changed = 0
+    passthrough = {"Cast", "Cos", "Div", "Erf", "InstanceNormalization", "LayerNormalization", "Mul", "Add", "Sigmoid", "Sin", "Softmax", "Sqrt"}
+    for node in model.graph.node:
+        inputs = [shapes.get(name) for name in node.input]
+        output_shape: tuple[int, ...] | None = None
+        properties = attrs(node)
+        if node.op_type in passthrough and inputs and inputs[0]:
+            output_shape = inputs[0]
+            if node.op_type in {"Add", "Div", "Mul"} and len(inputs) > 1 and inputs[1]:
+                output_shape = broadcast(inputs[0], inputs[1])
+        elif node.op_type == "Conv" and inputs[0] and inputs[1]:
+            pads = properties.get("pads", [0, 0, 0, 0])
+            strides = properties.get("strides", [1, 1])
+            dilations = properties.get("dilations", [1, 1])
+            x, weight = inputs[0], inputs[1]
+            height = (x[2] + pads[0] + pads[2] - dilations[0] * (weight[2] - 1) - 1) // strides[0] + 1
+            width = (x[3] + pads[1] + pads[3] - dilations[1] * (weight[3] - 1) - 1) // strides[1] + 1
+            output_shape = (x[0], weight[0], height, width)
+        elif node.op_type == "Gemm" and inputs[0] and inputs[1]:
+            output_shape = (inputs[0][1] if properties.get("transA", 0) else inputs[0][0],
+                            inputs[1][0] if properties.get("transB", 0) else inputs[1][1])
+        elif node.op_type == "MatMul" and inputs[0] and inputs[1]:
+            output_shape = broadcast(inputs[0][:-2], inputs[1][:-2]) + (inputs[0][-2], inputs[1][-1])
+        elif node.op_type == "Reshape" and len(node.input) > 1 and inputs[0] and node.input[1] in constants:
+            target = [int(v) for v in constants[node.input[1]].reshape(-1)]
+            for index, dimension in enumerate(target):
+                if dimension == 0: target[index] = inputs[0][index]
+            if -1 in target:
+                known = int(np.prod([v for v in target if v != -1], dtype=np.int64))
+                target[target.index(-1)] = int(np.prod(inputs[0], dtype=np.int64)) // known
+            output_shape = tuple(target)
+        elif node.op_type == "Transpose" and inputs[0]:
+            permutation = properties.get("perm", list(reversed(range(len(inputs[0])))))
+            output_shape = tuple(inputs[0][int(axis)] for axis in permutation)
+        elif node.op_type == "Concat" and all(inputs):
+            axis = int(properties["axis"]); axis %= len(inputs[0])
+            result = list(inputs[0]); result[axis] = sum(shape[axis] for shape in inputs)
+            output_shape = tuple(result)
+        elif node.op_type == "Unsqueeze" and inputs[0] and node.input[1] in constants:
+            result = list(inputs[0])
+            for axis in sorted(int(v) % (len(result) + 1) for v in constants[node.input[1]].reshape(-1)):
+                result.insert(axis, 1)
+            output_shape = tuple(result)
+        elif node.op_type == "Expand" and len(node.input) > 1 and node.input[1] in constants:
+            output_shape = tuple(int(v) for v in constants[node.input[1]].reshape(-1))
+        elif node.op_type == "Shape" and inputs[0]:
+            output_shape = (len(inputs[0]),)
+        elif node.op_type == "Resize" and len(node.input) > 3 and node.input[3] in constants:
+            output_shape = tuple(int(v) for v in constants[node.input[3]].reshape(-1))
+        elif node.op_type == "Slice" and inputs[0] and all(name in constants for name in node.input[1:]):
+            result = list(inputs[0])
+            starts = constants[node.input[1]].reshape(-1)
+            ends = constants[node.input[2]].reshape(-1)
+            axes = constants[node.input[3]].reshape(-1) if len(node.input) > 3 else np.arange(len(starts))
+            steps = constants[node.input[4]].reshape(-1) if len(node.input) > 4 else np.ones(len(starts), dtype=np.int64)
+            for start, end, axis, step in zip(starts, ends, axes, steps):
+                axis = int(axis) % len(result)
+                begin, stop, stride = slice(int(start), int(end), int(step)).indices(result[axis])
+                result[axis] = max(0, (stop - begin + (stride - (1 if stride > 0 else -1))) // stride)
+            output_shape = tuple(result)
+
+        if output_shape is not None and len(node.output) == 1:
+            shapes[node.output[0]] = output_shape
+            if node.output[0] in values:
+                dimensions = values[node.output[0]].type.tensor_type.shape.dim
+                if len(dimensions) == len(output_shape):
+                    for dimension, size in zip(dimensions, output_shape):
+                        if not dimension.HasField("dim_value") or dimension.dim_value != size:
+                            dimension.ClearField("dim_param")
+                            dimension.dim_value = size
+                            changed += 1
+    return changed
+
+
+def encode_prompt(model: str, prompt: str, negative_prompt: str) -> torch.Tensor:
+    tokenizer = CLIPTokenizer.from_pretrained(model, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(model, subfolder="text_encoder").eval()
+    tokens = tokenizer(
+        [negative_prompt, prompt],
+        padding="max_length",
+        max_length=tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+    )
+    with torch.inference_mode():
+        embeddings = text_encoder(tokens.input_ids, attention_mask=tokens.attention_mask)[0]
+    # The legacy ONNX tracer temporarily enables autograd while tracing Linear
+    # modules.  Clone outside inference mode so this fixture is a regular tensor
+    # that the tracer is allowed to save for backward.
+    result = embeddings.clone().detach().contiguous()
+    del text_encoder, tokenizer
+    gc.collect()
+    return result
+
+
+def export(
+    model: nn.Module,
+    sample: torch.Tensor,
+    timestep: torch.Tensor,
+    embeddings: torch.Tensor,
+    path: Path,
+) -> None:
+    raw_path = path.with_suffix(".raw.onnx")
+    inferred_path = path.with_suffix(".inferred.onnx")
+    weights_name = path.name + ".data"
+    torch.onnx.export(
+        model,
+        (sample, timestep, embeddings),
+        str(raw_path),
+        input_names=["sample", "timestep", "encoder_hidden_states"],
+        output_names=["noise_prediction"],
+        opset_version=17,
+        dynamo=False,
+        do_constant_folding=True,
+    )
+    shape_inference.infer_shapes_path(str(raw_path), str(inferred_path), strict_mode=True)
+    raw_graph = onnx.load(raw_path, load_external_data=False)
+    external_files = {
+        entry.value
+        for tensor in raw_graph.graph.initializer
+        for entry in tensor.external_data
+        if entry.key == "location"
+    }
+    inferred = add_initializer_value_info(onnx.load(inferred_path))
+    folded_count = fold_fixed_shape_expressions(inferred)
+    concrete_count = concretize_fixed_shapes(inferred)
+    folded_count += fold_fixed_shape_expressions(inferred)
+    concrete_count += concretize_fixed_shapes(inferred)
+    add_initializer_value_info(inferred)
+    print(f"Folded {folded_count} fixed-shape ONNX nodes and concretized {concrete_count} dimensions")
+    # ONNX appends to an existing external-data file. Remove only this
+    # export's generated weight file so repeated exports remain deterministic.
+    (path.parent / weights_name).unlink(missing_ok=True)
+    onnx.save_model(
+        inferred,
+        str(path),
+        save_as_external_data=True,
+        all_tensors_to_one_file=True,
+        location=weights_name,
+        size_threshold=1024,
+    )
+    onnx.checker.check_model(str(path))
+    raw_path.unlink()
+    inferred_path.unlink()
+    for name in external_files:
+        if name != weights_name:
+            (path.parent / name).unlink(missing_ok=True)
+
+
+def run_ort(path: Path, sample: np.ndarray, timestep: np.ndarray, embeddings: np.ndarray) -> np.ndarray:
+    session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+    return session.run(
+        ["noise_prediction"],
+        {
+            "sample": sample,
+            "timestep": timestep,
+            "encoder_hidden_states": embeddings,
+        },
+    )[0]
+
+
+def write_operator_report(path: Path, model_path: Path) -> set[str]:
+    model = onnx.load(model_path, load_external_data=False)
+    operations = Counter(node.op_type for node in model.graph.node)
+    unsupported = set(operations) - KLARTRAUM_OPERATIONS
+    lines = [
+        f"nodes={len(model.graph.node)}",
+        f"size_mib={model_path.stat().st_size / (1024 * 1024):.1f}",
+        "operations=" + ", ".join(f"{name}:{count}" for name, count in sorted(operations.items())),
+        "unsupported=" + ", ".join(sorted(unsupported)),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
+    return unsupported
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default=MODEL_ID)
+    parser.add_argument("--prompt", default="a photograph of a lantern")
+    parser.add_argument("--negative-prompt", default="")
+    parser.add_argument("--size", type=int, default=128)
+    parser.add_argument("--steps", type=int, default=20)
+    parser.add_argument("--guidance-scale", type=float, default=7.5)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--onnx-dir", type=Path, default=DEFAULT_ONNX_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.size <= 0 or args.size % 8:
+        raise ValueError("--size must be a positive multiple of 8")
+    if args.steps <= 0:
+        raise ValueError("--steps must be positive")
+    args.onnx_dir.mkdir(parents=True, exist_ok=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    embeddings = encode_prompt(args.model, args.prompt, args.negative_prompt)
+    unet = UNet2DConditionModel.from_pretrained(args.model, subfolder="unet").eval().cpu()
+    scheduler = PNDMScheduler.from_pretrained(args.model, subfolder="scheduler")
+    scheduler.set_timesteps(args.steps)
+
+    latent_size = args.size // 8
+    generator = torch.Generator(device="cpu").manual_seed(args.seed)
+    latents = torch.randn((1, 4, latent_size, latent_size), generator=generator)
+    latents *= scheduler.init_noise_sigma
+    timestep = scheduler.timesteps[0]
+    model_sample = scheduler.scale_model_input(torch.cat([latents, latents]), timestep)
+    timestep_input = timestep.reshape(1)
+
+    denoiser = Denoiser(unet).eval()
+    with torch.inference_mode():
+        torch_noise = denoiser(model_sample, timestep_input, embeddings)
+        unconditional, conditional = torch_noise.chunk(2)
+        guided_noise = unconditional + args.guidance_scale * (conditional - unconditional)
+        next_latents = scheduler.step(guided_noise, timestep, latents).prev_sample
+
+    model_path = args.onnx_dir / "sd15_unet.onnx"
+    export(denoiser, model_sample, timestep_input, embeddings, model_path)
+    unsupported = write_operator_report(args.output_dir / "operator_report.txt", model_path)
+
+    sample_array = model_sample.numpy()
+    timestep_array = timestep_input.numpy()
+    embedding_array = embeddings.numpy()
+    ort_noise = run_ort(model_path, sample_array, timestep_array, embedding_array)
+    maximum_error = float(np.max(np.abs(ort_noise - torch_noise.numpy())))
+    print(f"ONNX UNet maximum absolute error: {maximum_error:.7g}")
+    if not np.allclose(ort_noise, torch_noise.numpy(), atol=2e-3, rtol=2e-3):
+        raise RuntimeError("ONNX UNet does not match PyTorch")
+
+    sample_array.astype(np.float32).tofile(args.onnx_dir / "unet_sample_f32.bin")
+    timestep_array.astype(np.int64).tofile(args.onnx_dir / "unet_timestep_i64.bin")
+    embedding_array.astype(np.float32).tofile(args.onnx_dir / "prompt_embeddings_f32.bin")
+    ort_noise.astype(np.float32).tofile(args.onnx_dir / "unet_reference_f32.bin")
+    guided_noise.numpy().astype(np.float32).tofile(args.onnx_dir / "guided_noise_f32.bin")
+    next_latents.numpy().astype(np.float32).tofile(args.onnx_dir / "next_latents_f32.bin")
+    (args.output_dir / "prompt.txt").write_text(
+        f"prompt={args.prompt}\nnegative_prompt={args.negative_prompt}\n",
+        encoding="utf-8",
+    )
+    print(f"Unsupported Klartraum operations ({len(unsupported)}): {', '.join(sorted(unsupported))}")
+    print(f"Wrote denoiser fixtures to {args.onnx_dir}")
+
+
+if __name__ == "__main__":
+    main()
