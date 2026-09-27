@@ -1,4 +1,4 @@
-"""Export and verify one classifier-free-guided SD1.5 UNet denoising step."""
+"""Export and verify a small end-to-end SD1.5 DDIM inference pipeline."""
 
 from __future__ import annotations
 
@@ -12,12 +12,15 @@ import onnx
 import onnxruntime as ort
 import torch
 import torch.nn as nn
-from diffusers import PNDMScheduler, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDIMScheduler, PNDMScheduler, UNet2DConditionModel
 from onnx import helper, shape_inference
 from onnx import numpy_helper
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from run_reference import MODEL_ID
+from export_onnx import Decoder as VaeDecoder
+from export_onnx import export as export_vae_component
+from export_onnx import run_ort as run_vae_ort
+from run_reference import MODEL_ID, save_image
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -371,7 +374,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", default="a photograph of a lantern")
     parser.add_argument("--negative-prompt", default="")
     parser.add_argument("--size", type=int, default=128)
-    parser.add_argument("--steps", type=int, default=20)
+    parser.add_argument("--steps", type=int, default=4)
     parser.add_argument("--guidance-scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--onnx-dir", type=Path, default=DEFAULT_ONNX_DIR)
@@ -390,43 +393,106 @@ def main() -> None:
 
     embeddings = encode_prompt(args.model, args.prompt, args.negative_prompt)
     unet = UNet2DConditionModel.from_pretrained(args.model, subfolder="unet").eval().cpu()
-    scheduler = PNDMScheduler.from_pretrained(args.model, subfolder="scheduler")
+    pndm_scheduler = PNDMScheduler.from_pretrained(args.model, subfolder="scheduler")
+    scheduler = DDIMScheduler.from_config(pndm_scheduler.config)
     scheduler.set_timesteps(args.steps)
 
     latent_size = args.size // 8
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
     latents = torch.randn((1, 4, latent_size, latent_size), generator=generator)
     latents *= scheduler.init_noise_sigma
-    timestep = scheduler.timesteps[0]
-    model_sample = scheduler.scale_model_input(torch.cat([latents, latents]), timestep)
-    timestep_input = timestep.reshape(1)
-
     denoiser = Denoiser(unet).eval()
+    initial_latents = latents.clone()
+    first_model_sample = None
+    first_timestep_input = None
+    first_torch_noise = None
+    first_guided_noise = None
     with torch.inference_mode():
-        torch_noise = denoiser(model_sample, timestep_input, embeddings)
-        unconditional, conditional = torch_noise.chunk(2)
-        guided_noise = unconditional + args.guidance_scale * (conditional - unconditional)
-        next_latents = scheduler.step(guided_noise, timestep, latents).prev_sample
+        for timestep in scheduler.timesteps:
+            model_sample = scheduler.scale_model_input(torch.cat([latents, latents]), timestep)
+            timestep_input = timestep.reshape(1)
+            torch_noise = denoiser(model_sample, timestep_input, embeddings)
+            unconditional, conditional = torch_noise.chunk(2)
+            guided_noise = unconditional + args.guidance_scale * (conditional - unconditional)
+            latents = scheduler.step(guided_noise, timestep, latents).prev_sample
+            if first_model_sample is None:
+                first_model_sample = model_sample.clone()
+                first_timestep_input = timestep_input.clone()
+                first_torch_noise = torch_noise.clone()
+                first_guided_noise = guided_noise.clone()
+
+    assert first_model_sample is not None
+    assert first_timestep_input is not None
+    assert first_torch_noise is not None
+    assert first_guided_noise is not None
+    # The legacy ONNX tracer enables autograd while tracing modules. Convert
+    # values produced under inference_mode back to ordinary tensors first.
+    first_model_sample = torch.from_numpy(first_model_sample.numpy().copy())
+    first_timestep_input = torch.from_numpy(first_timestep_input.numpy().copy())
+
+    vae = AutoencoderKL.from_pretrained(
+        args.model, subfolder="vae", torch_dtype=torch.float32
+    ).eval().cpu()
+    decoder = VaeDecoder(vae).eval()
+    decoder_input = latents / vae.config.scaling_factor
+    with torch.inference_mode():
+        decoded = decoder(decoder_input)
+    decoder_input_for_export = torch.from_numpy(decoder_input.numpy().copy())
 
     model_path = args.onnx_dir / "sd15_unet.onnx"
-    export(denoiser, model_sample, timestep_input, embeddings, model_path)
+    export(
+        denoiser,
+        first_model_sample,
+        first_timestep_input,
+        embeddings,
+        model_path,
+    )
+    decoder_path = args.onnx_dir / "sd15_vae_decoder.onnx"
+    export_vae_component(decoder, decoder_input_for_export, decoder_path)
     unsupported = write_operator_report(args.output_dir / "operator_report.txt", model_path)
 
-    sample_array = model_sample.numpy()
-    timestep_array = timestep_input.numpy()
+    sample_array = first_model_sample.numpy()
+    timestep_array = first_timestep_input.numpy()
     embedding_array = embeddings.numpy()
     ort_noise = run_ort(model_path, sample_array, timestep_array, embedding_array)
-    maximum_error = float(np.max(np.abs(ort_noise - torch_noise.numpy())))
+    maximum_error = float(np.max(np.abs(ort_noise - first_torch_noise.numpy())))
     print(f"ONNX UNet maximum absolute error: {maximum_error:.7g}")
-    if not np.allclose(ort_noise, torch_noise.numpy(), atol=2e-3, rtol=2e-3):
+    if not np.allclose(ort_noise, first_torch_noise.numpy(), atol=2e-3, rtol=2e-3):
         raise RuntimeError("ONNX UNet does not match PyTorch")
+
+    ort_decoded = run_vae_ort(decoder_path, decoder_input.numpy())
+    decoder_error = float(np.max(np.abs(ort_decoded - decoded.numpy())))
+    print(f"ONNX VAE decoder maximum absolute error: {decoder_error:.7g}")
+    if not np.allclose(ort_decoded, decoded.numpy(), atol=2e-3, rtol=2e-3):
+        raise RuntimeError("ONNX VAE decoder does not match PyTorch")
+
+    timestep_values = scheduler.timesteps.cpu().numpy().astype(np.int64)
+    alpha_pairs = []
+    step_size = scheduler.config.num_train_timesteps // args.steps
+    for timestep_value in timestep_values:
+        previous = int(timestep_value) - step_size
+        alpha_current = scheduler.alphas_cumprod[int(timestep_value)]
+        alpha_previous = (
+            scheduler.alphas_cumprod[previous]
+            if previous >= 0
+            else scheduler.final_alpha_cumprod
+        )
+        alpha_pairs.append([float(alpha_current), float(alpha_previous)])
 
     sample_array.astype(np.float32).tofile(args.onnx_dir / "unet_sample_f32.bin")
     timestep_array.astype(np.int64).tofile(args.onnx_dir / "unet_timestep_i64.bin")
     embedding_array.astype(np.float32).tofile(args.onnx_dir / "prompt_embeddings_f32.bin")
     ort_noise.astype(np.float32).tofile(args.onnx_dir / "unet_reference_f32.bin")
-    guided_noise.numpy().astype(np.float32).tofile(args.onnx_dir / "guided_noise_f32.bin")
-    next_latents.numpy().astype(np.float32).tofile(args.onnx_dir / "next_latents_f32.bin")
+    first_guided_noise.numpy().astype(np.float32).tofile(args.onnx_dir / "guided_noise_f32.bin")
+    initial_latents.numpy().astype(np.float32).tofile(args.onnx_dir / "initial_latents_f32.bin")
+    timestep_values.tofile(args.onnx_dir / "scheduler_timesteps_i64.bin")
+    np.asarray(alpha_pairs, dtype=np.float32).tofile(
+        args.onnx_dir / "scheduler_alphas_f32.bin"
+    )
+    latents.numpy().astype(np.float32).tofile(args.onnx_dir / "final_latents_f32.bin")
+    decoder_input.numpy().astype(np.float32).tofile(args.onnx_dir / "decoder_input_f32.bin")
+    ort_decoded.astype(np.float32).tofile(args.onnx_dir / "pipeline_reference_f32.bin")
+    save_image(torch.from_numpy(ort_decoded), args.output_dir / "sd15_pipeline_reference.png")
     (args.output_dir / "prompt.txt").write_text(
         f"prompt={args.prompt}\nnegative_prompt={args.negative_prompt}\n",
         encoding="utf-8",
