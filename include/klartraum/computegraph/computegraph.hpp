@@ -727,8 +727,6 @@ private:
                 // if not, add it
                 edges[element].push_back(input);
                 incoming[input].push_back(element);
-                std::cout << "edge: " << element->getType() << "(" << element->getName() << ") -> " << input->getType()
-                          << "(" << input->getName() << ")" << std::endl;
                 fill_edges(edges, incoming, input);
             }
         }
