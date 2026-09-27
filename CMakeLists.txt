@@ -300,6 +300,7 @@ add_executable(
   tests/test_onnx_relu.cpp
   tests/test_onnx_transpose.cpp
   tests/test_onnx_reference.cpp
+  tests/test_onnx_sd15_operations.cpp
 
   tests/test_headless_frontend.cpp
   tests/test_multi_viewport_window.cpp
