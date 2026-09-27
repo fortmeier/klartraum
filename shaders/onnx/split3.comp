@@ -1,0 +1,37 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint outerCount;
+    uint axisSize;
+    uint innerSize;
+    uint split0;
+    uint split1;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+// The split-size tensor is bound for ONNX slot compatibility. Static split
+// sizes are carried in push constants, so its 64-bit payload is not read.
+layout(set = 0, binding = 1) restrict readonly buffer SizesBuffer { uint sizes[]; };
+layout(set = 0, binding = 2) restrict writeonly buffer Output0Buffer { float output0[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer Output1Buffer { float output1[]; };
+layout(set = 0, binding = 4) restrict writeonly buffer Output2Buffer { float output2[]; };
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint total = pc.outerCount * pc.axisSize * pc.innerSize;
+    if (index >= total) return;
+    uint inner = index % pc.innerSize;
+    uint axisAndOuter = index / pc.innerSize;
+    uint axis = axisAndOuter % pc.axisSize;
+    uint outer = axisAndOuter / pc.axisSize;
+    if (axis < pc.split0) {
+        output0[(outer * pc.split0 + axis) * pc.innerSize + inner] = inputData[index];
+    } else if (axis < pc.split0 + pc.split1) {
+        uint localAxis = axis - pc.split0;
+        output1[(outer * pc.split1 + localAxis) * pc.innerSize + inner] = inputData[index];
+    } else {
+        uint split2 = pc.axisSize - pc.split0 - pc.split1;
+        uint localAxis = axis - pc.split0 - pc.split1;
+        output2[(outer * split2 + localAxis) * pc.innerSize + inner] = inputData[index];
+    }
+}

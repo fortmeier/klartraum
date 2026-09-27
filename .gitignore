@@ -8,6 +8,7 @@ shaders/**/*.spv
 data/onnx/tmp/
 scripts/onnx/.venv/
 scripts/lantern_splat/.venv/
+scripts/sd15_onnx/.venv/
 
 # Python bytecode
 __pycache__/
