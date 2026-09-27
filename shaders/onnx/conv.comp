@@ -87,14 +87,13 @@ void main() {
         ? (input_W + 2 * pad_left - dilation_w * (kernel_w - 1) - 1) / stride_w + 1
         : pc.dimOutput[3];
 
-    // Current thread processes output position (gx, gy) for channel gz
-    if (gx >= output_W || gy >= output_H || gz >= weight_OUT_C) {
+    // Z encodes both batch and output channel.
+    if (gx >= output_W || gy >= output_H || gz >= input_N * weight_OUT_C) {
         return; // Out of bounds
     }
 
-    // For each batch (assuming batch size = 1 for now)
-    uint batch = 0;
-    uint out_channel = gz;
+    uint batch = gz / weight_OUT_C;
+    uint out_channel = gz % weight_OUT_C;
     uint out_y = gy;
     uint out_x = gx;
 
