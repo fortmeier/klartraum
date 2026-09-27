@@ -4,17 +4,15 @@
 
 /**
  * TESTS:
- * - ConstructorWithIndividualDimensions: a TensorElement can be created from width,
- *   height, depth and batch
- * - ConstructorWithDimensionsVector: a TensorElement can be created from a vector of
- *   dimensions
- * - TensorElementSinglePathConstruction: a TensorElementSinglePath can be created from
- *   width, height, depth and batch
- * - TensorElementSinglePathConstructionWithVector: a TensorElementSinglePath can be
- *   created from a vector of dimensions
- * - TensorElementSinglePathGetDimensions: a TensorElementSinglePath returns the
- *   dimensions it was created with
+ * - TensorElement constructs from individual dimensions.
+ * - TensorElement constructs from a dimension vector.
+ * - TensorElementSinglePath constructs from individual dimensions.
+ * - TensorElementSinglePath constructs from a dimension vector.
+ * - TensorElementSinglePath preserves its logical dimensions.
+ * - Compatible tensors can share physical storage while retaining logical sizes.
+ * - A tensor cannot share storage that is smaller than its logical allocation.
  **/
+
 #include <gtest/gtest.h>
 
 #include "klartraum/computegraph/tensorelement.hpp"
@@ -76,4 +74,26 @@ TEST_F(TensorElementTest, TensorElementSinglePathGetDimensions) {
 
     auto actualDims = tensorElementSinglePath->getDimensions();
     EXPECT_EQ(actualDims, expectedDims);
+}
+
+TEST_F(TensorElementTest, SharesPhysicalStorageAndRetainsLogicalSize) {
+    auto large = std::make_shared<TensorElement<float>>(*vulkanContext, std::vector<uint32_t>{16});
+    auto small = std::make_shared<TensorElement<float>>(*vulkanContext, std::vector<uint32_t>{4});
+
+    small->shareDataStorageWith(*large);
+    large->_setup(*vulkanContext, 1);
+    small->_setup(*vulkanContext, 1);
+
+    EXPECT_EQ(large->getDataVkBuffer(0), small->getDataVkBuffer(0));
+    EXPECT_EQ(large->getBufferMemSize(), 16 * sizeof(float));
+    EXPECT_EQ(small->getBufferMemSize(), 4 * sizeof(float));
+    EXPECT_EQ(small->getStorageCapacityBytes(), 16 * sizeof(float));
+    EXPECT_EQ(large->getStorageIdentity(), small->getStorageIdentity());
+}
+
+TEST_F(TensorElementTest, RejectsUndersizedSharedStorage) {
+    auto small = std::make_shared<TensorElement<float>>(*vulkanContext, std::vector<uint32_t>{4});
+    auto large = std::make_shared<TensorElement<float>>(*vulkanContext, std::vector<uint32_t>{16});
+
+    EXPECT_THROW(large->shareDataStorageWith(*small), std::invalid_argument);
 }

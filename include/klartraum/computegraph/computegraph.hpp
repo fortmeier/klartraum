@@ -582,8 +582,7 @@ private:
         // and then find the SemaphoreMap for the element, which
         // contains the semaphore for the connection between the element and its input element
         auto& renderFinishedSemaphores = allRenderFinishedSemaphores[pathId];
-        for (auto& input : element->getInputs()) {
-            auto& inputElement = input.second;
+        for (auto& inputElement : getPredecessors(element)) {
 
             auto input_output_map_iter = renderFinishedSemaphores.find(inputElement);
             if (input_output_map_iter != renderFinishedSemaphores.end()) {
@@ -687,8 +686,7 @@ private:
 
         // now, update the outputs of all elements
         for (auto& element : ordered_elements) {
-            for (auto& input : element->getInputs()) {
-                auto& inputElement = input.second;
+            for (auto& inputElement : getPredecessors(element)) {
                 // Only add if element is not already in outputs
                 if (std::find(inputElement->outputs.begin(), inputElement->outputs.end(), element) ==
                     inputElement->outputs.end()) {
@@ -706,17 +704,32 @@ private:
 
     typedef std::map<ComputeGraphElementPtr, std::vector<ComputeGraphElementPtr>> EdgeList;
 
+    std::vector<ComputeGraphElementPtr> getPredecessors(const ComputeGraphElementPtr& element) const {
+        std::vector<ComputeGraphElementPtr> predecessors;
+        for (const auto& input : element->getInputs()) {
+            if (std::find(predecessors.begin(), predecessors.end(), input.second) == predecessors.end()) {
+                predecessors.push_back(input.second);
+            }
+        }
+        for (const auto& dependency : element->getDependencies()) {
+            if (std::find(predecessors.begin(), predecessors.end(), dependency) == predecessors.end()) {
+                predecessors.push_back(dependency);
+            }
+        }
+        return predecessors;
+    }
+
     void fill_edges(EdgeList& edges, EdgeList& incoming, ComputeGraphElementPtr element) {
-        for (auto& input : element->getInputs()) {
+        for (auto& input : getPredecessors(element)) {
             // check if input already in graph
-            auto it = find(edges[element].begin(), edges[element].end(), input.second);
+            auto it = find(edges[element].begin(), edges[element].end(), input);
             if (it == edges[element].end()) {
                 // if not, add it
-                edges[element].push_back(input.second);
-                incoming[input.second].push_back(element);
-                std::cout << "edge: " << element->getType() << "(" << element->getName() << ") -> "
-                          << input.second->getType() << "(" << input.second->getName() << ")" << std::endl;
-                fill_edges(edges, incoming, input.second);
+                edges[element].push_back(input);
+                incoming[input].push_back(element);
+                std::cout << "edge: " << element->getType() << "(" << element->getName() << ") -> " << input->getType()
+                          << "(" << input->getName() << ")" << std::endl;
+                fill_edges(edges, incoming, input);
             }
         }
     }
@@ -740,9 +753,9 @@ private:
             S.pop();
 
             L.push_back(n);
-            for (auto input : n->getInputs()) {
+            for (auto input : getPredecessors(n)) {
                 // note the convention that N and M are iterators
-                auto m = input.second;
+                auto m = input;
                 // first check if the input node is still in the graph
                 auto M = find(edges[n].begin(), edges[n].end(), m);
                 if (M != edges[n].end()) {
