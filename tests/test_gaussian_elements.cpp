@@ -2,9 +2,9 @@
  * TESTS:
  * - transformBufferMatchesCpu: the transform buffer holds the translation, scale and the
  *   rotation quaternion of pitch/yaw/roll (about X, then Y, then Z), read from HostValues
- * - transformPassMatchesCpu: GPU-transformed Gaussians equal klartraum::transformGaussians
+ * - transformMatchesCpu: GPU-transformed Gaussians equal klartraum::transformGaussians
  *   on the CPU, including the rotated SH coefficients
- * - mergePassConcatenates: merged Gaussians are A's followed by B's, with the SH buffers
+ * - mergeConcatenates: merged Gaussians are A's followed by B's, with the SH buffers
  *   re-laid out for the merged count
  * - hostValuesReachTheNextRun: a value set between two runs of a compiled graph is used by
  *   the second run
@@ -20,7 +20,9 @@
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/gaussian_passes.hpp"
+#include "klartraum/computegraph/gaussianmerge.hpp"
+#include "klartraum/computegraph/gaussiantransform.hpp"
+#include "klartraum/computegraph/transformbuffer.hpp"
 #include "klartraum/gaussian_transform.hpp"
 #include "klartraum/headless_frontend.hpp"
 
@@ -121,7 +123,7 @@ glm::quat expectedRotation(const std::vector<float>& p) {
            glm::angleAxis(glm::radians(p[3]), glm::vec3(1, 0, 0));
 }
 
-class GaussianPassesTest : public ::testing::Test {
+class GaussianElementsTest : public ::testing::Test {
 protected:
     void SetUp() override { frontend = std::make_unique<HeadlessFrontend>(); }
     void TearDown() override {
@@ -135,7 +137,7 @@ protected:
     std::array<BufferRef, 7> parameterRefs(const std::vector<float>& values) {
         std::array<BufferRef, 7> refs;
         for (int i = 0; i < 7; ++i) {
-            parameters[i] = std::make_shared<HostValues>(vc(), std::vector<float>{values[i]});
+            parameters[i] = std::make_shared<HostFloat>(vc(), std::vector<float>{values[i]});
             refs[i] = BufferRef{parameters[i]};
         }
         return refs;
@@ -148,16 +150,16 @@ protected:
     }
 
     std::unique_ptr<HeadlessFrontend> frontend;
-    std::array<std::shared_ptr<HostValues>, 7> parameters;
+    std::array<std::shared_ptr<HostFloat>, 7> parameters;
 };
 
 } // namespace
 
-TEST_F(GaussianPassesTest, transformBufferMatchesCpu) {
-    const TransformBuffer transform = makeTransformBuffer(vc(), parameterRefs(kParameters));
-    run(transform.pass);
+TEST_F(GaussianElementsTest, transformBufferMatchesCpu) {
+    const TransformBufferResult transform = createTransformBuffer(vc(), parameterRefs(kParameters));
+    run(transform.element);
     const auto t = readBack<float>(transform.transform);
-    ASSERT_EQ(t.size(), TransformBufferPass::kSize);
+    ASSERT_EQ(t.size(), TransformBuffer::kSize);
     EXPECT_NEAR(t[0], 0.5f, 1e-6f);
     EXPECT_NEAR(t[1], -1.0f, 1e-6f);
     EXPECT_NEAR(t[2], 2.0f, 1e-6f);
@@ -170,12 +172,12 @@ TEST_F(GaussianPassesTest, transformBufferMatchesCpu) {
     EXPECT_NEAR(t[7], sign * q.w, 1e-5f);
 }
 
-TEST_F(GaussianPassesTest, transformPassMatchesCpu) {
+TEST_F(GaussianElementsTest, transformMatchesCpu) {
     auto gaussians = randomGaussians(1000, 7);
     auto source = std::make_shared<GaussianDataStandard>(vc(), gaussians);
-    const TransformBuffer transform = makeTransformBuffer(vc(), parameterRefs(kParameters));
-    const auto moved = transformGaussiansPass(vc(), source->buffers(), transform.transform);
-    run(moved.pass);
+    const TransformBufferResult transform = createTransformBuffer(vc(), parameterRefs(kParameters));
+    const auto moved = createGaussianTransform(vc(), source->buffers(), transform.transform);
+    run(moved.element);
 
     transformGaussians(gaussians, expectedRotation(kParameters), kParameters[6],
                        glm::vec3(kParameters[0], kParameters[1], kParameters[2]));
@@ -187,14 +189,14 @@ TEST_F(GaussianPassesTest, transformPassMatchesCpu) {
     }
 }
 
-TEST_F(GaussianPassesTest, mergePassConcatenates) {
+TEST_F(GaussianElementsTest, mergeConcatenates) {
     const auto a = randomGaussians(5, 1);
     const auto b = randomGaussians(7, 2);
     auto sourceA = std::make_shared<GaussianDataStandard>(vc(), a);
     auto sourceB = std::make_shared<GaussianDataStandard>(vc(), b);
-    const auto merged = mergeGaussiansPass(vc(), sourceA->buffers(), sourceB->buffers());
+    const auto merged = createGaussianMerge(vc(), sourceA->buffers(), sourceB->buffers());
     EXPECT_EQ(merged.output.count, 12u);
-    run(merged.pass);
+    run(merged.element);
 
     const auto result = readBack(merged.output);
     ASSERT_EQ(result.size(), 12u);
@@ -204,10 +206,10 @@ TEST_F(GaussianPassesTest, mergePassConcatenates) {
     }
 }
 
-TEST_F(GaussianPassesTest, hostValuesReachTheNextRun) {
-    const TransformBuffer transform = makeTransformBuffer(vc(), parameterRefs(kParameters));
+TEST_F(GaussianElementsTest, hostValuesReachTheNextRun) {
+    const TransformBufferResult transform = createTransformBuffer(vc(), parameterRefs(kParameters));
     ComputeGraph graph(vc(), 1);
-    graph.compileFrom(transform.pass);
+    graph.compileFrom(transform.element);
     graph.submitAndWait(vc().getGraphicsQueue(), 0);
     EXPECT_NEAR(readBack<float>(transform.transform)[0], 0.5f, 1e-6f);
 
