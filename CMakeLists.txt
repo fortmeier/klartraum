@@ -256,6 +256,7 @@ add_executable(
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
   tests/test_tensorelement.cpp
+  tests/test_tensor_memory_planner.cpp
   tests/test_image_resample.cpp
   tests/test_gaussian_transform.cpp
   tests/test_gaussian_elements.cpp
