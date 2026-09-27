@@ -1,0 +1,35 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint outerCount;
+    uint axisSize;
+    uint innerSize;
+    uint indexCount;
+    uint outputCount;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer DataBuffer { float data[]; };
+layout(set = 0, binding = 1) restrict readonly buffer IndicesBuffer { int64_t indices[]; };
+layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+void main() {
+    uint outputIndex = gl_GlobalInvocationID.x;
+    if (outputIndex >= pc.outputCount) return;
+    uint outer = outputIndex / (pc.indexCount * pc.innerSize);
+    uint remainder = outputIndex % (pc.indexCount * pc.innerSize);
+    uint indexOffset = remainder / pc.innerSize;
+    uint inner = remainder % pc.innerSize;
+    int64_t selected = indices[indexOffset];
+    if (selected < 0) selected += int64_t(pc.axisSize);
+    if (selected < 0 || selected >= int64_t(pc.axisSize)) {
+        outputData[outputIndex] = 0.0;
+        return;
+    }
+    uint inputIndex = (outer * pc.axisSize + uint(selected)) * pc.innerSize + inner;
+    outputData[outputIndex] = data[inputIndex];
+}
