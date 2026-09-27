@@ -168,6 +168,7 @@ public:
      * The submit infos will have to be prepared before by calling compile_from
      */
     VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId, VkFence fence = VK_NULL_HANDLE) {
+        updateElements(pathId);
         auto& submit_infos = all_path_submit_infos[pathId];
 
         // the following seems not to work if there are multiple paths in the graph
@@ -204,6 +205,7 @@ public:
             lockInfo.timeout = UINT64_MAX;
             pfn_AcquireLock_(device, &lockInfo);
 
+            updateElements(pathId);
             auto& origInfos = all_path_submit_infos[pathId];
             std::vector<VkPerformanceQuerySubmitInfoKHR> perfSubmits(origInfos.size());
             std::vector<VkSubmitInfo> infos = origInfos;
@@ -247,6 +249,13 @@ private:
     std::vector<VkCommandBuffer> commandBuffers;
 
     std::vector<ComputeGraphElementPtr> ordered_elements;
+
+    // Runs every element's host-side update for the path about to be submitted.
+    void updateElements(uint32_t pathId) {
+        for (auto& element : ordered_elements) {
+            element->_update(pathId);
+        }
+    }
 
     typedef std::vector<VkSubmitInfo> SubmitInfoList;
     typedef std::vector<SubmitInfoWrapper> SubmitInfoWrapperList;

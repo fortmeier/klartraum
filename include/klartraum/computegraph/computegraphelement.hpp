@@ -118,6 +118,11 @@ public:
         }
     }
 
+    // Host-side work right before a path of a compiled graph is submitted,
+    // e.g. copying values the CPU set into that path's buffers. The path's
+    // previous submission has finished by then, as for camera UBO updates.
+    virtual void _update(uint32_t pathId) {}
+
     virtual const char* getType() const = 0;
 
     virtual const char* getName() const {
