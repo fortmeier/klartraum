@@ -10,7 +10,7 @@
  * - MatMul multiplies batched row-major matrices.
  * - Softmax normalizes rows along the last axis.
  * - Split writes three contiguous slices along the last axis.
- * - Slice extracts a contiguous range on an arbitrary tensor axis.
+ * - Slice extracts FLOAT and INT64 ranges on arbitrary tensor axes.
  * - Resize performs nearest-neighbor spatial upsampling.
  * - Transpose supports the rank-three permutation used by SD 1.5 attention.
  * - Div applies ONNX right-aligned broadcasting.
@@ -243,6 +243,36 @@ TEST_F(OnnxSd15OperationsTest, SliceChannelRange) {
     std::vector<float> result(4);
     output->getDataBuffer(0).memcopyTo(result);
     EXPECT_EQ(result, (std::vector<float>{2, 3, 4, 5}));
+}
+
+TEST_F(OnnxSd15OperationsTest, SliceInt64ShapeValue) {
+    auto input = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{4});
+    auto starts = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{1});
+    auto ends = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{1});
+    auto output = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{1});
+    SlicePushConstants constants{};
+    constants.rank = 1;
+    constants.axis = 0;
+    constants.start = 3;
+    constants.elementCount = 1;
+    constants.inputDims[0] = 4;
+    constants.outputDims[0] = 1;
+    auto computation = context->create<GeneralComputation<SlicePushConstants>>("shaders/onnx/slice3_int64.comp.spv");
+    computation->setPushConstants({constants});
+    computation->setGroupCount(1, 1, 1);
+    computation->setInput(input, 0);
+    computation->setInput(starts, 1);
+    computation->setInput(ends, 2);
+    computation->setInput(output, 3);
+    ComputeGraph graph(*context, 1);
+    graph.compileFrom(computation);
+    input->setData(0, {2, 8, 256, 40});
+    starts->setData(0, {3});
+    ends->setData(0, {4});
+    graph.submitAndWait(context->getGraphicsQueue(), 0);
+    std::vector<int64_t> result(1);
+    output->getDataBuffer(0).memcopyTo(result);
+    EXPECT_EQ(result, (std::vector<int64_t>{40}));
 }
 
 TEST_F(OnnxSd15OperationsTest, ResizeNearest) {

@@ -89,6 +89,20 @@ def run_ort(path: Path, value: np.ndarray) -> np.ndarray:
     return session.run(["output"], {"input": value})[0]
 
 
+def require_meaningful_image(name: str, value: np.ndarray) -> None:
+    if not np.isfinite(value).all():
+        raise RuntimeError(f"{name} contains non-finite values")
+    pixels = np.clip((value + 1.0) * 127.5, 0.0, 255.0)
+    dynamic_range = float(np.ptp(pixels))
+    standard_deviation = float(np.std(pixels))
+    print(
+        f"{name} pixel sanity: min={pixels.min():.2f}, max={pixels.max():.2f}, "
+        f"range={dynamic_range:.2f}, std={standard_deviation:.2f}"
+    )
+    if dynamic_range < 16.0 or standard_deviation < 2.0:
+        raise RuntimeError(f"{name} is effectively blank or constant")
+
+
 def summarize(path: Path) -> None:
     model = onnx.load(path, load_external_data=False)
     operations = Counter(node.op_type for node in model.graph.node)
@@ -141,6 +155,7 @@ def main() -> None:
     latent_array = latent.numpy()
     encoder_output = run_ort(encoder_path, image_array)
     decoder_output = run_ort(decoder_path, encoder_output)
+    require_meaningful_image("ONNX lantern reconstruction", decoder_output)
     encoder_error = float(np.max(np.abs(encoder_output - latent_array)))
     decoder_error = float(np.max(np.abs(decoder_output - decoded.numpy())))
     print(f"ONNX encoder maximum absolute error: {encoder_error:.7g}")
