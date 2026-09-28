@@ -6,6 +6,7 @@
 
 #include "klartraum/vulkan_context.hpp"
 
+
 namespace klartraum {
 
 class ComputeGraphElement;
@@ -15,22 +16,27 @@ typedef std::shared_ptr<ComputeGraphElement> ComputeGraphElementPtr;
 class ComputeGraph;
 
 /**
- * @brief Sets the input element for this ComputeGraphElement at the specified index.
+ * @brief Abstract base class representing an element in a compute graph.
  * 
- * If slot is used, this indicates that the input is not given by input directly,
- * but rather by the slot element of the given element.
+ * ComputeGraphElement serves as the foundation for building computational graphs
+ * in the Klartraum framework. Each element can have multiple inputs and outputs,
+ * forming a directed acyclic graph structure for computation pipelines.
  * 
- * If slot is specified, retrieves the input element from the provided input's slot and checks its validity.
- * Updates the internal input and source output slot mappings.
  * 
- * @param input The ComputeGraphElementPtr to set as input.
- * @param index The index at which to set the input (default is 0).
- * @param slot The slot of the input element to use (default is -1, meaning no slot).
+ * @note This class is designed to work with shared_ptr (ComputeGraphElementPtr)
+ *       for automatic memory management and safe reference handling.
+ *       Generally, you should not create instances of this class directly,
+ *       but rather derive from it to implement specific compute graph elements and
+ *       use the VulkanContext::create to instantiate them.
+ * 
+ * @see ComputeGraph which is used to compile a compute graph from these elements.
  */
 class ComputeGraphElement {
 public:
     friend class ComputeGraph;
 
+    // maybe order of arguments should be changed to index, input, slot
+    // or index should be a template parameter
     void setInput(ComputeGraphElementPtr input, int index = 0, int slot = -1) {
         if(slot == -1) {
             checkInput(input, index);
@@ -41,6 +47,24 @@ public:
         srcOutputSlots[index] = slot;
     }
 
+    /**
+     * @brief Sets the input element for this ComputeGraphElement at the specified index.
+     * 
+     * If slot is used, this indicates that the input is not given by input directly,
+     * but rather by the slot element of the given element.
+     * 
+     * If slot is specified, retrieves the input element from the provided input's slot and checks its validity.
+     * Updates the internal input and source output slot mappings.
+     * 
+     * @tparam index The index at which to set the input (default is 0).
+     * @param input The ComputeGraphElementPtr to set as input.
+     * @param slot The slot of the input element to use (default is -1, meaning no slot). See explanation of slots above.
+     */    
+    template<int index = 0>
+    void setInput(ComputeGraphElementPtr input, int slot = -1) {
+        setInput(input, index, slot);
+    }
+
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
         throw std::runtime_error("checkInput not implemented for this element");
     }
@@ -48,13 +72,37 @@ public:
     ComputeGraphElementPtr getInputElement(int index = 0) {
         // if a slot is set, we need to get the element from
         // the inputs of the input element
-        if (srcOutputSlots[index] != -1) {
-            return inputs[index]->getInputElement(srcOutputSlots[index]);
+        if (srcOutputSlots.at(index) != -1) {
+            return inputs.at(index)->getInputElement(srcOutputSlots.at(index));
         }
         // otherwise we can just return the input at the index
         return inputs[index];
     }
 
+    template<typename T>
+    std::shared_ptr<T> getInputElement(int index = 0) {
+        return std::dynamic_pointer_cast<T>(getInputElement(index));
+    }
+
+    /**
+     * @brief get the output with specified index
+     * 
+     * Generally simply returns the input at the given index.
+     * In the klartraum computegraph framework, each input is passed through the
+     * node, regardless of whether it is modified or not.
+     * 
+     * 
+     * @param index 
+     * @return ComputeGraphElementPtr 
+     */
+    ComputeGraphElementPtr getOutputElement(int index = 0) {
+        return inputs.at(index);
+    }
+
+    template<typename T>
+    std::shared_ptr<T> getOutputElement(int index = 0) {
+        return std::dynamic_pointer_cast<T>(getOutputElement(index));
+    }    
 
     void setWaitFor(uint32_t pathId, VkSemaphore semaphore) {
         renderWaitSemaphores[pathId] = semaphore;
@@ -69,6 +117,16 @@ public:
             throw std::runtime_error("ComputeGraphElement not initialized");
         }
     }
+
+    // Host-side work right before a path of a compiled graph is submitted,
+    // e.g. copying values the CPU set into that path's buffers. The path's
+    // previous submission has finished by then, as for camera UBO updates.
+    // Only called for elements that return true from isUpdatable().
+    virtual void _update(uint32_t pathId) {}
+
+    // Whether the element has a host-side update; ComputeGraph collects such
+    // elements when compiling and calls only their _update().
+    virtual bool isUpdatable() const { return false; }
 
     virtual const char* getType() const = 0;
 

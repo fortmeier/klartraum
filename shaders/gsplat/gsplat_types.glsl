@@ -18,6 +18,11 @@ struct Gaussian2D {
     float alpha;
 };
 
+struct RadixContainer {
+    uint value;
+    uint originalIndex;
+};
+
 struct StartAndEnd {
     uint start;
     uint end;

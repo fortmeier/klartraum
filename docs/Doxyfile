@@ -1,0 +1,23 @@
+# Doxygen configuration for the Klartraum Engine API reference.
+# Doxygen only produces XML here; Sphinx renders it through Breathe.
+# Paths are relative to docs/, where conf.py runs Doxygen.
+
+PROJECT_NAME           = "Klartraum Engine"
+INPUT                  = ../include
+RECURSIVE              = YES
+FILE_PATTERNS          = *.hpp *.h
+OUTPUT_DIRECTORY       = _doxygen
+GENERATE_XML           = YES
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+JAVADOC_AUTOBRIEF      = NO
+MARKDOWN_SUPPORT       = YES
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = NO
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_LOGFILE           = _doxygen/warnings.log

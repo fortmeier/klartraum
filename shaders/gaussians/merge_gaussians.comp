@@ -1,0 +1,66 @@
+#version 450
+
+// Concatenates two sets of Gaussians: A's first, then B's. The SH buffers are
+// coefficient-major (sh[k * count + i]), so every coefficient is moved to
+// the merged count's layout.
+
+#extension GL_EXT_scalar_block_layout : require
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint countA;
+    uint countB;
+} pc;
+
+layout(scalar, set = 0, binding = 0) readonly buffer PosA { vec3 posA[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer RotA { vec4 rotA[]; };
+layout(scalar, set = 0, binding = 2) readonly buffer ScaleA { vec3 scaleA[]; };
+layout(scalar, set = 0, binding = 3) readonly buffer ColAlphaA { vec4 colAlphaA[]; };
+layout(scalar, set = 0, binding = 4) readonly buffer ShRA { float shRA[]; };
+layout(scalar, set = 0, binding = 5) readonly buffer ShGA { float shGA[]; };
+layout(scalar, set = 0, binding = 6) readonly buffer ShBA { float shBA[]; };
+layout(scalar, set = 0, binding = 7) readonly buffer PosB { vec3 posB[]; };
+layout(scalar, set = 0, binding = 8) readonly buffer RotB { vec4 rotB[]; };
+layout(scalar, set = 0, binding = 9) readonly buffer ScaleB { vec3 scaleB[]; };
+layout(scalar, set = 0, binding = 10) readonly buffer ColAlphaB { vec4 colAlphaB[]; };
+layout(scalar, set = 0, binding = 11) readonly buffer ShRB { float shRB[]; };
+layout(scalar, set = 0, binding = 12) readonly buffer ShGB { float shGB[]; };
+layout(scalar, set = 0, binding = 13) readonly buffer ShBB { float shBB[]; };
+layout(scalar, set = 0, binding = 14) writeonly buffer OutPos { vec3 outPos[]; };
+layout(scalar, set = 0, binding = 15) writeonly buffer OutRot { vec4 outRot[]; };
+layout(scalar, set = 0, binding = 16) writeonly buffer OutScale { vec3 outScale[]; };
+layout(scalar, set = 0, binding = 17) writeonly buffer OutColAlpha { vec4 outColAlpha[]; };
+layout(scalar, set = 0, binding = 18) writeonly buffer OutShR { float outShR[]; };
+layout(scalar, set = 0, binding = 19) writeonly buffer OutShG { float outShG[]; };
+layout(scalar, set = 0, binding = 20) writeonly buffer OutShB { float outShB[]; };
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    uint count = pc.countA + pc.countB;
+    if (i >= count) {
+        return;
+    }
+    if (i < pc.countA) {
+        outPos[i] = posA[i];
+        outRot[i] = rotA[i];
+        outScale[i] = scaleA[i];
+        outColAlpha[i] = colAlphaA[i];
+        for (uint k = 0; k < 15; ++k) {
+            outShR[k * count + i] = shRA[k * pc.countA + i];
+            outShG[k * count + i] = shGA[k * pc.countA + i];
+            outShB[k * count + i] = shBA[k * pc.countA + i];
+        }
+    } else {
+        uint j = i - pc.countA;
+        outPos[i] = posB[j];
+        outRot[i] = rotB[j];
+        outScale[i] = scaleB[j];
+        outColAlpha[i] = colAlphaB[j];
+        for (uint k = 0; k < 15; ++k) {
+            outShR[k * count + i] = shRB[k * pc.countB + j];
+            outShG[k * count + i] = shGB[k * pc.countB + j];
+            outShB[k * count + i] = shBB[k * pc.countB + j];
+        }
+    }
+}
