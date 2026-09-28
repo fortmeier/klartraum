@@ -742,6 +742,17 @@ void OnnxNetwork::planTransientTensorStorage()
         }
     }
 
+    // Tensor lifetimes above are expressed in ONNX node order. Independent
+    // branches may otherwise be emitted in a different topological order by
+    // ComputeGraph, invalidating those lifetime intervals and overwriting a
+    // reused slot too early. Keep execution consistent with the order used by
+    // the memory plan. The Vulkan queue is serial already, so this adds the
+    // required dependency edges without reducing available device parallelism.
+    for (int nodeIndex = 1; nodeIndex < graph.node_size(); ++nodeIndex) {
+        graphOperationElements.at(nodeIndex)->addDependency(
+            graphOperationElements.at(nodeIndex - 1));
+    }
+
     std::cout << "OnnxNetwork: transient memory plan: "
               << memoryPlanStats.tensorCount << " tensors, "
               << memoryPlanStats.slotCount << " slots, "

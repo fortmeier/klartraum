@@ -233,6 +233,8 @@ TEST(OnnxNetworkTest, ExecutesStableDiffusion15DenoiserStep) {
     ASSERT_EQ(actual.size(), expected.size());
     float maximumAbsoluteError = 0.0f;
     for (size_t index = 0; index < actual.size(); ++index) {
+        ASSERT_TRUE(std::isfinite(actual[index])) << "Non-finite UNet output at index " << index;
+        ASSERT_TRUE(std::isfinite(expected[index])) << "Non-finite UNet reference at index " << index;
         maximumAbsoluteError = std::max(maximumAbsoluteError, std::abs(actual[index] - expected[index]));
     }
     EXPECT_LE(maximumAbsoluteError, 2e-2f);
@@ -264,6 +266,8 @@ TEST(OnnxNetworkTest, ExecutesStableDiffusion15VaeOnLantern) {
 
     float maximumAbsoluteError = 0.0f;
     for (size_t i = 0; i < actual.size(); ++i) {
+        ASSERT_TRUE(std::isfinite(actual[i])) << "Non-finite VAE output at index " << i;
+        ASSERT_TRUE(std::isfinite(expected[i])) << "Non-finite VAE reference at index " << i;
         maximumAbsoluteError = std::max(maximumAbsoluteError, std::abs(actual[i] - expected[i]));
     }
     EXPECT_LE(maximumAbsoluteError, 2e-3f);
