@@ -61,3 +61,14 @@ add_executable(onnx_example
 target_link_libraries(onnx_example 
     klartraum_lib
 )
+
+# Headless turntable: renders a scene from a camera orbiting it once
+add_executable(turntable_example
+    turntable_example.cpp
+)
+
+target_link_libraries(turntable_example
+    klartraum_lib
+)
+
+add_dependencies(turntable_example Shaders)
