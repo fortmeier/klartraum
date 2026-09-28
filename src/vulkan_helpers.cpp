@@ -1,4 +1,7 @@
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <mutex>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -7,11 +10,42 @@
 
 namespace klartraum {
 
+namespace {
+
+std::mutex assetRootMutex;
+std::string assetRoot;
+
+} // namespace
+
+void setAssetRoot(const std::string& directory) {
+    std::lock_guard<std::mutex> lock(assetRootMutex);
+    assetRoot = directory;
+}
+
+std::string getAssetRoot() {
+    std::lock_guard<std::mutex> lock(assetRootMutex);
+    if (!assetRoot.empty()) {
+        return assetRoot;
+    }
+    const char* env = std::getenv("KLARTRAUM_ASSET_DIR");
+    return env ? std::string(env) : std::string();
+}
+
 std::vector<char> readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
+    // The working directory takes precedence, so existing callers that run
+    // from the repository root behave as before.
+    const std::filesystem::path path(filename);
+    if (!file.is_open() && path.is_relative()) {
+        const std::string root = getAssetRoot();
+        if (!root.empty()) {
+            file.open(std::filesystem::path(root) / path, std::ios::ate | std::ios::binary);
+        }
+    }
+
     if (!file.is_open()) {
-        throw std::runtime_error("failed to open file!");
+        throw std::runtime_error("failed to open file: " + filename);
     }
 
     size_t fileSize = (size_t)file.tellg();

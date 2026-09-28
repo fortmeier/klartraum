@@ -1,0 +1,29 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+} pc;
+
+layout(set = 0, binding = 0) restrict readonly buffer InputTensor {
+    float inputData[];
+};
+
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outputImage;
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= pc.width || pixel.y >= pc.height) {
+        return;
+    }
+
+    uint planeSize = pc.width * pc.height;
+    uint offset = pixel.y * pc.width + pixel.x;
+    vec3 color = vec3(
+        inputData[offset],
+        inputData[planeSize + offset],
+        inputData[2 * planeSize + offset]);
+    imageStore(outputImage, ivec2(pixel), vec4(clamp(color, 0.0, 1.0), 1.0));
+}

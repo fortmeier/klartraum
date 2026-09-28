@@ -1,6 +1,7 @@
 #ifndef KLARTRAUM_INTERFACE_CAMERA_ORBIT_HPP
 #define KLARTRAUM_INTERFACE_CAMERA_ORBIT_HPP
 
+#include <optional>
 #include <unordered_map>
 
 #include "klartraum/interface_camera.hpp"
@@ -44,14 +45,58 @@ public:
         this->position = position;
     }
 
+    void setNearPlane(float nearPlane) {
+        this->nearPlane = nearPlane;
+    }
+
+    void setFarPlane(float farPlane) {
+        this->farPlane = farPlane;
+    }
+
+    void setProjectionAspectRatio(float aspectRatio) {
+        projectionAspectRatio = aspectRatio;
+    }
+
+    void useSwapChainAspectRatio() {
+        projectionAspectRatio.reset();
+    }
+
+    double getDistance() const {
+        return distance;
+    }
+
+    double getAzimuth() const {
+        return azimuth;
+    }
+
+    double getElevation() const {
+        return elevation;
+    }
+
+    const glm::vec3& getPosition() const {
+        return position;
+    }
+
+    float getNearPlane() const {
+        return nearPlane;
+    }
+
+    float getFarPlane() const {
+        return farPlane;
+    }
+
 
 private:
-    VulkanContext* vulkanContext;
+    VulkanContext* vulkanContext = nullptr;
     double azimuth = 0.0;
     double elevation = 0.0;
     double distance = 2.0;
 
     glm::vec3 position = glm::vec3(0.0f);
+
+    float nearPlane = 0.1f;
+    float farPlane = 1000.0f;
+    std::optional<float> projectionAspectRatio;
 
     bool leftButtonDown = false;
 

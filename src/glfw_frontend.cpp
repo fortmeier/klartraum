@@ -44,6 +44,20 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
     frontend->keyCallback(window, key, scancode, action, mods);
 }
 
+static void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+    auto frontend = static_cast<GlfwFrontend*>(glfwGetWindowUserPointer(window));
+    frontend->getKlartraumEngine().getVulkanContext().setFramebufferExtent(
+        { static_cast<uint32_t>(width), static_cast<uint32_t>(height) });
+    frontend->renderFromEventCallback();
+}
+
+static void window_refresh_callback(GLFWwindow* window)
+{
+    auto frontend = static_cast<GlfwFrontend*>(glfwGetWindowUserPointer(window));
+    frontend->renderFromEventCallback();
+}
+
 void GlfwFrontend::initialize() {
     // Initialize the glfw window
 
@@ -53,49 +67,101 @@ void GlfwFrontend::initialize() {
     // TODO window size should be configurable somewhere else
     auto config = klartraumEngine->getVulkanContext().getConfig();
     window = glfwCreateWindow(config.WIDTH, config.HEIGHT, config.ENGINE_VERSION, nullptr, nullptr);
+    
+    float xscale, yscale;
+    glfwGetWindowContentScale(window, &xscale, &yscale);
+
+    // If the content scale is not 1.0, we need to adjust the window size
+    // seems only to make sense on Mac OS
+    #ifdef __APPLE__
+        if(xscale != 1.0f || yscale != 1.0f) {
+            glfwDestroyWindow(window);
+            window = glfwCreateWindow(config.WIDTH / xscale, config.HEIGHT / yscale, config.ENGINE_VERSION, nullptr, nullptr);
+        }
+    #endif
 
     glfwSetWindowUserPointer(window, this);
 
     // set GLFW event callbacks
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetWindowRefreshCallback(window, window_refresh_callback);
 
+    // Two-step windowed init:
+    // 1. Create the VkInstance so GLFW can create the surface against it.
+    klartraumEngine->getVulkanContext().initializeInstance();
+
+    // 2. Create the OS window surface.
     auto instance = klartraumEngine->getVulkanContext().getInstance();
-
-    // cerate the window surface
-    // (this needs to be done after the Vulkan instance is created)
     if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create window surface!");
     }
 
-    klartraumEngine->getVulkanContext().initialize(surface);
+    // Initial framebuffer size, for surfaces that leave the swapchain size to
+    // the application.
+    int fbWidth, fbHeight;
+    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+    klartraumEngine->getVulkanContext().setFramebufferExtent(
+        { static_cast<uint32_t>(fbWidth), static_cast<uint32_t>(fbHeight) });
+
+    // 3. Create device + real swapchain with VK_KHR_swapchain enabled.
+    klartraumEngine->getVulkanContext().initializeDevice(surface);
 }
 
 
-void GlfwFrontend::loop() {
+void GlfwFrontend::loop(int maxFrames) {
 
+    // Resizing is offered only when the engine can rebuild its graphs for a
+    // new swapchain (see KlartraumEngine::setGraphBuilder).
+    glfwSetWindowAttrib(window, GLFW_RESIZABLE, klartraumEngine->isResizable() ? GLFW_TRUE : GLFW_FALSE);
+
+    int frameCount = 0;
     while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
+        pollEvents();
+
+        // While minimized the framebuffer has zero size and nothing can be
+        // presented; block until the window is restored.
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        while ((fbWidth == 0 || fbHeight == 0) && !glfwWindowShouldClose(window)) {
+            glfwWaitEvents();
+            glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        }
 
         processGLFWEvents();
 
+        beforeStep();
         klartraumEngine->step();
+
+        if (maxFrames > 0 && ++frameCount >= maxFrames)
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
 }
 
 void GlfwFrontend::shutdown() {
-    auto& instance = klartraumEngine->getVulkanContext().getInstance();
+    auto instance = klartraumEngine->getVulkanContext().getInstance();
     auto& vulkanContext = klartraumEngine->getVulkanContext();
-    
-    vulkanContext.stopRender();
-    klartraumEngine->clearComputeGraphs();
-    vulkanContext.shutdown();
 
-    vkDestroySurfaceKHR(instance, surface, nullptr);
+    vulkanContext.stopRender();
+    // The graph builder may hold GPU resources (e.g. a captured model).
+    klartraumEngine->setGraphBuilder(nullptr);
+    klartraumEngine->clearComputeGraphs();
+
+    // Release all engine-owned GPU resource holders (camera UBO, interface camera)
+    // before device shutdown so their VkBuffer destructors run while device is valid.
+    klartraumEngine->setCameraUBO(nullptr);
+    klartraumEngine->clearInterfaceCamera();
+    klartraumEngine->clearWindow();
+
+    // VulkanContext::shutdown() destroys swapchain → surface → device → instance
+    // in the correct Vulkan teardown order.
+    vulkanContext.shutdown();
+    surface = VK_NULL_HANDLE;
 
     glfwDestroyWindow(window);
-    glfwTerminate();
+    window = nullptr;
 }
 
 
@@ -115,7 +181,9 @@ void GlfwFrontend::processGLFWEvents() {
         old_mouse_y = new_mouse_y;
     }
 
-    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !leftButtonDown) {
+    // A press on the GUI never starts a camera drag; a release always ends one.
+    const bool mouseCaptured = wantCaptureMouse();
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !leftButtonDown && !mouseCaptured) {
         auto event = std::make_unique<EventMouseButton>(EventMouseButton::Button::Left, EventMouseButton::Action::Press);
         eventQueue.push(std::move(event));
         leftButtonDown = true;
@@ -126,6 +194,10 @@ void GlfwFrontend::processGLFWEvents() {
         leftButtonDown = false;
     }
 
+    if (mouseCaptured) {
+        scrollXAccum = 0.0;
+        scrollYAccum = 0.0;
+    }
     if (scrollXAccum != 0.0 || scrollYAccum != 0.0) {
         auto event = std::make_unique<EventMouseScroll>(scrollXAccum, scrollYAccum);
         eventQueue.push(std::move(event));
@@ -260,8 +332,36 @@ constexpr EventKey::Key translateKey(int glfwKey) {
     }
 }
 
+void GlfwFrontend::pollEvents()
+{
+    glfwPollEvents();
+    if (callbackError) {
+        std::exception_ptr error = callbackError;
+        callbackError = nullptr;
+        std::rethrow_exception(error);
+    }
+}
+
+void GlfwFrontend::renderFromEventCallback()
+{
+    // Only a resizable engine can follow the new size; the check also keeps
+    // callbacks fired during window/device setup from rendering.
+    if (callbackError || !klartraumEngine || !klartraumEngine->isResizable()) {
+        return;
+    }
+    try {
+        beforeStep();
+        klartraumEngine->step();
+    } catch (...) {
+        callbackError = std::current_exception();
+    }
+}
+
 void GlfwFrontend::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
+    if (wantCaptureKeyboard()) {
+        return;
+    }
     auto& eventQueue = klartraumEngine->getEventQueue();
     EventKey::Key klartraumKey = translateKey(key);
 
@@ -272,6 +372,20 @@ void GlfwFrontend::keyCallback(GLFWwindow* window, int key, int scancode, int ac
 KlartraumEngine& GlfwFrontend::getKlartraumEngine()
 {
     return *klartraumEngine;
+}
+
+void GlfwFrontend::attachTextOverlay(RenderPassPtr renderPass)
+{
+    textOverlay = std::make_shared<TextDrawComponent>();
+    renderPass->addDrawComponent(textOverlay);
+}
+
+void GlfwFrontend::renderText(const std::string& text, float x, float y, float scale, float r, float g, float b, float a)
+{
+    if (!textOverlay) {
+        throw std::runtime_error("renderText() called without a text overlay; call attachTextOverlay() first");
+    }
+    textOverlay->setText(text, x, y, scale, r, g, b, a);
 }
 
 } // namespace klartraum

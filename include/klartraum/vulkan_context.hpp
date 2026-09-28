@@ -62,6 +62,7 @@ private:
     VkDebugUtilsMessengerEXT debugMessenger;
 
     std::vector<VkImage> swapChainImages;
+    std::vector<VkDeviceMemory> swapChainImageMemories;
 
     VkFormat swapChainImageFormat;
 
@@ -70,14 +71,7 @@ private:
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};
 
-    const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-        VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
-#ifdef __APPLE__
-        "VK_KHR_portability_subset",  // Required for MoltenVK on macOS
-#endif
-    };
+    std::vector<const char*> deviceExtensions;
 
 #ifdef NDEBUG
     const bool enableValidationLayers = false;
@@ -113,7 +107,14 @@ private:
 
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
-    void createSwapChain();
+    void createSwapChain(VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE);
+
+    void destroySyncObjects();
+
+    bool swapChainOutOfDate = false;
+    VkExtent2D framebufferExtent{0, 0};
+
+    void createSwapImagesHeadless();
 
     void createImageViews();
 
@@ -124,23 +125,38 @@ private:
     void createLogicalDevice();
 
     enum class State {
-        UNINITIALIZED,
-        INITIALIZED,
-        SHUTDOWN
-    } state = State::UNINITIALIZED;
+        PRE_INITIALIZED,  // Object created, no Vulkan work done
+        DEVICE_READY,     // Instance, device, queues initialized
+        SWAPCHAIN_READY,  // Swapchain/headless images, imageviews, sync objects ready
+        SHUTDOWN          // All resources cleaned up, object ready for destruction
+    } state = State::PRE_INITIALIZED;
 
 public:
-    VulkanContext();
+    // Explicit trivial constructor (no Vulkan work done here)
+    VulkanContext() noexcept = default;
 
     ~VulkanContext();
 
-    void initialize(VkSurfaceKHR& surface);
+    // Initialize with surface (windowed mode, one-shot)
+    [[nodiscard]] void initialize(VkSurfaceKHR& surface);
+
+    // Initialize without surface (headless mode)
+    [[nodiscard]] void initialize();
+
+    // Two-step windowed init for frontends that need the VkInstance before
+    // they can create a VkSurfaceKHR (e.g. GlfwFrontend):
+    //   1. initializeInstance()      → PRE_INITIALIZED → DEVICE_READY
+    //   2. <caller creates surface>
+    //   3. initializeDevice(surface) → DEVICE_READY   → SWAPCHAIN_READY
+    void initializeInstance();
+    void initializeDevice(VkSurfaceKHR surface);
+
     void shutdown();
 
     template<typename T, typename... Args>
     std::shared_ptr<T> create(Args&&... args) {
-        if (state != State::INITIALIZED) {
-            throw std::runtime_error("VulkanContext is not initialized!");
+        if (state != State::SWAPCHAIN_READY) {
+            throw std::runtime_error("VulkanContext is not fully initialized! Call initialize() first.");
         }
         return std::make_shared<T>(*this, std::forward<Args>(args)...);
     }
@@ -164,6 +180,8 @@ public:
 
     VkInstance& getInstance();
 
+    VkPhysicalDevice getPhysicalDevice() const { return physicalDevice; }
+
     VkDevice& getDevice();
     VkSwapchainKHR& getSwapChain();
 
@@ -172,6 +190,8 @@ public:
     VkImageView& getImageView(uint32_t imageIndex);
 
     VkImage& getSwapChainImage(uint32_t imageIndex);
+
+    uint32_t getNumberOfSwapChainImages() const;
 
     VkExtent2D& getSwapChainExtent();
 
@@ -188,20 +208,63 @@ public:
     std::vector<VkFence> inFlightFences;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerFrame;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerImage;
-    std::vector<VkSemaphore> renderEndSemaphores;
 
     void createSyncObjects();
 
     uint32_t currentFrame = 0;
 
-    std::tuple<uint32_t, VkSemaphore&> beginRender();
+    std::tuple<uint32_t, VkFence&> beginRender();
     void endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore);
     void stopRender();
 
+    // Frame start that tolerates an outdated swapchain. Returns false (without
+    // consuming the in-flight fence) when the swapchain no longer matches the
+    // surface; the caller must skip the frame and call recreateSwapChain().
+    bool tryBeginRender(uint32_t& imageIndex, VkFence*& fence);
+
+    // True once acquire or present reported VK_ERROR_OUT_OF_DATE_KHR or
+    // VK_SUBOPTIMAL_KHR, or after setFramebufferExtent() changed the size.
+    bool isSwapChainOutOfDate() const { return swapChainOutOfDate; }
+
+    // Size in pixels of the window's framebuffer. Used as the swapchain extent
+    // on platforms where the surface leaves the size to the application
+    // (currentExtent == 0xFFFFFFFF, e.g. Wayland). Marks the swapchain as
+    // outdated when the size changes.
+    void setFramebufferExtent(VkExtent2D extent);
+
+    // Waits for the device to be idle, then rebuilds the swapchain, its image
+    // views and the frame sync objects for the current surface size. All
+    // handles previously returned by getImageView(), getSwapChainImage() and
+    // imageAvailableSemaphoresPerImage become invalid, so anything recorded
+    // against them (compute graphs) must be rebuilt. Returns false and keeps
+    // the swapchain outdated while the surface has zero size (minimized).
+    bool recreateSwapChain();
+
     void createCommandPool();
+    VkCommandPool getCommandPool() const { return commandPool; }
+    bool hasSurface() const { return surface != VK_NULL_HANDLE; }
+    float getTimestampPeriod() const;   // nanoseconds per GPU timestamp unit
+
+    // VK_EXT_mesh_shader is enabled opportunistically at device creation when the
+    // physical device supports it (with the meshShader feature). Consumers gate
+    // the optional mesh-shader draw path on this and fall back to the vertex path
+    // when false. vkCmdDrawMeshTasksIndirectEXT is loaded via vkGetDeviceProcAddr
+    // since it is an extension entry point.
+    bool isMeshShaderSupported() const { return meshShaderSupported_; }
+    PFN_vkCmdDrawMeshTasksIndirectEXT getCmdDrawMeshTasksIndirectEXT() const {
+        return vkCmdDrawMeshTasksIndirectEXT_;
+    }
+
+    // The pipelineStatisticsQuery feature is enabled when the physical device
+    // supports it. Apple GPUs (MoltenVK, KosmicKrisp) do not.
+    bool isPipelineStatisticsQuerySupported() const { return pipelineStatisticsQuerySupported_; }
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
+
+    bool meshShaderSupported_ = false;
+    bool pipelineStatisticsQuerySupported_ = false;
+    PFN_vkCmdDrawMeshTasksIndirectEXT vkCmdDrawMeshTasksIndirectEXT_ = nullptr;
 };
 
 } // namespace klartraum

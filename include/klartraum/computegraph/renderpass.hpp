@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.h>
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/rendergraphelement.hpp"
+#include "klartraum/draw_component.hpp"
 
 namespace klartraum {
 
@@ -18,6 +19,10 @@ public:
     };
 
     ~RenderPass() {
+        // Nothing was created if the pass was never compiled into a graph.
+        if (vulkanContext == nullptr) {
+            return;
+        }
         auto& device = vulkanContext->getDevice();
         for (auto framebuffer : framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -58,13 +63,24 @@ public:
     
         colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    
-        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
-        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    
+
+        // For windowed rendering the image must be in PRESENT_SRC_KHR after
+        // the renderpass so vkQueuePresentKHR accepts it.  For headless
+        // offscreen rendering GENERAL is fine. A viewport target overrides this
+        // with TRANSFER_SRC_OPTIMAL so the Window composite can blit from it.
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout defaultFinal = vulkanContext.hasSurface()
+                                     ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                     : VK_IMAGE_LAYOUT_GENERAL;
+        if (auto* ivs = std::dynamic_pointer_cast<ImageViewSrcInterface>(getInputElement(0)).get()) {
+            colorAttachment.finalLayout = ivs->getFinalLayoutOverride().value_or(defaultFinal);
+        } else {
+            colorAttachment.finalLayout = defaultFinal;
+        }
+
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;
-        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_GENERAL;
+        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -123,6 +139,7 @@ public:
 
         auto cameraUBO = getCameraUBO();
         for(auto& drawComponent : drawComponents) {
+            drawComponent->setNumberPaths(numberPaths);
             drawComponent->initialize(vulkanContext, renderPass, cameraUBO);
         }
     };
@@ -184,6 +201,27 @@ public:
         drawComponents.push_back(drawComponent);
     }
 
+    // Makes `element` a scheduling dependency of this render pass: Kahn
+    // ordering (and the per-edge semaphore the graph creates for it) then
+    // guarantees `element`'s command buffer is submitted — and signals
+    // completion — before this render pass's. This is how compute work that
+    // a DrawComponent consumes (e.g. a sort/cull sub-graph feeding an
+    // indirect draw, bridged through a BufferToGraphicsBarrier) gets ordered
+    // ahead of the render pass, alongside the existing ImageViewSrc/camera
+    // inputs at indices 0/1.
+    void addComputeDependency(ComputeGraphElementPtr element) {
+        computeDependencies.push_back(element);
+    }
+
+    virtual std::map<int, ComputeGraphElementPtr> getInputs() const override {
+        auto allInputs = inputs;
+        int index = (int)inputs.size();
+        for (auto& dependency : computeDependencies) {
+            allInputs[index++] = dependency;
+        }
+        return allInputs;
+    }
+
     VkImageView& getImageView(uint32_t pathId) override {
         if(inputs.size() == 0) {
             throw std::runtime_error("no input!");
@@ -206,6 +244,17 @@ public:
         return imageViewSrc->getImage(pathId);
     }
 
+    VkExtent2D& getImageExtent(uint32_t pathId) override {
+        if(inputs.size() == 0) {
+            throw std::runtime_error("no input!");
+        }
+        ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>((getInputElement(0))).get();
+        if (imageViewSrc == nullptr) {
+            throw std::runtime_error("input is not an ImageViewSrc!");
+        }
+        return imageViewSrc->getImageExtent(pathId);
+    }
+
 private:
     VulkanContext* vulkanContext = nullptr;
     VkRenderPass renderPass;
@@ -215,6 +264,8 @@ private:
     std::vector<VkFramebuffer> framebuffers;
 
     std::vector<std::shared_ptr<DrawComponent> > drawComponents;
+
+    std::vector<ComputeGraphElementPtr> computeDependencies;
 
 };
 
