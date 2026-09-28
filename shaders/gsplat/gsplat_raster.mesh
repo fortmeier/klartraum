@@ -1,0 +1,61 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_EXT_scalar_block_layout : enable
+
+// Mesh-shader front end for the raster backend (perf plan R5), an additive,
+// device-gated alternative to gsplat_raster.vert. One workgroup emits a batch of
+// WG_SPLATS quads, reading the same precomputed Splat2D records the vertex path
+// uses (R1) dereferenced through the sorted index. Outputs match the vertex
+// shader's per-vertex interface so the existing gsplat_raster.frag is reused.
+
+#define WG_SPLATS 32u
+
+layout(local_size_x = WG_SPLATS) in;
+layout(triangles, max_vertices = WG_SPLATS * 4u, max_primitives = WG_SPLATS * 2u) out;
+
+struct Splat2D {
+    vec4  color;      // premultiplied rgb, alpha
+    vec3  conic;      // inverse projected covariance (a, b, c)
+    vec2  centerPx;   // splat centre in pixels
+    vec2  ndcCenter;  // splat centre in NDC
+    vec2  ndcAxis1;   // major eigen-axis * radius, in NDC
+    vec2  ndcAxis2;   // minor eigen-axis * radius, in NDC
+    float depth;      // clip.z / clip.w
+};
+layout(scalar, set = 1, binding = 0) readonly buffer Splat2DBuf   { Splat2D splat2D[];     };
+layout(scalar, set = 1, binding = 1) readonly buffer SortedIndices{ uint    sortedIndices[];};
+layout(scalar, set = 1, binding = 2) readonly buffer VisibleCount { uint    visibleCount;   };
+
+layout(location = 0) out vec4 outColor[];
+layout(location = 1) out vec3 outConic[];
+layout(location = 2) out vec2 outCenterPx[];
+
+const vec2 CORNERS[4] = vec2[](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0));
+
+void main() {
+    uint base  = gl_WorkGroupID.x * WG_SPLATS;
+    uint count = (visibleCount > base) ? min(WG_SPLATS, visibleCount - base) : 0u;
+
+    SetMeshOutputsEXT(count * 4u, count * 2u);
+    uint lid = gl_LocalInvocationID.x;
+    if (lid >= count) return;
+
+    uint splatId = sortedIndices[base + lid];
+    Splat2D s = splat2D[splatId];
+
+    uint v0 = lid * 4u;
+    for (uint c = 0u; c < 4u; c++) {
+        vec2 corner = CORNERS[c];
+        vec2 ndcOffset = s.ndcAxis1 * corner.x + s.ndcAxis2 * corner.y;
+        gl_MeshVerticesEXT[v0 + c].gl_Position = vec4(s.ndcCenter + ndcOffset, s.depth, 1.0);
+        outColor[v0 + c]    = s.color;
+        outConic[v0 + c]    = s.conic;
+        outCenterPx[v0 + c] = s.centerPx;
+    }
+
+    // Two triangles covering the quad {BL, BR, TL, TR}; cull mode is NONE so
+    // winding is irrelevant.
+    uint p0 = lid * 2u;
+    gl_PrimitiveTriangleIndicesEXT[p0 + 0u] = uvec3(v0 + 0u, v0 + 1u, v0 + 2u);
+    gl_PrimitiveTriangleIndicesEXT[p0 + 1u] = uvec3(v0 + 2u, v0 + 1u, v0 + 3u);
+}

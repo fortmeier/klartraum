@@ -1,0 +1,122 @@
+// WARNING: This file contains AI-generated code
+// This compute shader was automatically generated and may require
+// manual review and optimization for production use.
+
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint dimInput[4];    // [batch, input_channels, input_height, input_width]
+    uint dimWeights[4];  // [input_channels, output_channels, kernel_height, kernel_width]
+    uint dimOutput[4];   // [batch, output_channels, output_height, output_width]
+    uint dimBias[4];     // [output_channels] (only first element used)
+    uint kernel_shape[8];
+    uint strides[8];
+    uint pads[8];
+    uint dilations[8];
+    uint groups[8];
+    //uint output_padding[8];
+};
+
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
+    float input_data[];
+};
+
+layout(set = 0, binding = 1) restrict readonly buffer WeightsBuffer {
+    float weights_data[];
+};
+
+layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer {
+    float bias_data[];
+};
+
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer {
+    float output_data[];
+};
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint z = gl_GlobalInvocationID.z;
+
+    uint output_batch = dimOutput[0];
+    uint output_channels = dimOutput[1];
+    uint output_height = dimOutput[2];
+    uint output_width = dimOutput[3];
+
+    uint input_batch = dimInput[0];
+    uint input_channels = dimInput[1];
+    uint input_height = dimInput[2];
+    uint input_width = dimInput[3];
+
+    uint kernel_height = kernel_shape[0];
+    uint kernel_width = kernel_shape[1];
+    uint stride_h = strides[0];
+    uint stride_w = strides[1];
+    uint pad_h = pads[0];
+    uint pad_w = pads[1];
+
+    if (x >= output_width || y >= output_height || z >= output_channels) {
+        return;
+    }
+
+    for (uint b = 0; b < output_batch; ++b) {
+        float sum = 0.0;
+
+        // Transposed convolution algorithm:
+        // For each output position (x, y), we need to find all input positions
+        // whose kernel overlaps with this output position.
+        // 
+        // The relationship is: output[out_y][out_x] gets contributions from
+        // input[in_y][in_x] * kernel[ky][kx] where:
+        // out_y = in_y * stride_h + ky - pad_h
+        // out_x = in_x * stride_w + kx - pad_w
+        //
+        // Solving for input position:
+        // in_y = (out_y + pad_h - ky) / stride_h
+        // in_x = (out_x + pad_w - kx) / stride_w
+        
+        for (uint ic = 0; ic < input_channels; ++ic) {
+            for (uint ky = 0; ky < kernel_height; ++ky) {
+                for (uint kx = 0; kx < kernel_width; ++kx) {
+                    // Calculate which input position would contribute through this kernel position
+                    int in_y_num = int(y + pad_h) - int(ky);
+                    int in_x_num = int(x + pad_w) - int(kx);
+                    
+                    // Check if input position is valid (must be on stride grid and in bounds)
+                    if (in_y_num >= 0 && in_x_num >= 0 && 
+                        (in_y_num % int(stride_h)) == 0 && (in_x_num % int(stride_w)) == 0) {
+                        
+                        uint in_y = uint(in_y_num / int(stride_h));
+                        uint in_x = uint(in_x_num / int(stride_w));
+                        
+                        if (in_y < input_height && in_x < input_width) {
+                            uint input_idx = b * input_channels * input_height * input_width +
+                                           ic * input_height * input_width +
+                                           in_y * input_width + in_x;
+
+                            // For transposed conv, weight layout is [input_channels, output_channels, kh, kw]
+                            uint weight_idx = ic * output_channels * kernel_height * kernel_width +
+                                            z * kernel_height * kernel_width +
+                                            ky * kernel_width + kx;
+
+                            sum += input_data[input_idx] * weights_data[weight_idx];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add bias if available
+        if (dimBias[0] > 0) {
+            sum += bias_data[z];
+        }
+
+        uint output_idx = b * output_channels * output_height * output_width +
+                         z * output_height * output_width +
+                         y * output_width + x;
+
+        output_data[output_idx] = sum;
+    }
+}

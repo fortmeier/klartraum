@@ -20,8 +20,25 @@ KlartraumEngine::~KlartraumEngine() {
 
 void KlartraumEngine::step() {
 
-    // start frame rendering
-    auto [imageIndex, semaphore] = vulkanContext.beginRender();
+    uint32_t imageIndex;
+    VkFence* fencePtr;
+    if (isResizable()) {
+        if (vulkanContext.isSwapChainOutOfDate() && !rebuildForSwapChain()) {
+            return; // minimized: nothing to render into
+        }
+        if (!vulkanContext.tryBeginRender(imageIndex, fencePtr)) {
+            return; // outdated since the last frame; rebuilt on the next step
+        }
+    } else {
+        // Without a builder the graphs cannot follow a new swapchain, so an
+        // outdated swapchain is an error (beginRender() throws).
+        auto [index, fence] = vulkanContext.beginRender();
+        imageIndex = index;
+        fencePtr = &fence;
+    }
+    VkFence& fence = *fencePtr;
+    // endRender() advances currentFrame, so read the slot now.
+    const uint32_t frameIndex = vulkanContext.currentFrame;
 
     // process event queue,
     // this currently only updates the camera
@@ -39,14 +56,60 @@ void KlartraumEngine::step() {
 
     auto& graphicsQueue = vulkanContext.getGraphicsQueue();
 
-    VkSemaphore renderFinishedSemaphore;
-    for(auto &computeGraph : computeGraphs) {
-        renderFinishedSemaphore = computeGraph.submitTo(graphicsQueue, imageIndex);
+    if (window_ && window_->hasViewports()) {
+        // Viewport mode: each graph renders into its own offscreen target (no
+        // swapchain wait); the window composite blits them into the one
+        // swapchain image and is the single submission that touches it.
+        std::vector<VkSemaphore> graphFinished;
+        graphFinished.reserve(computeGraphs.size());
+        for (auto& cg : computeGraphs) {
+            graphFinished.push_back(cg->submitTo(graphicsQueue, imageIndex));
+        }
+        // The composite alone reads the freshly acquired swapchain image, so it
+        // waits on image-available in addition to every viewport scene.
+        graphFinished.push_back(vulkanContext.imageAvailableSemaphoresPerImage[imageIndex]);
+
+        // With an overlay, the overlay is the frame's last submission and
+        // signals the fence instead.
+        VkSemaphore compositeFinished = window_->submitComposite(
+            graphicsQueue, imageIndex, graphFinished, overlay_ ? VK_NULL_HANDLE : fence);
+        if (overlay_) {
+            compositeFinished = overlay_->submit(graphicsQueue, imageIndex, frameIndex, compositeFinished, fence);
+        }
+        vulkanContext.endRender(imageIndex, compositeFinished);
+    } else {
+        // Without graphs, the frame just presents the acquired image.
+        VkSemaphore renderFinishedSemaphore = vulkanContext.imageAvailableSemaphoresPerImage[imageIndex];
+
+        for(auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
+            // only the last submission of the frame signals the fence: the
+            // last computegraph, or the overlay if there is one
+            if (it == computeGraphs.end() - 1 && !overlay_) {
+                renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
+            }
+            else {
+                renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex);
+            }
+        }
+
+        if (overlay_) {
+            renderFinishedSemaphore =
+                overlay_->submit(graphicsQueue, imageIndex, frameIndex, renderFinishedSemaphore, fence);
+        }
+
+        // finish frame rendering
+        vulkanContext.endRender(imageIndex, renderFinishedSemaphore);
     }
 
-    // finish frame rendering
-    vulkanContext.endRender(imageIndex, renderFinishedSemaphore);
- 
+    // When profiling is enabled, wait for the GPU to finish this frame so we
+    // can read back the timestamp queries.  This makes each step() synchronous
+    // but that is acceptable in a profiling / development build.
+    if (profilingEnabled_) {
+        vkQueueWaitIdle(graphicsQueue);
+        for (auto& cg : computeGraphs) {
+            cg->readAndAccumulateTimestamps_();
+        }
+    }
 }
 
 std::queue<std::unique_ptr<Event> >& KlartraumEngine::getEventQueue()
@@ -66,30 +129,87 @@ VulkanContext& KlartraumEngine::getVulkanContext()
     return vulkanContext;
 }
 
+Window& KlartraumEngine::getWindow()
+{
+    if (!window_) {
+        window_ = std::make_unique<Window>(vulkanContext);
+    }
+    return *window_;
+}
+
 void KlartraumEngine::add(ComputeGraphElementPtr element)
 {
-    computeGraphs.emplace_back(vulkanContext, 3);
+    uint32_t numberPaths = vulkanContext.getNumberOfSwapChainImages();
+    computeGraphs.emplace_back(std::make_unique<ComputeGraph>(vulkanContext, numberPaths));
     auto& computeGraph = computeGraphs.back();
-    computeGraph.compileFrom(element);
+    if (profilingEnabled_) computeGraph->enableProfiling();
+    if (perfProfilingEnabled_) computeGraph->enablePerformanceProfiling(perfProfilingNameFilter_);
+    computeGraph->compileFrom(element);
+}
+
+void KlartraumEngine::setGraphBuilder(GraphBuilder builder)
+{
+    graphBuilder_ = std::move(builder);
+    computeGraphs.clear();
+    if (graphBuilder_) {
+        graphBuilder_(*this);
+    }
+}
+
+bool KlartraumEngine::isResizable() const
+{
+    return graphBuilder_ && !(window_ && window_->hasViewports());
+}
+
+bool KlartraumEngine::rebuildForSwapChain()
+{
+    // Waits for the device to be idle before anything is destroyed.
+    if (!vulkanContext.recreateSwapChain()) {
+        return false;
+    }
+    // The graphs recorded the old swapchain's image views and semaphores.
+    computeGraphs.clear();
+    graphBuilder_(*this);
+    if (overlay_) {
+        overlay_->onSwapChainRecreated();
+    }
+    return true;
+}
+
+std::vector<std::pair<std::string, float>> KlartraumEngine::getProfilingResults()
+{
+    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
+    for (auto& cg : computeGraphs) {
+        cg->readAndAccumulateTimestamps_();
+        cg->readAndAccumulatePerformanceCounters_();
+    }
+    std::vector<std::pair<std::string, float>> results;
+    for (auto& cg : computeGraphs) {
+        auto r = cg->getProfilingResults();
+        results.insert(results.end(), r.begin(), r.end());
+    }
+    return results;
 }
 
 RenderPassPtr KlartraumEngine::createRenderPass()
 {
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;
+    std::vector<VkExtent2D> imageExtents;
     std::vector<VkSemaphore> imageAvailableSemaphores;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < vulkanContext.getNumberOfSwapChainImages(); i++) {
         imageViews.push_back(vulkanContext.getImageView(i));
         images.push_back(vulkanContext.getSwapChainImage(i));
+        imageExtents.push_back(vulkanContext.getSwapChainExtent());
         imageAvailableSemaphores.push_back(vulkanContext.imageAvailableSemaphoresPerImage[i]);
     }
 
-    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
+    auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images, imageExtents);
 
-    imageViewSrc->setWaitFor(0, imageAvailableSemaphores[0]);
-    imageViewSrc->setWaitFor(1, imageAvailableSemaphores[1]);
-    imageViewSrc->setWaitFor(2, imageAvailableSemaphores[2]);
+    for (int i = 0; i < vulkanContext.getNumberOfSwapChainImages(); i++) {
+        imageViewSrc->setWaitFor(i, imageAvailableSemaphores[i]);
+    }
 
     auto camera = std::make_shared<CameraUboType>();
 
