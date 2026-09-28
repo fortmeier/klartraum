@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -47,7 +48,20 @@ float maximumError(const std::vector<float>& actual, const std::vector<float>& e
         throw std::runtime_error("Reference tensor size mismatch");
     float result = 0.0f;
     for (size_t index = 0; index < actual.size(); ++index) {
+        if (!std::isfinite(actual[index]) || !std::isfinite(expected[index])) {
+            return std::numeric_limits<float>::infinity();
+        }
         result = std::max(result, std::abs(actual[index] - expected[index]));
+    }
+    return result;
+}
+
+float maximumMagnitude(const std::vector<float>& values) {
+    float result = 0.0f;
+    for (float value : values) {
+        if (!std::isfinite(value))
+            return std::numeric_limits<float>::infinity();
+        result = std::max(result, std::abs(value));
     }
     return result;
 }
@@ -154,6 +168,11 @@ int main(int argc, char** argv) {
                 auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
                     network->getOutputElement("noise_prediction"));
                 output->getDataBuffer(0).memcopyTo(prediction);
+                if (step == 0) {
+                    const float firstStepError = maximumError(
+                        prediction, readTensor<float>(directory / "unet_reference_f32.bin", sampleElements));
+                    std::cout << "First UNet prediction maximum error: " << firstStepError << std::endl;
+                }
                 for (size_t index = 0; index < latentElements; ++index) {
                     guided[index] =
                         prediction[index] + guidanceScale * (prediction[latentElements + index] - prediction[index]);
@@ -170,7 +189,8 @@ int main(int argc, char** argv) {
                     latents[index] = sqrtPreviousAlpha * predictedOriginal + sqrtPreviousBeta * guided[index];
                 }
                 std::cout << "Completed DDIM step " << (step + 1) << "/" << timesteps.size()
-                          << " (t=" << timesteps[step] << ")" << std::endl;
+                          << " (t=" << timesteps[step] << ", max|noise|=" << maximumMagnitude(guided)
+                          << ", max|latent|=" << maximumMagnitude(latents) << ")" << std::endl;
             }
         }
 
