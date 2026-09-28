@@ -12,3 +12,12 @@ scripts/lantern_splat/.venv/
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# Claude work-planning files
+.claude/plans/
+
+# Documentation build
+docs/.venv/
+docs/_build/
+docs/_doxygen/
+_site/
