@@ -1,5 +1,6 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 
@@ -511,13 +512,63 @@ ComputeGraphElementPtr createCast(VulkanContext* vulkanContext, const onnx::Node
 ComputeGraphElementPtr createExpand(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                     const std::map<std::string, const onnx::ValueInfoProto*>& infos,
                                     const onnx::GraphProto& graph) {
-    if (getTensorElementType(node.input(0), infos, graph) != onnx::TensorProto::INT64 ||
-        getTensorElementType(node.output(0), infos, graph) != onnx::TensorProto::INT64) {
-        throw std::runtime_error("Expand currently supports INT64 tensors only");
+    const auto inputType = getTensorElementType(node.input(0), infos, graph);
+    const auto outputType = getTensorElementType(node.output(0), infos, graph);
+    if (inputType != outputType ||
+        (inputType != onnx::TensorProto::INT64 && inputType != onnx::TensorProto::FLOAT)) {
+        throw std::runtime_error("Expand supports matching FLOAT or INT64 tensors");
     }
-    ExpandPushConstants constants{tensorElementCount(getTensorDimensions(node.input(0), infos, graph)),
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (input.size() > 4 || output.size() > 4 || input.size() > output.size()) {
+        throw std::runtime_error("Expand supports ranks up to four");
+    }
+    ExpandPushConstants constants{};
+    constants.elementCount = tensorElementCount(output);
+    constants.rank = static_cast<uint32_t>(output.size());
+    std::fill(std::begin(constants.inputDims), std::end(constants.inputDims), 1);
+    std::fill(std::begin(constants.outputDims), std::end(constants.outputDims), 1);
+    const size_t inputOffset = 4 - input.size();
+    const size_t outputOffset = 4 - output.size();
+    for (size_t index = 0; index < input.size(); ++index) constants.inputDims[inputOffset + index] = input[index];
+    for (size_t index = 0; index < output.size(); ++index) constants.outputDims[outputOffset + index] = output[index];
+    for (size_t index = 0; index < 4; ++index) {
+        if (constants.inputDims[index] != 1 && constants.inputDims[index] != constants.outputDims[index]) {
+            throw std::runtime_error("Expand input shape cannot broadcast to its output shape");
+        }
+    }
+    const char* shader = inputType == onnx::TensorProto::FLOAT
+                             ? "shaders/onnx/expand_float.comp.spv"
+                             : "shaders/onnx/expand_int64.comp.spv";
+    auto operation = vulkanContext->create<GeneralComputation<ExpandPushConstants>>(shader);
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((constants.elementCount + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr createGather(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                    const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                    const onnx::GraphProto& graph) {
+    if (getTensorElementType(node.input(0), infos, graph) != onnx::TensorProto::FLOAT ||
+        getTensorElementType(node.input(1), infos, graph) != onnx::TensorProto::INT64 ||
+        getTensorElementType(node.output(0), infos, graph) != onnx::TensorProto::FLOAT) {
+        throw std::runtime_error("Gather supports FLOAT data with INT64 indices");
+    }
+    const auto data = getTensorDimensions(node.input(0), infos, graph);
+    const auto indices = getTensorDimensions(node.input(1), infos, graph);
+    int64_t axis = getIntegerAttribute(node, "axis", 0);
+    if (axis < 0) axis += static_cast<int64_t>(data.size());
+    if (axis < 0 || axis >= static_cast<int64_t>(data.size())) {
+        throw std::runtime_error("Gather axis is outside the data tensor rank");
+    }
+    GatherPushConstants constants{1, data[axis], 1, tensorElementCount(indices),
                                   tensorElementCount(getTensorDimensions(node.output(0), infos, graph))};
-    auto operation = vulkanContext->create<GeneralComputation<ExpandPushConstants>>("shaders/onnx/expand_int64.comp.spv");
+    for (int64_t dimension = 0; dimension < axis; ++dimension) constants.outerCount *= data[dimension];
+    for (size_t dimension = static_cast<size_t>(axis) + 1; dimension < data.size(); ++dimension) {
+        constants.innerSize *= data[dimension];
+    }
+    auto operation = vulkanContext->create<GeneralComputation<GatherPushConstants>>(
+        "shaders/onnx/gather_float_int64.comp.spv");
     operation->setPushConstants({constants});
     operation->setGroupCountX((constants.outputCount + 63) / 64);
     return operation;
@@ -578,6 +629,24 @@ ComputeGraphElementPtr createSlice(VulkanContext* vulkanContext, const onnx::Nod
     const auto input = getTensorDimensions(node.input(0), infos, graph);
     const auto output = getTensorDimensions(node.output(0), infos, graph);
     if (input.size() != output.size() || input.size() > 4) throw std::runtime_error("Unsupported Slice rank");
+    if (input == output) {
+        const auto starts = getInt64InitializerValues(node.input(1), graph);
+        const auto ends = getInt64InitializerValues(node.input(2), graph);
+        const auto axes = node.input_size() > 3
+                              ? getInt64InitializerValues(node.input(3), graph)
+                              : std::vector<int64_t>{0};
+        const auto steps = node.input_size() > 4
+                               ? getInt64InitializerValues(node.input(4), graph)
+                               : std::vector<int64_t>{1};
+        int64_t fullAxis = axes.size() == 1 ? axes[0] : 0;
+        if (fullAxis < 0) fullAxis += static_cast<int64_t>(input.size());
+        if (starts.size() != 1 || ends.size() != 1 || axes.size() != 1 || steps.size() != 1 ||
+            fullAxis < 0 || fullAxis >= static_cast<int64_t>(input.size()) || starts[0] != 0 ||
+            steps[0] != 1 || ends[0] < static_cast<int64_t>(input[static_cast<size_t>(fullAxis)])) {
+            throw std::runtime_error("Unsupported shape-preserving Slice");
+        }
+        return vulkanContext->create<NoOp>();
+    }
     SlicePushConstants constants{};
     constants.rank = static_cast<uint32_t>(input.size());
     constants.elementCount = tensorElementCount(output);
@@ -635,6 +704,8 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
         operation = createConv(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Add") {
         operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, "shaders/onnx/add.comp.spv");
+    } else if (operationType == "Sub") {
+        operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, "shaders/onnx/sub.comp.spv");
     } else if (operationType == "Mul") {
         operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, "shaders/onnx/mul.comp.spv");
     } else if (operationType == "Div") {
@@ -663,6 +734,8 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
         operation = createCast(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Expand") {
         operation = createExpand(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Gather") {
+        operation = createGather(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Unsqueeze") {
         operation = createReshape(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Softmax") {
