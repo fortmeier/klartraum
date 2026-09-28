@@ -291,6 +291,7 @@ add_executable(
   tests/test_copybuffer.cpp
   tests/test_tensorelement.cpp
   tests/test_tensor_memory_planner.cpp
+  tests/test_clip_tokenizer.cpp
   tests/test_image_resample.cpp
   tests/test_gaussian_transform.cpp
   tests/test_gaussian_elements.cpp
@@ -336,6 +337,7 @@ set(KLARTRAUM_LIB_SRC
   src/gaussian_splat_rasterizer.cpp
   src/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
+  src/clip_tokenizer.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp

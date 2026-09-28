@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(push_constant) uniform PushConstants {
     uint elementCount;
@@ -7,9 +8,10 @@ layout(push_constant) uniform PushConstants {
     uint inputDims[4];
     uint outputDims[4];
 } pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { int64_t inputData[]; };
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
 layout(set = 0, binding = 1) restrict readonly buffer ShapeBuffer { int64_t shapeData[]; };
-layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { int64_t outputData[]; };
+layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= pc.elementCount) return;

@@ -623,8 +623,7 @@ void OnnxNetwork::planTransientTensorStorage()
         if (lifetime != lifetimes.end()) lifetime->second.lastUse = graphEnd;
     }
 
-    // Reshape, Unsqueeze, and identity Cast change tensor metadata only. Merge eligible input/output
-    // lifetimes so both logical tensors become views of the same storage.
+    // Metadata-only operations and shape-preserving Slice nodes share their input storage.
     std::map<std::string, std::string> parent;
     for (const auto& [name, lifetime] : lifetimes) parent[name] = name;
     std::function<std::string(const std::string&)> findRoot = [&](const std::string& name) {
@@ -635,7 +634,8 @@ void OnnxNetwork::planTransientTensorStorage()
 
     for (int nodeIndex = 0; nodeIndex < graph.node_size(); ++nodeIndex) {
         const auto& node = graph.node(nodeIndex);
-        if ((node.op_type() != "Reshape" && node.op_type() != "Unsqueeze" && node.op_type() != "Cast") ||
+        if ((node.op_type() != "Reshape" && node.op_type() != "Unsqueeze" && node.op_type() != "Cast" &&
+             node.op_type() != "Slice") ||
             node.input_size() < 1 || node.output_size() < 1) continue;
         const auto input = lifetimes.find(node.input(0));
         const auto output = lifetimes.find(node.output(0));
