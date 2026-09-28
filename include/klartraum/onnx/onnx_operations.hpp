@@ -603,10 +603,17 @@ ComputeGraphElementPtr createSlice(VulkanContext* vulkanContext, const onnx::Nod
         const auto steps = getInt64InitializerValues(node.input(4), graph);
         if (steps.size() != 1 || steps[0] != 1) throw std::runtime_error("Only unit Slice steps are supported");
     }
+    const auto inputType = getTensorElementType(node.input(0), infos, graph);
+    const auto outputType = getTensorElementType(node.output(0), infos, graph);
+    if (inputType != outputType ||
+        (inputType != onnx::TensorProto::FLOAT && inputType != onnx::TensorProto::INT64)) {
+        throw std::runtime_error("Slice supports matching FLOAT or INT64 input and output tensors");
+    }
+    const std::string typeSuffix = inputType == onnx::TensorProto::INT64 ? "_int64" : "";
     std::string shader;
-    if (node.input_size() == 3) shader = "shaders/onnx/slice3.comp.spv";
-    else if (node.input_size() == 4) shader = "shaders/onnx/slice.comp.spv";
-    else if (node.input_size() == 5) shader = "shaders/onnx/slice5.comp.spv";
+    if (node.input_size() == 3) shader = "shaders/onnx/slice3" + typeSuffix + ".comp.spv";
+    else if (node.input_size() == 4) shader = "shaders/onnx/slice" + typeSuffix + ".comp.spv";
+    else if (node.input_size() == 5) shader = "shaders/onnx/slice5" + typeSuffix + ".comp.spv";
     else throw std::runtime_error("Slice requires 3, 4, or 5 inputs");
     auto operation = vulkanContext->create<GeneralComputation<SlicePushConstants>>(shader);
     operation->setPushConstants({constants});
