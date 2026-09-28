@@ -47,6 +47,7 @@ KLARTRAUM_OPERATIONS = {
     "Erf",
     "Expand",
     "Gemm",
+    "Gather",
     "InstanceNormalization",
     "LayerNormalization",
     "MatMul",
@@ -59,6 +60,7 @@ KLARTRAUM_OPERATIONS = {
     "Slice",
     "Softmax",
     "Sqrt",
+    "Sub",
     "Split",
     "Transpose",
     "Unsqueeze",
@@ -82,6 +84,47 @@ class Denoiser(nn.Module):
             encoder_hidden_states=encoder_hidden_states,
             return_dict=False,
         )[0]
+
+
+class TextEncoder(nn.Module):
+    def __init__(self, encoder: CLIPTextModel):
+        super().__init__()
+        self.encoder = encoder
+        causal_attention_mask = torch.full(
+            (77, 77), torch.finfo(torch.float32).min, dtype=torch.float32
+        ).triu(diagonal=1)
+        self.register_buffer(
+            "causal_attention_mask", causal_attention_mask[None, None, :, :]
+        )
+
+    def forward(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        text_model = self.encoder.text_model
+        input_shape = input_ids.size()
+        input_ids = input_ids.view(-1, input_shape[-1])
+        hidden_states = text_model.embeddings(input_ids=input_ids)
+
+        sequence_length = input_shape[-1]
+        causal_attention_mask = self.causal_attention_mask.expand(
+            input_shape[0], 1, sequence_length, sequence_length
+        )
+
+        expanded_attention_mask = attention_mask[:, None, None, :].expand(
+            input_shape[0], 1, sequence_length, sequence_length
+        ).to(hidden_states.dtype)
+        expanded_attention_mask = (
+            1.0 - expanded_attention_mask
+        ) * -10000.0
+
+        encoder_outputs = text_model.encoder(
+            inputs_embeds=hidden_states,
+            attention_mask=expanded_attention_mask,
+            causal_attention_mask=causal_attention_mask,
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+        return text_model.final_layer_norm(encoder_outputs[0])
 
 
 def add_initializer_value_info(model: onnx.ModelProto) -> onnx.ModelProto:
@@ -157,7 +200,7 @@ def fold_fixed_shape_expressions(model: onnx.ModelProto) -> int:
                 elif node.op_type == "Unsqueeze": result = np.expand_dims(inputs[0], tuple(int(v) for v in inputs[1].reshape(-1)))
                 elif node.op_type == "Where": result = np.where(inputs[0], inputs[1], inputs[2])
 
-        if result is not None and result.size <= 4096 and len(node.output) == 1:
+        if result is not None and result.size <= 65536 and len(node.output) == 1:
             if node.output[0] in dtypes:
                 result = result.astype(dtypes[node.output[0]], copy=False)
             result = np.ascontiguousarray(result)
@@ -274,9 +317,12 @@ def concretize_fixed_shapes(model: onnx.ModelProto) -> int:
     return changed
 
 
-def encode_prompt(model: str, prompt: str, negative_prompt: str) -> torch.Tensor:
-    tokenizer = CLIPTokenizer.from_pretrained(model, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(model, subfolder="text_encoder").eval()
+def encode_prompt(
+    tokenizer: CLIPTokenizer,
+    text_encoder: CLIPTextModel,
+    prompt: str,
+    negative_prompt: str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     tokens = tokenizer(
         [negative_prompt, prompt],
         padding="max_length",
@@ -285,14 +331,71 @@ def encode_prompt(model: str, prompt: str, negative_prompt: str) -> torch.Tensor
         return_tensors="pt",
     )
     with torch.inference_mode():
-        embeddings = text_encoder(tokens.input_ids, attention_mask=tokens.attention_mask)[0]
+        embeddings = text_encoder(
+            tokens.input_ids, attention_mask=tokens.attention_mask
+        )[0]
     # The legacy ONNX tracer temporarily enables autograd while tracing Linear
     # modules.  Clone outside inference mode so this fixture is a regular tensor
     # that the tracer is allowed to save for backward.
-    result = embeddings.clone().detach().contiguous()
-    del text_encoder, tokenizer
-    gc.collect()
-    return result
+    return (
+        tokens.input_ids.contiguous(),
+        tokens.attention_mask.contiguous(),
+        embeddings.clone().detach().contiguous(),
+    )
+
+
+def export_text_encoder(
+    model: nn.Module,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    path: Path,
+) -> None:
+    raw_path = path.with_suffix(".raw.onnx")
+    inferred_path = path.with_suffix(".inferred.onnx")
+    weights_name = path.name + ".data"
+    torch.onnx.export(
+        model,
+        (input_ids, attention_mask),
+        str(raw_path),
+        input_names=["input_ids", "attention_mask"],
+        output_names=["last_hidden_state"],
+        opset_version=17,
+        dynamo=False,
+        do_constant_folding=True,
+    )
+    shape_inference.infer_shapes_path(str(raw_path), str(inferred_path), strict_mode=True)
+    inferred = add_initializer_value_info(onnx.load(inferred_path))
+    folded_count = fold_fixed_shape_expressions(inferred)
+    concrete_count = concretize_fixed_shapes(inferred)
+    folded_count += fold_fixed_shape_expressions(inferred)
+    concrete_count += concretize_fixed_shapes(inferred)
+    add_initializer_value_info(inferred)
+    print(
+        f"Folded {folded_count} fixed-shape CLIP ONNX nodes and "
+        f"concretized {concrete_count} dimensions"
+    )
+    (path.parent / weights_name).unlink(missing_ok=True)
+    onnx.save_model(
+        inferred,
+        str(path),
+        save_as_external_data=True,
+        all_tensors_to_one_file=True,
+        location=weights_name,
+        size_threshold=1024,
+    )
+    onnx.checker.check_model(str(path))
+    raw_path.unlink()
+    inferred_path.unlink()
+
+
+def run_text_encoder_ort(
+    path: Path, input_ids: np.ndarray, attention_mask: np.ndarray
+) -> np.ndarray:
+    session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+    return session.run(
+        ["last_hidden_state"],
+        {"input_ids": input_ids, "attention_mask": attention_mask},
+    )[0]
 
 
 def export(
@@ -411,6 +514,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="reuse compatible fixed-size ONNX files and only regenerate reference fixtures",
     )
+    parser.add_argument(
+        "--text-encoder-only",
+        action="store_true",
+        help="export and validate CLIP/tokenizer assets without running the image pipeline",
+    )
     return parser.parse_args()
 
 
@@ -423,7 +531,47 @@ def main() -> None:
     args.onnx_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    embeddings = encode_prompt(args.model, args.prompt, args.negative_prompt)
+    tokenizer = CLIPTokenizer.from_pretrained(args.model, subfolder="tokenizer")
+    text_encoder_model = CLIPTextModel.from_pretrained(
+        args.model, subfolder="text_encoder"
+    ).eval().cpu()
+    input_ids, attention_mask, embeddings = encode_prompt(
+        tokenizer, text_encoder_model, args.prompt, args.negative_prompt
+    )
+    tokenizer.save_pretrained(args.onnx_dir)
+    text_encoder_path = args.onnx_dir / "sd15_text_encoder.onnx"
+    if not args.reuse_models or not text_encoder_path.exists():
+        export_text_encoder(
+            TextEncoder(text_encoder_model).eval(),
+            input_ids,
+            attention_mask,
+            text_encoder_path,
+        )
+    clip_output = run_text_encoder_ort(
+        text_encoder_path, input_ids.numpy(), attention_mask.numpy()
+    )
+    clip_error = float(np.max(np.abs(clip_output - embeddings.numpy())))
+    print(f"ONNX CLIP text encoder maximum absolute error: {clip_error:.7g}")
+    if not np.allclose(clip_output, embeddings.numpy(), atol=2e-3, rtol=2e-3):
+        raise RuntimeError("ONNX CLIP text encoder does not match PyTorch")
+    input_ids.numpy().astype(np.int64).tofile(args.onnx_dir / "prompt_input_ids_i64.bin")
+    attention_mask.numpy().astype(np.int64).tofile(
+        args.onnx_dir / "prompt_attention_mask_i64.bin"
+    )
+    embeddings.numpy().astype(np.float32).tofile(args.onnx_dir / "prompt_embeddings_f32.bin")
+    clip_output.astype(np.float32).tofile(args.onnx_dir / "text_encoder_reference_f32.bin")
+    clip_unsupported = write_operator_report(
+        args.output_dir / "text_encoder_operator_report.txt", text_encoder_path
+    )
+    if args.text_encoder_only:
+        print(
+            "Unsupported Klartraum CLIP operations "
+            f"({len(clip_unsupported)}): {', '.join(sorted(clip_unsupported))}"
+        )
+        return
+    del text_encoder_model, tokenizer
+    gc.collect()
+
     unet = UNet2DConditionModel.from_pretrained(args.model, subfolder="unet").eval().cpu()
     pndm_scheduler = PNDMScheduler.from_pretrained(args.model, subfolder="scheduler")
     scheduler = DDIMScheduler.from_config(pndm_scheduler.config)
@@ -524,6 +672,8 @@ def main() -> None:
     sample_array.astype(np.float32).tofile(args.onnx_dir / "unet_sample_f32.bin")
     timestep_array.astype(np.int64).tofile(args.onnx_dir / "unet_timestep_i64.bin")
     embedding_array.astype(np.float32).tofile(args.onnx_dir / "prompt_embeddings_f32.bin")
+    input_ids.numpy().astype(np.int64).tofile(args.onnx_dir / "prompt_input_ids_i64.bin")
+    clip_output.astype(np.float32).tofile(args.onnx_dir / "text_encoder_reference_f32.bin")
     ort_noise.astype(np.float32).tofile(args.onnx_dir / "unet_reference_f32.bin")
     first_guided_noise.numpy().astype(np.float32).tofile(args.onnx_dir / "guided_noise_f32.bin")
     initial_latents.numpy().astype(np.float32).tofile(args.onnx_dir / "initial_latents_f32.bin")

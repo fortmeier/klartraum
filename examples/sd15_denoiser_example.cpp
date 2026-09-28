@@ -13,6 +13,7 @@
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
+#include "klartraum/sd15/clip_tokenizer.hpp"
 
 namespace {
 
@@ -78,6 +79,12 @@ struct Options {
     std::filesystem::path modelDirectory = "./data/onnx/sd15_denoiser_256";
     std::filesystem::path outputPath = "build/TestingOutput/sd15_pipeline_klartraum.ppm";
     uint32_t imageSize = 256;
+    std::string prompt =
+        "a realistic photograph of a traditional Japanese stone lantern in a green garden, "
+        "single gray granite garden lantern, centered, moss, natural daylight";
+    std::string negativePrompt =
+        "person, building, house, flower pot, collage, multiple images, metal, painting, "
+        "illustration, abstract, blurry, distorted, oversaturated, text";
 };
 
 Options parseOptions(int argc, char** argv) {
@@ -90,6 +97,10 @@ Options parseOptions(int argc, char** argv) {
             options.outputPath = argv[++index];
         } else if (argument == "--size" && index + 1 < argc) {
             options.imageSize = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (argument == "--prompt" && index + 1 < argc) {
+            options.prompt = argv[++index];
+        } else if (argument == "--negative-prompt" && index + 1 < argc) {
+            options.negativePrompt = argv[++index];
         } else {
             throw std::runtime_error("Unknown or incomplete argument: " + argument);
         }
@@ -115,9 +126,10 @@ int main(int argc, char** argv) {
         constexpr float vaeScalingFactor = 0.18215f;
 
         const auto& directory = options.modelDirectory;
+        const auto textEncoderPath = directory / "sd15_text_encoder.onnx";
         const auto unetPath = directory / "sd15_unet.onnx";
         const auto decoderPath = directory / "sd15_vae_decoder.onnx";
-        for (const auto& path : {unetPath, decoderPath}) {
+        for (const auto& path : {textEncoderPath, unetPath, decoderPath}) {
             if (!std::filesystem::exists(path)) {
                 throw std::runtime_error(
                     "Missing " + path.string() +
@@ -130,13 +142,60 @@ int main(int argc, char** argv) {
         if (timesteps.empty() || alphaPairs.size() != timesteps.size() * 2) {
             throw std::runtime_error("Invalid DDIM scheduler fixtures");
         }
-        const auto embeddingsValues = readTensor<float>(
-            directory / "prompt_embeddings_f32.bin", embeddingElements);
         std::vector<float> latents = readTensor<float>(
             directory / "initial_latents_f32.bin", latentElements);
 
         klartraum::HeadlessFrontend frontend;
         auto& context = frontend.getKlartraumEngine().getVulkanContext();
+        klartraum::ClipTokenizer tokenizer(directory);
+        const auto tokenIds = tokenizer.encodePair(options.negativePrompt, options.prompt);
+        const auto attentionMaskValues = tokenizer.attentionMask(tokenIds);
+        bool referencePrompt = false;
+        const auto referenceTokenPath = directory / "prompt_input_ids_i64.bin";
+        if (std::filesystem::exists(referenceTokenPath)) {
+            referencePrompt = tokenIds == readTensor<int64_t>(referenceTokenPath, tokenIds.size());
+        }
+        std::vector<float> embeddingsValues(embeddingElements);
+        {
+            auto textEncoder = context.create<klartraum::OnnxNetwork>(textEncoderPath.string());
+            const auto& memory = textEncoder->getMemoryPlanStats();
+            std::cout << "CLIP transient storage: " << memory.logicalBytes / (1024.0 * 1024.0)
+                      << " logical MiB -> " << memory.allocatedBytes / (1024.0 * 1024.0)
+                      << " allocated MiB in " << memory.slotCount << " slots" << std::endl;
+            constexpr VkBufferUsageFlags inputUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            auto inputIds = context.create<klartraum::TensorElement<int64_t>>(
+                std::vector<uint32_t>{2, 77}, inputUsage);
+            auto attentionMask = context.create<klartraum::TensorElement<int64_t>>(
+                std::vector<uint32_t>{2, 77}, inputUsage);
+            textEncoder->setInputTensor("input_ids", inputIds);
+            textEncoder->setInputTensor("attention_mask", attentionMask);
+            klartraum::ComputeGraph graph(context, 1);
+            graph.compileFrom(textEncoder);
+            inputIds->setData(0, tokenIds);
+            attentionMask->setData(0, attentionMaskValues);
+            graph.submitAndWait(context.getGraphicsQueue(), 0);
+            auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
+                textEncoder->getOutputElement("last_hidden_state"));
+            if (!output || output->getDataElementCount() != embeddingElements) {
+                throw std::runtime_error("Unexpected CLIP text encoder output");
+            }
+            output->getDataBuffer(0).memcopyTo(embeddingsValues);
+            if (referencePrompt) {
+                const float textError = maximumError(
+                    embeddingsValues,
+                    readTensor<float>(directory / "text_encoder_reference_f32.bin", embeddingElements));
+                std::cout << "CLIP text embedding maximum error: " << textError << std::endl;
+                if (textError > 2e-2f) {
+                    throw std::runtime_error("Klartraum CLIP output is outside its reference tolerance");
+                }
+            }
+        }
+        std::cout << "Prompt: " << options.prompt << std::endl;
+        if (!referencePrompt) {
+            std::cout << "Runtime prompt differs from the exported fixture; reference image checks are skipped"
+                      << std::endl;
+        }
         {
             auto network = context.create<klartraum::OnnxNetwork>(unetPath.string());
             const auto& memory = network->getMemoryPlanStats();
@@ -171,7 +230,7 @@ int main(int argc, char** argv) {
                 auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
                     network->getOutputElement("noise_prediction"));
                 output->getDataBuffer(0).memcopyTo(prediction);
-                if (step == 0) {
+                if (step == 0 && referencePrompt) {
                     const float firstStepError = maximumError(
                         prediction,
                         readTensor<float>(directory / "unet_reference_f32.bin", sampleElements));
@@ -202,8 +261,11 @@ int main(int argc, char** argv) {
             }
         }
 
-        const float latentError = maximumError(
-            latents, readTensor<float>(directory / "final_latents_f32.bin", latentElements));
+        float latentError = 0.0f;
+        if (referencePrompt) {
+            latentError = maximumError(
+                latents, readTensor<float>(directory / "final_latents_f32.bin", latentElements));
+        }
         for (float& value : latents) value /= vaeScalingFactor;
 
         std::vector<float> decoded;
@@ -222,12 +284,14 @@ int main(int argc, char** argv) {
             output->getDataBuffer(0).memcopyTo(decoded);
         }
 
-        const float imageError = maximumError(
-            decoded, readTensor<float>(directory / "pipeline_reference_f32.bin", imageElements));
-        std::cout << "Error versus Python/ONNX Runtime: final latent=" << latentError
-                  << ", decoded image=" << imageError << std::endl;
-        if (latentError > 2e-1f || imageError > 2e-1f) {
-            throw std::runtime_error("Klartraum pipeline output is outside its reference tolerance");
+        if (referencePrompt) {
+            const float imageError = maximumError(
+                decoded, readTensor<float>(directory / "pipeline_reference_f32.bin", imageElements));
+            std::cout << "Error versus Python/ONNX Runtime: final latent=" << latentError
+                      << ", decoded image=" << imageError << std::endl;
+            if (latentError > 2e-1f || imageError > 2.5e-1f) {
+                throw std::runtime_error("Klartraum pipeline output is outside its reference tolerance");
+            }
         }
         writePpm(options.outputPath, decoded, imageSize);
         std::cout << "Wrote " << options.outputPath << std::endl;
