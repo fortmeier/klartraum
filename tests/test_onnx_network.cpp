@@ -13,12 +13,14 @@
  * - Eligible ONNX Reshape tensors are zero-copy views of their inputs.
  * - The generated fixed-size SD1.5 UNet graph loads with complete operator coverage.
  * - The generated fixed-size SD1.5 UNet executes one denoising prediction against ONNX Runtime.
+ * - The generated SD1.5 CLIP encoder executes token IDs against ONNX Runtime.
  **/
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -58,6 +60,19 @@ std::vector<int64_t> readInt64Tensor(const std::filesystem::path& path, size_t c
     if (!input)
         throw std::runtime_error("Could not read int64 tensor fixture: " + path.string());
     return values;
+}
+
+float maximumAbsoluteError(const std::vector<float>& actual, const std::vector<float>& expected) {
+    if (actual.size() != expected.size())
+        throw std::runtime_error("Tensor fixture size mismatch");
+    float result = 0.0f;
+    for (size_t index = 0; index < actual.size(); ++index) {
+        if (!std::isfinite(actual[index]) || !std::isfinite(expected[index])) {
+            return std::numeric_limits<float>::infinity();
+        }
+        result = std::max(result, std::abs(actual[index] - expected[index]));
+    }
+    return result;
 }
 
 } // namespace
@@ -228,7 +243,6 @@ TEST(OnnxNetworkTest, ExecutesStableDiffusion15DenoiserStep) {
     timestep->setData(0, readInt64Tensor(modelDirectory / "unet_timestep_i64.bin", 1));
     embeddings->setData(0, readFloatTensor(modelDirectory / "prompt_embeddings_f32.bin", embeddingElements));
     graph.submitAndWait(context.getGraphicsQueue(), 0);
-
     auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("noise_prediction"));
     ASSERT_NE(output, nullptr);
     std::vector<float> actual(output->getDataElementCount());
@@ -242,6 +256,36 @@ TEST(OnnxNetworkTest, ExecutesStableDiffusion15DenoiserStep) {
         maximumAbsoluteError = std::max(maximumAbsoluteError, std::abs(actual[index] - expected[index]));
     }
     EXPECT_LE(maximumAbsoluteError, 2e-2f);
+}
+
+TEST(OnnxNetworkTest, ExecutesStableDiffusion15TextEncoder) {
+    constexpr size_t tokenElements = 2 * 77;
+    constexpr size_t embeddingElements = tokenElements * 768;
+    const std::filesystem::path directory = "./data/onnx/sd15_denoiser_256";
+    const auto modelPath = directory / "sd15_text_encoder.onnx";
+    if (!std::filesystem::exists(modelPath)) {
+        GTEST_SKIP() << "Generate CLIP with scripts/sd15_onnx/export_denoiser.py";
+    }
+    HeadlessFrontend frontend;
+    auto& context = frontend.getKlartraumEngine().getVulkanContext();
+    auto network = context.create<OnnxNetwork>(modelPath.string());
+    constexpr VkBufferUsageFlags inputUsage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    auto inputIds = context.create<TensorElement<int64_t>>(std::vector<uint32_t>{2, 77}, inputUsage);
+    auto attentionMask = context.create<TensorElement<int64_t>>(std::vector<uint32_t>{2, 77}, inputUsage);
+    network->setInputTensor("input_ids", inputIds);
+    network->setInputTensor("attention_mask", attentionMask);
+    ComputeGraph graph(context, 1);
+    graph.compileFrom(network);
+    inputIds->setData(0, readInt64Tensor(directory / "prompt_input_ids_i64.bin", tokenElements));
+    attentionMask->setData(0, readInt64Tensor(directory / "prompt_attention_mask_i64.bin", tokenElements));
+    graph.submitAndWait(context.getGraphicsQueue(), 0);
+    auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("last_hidden_state"));
+    ASSERT_NE(output, nullptr);
+    std::vector<float> actual(embeddingElements);
+    output->getDataBuffer(0).memcopyTo(actual);
+    const auto expected = readFloatTensor(directory / "text_encoder_reference_f32.bin", embeddingElements);
+    EXPECT_LE(maximumAbsoluteError(actual, expected), 2e-2f);
 }
 
 TEST(OnnxNetworkTest, ExecutesStableDiffusion15VaeOnLantern) {

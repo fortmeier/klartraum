@@ -48,8 +48,9 @@ decoder execute sequentially, so their transient arenas are not resident at the
 same time. Use `--load-only` to parse both graphs without allocating or running
 their Vulkan buffers.
 
-`export_denoiser.py` exports a fixed 256x256, batch-two UNet and matching VAE
-decoder. Its default reference pipeline runs eight deterministic DDIM steps
+`export_denoiser.py` exports a fixed 256x256 CLIP text encoder, batch-two UNet,
+and matching VAE decoder. It also saves the CLIP vocabulary and BPE merges used
+by the native tokenizer. Its default reference pipeline runs eight deterministic DDIM steps
 with classifier-free guidance and seed 12. The prompt produces a recognizable
 traditional Japanese granite garden lantern rather than merely exercising the
 network numerically. It writes prompt
@@ -57,24 +58,29 @@ embeddings, scheduler coefficients, latent/image references, and an operator
 coverage report. These generated model and tensor files remain development
 artifacts and must not be committed.
 
-After changing only the prompt, seed, or step count, reuse an existing export
-of the same fixed size and regenerate just the fixtures with
-`uv run python export_denoiser.py --reuse-models`.
+Use `uv run python export_denoiser.py --text-encoder-only` to export and check
+only CLIP/tokenizer assets. After changing only the fixture prompt, seed, or
+step count, reuse an existing export of the same fixed size and regenerate just
+the fixtures with `uv run python export_denoiser.py --reuse-models`.
 
 Run the matching Vulkan pipeline with:
 
 ```powershell
 .\build\examples\Debug\sd15_denoiser_example.exe
+
+.\build\examples\Debug\sd15_denoiser_example.exe `
+  --prompt "a red sports car parked on a city street" `
+  --negative-prompt "blurry, distorted"
 ```
 
-The example executes the complete SD1.5 UNet once per generated scheduler step
-with a batch of two (negative and positive prompt conditioning), applies guidance
-scale 7.5 and the DDIM update on the CPU, and feeds the final latent into the
-Klartraum VAE decoder.
+The example tokenizes both prompts with native CLIP byte-pair encoding, runs the
+exported CLIP text encoder in Klartraum, then executes the complete SD1.5 UNet
+once per generated scheduler step with a batch of two (negative and positive
+prompt conditioning). It applies guidance scale 7.5 and the DDIM update on the
+CPU, then feeds the final latent into the Klartraum VAE decoder.
 It writes `build/TestingOutput/sd15_pipeline_klartraum.ppm` and checks the final
 latent and decoded pixels against the generated Python/ONNX Runtime reference.
 The current experiment deliberately stays at 256x256. The example also accepts
-`--size` and `--model-dir` for separately generated fixed-size exports. Prompt
-tokenization and CLIP text encoding are still performed by the export script;
-moving those into the native runtime is the remaining step for accepting
-arbitrary prompt text.
+`--size`, `--model-dir`, `--prompt`, and `--negative-prompt`. Numerical fixture
+checks run for the exported default prompt; arbitrary runtime prompts use the
+same deterministic latent seed and write their result without fixture checks.
