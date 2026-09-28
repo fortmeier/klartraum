@@ -29,8 +29,16 @@ from run_reference import MODEL_ID, save_image
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
-DEFAULT_ONNX_DIR = REPO_ROOT / "data" / "onnx" / "sd15_denoiser_128"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "build" / "TestingOutput" / "sd15_denoiser_128"
+DEFAULT_ONNX_DIR = REPO_ROOT / "data" / "onnx" / "sd15_denoiser_256"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "build" / "TestingOutput" / "sd15_denoiser_256"
+DEFAULT_PROMPT = (
+    "a realistic photograph of a traditional Japanese stone lantern in a green garden, "
+    "single gray granite garden lantern, centered, moss, natural daylight"
+)
+DEFAULT_NEGATIVE_PROMPT = (
+    "person, building, house, flower pot, collage, multiple images, metal, painting, "
+    "illustration, abstract, blurry, distorted, oversaturated, text"
+)
 KLARTRAUM_OPERATIONS = {
     "Add",
     "Cast",
@@ -394,14 +402,19 @@ def write_operator_report(path: Path, model_path: Path) -> set[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default=MODEL_ID)
-    parser.add_argument("--prompt", default="a photograph of a lantern")
-    parser.add_argument("--negative-prompt", default="")
-    parser.add_argument("--size", type=int, default=128)
-    parser.add_argument("--steps", type=int, default=4)
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT)
+    parser.add_argument("--negative-prompt", default=DEFAULT_NEGATIVE_PROMPT)
+    parser.add_argument("--size", type=int, default=256)
+    parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--guidance-scale", type=float, default=7.5)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=12)
     parser.add_argument("--onnx-dir", type=Path, default=DEFAULT_ONNX_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--reuse-models",
+        action="store_true",
+        help="reuse compatible fixed-size ONNX files and only regenerate reference fixtures",
+    )
     return parser.parse_args()
 
 
@@ -463,15 +476,21 @@ def main() -> None:
     decoder_input_for_export = torch.from_numpy(decoder_input.numpy().copy())
 
     model_path = args.onnx_dir / "sd15_unet.onnx"
-    export(
-        denoiser,
-        first_model_sample,
-        first_timestep_input,
-        embeddings,
-        model_path,
-    )
     decoder_path = args.onnx_dir / "sd15_vae_decoder.onnx"
-    export_vae_component(decoder, decoder_input_for_export, decoder_path)
+    if args.reuse_models:
+        for path in (model_path, decoder_path):
+            if not path.exists():
+                raise RuntimeError(f"Cannot reuse missing model: {path}")
+        print("Reusing existing fixed-size ONNX models")
+    else:
+        export(
+            denoiser,
+            first_model_sample,
+            first_timestep_input,
+            embeddings,
+            model_path,
+        )
+        export_vae_component(decoder, decoder_input_for_export, decoder_path)
     unsupported = write_operator_report(args.output_dir / "operator_report.txt", model_path)
 
     sample_array = first_model_sample.numpy()
