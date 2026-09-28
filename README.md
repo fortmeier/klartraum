@@ -2,7 +2,7 @@
 
 Klartraum (German for *lucid dream*) is a real-time neural rendering and inference engine built on top of Vulkan.
 
-**[Documentation](https://fortmeier.github.io/klartraum/docs/)** · **[Website](https://klartraum.ai)** · **[Klartraum Studio](https://github.com/fortmeier/klartraum-studio)**
+**[Documentation](https://klartraum.ai/docs/)** · **[Website](https://klartraum.ai)** · **[Klartraum Studio](https://github.com/fortmeier/klartraum-studio)**
 
 ![A stone lantern rendered with Gaussian splatting by Klartraum, turning once around its axis](site/images/engine-lantern.gif)
 
@@ -13,7 +13,7 @@ Klartraum (German for *lucid dream*) is a real-time neural rendering and inferen
 - **Keeps the CPU out of the way:** all GPU work is recorded into Vulkan command buffers once; each frame only submits them.
 - **Works with or without a window,** as an interactive application or as a headless inference engine.
 
-See [Vision and roadmap](https://fortmeier.github.io/klartraum/docs/vision.html) for where it is heading.
+See [Vision and roadmap](https://klartraum.ai/docs/vision.html) for where it is heading.
 
 ## Status
 
@@ -32,7 +32,7 @@ cmake --build build
 ./build/examples/gaussian_splatting_example        # Windows: .\build\examples\Debug\gaussian_splatting_example.exe
 ```
 
-Requirements, platform notes, tests and a walk-through of a first application are in the [documentation](https://fortmeier.github.io/klartraum/docs/getting-started/building.html).
+Requirements, platform notes, tests and a walk-through of a first application are in the [documentation](https://klartraum.ai/docs/getting-started/building.html).
 
 ## License
 
