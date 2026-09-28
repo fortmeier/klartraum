@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>klartraum.ai</title>
+    <meta name="description" content="Klartraum is a real-time neural rendering and inference engine built on Vulkan, with Klartraum Studio for building compute graphs visually.">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234b3fb8'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='20' text-anchor='middle' fill='white'%3E☾%3C/text%3E%3C/svg%3E">
+    <style>
+        :root {
+            --bg: #f4f3ef;
+            --surface: #ffffff;
+            --text: #1b1b1f;
+            --muted: #5b5b66;
+            --border: #dddbd3;
+            --accent: #4b3fb8;
+            --accent-soft: #ebe8fb;
+            --glyph: 27, 27, 31;
+            --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+            --radius: 14px;
+            --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+            --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                --bg: #111116;
+                --surface: #1a1a21;
+                --text: #ececf1;
+                --muted: #a0a0ae;
+                --border: #2c2c36;
+                --accent: #a99cff;
+                --accent-soft: #25223f;
+                --glyph: 236, 236, 241;
+                --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+            }
+        }
+
+        :root[data-theme="dark"] {
+            --bg: #111116;
+            --surface: #1a1a21;
+            --text: #ececf1;
+            --muted: #a0a0ae;
+            --border: #2c2c36;
+            --accent: #a99cff;
+            --accent-soft: #25223f;
+            --glyph: 236, 236, 241;
+            --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+        }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        html {
+            -webkit-text-size-adjust: 100%;
+        }
+
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 1.0625rem;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        a {
+            color: var(--accent);
+        }
+
+        .wrap {
+            max-width: 1040px;
+            margin: 0 auto;
+            padding: 0 16px;
+        }
+
+        /* Hero */
+
+        .hero {
+            position: relative;
+            overflow: hidden;
+            min-height: min(70vh, 720px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .rain {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        .rain span {
+            position: absolute;
+            top: -2em;
+            font-family: var(--mono);
+            font-size: 2.2rem;
+            line-height: 1;
+            color: rgba(var(--glyph), var(--alpha, 0.1));
+            animation: drop linear infinite;
+        }
+
+        @keyframes drop {
+            from { top: -2em; }
+            to { top: 100%; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .rain {
+                display: none;
+            }
+        }
+
+        .hero-content {
+            position: relative;
+            padding-top: 64px;
+            padding-bottom: 64px;
+        }
+
+        .wordmark {
+            margin: 0;
+            font-size: clamp(2.6rem, 9vw, 5rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.05;
+        }
+
+        .wordmark .tld {
+            color: var(--accent);
+        }
+
+        .whisper {
+            margin: 12px 0 0;
+            font-family: var(--mono);
+            font-size: 1rem;
+            color: var(--muted);
+        }
+
+        .tagline {
+            max-width: 36em;
+            margin: 28px auto 0;
+            font-size: 1.15rem;
+        }
+
+        .hero-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 32px;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--bg);
+        }
+
+        .button:hover {
+            border-color: var(--accent);
+        }
+
+        /* Products */
+
+        section {
+            padding: 64px 0 0;
+        }
+
+        h2 {
+            margin: 0 0 8px;
+            font-size: 1.6rem;
+            letter-spacing: -0.01em;
+        }
+
+        .lead {
+            margin: 0 0 32px;
+            color: var(--muted);
+            max-width: 40em;
+        }
+
+        .products {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+            gap: 24px;
+        }
+
+        .card {
+            display: flex;
+            flex-direction: column;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .card-image {
+            aspect-ratio: 4 / 3;
+            background: #000;
+            overflow: hidden;
+        }
+
+        .card-image video {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .card-body {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            padding: 24px;
+        }
+
+        .card h3 {
+            margin: 0;
+            font-size: 1.35rem;
+        }
+
+        .kicker {
+            margin: 2px 0 12px;
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+        }
+
+        .card p {
+            margin: 0 0 16px;
+        }
+
+        .goals-title {
+            margin: 0 0 6px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .goals {
+            margin: 0 0 24px;
+            padding-left: 1.2em;
+        }
+
+        .goals li + li {
+            margin-top: 4px;
+        }
+
+        .card-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: auto;
+        }
+
+        /* Status */
+
+        .status {
+            padding: 20px 24px;
+            border-radius: var(--radius);
+            background: var(--accent-soft);
+        }
+
+        .status h2 {
+            font-size: 1.1rem;
+        }
+
+        .status p {
+            margin: 0;
+        }
+
+        /* Footer */
+
+        footer {
+            margin-top: 64px;
+            padding: 24px 0 40px;
+            border-top: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        footer .wrap {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 24px;
+            justify-content: space-between;
+        }
+
+        footer a {
+            color: inherit;
+        }
+
+        /* On large screens the whole page grows a little, instead of a narrow
+           column of small text in the middle of the window. */
+        @media (min-width: 1600px) {
+            html {
+                font-size: 18px;
+            }
+
+            .wrap {
+                max-width: 1200px;
+            }
+        }
+
+        @media (min-width: 2200px) {
+            html {
+                font-size: 20px;
+            }
+
+            .wrap {
+                max-width: 1360px;
+            }
+        }
+
+        /* Desktop screens: the whole page fits into the window. The hero is as
+           tall as its content, the videos scale with the window height, and the
+           footer sits at the bottom of the window. */
+        @media (min-width: 1100px) and (min-height: 700px) {
+            /* Everything is sized in rem, so the page scales with the window
+               height. */
+            html {
+                font-size: clamp(15px, 1.6vh, 20px);
+            }
+
+            body {
+                display: flex;
+                flex-direction: column;
+                min-height: 100vh;
+            }
+
+            .hero {
+                min-height: 0;
+            }
+
+            /* Wider cards wrap their text into fewer lines. */
+            .wrap {
+                max-width: min(1400px, calc(100vw - 96px));
+            }
+
+            .hero-content {
+                padding-top: clamp(20px, 4vh, 80px);
+                padding-bottom: clamp(20px, 4vh, 80px);
+            }
+
+            .wordmark {
+                font-size: 4.25rem;
+            }
+
+            .tagline {
+                margin-top: clamp(12px, 2vh, 28px);
+            }
+
+            /* The cards the buttons jump to are visible anyway. */
+            .hero-links {
+                display: none;
+            }
+
+            section {
+                padding-top: clamp(16px, 3vh, 56px);
+            }
+
+            .card-image {
+                aspect-ratio: auto;
+                height: clamp(180px, 22vh, 440px);
+            }
+
+            .card-body {
+                padding: 16px 24px 16px;
+                font-size: 0.94rem;
+                line-height: 1.5;
+            }
+
+            .kicker {
+                margin-bottom: 8px;
+            }
+
+            .card p {
+                margin-bottom: 12px;
+            }
+
+            .goals {
+                margin-bottom: 16px;
+            }
+
+            .goals li + li {
+                margin-top: 2px;
+            }
+
+            footer {
+                margin-top: auto;
+                padding: 12px 0;
+            }
+
+            main {
+                padding-bottom: clamp(16px, 3vh, 56px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="hero">
+        <div class="rain" id="rain" aria-hidden="true"></div>
+        <div class="wrap hero-content">
+            <h1 class="wordmark">klartraum<span class="tld">.ai</span></h1>
+            <p class="whisper">… wake up, dreamer …</p>
+            <p class="tagline">
+                Real-time neural rendering and inference on any device with
+                Vulkan, from embedded devices to high-end data center GPUs.
+            </p>
+            <nav class="hero-links" aria-label="Main links">
+                <a class="button primary" href="#engine" target="_self">Klartraum Engine</a>
+                <a class="button" href="#studio" target="_self">Klartraum Studio</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section>
+            <div class="wrap">
+
+                <div class="products">
+                    <article class="card" id="engine">
+                        <div class="card-image">
+                            <video src="images/engine-lantern.mp4" poster="images/engine-lantern-poster.jpg"
+                                   width="480" height="360" autoplay loop muted playsinline
+                                   aria-label="A stone lantern rendered with Gaussian splatting by the Klartraum Engine, turning once around its axis"></video>
+                        </div>
+                        <div class="card-body">
+                            <h3>Klartraum Engine</h3>
+                            <p class="kicker">C++ · Vulkan</p>
+                            <p>
+                                A compute and rendering engine built on Vulkan. Work is
+                                described as a graph of GPU operations that is recorded
+                                into command buffers once and then only submitted, so
+                                the CPU stays out of the way for highest performance.
+                            </p>
+                            <p class="goals-title">Goals</p>
+                            <ul class="goals">
+                                <li>Run neural networks on any Vulkan device</li>
+                                <li>Combine Gaussian splatting, neural networks and classic rasterization in one pipeline</li>
+                                <li>Pre-record all GPU work for low latency and low CPU load</li>
+                                <li>Work in a window or headless, as an inference engine</li>
+                            </ul>
+                            <div class="card-links">
+                                <a class="button primary" href="https://fortmeier.github.io/klartraum/docs/" target="_top">Documentation</a>
+                                <a class="button" href="https://github.com/fortmeier/klartraum" target="_blank" rel="noopener">GitHub</a>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="card" id="studio">
+                        <div class="card-image">
+                            <video src="images/studio.mp4" poster="images/studio-poster.jpg"
+                                   width="960" height="580" autoplay loop muted playsinline
+                                   aria-label="The Klartraum Studio window showing a stone lantern that turns once around its axis, driven by a Time node in the node graph below it"></video>
+                        </div>
+                        <div class="card-body">
+                            <h3>Klartraum Studio</h3>
+                            <p class="kicker">Node editor · live preview</p>
+                            <p>
+                                Building, inspecting and tuning
+                                Klartraum compute graphs. Nodes stand for the engine's compute graph
+                                building blocks, and edits are compiled and shown
+                                live.
+                            </p>
+                            <p class="goals-title">Goals</p>
+                            <ul class="goals">
+                                <li>Build and inspect compute graphs visually</li>
+                                <li>See results live while editing</li>
+                                <li>Run one-off graphs for previews and image files</li>
+                                <li>Use Gaussian splatting, ONNX models and tensor operations as nodes</li>
+                            </ul>
+                            <div class="card-links">
+                                <a class="button primary" href="https://fortmeier.github.io/klartraum-studio/" target="_top">Documentation</a>
+                                <a class="button" href="https://github.com/fortmeier/klartraum-studio" target="_blank" rel="noopener">GitHub</a>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+
+        
+    </main>
+
+    <footer>
+        <div class="wrap">
+            <span>© Dirk Fortmeier · MIT License</span>
+            <span>
+                <a href="https://github.com/fortmeier/klartraum" target="_blank" rel="noopener">klartraum</a>
+                ·
+                <a href="https://github.com/fortmeier/klartraum-studio" target="_blank" rel="noopener">klartraum-studio</a>
+            </span>
+        </div>
+    </footer>
+
+    <script>
+        (function () {
+            if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+                // Only the posters are shown; the videos stay on their first frame.
+                document.querySelectorAll("video").forEach(function (video) {
+                    video.removeAttribute("autoplay");
+                    video.pause();
+                });
+                return;
+            }
+            var rain = document.getElementById("rain");
+            var glyphs = "☀☁☂★☆☉☊☋☌☍☰☱☲☳☴☵☶☷☸☽☾♁♃♄♅♆♔♕♖♗♘♙♠♡♢♣♤♥♦";
+            var count = window.innerWidth < 600 ? 24 : 60;
+            for (var i = 0; i < count; i++) {
+                var span = document.createElement("span");
+                span.textContent = glyphs.charAt(Math.floor(Math.random() * glyphs.length));
+                span.style.left = (Math.random() * 100) + "%";
+                span.style.setProperty("--alpha", (0.04 + Math.random() * 0.12).toFixed(3));
+                span.style.fontSize = (1.2 + Math.random() * 1.6).toFixed(2) + "rem";
+                span.style.animationDuration = (8 + Math.random() * 10).toFixed(2) + "s";
+                span.style.animationDelay = (-Math.random() * 18).toFixed(2) + "s";
+                rain.appendChild(span);
+            }
+        })();
+    </script>
+</body>
+</html>

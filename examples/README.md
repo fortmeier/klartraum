@@ -32,6 +32,25 @@ A basic example that demonstrates:
 ./build/gaussian_splatting_example --file data/lantern.spz --camera-position 0.55 0.48 0.69 --flip-y
 ```
 
+### Turntable Example
+**File**: `turntable_example.cpp`
+
+Renders a Gaussian splat scene headlessly (no window) from a camera that
+circles the scene's vertical axis exactly once, and writes one PPM image per
+frame. The camera orbits the scene centre (the median of the Gaussian
+positions). After the frames, the view after a full turn is compared with the
+first frame, and the program fails if they differ, so the frames always loop
+seamlessly. `scripts/site/make_lantern_animation.sh` uses it for the animation on
+the landing page.
+
+#### Usage:
+```bash
+# From project root
+./build/examples/turntable_example --file data/lantern.spz --flip-y --frames 60 \
+    --width 400 --height 300 --camera-position 0.55 0.48 0.69 --distance 0.65 \
+    --out-dir build/TestingOutput/turntable
+```
+
 ## Building Examples
 
 Examples are built automatically when you build the main project.
