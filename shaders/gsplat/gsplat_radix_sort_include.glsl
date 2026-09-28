@@ -4,45 +4,57 @@
 
 #extension GL_EXT_scalar_block_layout : enable
 
-layout(scalar, binding = 0) buffer BufferA {
-    Gaussian2D gaussiansA[];
+layout(scalar, binding = 0) buffer BufferA0 {
+    uint radixValuesA[];
 };
 
-layout(scalar, binding = 2) buffer BufferB {
-    Gaussian2D gaussiansB[];
+layout(scalar, binding = 1) buffer BufferA1 {
+    uint indexesA[];
 };
 
-layout(scalar, binding = 3) buffer CountBuffer {
+layout(scalar, binding = 2) buffer BufferB0 {
+    uint radixValuesB[];
+};
+
+layout(scalar, binding = 3) buffer BufferB1 {
+    uint indexesB[];
+};
+
+layout(scalar, binding = 4) buffer CountBuffer {
     uint counts[];
 } countBuffer;
 
-layout(scalar, binding = 4) buffer OffsetBuffer {
+layout(scalar, binding = 5) buffer OffsetBuffer {
     uint offsets[];
 } offsetBuffer;
 
-layout(scalar, binding = 5) buffer InputBuffer2 {
+layout(scalar, binding = 6) buffer InputBuffer2 {
     uint numberTotalGaussians;
 } inputBuffer2;
 
-layout(scalar, binding = 6) buffer InputBuffer3 {
+layout(scalar, binding = 7) buffer InputBuffer3 {
     uint histogram[];
 } inputBuffer3;
-
-layout(scalar, binding = 7) buffer InputBufferIndexA {
-    uint inputBufferIndexA[];
-};
-
-layout(scalar, binding = 8) buffer InputBufferIndexB {
-    uint inputBufferIndexB[];
-};
-
 
 layout(push_constant) uniform PushConstants {
     uint pass;
     uint numElements;
     uint numBins;
-
+    uint useCountBuffer; // 1 = take the active element count from inputBuffer2
+                         // (binding 6) instead of numElements, so the sort
+                         // processes only a GPU-determined visible count
 } pushConstants;
+
+// Active element count for this dispatch. When useCountBuffer is set the count
+// comes from inputBuffer2.numberTotalGaussians (written on the GPU before the
+// sort runs); otherwise it is the static push-constant numElements. Keeping the
+// work-distribution math driven by this value while the dispatch group count
+// stays fixed preserves the histogram's bin-major stride (= numWorkGroups).
+uint activeNumElements() {
+    return (pushConstants.useCountBuffer != 0u)
+        ? inputBuffer2.numberTotalGaussians
+        : pushConstants.numElements;
+}
 
 bool debug = false;
 
@@ -67,31 +79,31 @@ uint getBin(uint value, uint binMask, uint pass) {
 // or alternatively from index buffers
 // this way, the other shaders do not have to change
 
-Gaussian2D getInputGaussian(uint idx) {
-    if (pushConstants.pass == 0) {
-        inputBufferIndexA[idx] = idx;
-    }
+// Gaussian2D getInputGaussian(uint idx) {
+//     if (pushConstants.pass == 0) {
+//         inputBufferIndexA[idx] = idx;
+//     }
 
-    if (pushConstants.pass % 2 == 0) {
-        return gaussiansA[inputBufferIndexA[idx]];
-    } else {
-        return gaussiansA[inputBufferIndexB[idx]];
-    }
-}
+//     if (pushConstants.pass % 2 == 0) {
+//         return gaussiansA[inputBufferIndexA[idx]];
+//     } else {
+//         return gaussiansA[inputBufferIndexB[idx]];
+//     }
+// }
 
-void setOutputGaussian(uint idxNew, uint idxOld) {
-    if (pushConstants.pass % 2 == 0) {
-        inputBufferIndexB[idxNew] = inputBufferIndexA[idxOld];
-    } else {
-        inputBufferIndexA[idxNew] = inputBufferIndexB[idxOld];
-    }
+// void setOutputGaussian(uint idxNew, uint idxOld) {
+//     if (pushConstants.pass % 2 == 0) {
+//         inputBufferIndexB[idxNew] = inputBufferIndexA[idxOld];
+//     } else {
+//         inputBufferIndexA[idxNew] = inputBufferIndexB[idxOld];
+//     }
 
-    if (pushConstants.pass == 11) {
-        // for the last pass, we need to write the final output to the output buffer
-        // this is done by writing to the B buffer
-        // (one might expect to write again to the A buffer, since 11 % 2 == 1,
-        // but that would require to read and write from the same buffer in the last pass,
-        // which will give wrong results)
-        gaussiansB[idxNew] = gaussiansA[inputBufferIndexA[idxNew]];
-    }
-}
+//     if (pushConstants.pass == 11) {
+//         // for the last pass, we need to write the final output to the output buffer
+//         // this is done by writing to the B buffer
+//         // (one might expect to write again to the A buffer, since 11 % 2 == 1,
+//         // but that would require to read and write from the same buffer in the last pass,
+//         // which will give wrong results)
+//         gaussiansB[idxNew] = gaussiansA[inputBufferIndexA[idxNew]];
+//     }
+// }

@@ -1,0 +1,24 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+// Fills the VkDrawMeshTasksIndirectCommandEXT buffer for the raster backend's
+// mesh-shader draw (perf plan R5): groupCountX = ceil(visible / WG_SPLATS),
+// matching gsplat_raster.mesh's WG_SPLATS splats per workgroup. Reads the
+// visible count from the sort's count buffer (the value dist wrote). Runs after
+// dist (via the dist -> this edge) and before the mesh draw (via the barrier).
+#define WG_SPLATS 32u
+
+layout(local_size_x = 1) in;
+
+layout(scalar, set = 0, binding = 0) readonly buffer VisibleCount { uint visibleCount; };
+layout(scalar, set = 0, binding = 1) buffer MeshArgs {
+    uint groupCountX;
+    uint groupCountY;
+    uint groupCountZ;
+} args;
+
+void main() {
+    args.groupCountX = (visibleCount + WG_SPLATS - 1u) / WG_SPLATS;
+    args.groupCountY = 1u;
+    args.groupCountZ = 1u;
+}

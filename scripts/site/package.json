@@ -1,0 +1,12 @@
+{
+  "name": "klartraum-site-checks",
+  "private": true,
+  "description": "Automated checks for the klartraum.ai landing page",
+  "type": "module",
+  "scripts": {
+    "check": "node check_site.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

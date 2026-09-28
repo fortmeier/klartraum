@@ -15,6 +15,10 @@ public:
     VulkanBuffer(VulkanContext& kernel, uint32_t size, VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : vulkanContext(kernel), size(size) {
         auto& device = kernel.getDevice();
 
+        if (size == 0) {
+            throw std::invalid_argument("Buffer size must be greater than 0");
+        }
+
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.size = sizeof(T) * size;
@@ -63,6 +67,24 @@ public:
         vkUnmapMemory(device, vertexBufferMemory);
     }
 
+    void memcopyFrom(const T* src, size_t count) {
+        auto& device = vulkanContext.getDevice();
+        void* mappedData;
+        vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
+        size_t dataSize = sizeof(T) * std::min((uint32_t)count, size);
+        memcpy(mappedData, src, dataSize);
+        vkUnmapMemory(device, vertexBufferMemory);
+    }
+
+    void memcopyFrom(const char* src, size_t count) {
+        auto& device = vulkanContext.getDevice();
+        void* mappedData;
+        vkMapMemory(device, vertexBufferMemory, 0, sizeof(char) * size, 0, &mappedData);
+        size_t dataSize = std::min(count, sizeof(T) * size_t(size));
+        memcpy(mappedData, src, dataSize);
+        vkUnmapMemory(device, vertexBufferMemory);
+    }
+
     void memcopyTo(std::vector<T>& dst) {
         auto& device = vulkanContext.getDevice();
         void* mappedData;
@@ -84,6 +106,21 @@ public:
     void _recordZero(VkCommandBuffer commandBuffer) {
         auto& device = vulkanContext.getDevice();
         vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, 0);
+    }
+
+    // Fills the whole buffer with a repeating 32-bit pattern each frame — e.g.
+    // resetting a uint sort-key buffer to 0xFFFFFFFF (a sentinel guaranteed to
+    // sort after any encoded depth key) so stale entries from a previous
+    // frame's larger visible-splat count never contaminate this frame's sort.
+    void _recordFill(VkCommandBuffer commandBuffer, uint32_t value) {
+        vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, value);
+    }
+
+    // Zeroes only [byteOffset, byteOffset + byteSize) — e.g. to reset a single
+    // field of a struct buffer (such as VkDrawIndirectCommand::instanceCount)
+    // each frame while leaving the rest of the buffer untouched.
+    void _recordZero(VkCommandBuffer commandBuffer, VkDeviceSize byteOffset, VkDeviceSize byteSize) {
+        vkCmdFillBuffer(commandBuffer, vertexBuffer, byteOffset, byteSize, 0);
     }
 
     VkBuffer& getBuffer() {

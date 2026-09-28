@@ -13,6 +13,7 @@
 namespace klartraum {
 
 using DispatchIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
+using DrawIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDrawIndirectCommand>>;
 
 
 template <typename A, typename R, typename U = void, typename P = void>
@@ -65,7 +66,7 @@ public:
         }
     }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
         this->numberPaths = numberPaths;
         this->vulkanContext = &vulkanContext;
 
@@ -80,22 +81,19 @@ public:
         createDescriptorPool();
         createComputeDescriptorSetLayout();
         createComputePipeline();
-        
+
         uint32_t inputSize = getInput().getSize();
         if (inputSize == 0) {
             throw std::runtime_error("input size is 0!");
         }
 
-        // If groupCountX is 0, use input size, otherwise use groupCountX
-        groupCountX = groupCountX > 0 ? groupCountX : inputSize; 
+        groupCountX = groupCountX > 0 ? groupCountX : inputSize;
 
         computeDescriptorSets.resize(numberPaths);
         for(uint32_t i = 0; i < numberPaths; i++) {
-            // Use custom output size if set, otherwise use input size
             uint32_t outputSize = customOutputSize > 0 ? customOutputSize : inputSize;
             outputBuffers.emplace_back(vulkanContext, outputSize);
             createComputeDescriptorSets(i);
-            
             if constexpr (!std::is_void<U>::value) {
                 uboPtr->update(i);
             }
@@ -162,8 +160,10 @@ public:
         }
     }
 
-    void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, P pushConstant) {
-        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(P), &pushConstant);
+    template<typename PushConstantType = P>
+    typename std::enable_if<!std::is_void<PushConstantType>::value, void>::type
+    dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, const PushConstantType* pushConstant) {
+        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstantType), pushConstant);
         if (dynamicGroupDispatchParams == nullptr)
         {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
@@ -187,7 +187,7 @@ public:
         );
     }
 
-    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
         if (!this->initialized) {
             throw std::runtime_error("BufferTransformation not initialized");
         }
@@ -207,13 +207,13 @@ public:
                 recordScratchToZero(commandBuffer, pathId);
                 for(VkPipeline computePipeline : computePipelines) {
                     bind(commandBuffer, pathId, computePipeline);
-                    dispatch(commandBuffer, pathId, computePipeline, pushConstant);
+                    dispatch(commandBuffer, pathId, computePipeline, &pushConstant);
                 }
             }
         }
     };
 
-    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
         BufferElementInterface* bufferSrc = std::dynamic_pointer_cast<BufferElementInterface>(input).get();
         if (bufferSrc == nullptr) {
             throw std::runtime_error("input is not a fitting BufferElementInterface!");
@@ -230,7 +230,7 @@ public:
         return bufferPtr->getBuffer(pathId);
     }
 
-    virtual const char* getType() const {
+    virtual const char* getType() const override {
         return "BufferTransformation";
     }    
 
@@ -464,11 +464,10 @@ private:
         auto& device = vulkanContext->getDevice();
 
         std::vector<VkShaderModule> computeShaderModules(shaderPaths.size());
-        std::vector<VkPipelineShaderStageCreateInfo> computeShaderStages(shaderPaths.size()); 
+        std::vector<VkPipelineShaderStageCreateInfo> computeShaderStages(shaderPaths.size());
 
         for (size_t i = 0; i < shaderPaths.size(); i++) {
             auto computeShaderCode = readFile(shaderPaths[i]);
-
             computeShaderModules[i] = createShaderModule(computeShaderCode, vulkanContext->getDevice());
 
             computeShaderStages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -477,51 +476,53 @@ private:
             computeShaderStages[i].pName = "main";
         }
 
-    
-        
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        
+        // combinedLayouts must outlive vkCreatePipelineLayout — declare it here,
+        // not inside the if constexpr block, to avoid a dangling stack pointer.
+        std::vector<VkDescriptorSetLayout> combinedLayouts;
         if constexpr (!std::is_void<U>::value) {
-            pipelineLayoutInfo.setLayoutCount = 2;
-            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout, uboPtr->getDescriptorSetLayout()};
-            pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+            combinedLayouts = {computeDescriptorSetLayout, uboPtr->getDescriptorSetLayout()};
         } else {
-            pipelineLayoutInfo.setLayoutCount = 1;
-            VkDescriptorSetLayout combinedLayouts[] = {computeDescriptorSetLayout};
-            pipelineLayoutInfo.pSetLayouts = combinedLayouts;
+            combinedLayouts = {computeDescriptorSetLayout};
         }
 
+        VkPushConstantRange pushConstantRange{};
         if constexpr (!std::is_void<P>::value) {
-            VkPushConstantRange pushConstantRange{};
             pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
             pushConstantRange.offset = 0;
             pushConstantRange.size = sizeof(P);
-            pipelineLayoutInfo.pushConstantRangeCount = 1;
-            pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
         }
-        
+
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = (uint32_t)combinedLayouts.size();
+        pipelineLayoutInfo.pSetLayouts    = combinedLayouts.data();
+        if constexpr (!std::is_void<P>::value) {
+            pipelineLayoutInfo.pushConstantRangeCount = 1;
+            pipelineLayoutInfo.pPushConstantRanges    = &pushConstantRange;
+        }
+
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline layout!");
         }
-    
-    
+
         std::vector<VkComputePipelineCreateInfo> pipelineInfos(computeShaderStages.size());
         for (size_t i = 0; i < computeShaderStages.size(); i++) {
             VkComputePipelineCreateInfo& pipelineInfo = pipelineInfos[i];
-            pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-            pipelineInfo.layout = computePipelineLayout;
-            pipelineInfo.stage = computeShaderStages[i];
+            pipelineInfo.sType              = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            pipelineInfo.layout             = computePipelineLayout;
+            pipelineInfo.stage              = computeShaderStages[i];
+            pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+            pipelineInfo.basePipelineIndex  = -1;
         }
 
         computePipelines.resize(computeShaderStages.size());
-        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, computeShaderStages.size(), pipelineInfos.data(), nullptr, computePipelines.data()) != VK_SUCCESS) {
+        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, (uint32_t)computeShaderStages.size(), pipelineInfos.data(), nullptr, computePipelines.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline!");
         }
 
-        for (size_t i = 0; i < computeShaderModules.size(); i++) {
-            vkDestroyShaderModule(device, computeShaderModules[i], nullptr);
-        }
+        // Shader modules are no longer needed once the pipeline is compiled.
+        for (auto& mod : computeShaderModules)
+            vkDestroyShaderModule(device, mod, nullptr);
     }
 
     void recordScratchToZero(VkCommandBuffer commandBuffer, uint32_t pathId) {

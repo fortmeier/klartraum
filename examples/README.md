@@ -27,6 +27,55 @@ A basic example that demonstrates:
 
 # Or from project root
 ./build/gaussian_splatting_example
+
+# Load a scene and set the world-space camera position; it looks at the origin
+./build/gaussian_splatting_example --file data/lantern.spz --camera-position 0.55 0.48 0.69 --flip-y
+```
+
+### ImGui Gaussian Splatting Example
+**File**: `imgui_gaussian_splatting_example.cpp`
+
+Renders a Gaussian splat scene with a Dear ImGui user interface on top, using
+`ImGuiFrontend`. The rendering backend (raster or compute) can be switched at
+runtime from a dropdown:
+- Statistics: frame rate, resolution, number of Gaussians
+- Camera: azimuth, elevation, distance and target sliders (kept in sync with
+  mouse orbiting), reset button
+- Rendering: backend dropdown (raster/compute, switches immediately) and the
+  settings the selected backend uses — raster: SH degree, alpha-cull threshold,
+  mesh-shader path; compute: spread multiplier. "Apply" rebuilds the pipeline
+  with the new settings
+- Optional ImGui demo window
+
+Mouse input over a GUI window goes to the GUI, not the camera. The window is
+resizable.
+
+#### Usage:
+```bash
+# From project root (shaders are loaded relative to it)
+./build/examples/imgui_gaussian_splatting_example
+./build/examples/imgui_gaussian_splatting_example --spz path/to/scene.spz
+./build/examples/imgui_gaussian_splatting_example --backend compute   # start on the compute backend
+./build/examples/imgui_gaussian_splatting_example --frames 120   # close after 120 frames
+```
+
+### Turntable Example
+**File**: `turntable_example.cpp`
+
+Renders a Gaussian splat scene headlessly (no window) from a camera that
+circles the scene's vertical axis exactly once, and writes one PPM image per
+frame. The camera orbits the scene centre (the median of the Gaussian
+positions). After the frames, the view after a full turn is compared with the
+first frame, and the program fails if they differ, so the frames always loop
+seamlessly. `scripts/site/make_lantern_animation.sh` uses it for the animation on
+the landing page.
+
+#### Usage:
+```bash
+# From project root
+./build/examples/turntable_example --file data/lantern.spz --flip-y --frames 60 \
+    --width 400 --height 300 --camera-position 0.55 0.48 0.69 --distance 0.65 \
+    --out-dir build/TestingOutput/turntable
 ```
 
 ## Building Examples

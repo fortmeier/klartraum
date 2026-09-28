@@ -49,10 +49,16 @@ void InterfaceCameraOrbit::update(CameraMVP &mvp)
         break;
     }
     
-    mvp.proj = glm::perspective(glm::radians(45.0f), vulkanContext->getSwapChainExtent().width / (float) swapChainExtent.height, 0.1f, 10.0f);
+    float aspectRatio = projectionAspectRatio.value_or(
+        swapChainExtent.width / static_cast<float>(swapChainExtent.height));
+    mvp.proj = glm::perspective(glm::radians(45.0f), aspectRatio, nearPlane, farPlane);
 
     // Vulkan has inverted Y coordinates compared to OpenGL
     mvp.proj[1][1] *= -1;
+
+    // World-space camera position, derived the same way shaders need it
+    // (camera→Gaussian direction for SH must be in world space).
+    mvp.cameraWorldPos = glm::inverse(mvp.model * mvp.view)[3];
 }
 
 void InterfaceCameraOrbit::updatePosition(float deltaTime)

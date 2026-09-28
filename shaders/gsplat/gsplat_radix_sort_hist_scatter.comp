@@ -2,43 +2,87 @@
 
 #include "gsplat_radix_sort_include.glsl"
 
-// process 64 local histogram groups of 128 elements each
-layout(local_size_x = 64) in;
+layout(local_size_x = 128) in;
+
+shared uint sharedOffsets[16];   // per-bin global write cursor (seeded from histogram)
+shared uint localBinBase[16];    // per-bin base offset reserved for the current chunk
+shared uint scan[128];           // scratch for the per-bin rank scan
 
 void main() {
-
-    /* This shader scatters the elements of the input buffer into the output buffer
-     * based on the histograms and their prefix sum computed in the previous shader.
+    /* Scatters elements into the output buffers based on the prefix-summed
+     * histogram. Stability: elements with the same bin keep their relative
+     * input order — within each 128-element chunk the rank inside a bin is a
+     * parallel prefix scan over thread index (= input order), and the per-bin
+     * cursor advances chunk by chunk.
      */
 
-    uint histIdx = gl_WorkGroupID.x * 64 + gl_LocalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
 
-    if (histIdx >= inputBuffer2.numberTotalGaussians / 128 + 1) {
-        return; // No more histograms to process
+    if (lid < 16) {
+        uint offsetIdx = gl_NumWorkGroups.x * lid + gl_WorkGroupID.x;
+        sharedOffsets[lid] = inputBuffer3.histogram[offsetIdx];
     }
+    barrier();
 
+    uint numElements = activeNumElements();
+    uint itemsPerWorkGroup0 = numElements / gl_NumWorkGroups.x;
+    uint iterationsPerWorkGroup = (itemsPerWorkGroup0 + gl_WorkGroupSize.x - 1) / gl_WorkGroupSize.x;
+    uint itemsPerWorkGroup = iterationsPerWorkGroup * gl_WorkGroupSize.x;
 
-    uint localIndex[16];
-    for (uint binIdx = 0; binIdx < 16; binIdx++) {
-        uint globalBinIdx = histIdx * 16 + binIdx;
-        localIndex[binIdx] = offsetBuffer.offsets[binIdx] + inputBuffer3.histogram[globalBinIdx]; // Initialize local index for each bin
+    uint baseIdx = gl_WorkGroupID.x * itemsPerWorkGroup;
+    uint endIdx  = baseIdx + itemsPerWorkGroup;
+
+    for (uint groupStart = baseIdx; groupStart < endIdx; groupStart += gl_WorkGroupSize.x) {
+        uint elemIdx  = groupStart + lid;
+        bool isActive = (elemIdx < numElements);
+
+        uint value = 0u, index = 0u, bin = 0xFFFFFFFFu;
+        if (isActive) {
+            if (pushConstants.pass % 2 == 0) {
+                value = radixValuesA[elemIdx];
+                index = indexesA[elemIdx];
+            } else {
+                value = radixValuesB[elemIdx];
+                index = indexesB[elemIdx];
+            }
+            bin = (value >> (pushConstants.pass * 4)) & 0xFu;
+        }
+
+        // Rank within the element's bin, computed in parallel one bin at a time.
+        uint myRank = 0u;
+        for (uint b = 0u; b < 16u; b++) {
+            uint pred = (bin == b) ? 1u : 0u;
+            scan[lid] = pred;
+            barrier();
+
+            // Inclusive Hillis-Steele scan over the 128 threads.
+            for (uint stride = 1u; stride < gl_WorkGroupSize.x; stride <<= 1u) {
+                uint add = (lid >= stride) ? scan[lid - stride] : 0u;
+                barrier();
+                scan[lid] += add;
+                barrier();
+            }
+
+            uint total = scan[gl_WorkGroupSize.x - 1u];
+            if (pred == 1u) myRank = scan[lid] - 1u;
+
+            // First thread reserves this chunk's block of slots for bin b.
+            if (lid == 0u && total > 0u) {
+                localBinBase[b] = atomicAdd(sharedOffsets[b], total);
+            }
+            barrier();
+        }
+
+        if (isActive) {
+            uint pos = localBinBase[bin] + myRank;
+            if (pushConstants.pass % 2 == 0) {
+                radixValuesB[pos] = value;
+                indexesB[pos]     = index;
+            } else {
+                radixValuesA[pos] = value;
+                indexesA[pos]     = index;
+            }
+        }
+        barrier();
     }
-
-    uint startIdx = histIdx * 128;
-    uint endIdx = startIdx + 128;
-
-    for (uint idx = startIdx; idx < endIdx; idx++) {
-        if (idx >= inputBuffer2.numberTotalGaussians) break;
-        const Gaussian2D gaussian = getInputGaussian(idx);
-        // get the value to sort (use z here)
-        uint value = floatBitsToUint(gaussian.z);
-        uint binMask = gaussian.binMask;
-
-        // get the bin of the current value for the current pass
-        uint binIdx = getBin(value, binMask, pushConstants.pass);
-
-        setOutputGaussian(localIndex[binIdx], idx);
-        localIndex[binIdx] += 1;
-    }
-
 }
