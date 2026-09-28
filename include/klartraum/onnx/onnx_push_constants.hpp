@@ -63,7 +63,17 @@ struct ConcatPushConstants {
 };
 
 struct ExpandPushConstants {
-    uint32_t inputCount;
+    uint32_t elementCount;
+    uint32_t rank;
+    uint32_t inputDims[4];
+    uint32_t outputDims[4];
+};
+
+struct GatherPushConstants {
+    uint32_t outerCount;
+    uint32_t axisSize;
+    uint32_t innerSize;
+    uint32_t indexCount;
     uint32_t outputCount;
 };
 

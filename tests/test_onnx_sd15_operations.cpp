@@ -4,7 +4,7 @@
 
 /**
  * TESTS:
- * - Add and Mul apply ONNX right-aligned broadcasting.
+ * - Add, Sub, and Mul apply ONNX right-aligned broadcasting.
  * - Sigmoid evaluates every tensor element.
  * - InstanceNormalization normalizes each N,C spatial slice.
  * - MatMul multiplies batched row-major matrices.
@@ -18,10 +18,12 @@
  * - Concat joins skip connections along an arbitrary axis.
  * - Gemm applies transposed weights and bias.
  * - LayerNormalization normalizes and affine-transforms the last axis.
- * - Expand and Cast convert the SD1.5 timestep from INT64 to FLOAT.
+ * - Expand performs multidimensional ONNX broadcasting and supports INT64 timestep expansion.
+ * - Gather selects embedding rows using INT64 token indices.
  * - Conv dispatches every item in a classifier-free-guidance batch.
  **/
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -451,7 +453,12 @@ TEST_F(OnnxSd15OperationsTest, ExpandAndCastTimestep) {
     auto shape = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{1});
     auto expanded = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{2});
     auto output = context->create<TensorElement<float>>(std::vector<uint32_t>{2});
-    ExpandPushConstants expandConstants{1, 2};
+    ExpandPushConstants expandConstants{};
+    expandConstants.elementCount = 2;
+    expandConstants.rank = 1;
+    std::fill(std::begin(expandConstants.inputDims), std::end(expandConstants.inputDims), 1);
+    std::fill(std::begin(expandConstants.outputDims), std::end(expandConstants.outputDims), 1);
+    expandConstants.outputDims[3] = 2;
     auto expand = context->create<GeneralComputation<ExpandPushConstants>>("shaders/onnx/expand_int64.comp.spv");
     expand->setPushConstants({expandConstants});
     expand->setGroupCount(1, 1, 1);
@@ -472,6 +479,54 @@ TEST_F(OnnxSd15OperationsTest, ExpandAndCastTimestep) {
     std::vector<float> result(2);
     output->getDataBuffer(0).memcopyTo(result);
     EXPECT_EQ(result, (std::vector<float>{981, 981}));
+}
+
+TEST_F(OnnxSd15OperationsTest, ExpandBroadcastsBatchRowsIndependently) {
+    auto input = context->create<TensorElement<float>>(std::vector<uint32_t>{2, 1, 1, 3});
+    auto shape = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{4});
+    auto output = context->create<TensorElement<float>>(std::vector<uint32_t>{2, 1, 2, 3});
+    ExpandPushConstants constants{};
+    constants.elementCount = 12;
+    constants.rank = 4;
+    const uint32_t inputDims[4] = {2, 1, 1, 3};
+    const uint32_t outputDims[4] = {2, 1, 2, 3};
+    std::copy(std::begin(inputDims), std::end(inputDims), constants.inputDims);
+    std::copy(std::begin(outputDims), std::end(outputDims), constants.outputDims);
+    auto expand = context->create<GeneralComputation<ExpandPushConstants>>("shaders/onnx/expand_float.comp.spv");
+    expand->setPushConstants({constants});
+    expand->setGroupCount(1, 1, 1);
+    expand->setInput(input, 0);
+    expand->setInput(shape, 1);
+    expand->setInput(output, 2);
+    ComputeGraph graph(*context, 1);
+    graph.compileFrom(expand);
+    input->setData(0, {1, 2, 3, 4, 5, 6});
+    shape->setData(0, std::vector<int64_t>{2, 1, 2, 3});
+    graph.submitAndWait(context->getGraphicsQueue(), 0);
+    std::vector<float> values(12);
+    output->getDataBuffer(0).memcopyTo(values);
+    EXPECT_EQ(values, (std::vector<float>{1, 2, 3, 1, 2, 3, 4, 5, 6, 4, 5, 6}));
+}
+
+TEST_F(OnnxSd15OperationsTest, GatherEmbeddingRows) {
+    auto data = context->create<TensorElement<float>>(std::vector<uint32_t>{3, 2});
+    auto indices = context->create<TensorElement<int64_t>>(std::vector<uint32_t>{2, 2});
+    auto output = context->create<TensorElement<float>>(std::vector<uint32_t>{2, 2, 2});
+    GatherPushConstants constants{1, 3, 2, 4, 8};
+    auto gather = context->create<GeneralComputation<GatherPushConstants>>("shaders/onnx/gather_float_int64.comp.spv");
+    gather->setPushConstants({constants});
+    gather->setGroupCount(1, 1, 1);
+    gather->setInput(data, 0);
+    gather->setInput(indices, 1);
+    gather->setInput(output, 2);
+    ComputeGraph graph(*context, 1);
+    graph.compileFrom(gather);
+    data->setData(0, {10, 11, 20, 21, 30, 31});
+    indices->setData(0, std::vector<int64_t>{2, 0, 1, -1});
+    graph.submitAndWait(context->getGraphicsQueue(), 0);
+    std::vector<float> values(8);
+    output->getDataBuffer(0).memcopyTo(values);
+    EXPECT_EQ(values, (std::vector<float>{30, 31, 10, 11, 20, 21, 30, 31}));
 }
 
 TEST_F(OnnxSd15OperationsTest, BatchedConvolution) {
