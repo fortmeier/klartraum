@@ -357,6 +357,25 @@ def run_ort(path: Path, sample: np.ndarray, timestep: np.ndarray, embeddings: np
     )[0]
 
 
+def require_finite(name: str, value: np.ndarray) -> None:
+    if not np.isfinite(value).all():
+        invalid = int(value.size - np.isfinite(value).sum())
+        raise RuntimeError(f"{name} contains {invalid} non-finite values")
+
+
+def validate_decoded_image(name: str, value: np.ndarray) -> None:
+    require_finite(name, value)
+    pixels = np.clip((value + 1.0) * 127.5, 0.0, 255.0)
+    dynamic_range = float(np.ptp(pixels))
+    standard_deviation = float(np.std(pixels))
+    print(
+        f"{name} pixel sanity: min={pixels.min():.2f}, max={pixels.max():.2f}, "
+        f"range={dynamic_range:.2f}, std={standard_deviation:.2f}"
+    )
+    if dynamic_range < 16.0 or standard_deviation < 2.0:
+        raise RuntimeError(f"{name} is effectively blank or constant")
+
+
 def write_operator_report(path: Path, model_path: Path) -> set[str]:
     model = onnx.load(model_path, load_external_data=False)
     operations = Counter(node.op_type for node in model.graph.node)
@@ -459,12 +478,16 @@ def main() -> None:
     timestep_array = first_timestep_input.numpy()
     embedding_array = embeddings.numpy()
     ort_noise = run_ort(model_path, sample_array, timestep_array, embedding_array)
+    require_finite("PyTorch UNet output", first_torch_noise.numpy())
+    require_finite("ONNX UNet output", ort_noise)
     maximum_error = float(np.max(np.abs(ort_noise - first_torch_noise.numpy())))
     print(f"ONNX UNet maximum absolute error: {maximum_error:.7g}")
     if not np.allclose(ort_noise, first_torch_noise.numpy(), atol=2e-3, rtol=2e-3):
         raise RuntimeError("ONNX UNet does not match PyTorch")
 
     ort_decoded = run_vae_ort(decoder_path, decoder_input.numpy())
+    validate_decoded_image("PyTorch decoded image", decoded.numpy())
+    validate_decoded_image("ONNX decoded image", ort_decoded)
     decoder_error = float(np.max(np.abs(ort_decoded - decoded.numpy())))
     print(f"ONNX VAE decoder maximum absolute error: {decoder_error:.7g}")
     if not np.allclose(ort_decoded, decoded.numpy(), atol=2e-3, rtol=2e-3):
