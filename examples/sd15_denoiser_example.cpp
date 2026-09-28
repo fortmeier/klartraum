@@ -75,8 +75,9 @@ void writePpm(const std::filesystem::path& path, const std::vector<float>& nchw,
 }
 
 struct Options {
-    std::filesystem::path modelDirectory = "./data/onnx/sd15_denoiser_128";
+    std::filesystem::path modelDirectory = "./data/onnx/sd15_denoiser_256";
     std::filesystem::path outputPath = "build/TestingOutput/sd15_pipeline_klartraum.ppm";
+    uint32_t imageSize = 256;
 };
 
 Options parseOptions(int argc, char** argv) {
@@ -87,6 +88,8 @@ Options parseOptions(int argc, char** argv) {
             options.modelDirectory = argv[++index];
         } else if (argument == "--output" && index + 1 < argc) {
             options.outputPath = argv[++index];
+        } else if (argument == "--size" && index + 1 < argc) {
+            options.imageSize = static_cast<uint32_t>(std::stoul(argv[++index]));
         } else {
             throw std::runtime_error("Unknown or incomplete argument: " + argument);
         }
@@ -98,16 +101,19 @@ Options parseOptions(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     try {
-        constexpr uint32_t imageSize = 128;
-        constexpr uint32_t latentSize = imageSize / 8;
-        constexpr size_t latentElements = 4 * latentSize * latentSize;
-        constexpr size_t sampleElements = 2 * latentElements;
+        const Options options = parseOptions(argc, argv);
+        if (options.imageSize == 0 || options.imageSize % 8 != 0) {
+            throw std::runtime_error("--size must be a positive multiple of 8");
+        }
+        const uint32_t imageSize = options.imageSize;
+        const uint32_t latentSize = imageSize / 8;
+        const size_t latentElements = 4 * latentSize * latentSize;
+        const size_t sampleElements = 2 * latentElements;
         constexpr size_t embeddingElements = 2 * 77 * 768;
-        constexpr size_t imageElements = 3 * imageSize * imageSize;
+        const size_t imageElements = 3 * static_cast<size_t>(imageSize) * imageSize;
         constexpr float guidanceScale = 7.5f;
         constexpr float vaeScalingFactor = 0.18215f;
 
-        const Options options = parseOptions(argc, argv);
         const auto& directory = options.modelDirectory;
         const auto unetPath = directory / "sd15_unet.onnx";
         const auto decoderPath = directory / "sd15_vae_decoder.onnx";
