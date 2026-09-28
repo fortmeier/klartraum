@@ -1,0 +1,96 @@
+# Builds the klartraum.ai landing page and the engine documentation, checks
+# them, and deploys them to GitHub Pages. Every push and pull request builds
+# and checks the site; only pushes to main deploy it.
+name: Site and documentation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The screenshots are stored in Git LFS.
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: Install Doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen
+
+      - name: Install Sphinx
+        run: pip install -r docs/requirements.txt
+
+      - name: Build site
+        run: SPHINX_BUILD=sphinx-build ./scripts/site/build_site.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: scripts/site/package-lock.json
+
+      - name: Check landing page
+        working-directory: scripts/site
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run check
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-screenshots
+          path: build/TestingOutput/site-*.png
+          if-no-files-found: ignore
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  linkcheck:
+    # External sites can be flaky, so broken links are reported without
+    # failing the workflow.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The screenshots are stored in Git LFS.
+          lfs: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y doxygen
+      - run: pip install -r docs/requirements.txt
+      - run: sphinx-build -b linkcheck -q docs docs/_build/linkcheck
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
