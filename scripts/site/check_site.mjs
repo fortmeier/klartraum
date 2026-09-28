@@ -5,10 +5,11 @@
 //
 //   cd scripts/site && npm ci && npm run check
 //
-// External targets (github.io, github.com) are answered with request
-// interception, so the checks need no network. The IONOS frameset is served
+// External targets (klartraum.ai, github.io, github.com) are answered with request
+// interception, so the checks need no network. A test frameset is served
 // from http://localhost:<port>/ while the site is loaded from
-// http://127.0.0.1:<port>/, so the frame is cross-origin as on klartraum.ai.
+// http://127.0.0.1:<port>/, so the frame is cross-origin as under a domain
+// forwarding frame.
 
 /**
  * TESTS:
@@ -18,7 +19,7 @@
  * - productLinks: both product cards exist with GitHub and documentation links
  * - darkMode: prefers-color-scheme: dark switches the body background to the dark token
  * - reducedMotion: prefers-reduced-motion: reduce creates no animated glyphs and keeps the videos paused
- * - frameBreakout: inside a frameset like the one on klartraum.ai, a documentation link navigates the top window
+ * - frameBreakout: inside a cross-origin frameset (e.g. a domain forwarding frame), a documentation link navigates the top window
  **/
 
 import { chromium } from "playwright";
@@ -33,7 +34,7 @@ const outDir = join(repoRoot, "build", "TestingOutput");
 
 const EXPECTED_LINKS = {
     engine: {
-        docs: "https://fortmeier.github.io/klartraum/docs/",
+        docs: "https://klartraum.ai/docs/",
         github: "https://github.com/fortmeier/klartraum",
     },
     studio: {
@@ -108,7 +109,7 @@ const browser = await chromium.launch();
 // Answer every external request with a stub page, so link targets can be
 // followed without network access.
 async function stubExternal(context) {
-    await context.route(/^https:\/\/(fortmeier\.github\.io|github\.com)\//, (route) =>
+    await context.route(/^https:\/\/(klartraum\.ai|fortmeier\.github\.io|github\.com)\//, (route) =>
         route.fulfill({ contentType: "text/html", body: "<title>stub</title>" }));
 }
 
@@ -219,7 +220,7 @@ try {
     });
 
     await check("frameBreakout", async () => {
-        // Mirrors the frameset that the IONOS server delivers for klartraum.ai.
+        // Mirrors the frameset a domain forwarding frame delivers.
         const context = await browser.newContext();
         await stubExternal(context);
         const page = await context.newPage();
