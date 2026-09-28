@@ -1,0 +1,37 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint rank;
+    uint axis;
+    uint start;
+    uint elementCount;
+    uint inputDims[4];
+    uint outputDims[4];
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { int64_t inputData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer StartsBuffer { int64_t starts[]; };
+layout(set = 0, binding = 2) restrict readonly buffer EndsBuffer { int64_t ends[]; };
+layout(set = 0, binding = 3) restrict readonly buffer AxesBuffer { int64_t axes[]; };
+layout(set = 0, binding = 4) restrict readonly buffer StepsBuffer { int64_t steps[]; };
+layout(set = 0, binding = 5) restrict writeonly buffer OutputBuffer { int64_t outputData[]; };
+
+void main() {
+    uint outputIndex = gl_GlobalInvocationID.x;
+    if (outputIndex >= pc.elementCount) return;
+    uint coordinates[4];
+    uint remaining = outputIndex;
+    for (int dimension = int(pc.rank) - 1; dimension >= 0; --dimension) {
+        coordinates[dimension] = remaining % pc.outputDims[dimension];
+        remaining /= pc.outputDims[dimension];
+    }
+    coordinates[pc.axis] += pc.start;
+    uint inputIndex = 0;
+    uint stride = 1;
+    for (int dimension = int(pc.rank) - 1; dimension >= 0; --dimension) {
+        inputIndex += coordinates[dimension] * stride;
+        stride *= pc.inputDims[dimension];
+    }
+    outputData[outputIndex] = inputData[inputIndex];
+}
