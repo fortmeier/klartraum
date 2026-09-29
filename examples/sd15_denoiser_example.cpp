@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -92,7 +93,37 @@ struct Options {
                          "single gray granite garden lantern, centered, moss, natural daylight";
     std::string negativePrompt = "person, building, house, flower pot, collage, multiple images, metal, painting, "
                                  "illustration, abstract, blurry, distorted, oversaturated, text";
+    size_t maxDenoiseSteps = std::numeric_limits<size_t>::max();
+    bool profile = false;
+    bool skipDecoder = false;
 };
+
+void printProfiling(const std::string& stage, const klartraum::ComputeGraph& graph) {
+    auto results = graph.getProfilingResults();
+    std::map<std::string, double> operationTotals;
+    for (const auto& [name, milliseconds] : results) {
+        const auto separator = name.find('_');
+        operationTotals[name.substr(0, separator)] += milliseconds;
+    }
+    std::vector<std::pair<std::string, double>> sortedTotals(operationTotals.begin(), operationTotals.end());
+    std::sort(sortedTotals.begin(), sortedTotals.end(),
+              [](const auto& lhs, const auto& rhs) { return lhs.second > rhs.second; });
+    std::sort(results.begin(), results.end(), [](const auto& lhs, const auto& rhs) { return lhs.second > rhs.second; });
+    double totalMilliseconds = 0.0;
+    for (const auto& result : results)
+        totalMilliseconds += result.second;
+    std::cout << stage << " GPU profile: " << totalMilliseconds << " ms across " << results.size() << " dispatches"
+              << std::endl;
+    std::cout << "  Operation totals:";
+    for (size_t index = 0; index < std::min<size_t>(10, sortedTotals.size()); ++index) {
+        std::cout << " " << sortedTotals[index].first << "=" << sortedTotals[index].second << " ms";
+    }
+    std::cout << std::endl;
+    const size_t count = std::min<size_t>(20, results.size());
+    for (size_t index = 0; index < count; ++index) {
+        std::cout << "  " << results[index].second << " ms  " << results[index].first << std::endl;
+    }
+}
 
 Options parseOptions(int argc, char** argv) {
     Options options;
@@ -108,6 +139,12 @@ Options parseOptions(int argc, char** argv) {
             options.prompt = argv[++index];
         } else if (argument == "--negative-prompt" && index + 1 < argc) {
             options.negativePrompt = argv[++index];
+        } else if (argument == "--max-denoise-steps" && index + 1 < argc) {
+            options.maxDenoiseSteps = std::stoul(argv[++index]);
+        } else if (argument == "--profile") {
+            options.profile = true;
+        } else if (argument == "--skip-decoder") {
+            options.skipDecoder = true;
         } else {
             throw std::runtime_error("Unknown or incomplete argument: " + argument);
         }
@@ -134,6 +171,7 @@ int main(int argc, char** argv) {
         double clipSeconds = 0.0;
         double denoiseSeconds = 0.0;
         double decodeSeconds = 0.0;
+        size_t denoiseStepCount = 0;
 
         const auto& directory = options.modelDirectory;
         const auto textEncoderPath = directory / "sd15_text_encoder.onnx";
@@ -179,6 +217,8 @@ int main(int argc, char** argv) {
             textEncoder->setInputTensor("input_ids", inputIds);
             textEncoder->setInputTensor("attention_mask", attentionMask);
             klartraum::ComputeGraph graph(context, 1);
+            if (options.profile)
+                graph.enableProfiling();
             graph.compileFrom(textEncoder);
             inputIds->setData(0, tokenIds);
             attentionMask->setData(0, attentionMaskValues);
@@ -201,6 +241,8 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("Klartraum CLIP output is outside its reference tolerance");
                 }
             }
+            if (options.profile)
+                printProfiling("CLIP", graph);
         }
         std::cout << "Prompt: " << options.prompt << std::endl;
         if (!referencePrompt) {
@@ -223,13 +265,16 @@ int main(int argc, char** argv) {
             network->setInputTensor("encoder_hidden_states", embeddings);
 
             klartraum::ComputeGraph graph(context, 1);
+            if (options.profile)
+                graph.enableProfiling();
             graph.compileFrom(network);
             embeddings->setData(0, embeddingsValues);
 
             std::vector<float> batch(sampleElements);
             std::vector<float> prediction(sampleElements);
             std::vector<float> guided(latentElements);
-            for (size_t step = 0; step < timesteps.size(); ++step) {
+            denoiseStepCount = std::min(timesteps.size(), options.maxDenoiseSteps);
+            for (size_t step = 0; step < denoiseStepCount; ++step) {
                 const auto stepStarted = std::chrono::steady_clock::now();
                 std::copy(latents.begin(), latents.end(), batch.begin());
                 std::copy(latents.begin(), latents.end(), batch.begin() + latentElements);
@@ -268,11 +313,19 @@ int main(int argc, char** argv) {
                           << ", max|noise|=" << maximumMagnitude(guided)
                           << ", max|latent|=" << maximumMagnitude(latents) << ")" << std::endl;
             }
+            if (options.profile && denoiseStepCount > 0)
+                printProfiling("UNet", graph);
         }
 
         float latentError = 0.0f;
-        if (referencePrompt) {
+        const bool completedDenoising = options.maxDenoiseSteps >= timesteps.size();
+        if (referencePrompt && completedDenoising) {
             latentError = maximumError(latents, readTensor<float>(directory / "final_latents_f32.bin", latentElements));
+        }
+        if (options.skipDecoder) {
+            std::cout << "Klartraum inference timing: CLIP=" << clipSeconds << " s, DDIM UNet=" << denoiseSeconds
+                      << " s" << std::endl;
+            return 0;
         }
         for (float& value : latents)
             value /= vaeScalingFactor;
@@ -284,6 +337,8 @@ int main(int argc, char** argv) {
                 context.create<klartraum::TensorElement<float>>(std::vector<uint32_t>{1, 4, latentSize, latentSize});
             decoder->setInputTensor("input", latent);
             klartraum::ComputeGraph graph(context, 1);
+            if (options.profile)
+                graph.enableProfiling();
             graph.compileFrom(decoder);
             latent->setData(0, latents);
             const auto started = std::chrono::steady_clock::now();
@@ -293,9 +348,11 @@ int main(int argc, char** argv) {
                 std::dynamic_pointer_cast<klartraum::TensorElement<float>>(decoder->getOutputElement("output"));
             decoded.resize(output->getDataElementCount());
             output->getDataBuffer(0).memcopyTo(decoded);
+            if (options.profile)
+                printProfiling("VAE decoder", graph);
         }
 
-        if (referencePrompt) {
+        if (referencePrompt && completedDenoising) {
             const float imageError =
                 maximumError(decoded, readTensor<float>(directory / "pipeline_reference_f32.bin", imageElements));
             std::cout << "Error versus Python/ONNX Runtime: final latent=" << latentError
@@ -306,7 +363,8 @@ int main(int argc, char** argv) {
         }
         writePpm(options.outputPath, decoded, imageSize);
         std::cout << "Klartraum inference timing: CLIP=" << clipSeconds << " s, DDIM UNet=" << denoiseSeconds << " s ("
-                  << denoiseSeconds / timesteps.size() << " s/step), VAE decode=" << decodeSeconds
+                  << (denoiseStepCount == 0 ? 0.0 : denoiseSeconds / denoiseStepCount)
+                  << " s/step), VAE decode=" << decodeSeconds
                   << " s, total=" << clipSeconds + denoiseSeconds + decodeSeconds << " s" << std::endl;
         std::cout << "Wrote " << options.outputPath << std::endl;
         return 0;
