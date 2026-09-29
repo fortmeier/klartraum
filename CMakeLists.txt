@@ -118,10 +118,15 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
 
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
+  set(GLSLC_OPTIONS)
+  if(FILE_NAME STREQUAL "onnx/fused_attention.comp")
+    # Subgroup arithmetic is core in Vulkan 1.1 / SPIR-V 1.3.
+    list(APPEND GLSLC_OPTIONS --target-env=vulkan1.1)
+  endif()
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${GLSLC} -MD -MF ${SPIRV}.d -o ${SPIRV} ${GLSL}
+    COMMAND ${GLSLC} ${GLSLC_OPTIONS} -MD -MF ${SPIRV}.d -o ${SPIRV} ${GLSL}
     DEPFILE ${SPIRV}.d
     DEPENDS ${GLSL}
     COMMENT "Compiling ${GLSL} to ${SPIRV}"
