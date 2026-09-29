@@ -21,6 +21,8 @@
  * - Expand performs multidimensional ONNX broadcasting and supports INT64 timestep expansion.
  * - Gather selects embedding rows using INT64 token indices.
  * - Conv dispatches every item in a classifier-free-guidance batch.
+ * - FusedAttention matches a CPU softmax(Q K) V reference for SD1.5 head widths and uneven query/key counts.
+ * - Tiled FusedAttention for head width 40 matches the same reference across partial query groups and key tiles.
  **/
 
 #include <algorithm>
@@ -70,6 +72,79 @@ protected:
     std::unique_ptr<HeadlessFrontend> frontend;
     VulkanContext* context = nullptr;
 };
+
+struct AttentionShape {
+    uint32_t batch, queries, keys, depth;
+};
+
+// Q is [batch, queries, depth], K is [batch, depth, keys] (pre-transposed as
+// in the fused ONNX graph), V is [batch, keys, depth].
+std::vector<float> attentionReference(const AttentionShape& shape, const std::vector<float>& q,
+                                      const std::vector<float>& k, const std::vector<float>& v) {
+    std::vector<float> out(size_t(shape.batch) * shape.queries * shape.depth);
+    std::vector<double> scores(shape.keys);
+    for (uint32_t b = 0; b < shape.batch; ++b) {
+        for (uint32_t i = 0; i < shape.queries; ++i) {
+            double maximum = -1e300;
+            for (uint32_t j = 0; j < shape.keys; ++j) {
+                double score = 0.0;
+                for (uint32_t d = 0; d < shape.depth; ++d) {
+                    score += double(q[(size_t(b) * shape.queries + i) * shape.depth + d]) *
+                             k[(size_t(b) * shape.depth + d) * shape.keys + j];
+                }
+                scores[j] = score;
+                maximum = std::max(maximum, score);
+            }
+            double sum = 0.0;
+            for (auto& score : scores)
+                sum += (score = std::exp(score - maximum));
+            for (uint32_t d = 0; d < shape.depth; ++d) {
+                double value = 0.0;
+                for (uint32_t j = 0; j < shape.keys; ++j) {
+                    value += scores[j] * v[(size_t(b) * shape.keys + j) * shape.depth + d];
+                }
+                out[(size_t(b) * shape.queries + i) * shape.depth + d] = float(value / sum);
+            }
+        }
+    }
+    return out;
+}
+
+std::vector<float> patternedValues(size_t count, uint32_t seed, float scale) {
+    std::vector<float> values(count);
+    uint32_t state = seed;
+    for (auto& value : values) {
+        state = state * 1664525u + 1013904223u;
+        value = scale * (float(state >> 8) / float(1u << 24) - 0.5f);
+    }
+    return values;
+}
+
+std::vector<float> runFusedAttention(VulkanContext& context, const char* shader, const AttentionShape& shape,
+                                     uint32_t queriesPerGroup, const std::vector<float>& q, const std::vector<float>& k,
+                                     const std::vector<float>& v) {
+    auto query = context.create<TensorElement<float>>(std::vector<uint32_t>{shape.batch, shape.queries, shape.depth});
+    auto key = context.create<TensorElement<float>>(std::vector<uint32_t>{shape.batch, shape.depth, shape.keys});
+    auto value = context.create<TensorElement<float>>(std::vector<uint32_t>{shape.batch, shape.keys, shape.depth});
+    auto output = context.create<TensorElement<float>>(std::vector<uint32_t>{shape.batch, shape.queries, shape.depth});
+    auto computation = context.create<GeneralComputation<FusedAttentionPushConstants>>(shader);
+    computation->setPushConstants(
+        {FusedAttentionPushConstants{shape.batch, shape.queries, shape.keys, shape.depth, shape.depth}});
+    computation->setGroupCount((shape.queries + queriesPerGroup - 1) / queriesPerGroup, shape.batch, 1);
+    computation->setInput(query, 0);
+    computation->setInput(key, 1);
+    computation->setInput(value, 2);
+    computation->setInput(output, 3);
+    ComputeGraph graph(context, 1);
+    graph.compileFrom(computation);
+    query->setData(0, q);
+    key->setData(0, k);
+    value->setData(0, v);
+    graph.submitAndWait(context.getGraphicsQueue(), 0);
+    std::vector<float> result(output->getDataBuffer(0).getSize());
+    output->getDataBuffer(0).memcopyTo(result);
+    return result;
+}
 
 } // namespace
 
@@ -563,4 +638,47 @@ TEST_F(OnnxSd15OperationsTest, BatchedConvolution) {
     std::vector<float> result(8);
     output->getDataBuffer(0).memcopyTo(result);
     EXPECT_EQ(result, (std::vector<float>{3, 5, 7, 9, 11, 13, 15, 17}));
+}
+
+TEST_F(OnnxSd15OperationsTest, FusedAttentionMatchesSoftmaxReference) {
+    // Head widths 40 and 80 occur in the SD1.5 UNet; 77 keys is the CLIP
+    // cross-attention length and 300 keys spans several key tiles.
+    for (const AttentionShape shape :
+         {AttentionShape{3, 70, 77, 40}, AttentionShape{2, 70, 300, 40}, AttentionShape{2, 33, 300, 80}}) {
+        const size_t qCount = size_t(shape.batch) * shape.queries * shape.depth;
+        const size_t kvCount = size_t(shape.batch) * shape.keys * shape.depth;
+        const auto q = patternedValues(qCount, 1u, 2.0f);
+        const auto k = patternedValues(kvCount, 2u, 2.0f);
+        const auto v = patternedValues(kvCount, 3u, 4.0f);
+        const auto expected = attentionReference(shape, q, k, v);
+        const auto result = runFusedAttention(*context, "shaders/onnx/fused_attention.comp.spv", shape, 8, q, k, v);
+        ASSERT_EQ(result.size(), expected.size());
+        float maximumError = 0.0f;
+        for (size_t index = 0; index < result.size(); ++index) {
+            maximumError = std::max(maximumError, std::abs(result[index] - expected[index]));
+        }
+        EXPECT_LT(maximumError, 1e-5f) << "keys=" << shape.keys << " depth=" << shape.depth;
+    }
+}
+
+TEST_F(OnnxSd15OperationsTest, TiledFusedAttentionMatchesSoftmaxReference) {
+    // 70 queries leave a partial 64-query group; 77 and 300 keys end in
+    // partial 32-key tiles; 4096 keys matches the 64x64 latent self-attention.
+    for (const AttentionShape shape :
+         {AttentionShape{3, 70, 77, 40}, AttentionShape{2, 130, 300, 40}, AttentionShape{1, 64, 4096, 40}}) {
+        const size_t qCount = size_t(shape.batch) * shape.queries * shape.depth;
+        const size_t kvCount = size_t(shape.batch) * shape.keys * shape.depth;
+        const auto q = patternedValues(qCount, 4u, 2.0f);
+        const auto k = patternedValues(kvCount, 5u, 2.0f);
+        const auto v = patternedValues(kvCount, 6u, 4.0f);
+        const auto expected = attentionReference(shape, q, k, v);
+        const auto result =
+            runFusedAttention(*context, "shaders/onnx/fused_attention_tiled_d40.comp.spv", shape, 64, q, k, v);
+        ASSERT_EQ(result.size(), expected.size());
+        float maximumError = 0.0f;
+        for (size_t index = 0; index < result.size(); ++index) {
+            maximumError = std::max(maximumError, std::abs(result[index] - expected[index]));
+        }
+        EXPECT_LT(maximumError, 1e-5f) << "queries=" << shape.queries << " keys=" << shape.keys;
+    }
 }
