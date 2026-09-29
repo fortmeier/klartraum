@@ -120,6 +120,90 @@ bandwidth-limited. At present every stage is compute-bound by this model, which
 supports prioritizing attention/convolution arithmetic efficiency and later
 FP16 or cooperative-matrix paths.
 
+## Apple M4 (MoltenVK)
+
+### Benchmark configuration
+
+- Date: 2026-09-29
+- Machine: Mac mini (Mac16,10), Apple M4 with a 10-core GPU, 24 GB unified memory
+- Vulkan driver: MoltenVK (Vulkan SDK 1.4.357.1), API 1.4.357
+- Build: Release (`build-release/`, validation layers off)
+- Image size, scheduler, batch, prompt, and fixtures: as above
+  (`data/onnx/sd15_denoiser_512`, 30 DDIM steps, batch 2)
+- Klartraum memory plan: 336.875 MiB allocated for the UNet, identical to the
+  RTX run
+
+Before these cycles the GPU profile reported 0 ms for every UNet dispatch:
+MoltenVK backs a timestamp query pool with one `MTLCounterSampleBuffer`,
+limited to 4096 samples, and the UNet needs 10192. Timestamps are now split
+across pools of at most 2048 elements (commit `19b7d9a`).
+
+### UNet improvement runs
+
+One profiled UNet step, `--profile --max-denoise-steps 1 --skip-decoder`.
+
+| Cycle | Variant | One UNet step | GPU time | FusedAttention | Incremental change | Decision |
+|---:|---|---:|---:|---:|---:|---|
+| 0 | Starting point (RTX-tuned shaders) | 10.3467 s | 9196.46 ms | 6625.63 ms | baseline | Baseline |
+| 1 | Key-tiled attention for head width 40 | 3.8572 s | 3094.06 ms | 514.06 ms | 62.72% faster | Kept (`a9da76f`) |
+| 2 | Key-tiled attention for head width 80 | 3.5096 s | 2578.95 ms | 97.73 ms | 9.01% faster | Kept (`02b7392`) |
+
+The starting-point attention kernel handles one key per iteration: it stages a
+single key and value row, synchronizes the workgroup twice, and reduces a
+40-wide dot product across a subgroup, all per key. The five 64x64-latent
+self-attention dispatches (4096 keys) took 1.08-1.28 s each, about 35
+GFLOP/s. The tiled kernel keeps one query row and its accumulators in
+registers per invocation, stages 32 keys per barrier pair for 64 queries,
+and rescales the online softmax once per 8 keys.
+
+After cycle 2 the profiled step still spends about 930 ms outside GPU
+operations (3509.6 ms wall versus 2579.0 ms GPU). Every graph element is
+submitted as its own command buffer with semaphore waits and signals, which
+MoltenVK maps to one `MTLCommandBuffer` and `MTLEvent` synchronization per
+dispatch. The largest GPU families are now convolution at 1340.21 ms and
+MatMul at 685.54 ms.
+
+### End-to-end comparison
+
+| Implementation | CLIP | DDIM UNet (30 steps) | VAE decode | Total |
+|---|---:|---:|---:|---:|
+| Python/PyTorch reference on the M4 CPU | 0.520 s | 78.682 s | 9.923 s | 89.125 s |
+| Klartraum, starting point | 0.075 s | 306.866 s (10.229 s/step) | 5.483 s | 312.425 s |
+| Klartraum after cycles 1-2 | 0.076 s | 103.995 s (3.467 s/step) | 5.580 s | 109.651 s |
+| Klartraum on the RTX 2070 SUPER (above) | 0.050 s | 101.797 s (3.393 s/step) | 4.020 s | 105.868 s |
+
+The two attention cycles reduced the M4 total by **64.90%** (2.85x speedup)
+and the UNet step by **66.11%**. The M4 now runs the full pipeline within 4%
+of the RTX 2070 SUPER, whose FP32 peak is about twice as high. The Python
+reference on the M4 CPU remains faster (89.1 s).
+
+| Validation value | Starting point | After cycles 1-2 |
+|---|---:|---:|
+| CLIP text embedding | 2.40326e-04 | 2.40326e-04 |
+| First UNet prediction | 6.91414e-06 | 7.15256e-06 |
+| Final latent after 30 steps | 7.72528e-04 | 2.67658e-04 |
+| Decoded image | 9.05514e-04 | 4.79594e-04 |
+
+### Theoretical speed-of-light bounds
+
+Apple does not publish FP32 throughput for the M4 GPU. The estimate below
+uses **4.26 TFLOP/s** (10 cores x 128 FP32 lanes x 2 FLOPs x about 1.66 GHz)
+and the specified **120 GB/s** unified-memory bandwidth, with the same
+operator model as the RTX table:
+
+```bash
+cd scripts/sd15_onnx
+python analyze_roofline.py --fp32-tflops 4.26 --memory-bandwidth-gbps 120 \
+  --clip-seconds 0.0757297 --unet-seconds 103.995 --vae-seconds 5.57983
+```
+
+| Stage | Compute floor | Bandwidth floor | Roofline floor | Efficiency before | Efficiency after cycles 1-2 | Remaining headroom |
+|---|---:|---:|---:|---:|---:|---:|
+| CLIP | 6.243 ms | 8.728 ms | 8.728 ms | 11.67% | 11.53% | 8.68x |
+| UNet average step | 377.124 ms | 213.145 ms | 377.124 ms | 3.69% | 10.88% | 9.19x |
+| VAE decode | 590.263 ms | 235.999 ms | 590.263 ms | 10.76% | 10.58% | 9.45x |
+| Full pipeline | 11,910.217 ms | 6,639.078 ms | 11,910.217 ms | 3.81% | 10.86% | 9.21x |
+
 ## Adding another cycle
 
 For each new optimization:
