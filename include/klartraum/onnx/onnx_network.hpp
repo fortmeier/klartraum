@@ -46,31 +46,36 @@ struct TensorInfo {
 
 using TensorInfoMap = std::map<std::string, TensorInfo>;
 
+/** @brief Memory-reuse statistics for an ONNX network's transient tensors. */
 struct OnnxMemoryPlanStats {
-    size_t logicalBytes = 0;
-    size_t allocatedBytes = 0;
-    size_t peakLiveBytes = 0;
-    size_t slotCount = 0;
-    size_t tensorCount = 0;
-    size_t viewAliasCount = 0;
+    size_t logicalBytes = 0;   ///< Bytes required if every logical tensor had unique storage.
+    size_t allocatedBytes = 0; ///< Bytes allocated across reusable physical slots.
+    size_t peakLiveBytes = 0;  ///< Maximum logical bytes simultaneously live.
+    size_t slotCount = 0;      ///< Number of reusable physical storage slots.
+    size_t tensorCount = 0;    ///< Number of transient logical tensors in the plan.
+    size_t viewAliasCount = 0; ///< Number of tensors represented as zero-copy views.
 };
 
+/**
+ * @brief Loads and executes an ONNX network as a Klartraum compute-graph group.
+ *
+ * ONNX nodes are translated to Vulkan compute operations. Transient tensor
+ * lifetimes are derived from the ONNX graph so non-overlapping tensors can
+ * share device-local storage. Graph inputs may also be connected directly to
+ * tensors produced by preceding Klartraum graph elements.
+ */
 class OnnxNetwork : virtual public ComputeGraphElement, virtual public ComputeGraphGroup {
-    /**
-     * @brief ONNX Neural Network Graph Representation
-     *
-     * This class provides GPU-accelerated execution of ONNX models using Klartraum
-     * ComputeGraph Framework.
-     * It supports:
-     * 1. Loading and parsing ONNX model files
-     * 2. Converting ONNX operations to ComputeGraphElement instances
-     * 3. Managing GPU memory for tensors and intermediate results by ComputeGraphElement instances
-     */
 public:
+    /**
+     * @brief Loads an ONNX model and constructs its Klartraum graph representation.
+     * @param vulkanContext Vulkan context used to create tensor and operation resources.
+     * @param modelPath Path to the ONNX model file.
+     * @throws std::runtime_error If the model cannot be read or contains unsupported data.
+     */
     OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelPath);
     ~OnnxNetwork();
 
-    // Print detailed model information
+    /** @brief Prints detailed model inputs, outputs, initializers, and nodes. */
     void printModelInfo() const;
 
     // ComputeGraphGroup interface
@@ -81,19 +86,40 @@ public:
     // RenderGraphElement interface
     virtual const char* getType() const override { return "OnnxNetwork"; }
 
-    // Helper methods to access model information
+    /**
+     * @brief Reads a floating-point model initializer.
+     * @param name ONNX initializer name.
+     * @return Initializer values as 32-bit floats.
+     */
     std::vector<float> getFloatInitializerData(const std::string& name) const;
+
+    /**
+     * @brief Returns the graph element that produces a named ONNX tensor.
+     * @param name ONNX tensor name.
+     * @return Producing compute-graph element.
+     * @throws std::runtime_error If no element produces @p name.
+     */
     ComputeGraphElementPtr getOutputElement(const std::string& name) const;
+
+    /** @brief Returns transient tensor memory statistics computed during model loading. */
     const OnnxMemoryPlanStats& getMemoryPlanStats() const { return memoryPlanStats; }
 
-    // Keep an intermediate tensor readable after execution. This must be
-    // called before the network is compiled/setup because transient tensors
-    // otherwise participate in storage reuse.
+    /**
+     * @brief Keeps a named intermediate tensor readable after network execution.
+     * @param name ONNX tensor name to retain.
+     * @note Call this before graph compilation/setup. Retained tensors are excluded
+     *       from transient storage reuse so their values are not overwritten.
+     */
     void retainTensor(const std::string& name);
 
-    // Replace a declared ONNX graph input with a tensor produced elsewhere in
-    // the compute graph. When outputSlot is specified, the producer remains a
-    // graph dependency while that output tensor is bound to the ONNX operation.
+    /**
+     * @brief Connects an ONNX graph input directly to another graph element's tensor.
+     * @param name Declared ONNX graph input name.
+     * @param producer Element that produces the replacement tensor.
+     * @param outputSlot Producer output slot, or `-1` for its default output.
+     * @note With an explicit output slot, the producer is retained as an execution
+     *       dependency while that output tensor is bound to the ONNX operation.
+     */
     void setInputTensor(const std::string& name, ComputeGraphElementPtr producer, int outputSlot = -1);
 
 private:
