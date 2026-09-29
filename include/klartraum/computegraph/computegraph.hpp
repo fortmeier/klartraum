@@ -75,8 +75,8 @@ public:
         }
         vkDestroyCommandPool(device, commandPool, nullptr);
 
-        if (profilingQueryPool != VK_NULL_HANDLE)
-            vkDestroyQueryPool(device, profilingQueryPool, nullptr);
+        for (VkQueryPool pool : profilingQueryPools)
+            vkDestroyQueryPool(device, pool, nullptr);
         if (perfQueryPool != VK_NULL_HANDLE)
             vkDestroyQueryPool(device, perfQueryPool, nullptr);
     }
@@ -113,16 +113,26 @@ public:
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
-        // Timestamp query pool: 2 slots per element (start/end).
+        // Timestamp query pools: 2 slots per element (start/end), split into
+        // pools of at most kProfilingElementsPerPool elements. MoltenVK backs a
+        // timestamp pool with one MTLCounterSampleBuffer, which is limited to
+        // 4096 samples; larger pools silently fall back to emulated zeros.
         if (profilingEnabled) {
             profilingTimestampPeriodNs = vulkanContext.getTimestampPeriod();
             profilingAccum.assign(ordered_elements.size(), {0.0, 0ULL});
 
-            VkQueryPoolCreateInfo qi{};
-            qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-            qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
-            qi.queryCount = 2u * (uint32_t)ordered_elements.size();
-            vkCreateQueryPool(device, &qi, nullptr, &profilingQueryPool);
+            uint32_t remaining = (uint32_t)ordered_elements.size();
+            while (remaining > 0) {
+                uint32_t elements = std::min(remaining, kProfilingElementsPerPool);
+                VkQueryPoolCreateInfo qi{};
+                qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+                qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+                qi.queryCount = 2u * elements;
+                VkQueryPool pool = VK_NULL_HANDLE;
+                vkCreateQueryPool(device, &qi, nullptr, &pool);
+                profilingQueryPools.push_back(pool);
+                remaining -= elements;
+            }
         }
 
         // Performance counter query pool.
@@ -290,7 +300,8 @@ private:
 
     // ---- Timestamp profiling ---------------------------------------------
     bool profilingEnabled = false;
-    VkQueryPool profilingQueryPool = VK_NULL_HANDLE;
+    static constexpr uint32_t kProfilingElementsPerPool = 2048;
+    std::vector<VkQueryPool> profilingQueryPools;
     float profilingTimestampPeriodNs = 1.0f;
     // Per ordered_element: {accumulated nanoseconds, sample count}
     std::vector<std::pair<double, uint64_t>> profilingAccum;
@@ -451,15 +462,19 @@ public:
     }
 
     void readAndAccumulateTimestamps() {
-        if (!profilingEnabled || profilingQueryPool == VK_NULL_HANDLE)
+        if (!profilingEnabled || profilingQueryPools.empty())
             return;
         uint32_t n = (uint32_t)ordered_elements.size();
         std::vector<uint64_t> ts(2u * n, 0ULL);
-        VkResult r =
-            vkGetQueryPoolResults(vulkanContext.getDevice(), profilingQueryPool, 0, 2u * n, sizeof(uint64_t) * 2u * n,
-                                  ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
-        if (r != VK_SUCCESS && r != VK_NOT_READY)
-            return;
+        for (size_t p = 0; p < profilingQueryPools.size(); ++p) {
+            uint32_t first = (uint32_t)p * kProfilingElementsPerPool;
+            uint32_t elements = std::min(n - first, kProfilingElementsPerPool);
+            VkResult r = vkGetQueryPoolResults(vulkanContext.getDevice(), profilingQueryPools[p], 0, 2u * elements,
+                                               sizeof(uint64_t) * 2u * elements, ts.data() + 2u * first,
+                                               sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+            if (r != VK_SUCCESS && r != VK_NOT_READY)
+                return;
+        }
         for (uint32_t i = 0; i < n; ++i) {
             if (ts[2 * i + 1] >= ts[2 * i]) {
                 profilingAccum[i].first += double(ts[2 * i + 1] - ts[2 * i]) * profilingTimestampPeriodNs;
@@ -548,9 +563,16 @@ private:
             throw std::runtime_error("failed to begin recording command buffer!");
         }
 
-        if (profilingEnabled && profilingQueryPool != VK_NULL_HANDLE) {
-            vkCmdResetQueryPool(commandBuffer, profilingQueryPool, 2 * elementIdx, 2);
-            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profilingQueryPool, 2 * elementIdx);
+        VkQueryPool timestampPool = VK_NULL_HANDLE;
+        uint32_t timestampQuery = 0;
+        if (profilingEnabled && elementIdx / kProfilingElementsPerPool < profilingQueryPools.size()) {
+            timestampPool = profilingQueryPools[elementIdx / kProfilingElementsPerPool];
+            timestampQuery = 2 * (elementIdx % kProfilingElementsPerPool);
+        }
+
+        if (timestampPool != VK_NULL_HANDLE) {
+            vkCmdResetQueryPool(commandBuffer, timestampPool, timestampQuery, 2);
+            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, timestampQuery);
         }
 
         if (perfProfilingEnabled && perfQueryPool != VK_NULL_HANDLE) {
@@ -563,9 +585,8 @@ private:
         if (perfProfilingEnabled && perfQueryPool != VK_NULL_HANDLE)
             vkCmdEndQuery(commandBuffer, perfQueryPool, elementIdx);
 
-        if (profilingEnabled && profilingQueryPool != VK_NULL_HANDLE) {
-            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profilingQueryPool,
-                                2 * elementIdx + 1);
+        if (timestampPool != VK_NULL_HANDLE) {
+            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, timestampQuery + 1);
         }
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
