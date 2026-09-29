@@ -12,22 +12,39 @@ layout(set = 0, binding = 1) restrict readonly buffer ScaleBuffer { float scale[
 layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer { float bias[]; };
 layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
 
+shared float partial[64];
+
 void main() {
-    uint nc = gl_GlobalInvocationID.x;
+    const uint lane = gl_LocalInvocationID.x;
+    const uint nc = gl_WorkGroupID.x;
     if (nc >= pc.batch * pc.channels) return;
-    uint offset = nc * pc.spatialSize;
-    float mean = 0.0;
-    for (uint i = 0; i < pc.spatialSize; ++i) mean += inputData[offset + i];
-    mean /= float(pc.spatialSize);
-    float variance = 0.0;
-    for (uint i = 0; i < pc.spatialSize; ++i) {
-        float centered = inputData[offset + i] - mean;
-        variance += centered * centered;
+    const uint offset = nc * pc.spatialSize;
+
+    float sum = 0.0;
+    for (uint i = lane; i < pc.spatialSize; i += 64) sum += inputData[offset + i];
+    partial[lane] = sum;
+    barrier();
+    for (uint stride = 32; stride > 0; stride /= 2) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        barrier();
     }
-    variance /= float(pc.spatialSize);
+    const float mean = partial[0] / float(pc.spatialSize);
+
+    float sumSquared = 0.0;
+    for (uint i = lane; i < pc.spatialSize; i += 64) {
+        const float centered = inputData[offset + i] - mean;
+        sumSquared += centered * centered;
+    }
+    partial[lane] = sumSquared;
+    barrier();
+    for (uint stride = 32; stride > 0; stride /= 2) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        barrier();
+    }
+    const float variance = partial[0] / float(pc.spatialSize);
     float inverseStd = inversesqrt(variance + pc.epsilon);
     uint channel = nc % pc.channels;
-    for (uint i = 0; i < pc.spatialSize; ++i) {
+    for (uint i = lane; i < pc.spatialSize; i += 64) {
         outputData[offset + i] = (inputData[offset + i] - mean) * inverseStd * scale[channel] + bias[channel];
     }
 }

@@ -118,7 +118,7 @@ TEST_F(OnnxSd15OperationsTest, InstanceNormalization) {
     auto computation = context->create<GeneralComputation<InstanceNormalizationPushConstants>>(
         "shaders/onnx/instance_normalization.comp.spv");
     computation->setPushConstants({constants});
-    computation->setGroupCount(1, 1, 1);
+    computation->setGroupCount(2, 1, 1);
     computation->setInput(input, 0); computation->setInput(scale, 1);
     computation->setInput(bias, 2); computation->setInput(output, 3);
     ComputeGraph graph(*context, 1);
@@ -441,7 +441,8 @@ TEST_F(OnnxSd15OperationsTest, BatchedConvolution) {
         constants.dimWeights[index] = weightDimensions[index];
     }
     constants.dimBias[0] = 1;
-    auto computation = context->create<GeneralComputation<ConvPushConstants>>("shaders/onnx/conv.comp.spv");
+    auto computation = context->create<GeneralComputation<ConvPushConstants>>(
+        "shaders/onnx/conv_1x1.comp.spv");
     computation->setPushConstants({constants}); computation->setGroupCount(1, 1, 2);
     computation->setInput(input, 0); computation->setInput(weights, 1);
     computation->setInput(bias, 2); computation->setInput(output, 3);
