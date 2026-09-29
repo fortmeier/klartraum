@@ -42,6 +42,14 @@ struct MatMulPushConstants {
     uint32_t rhsBatchCount;
 };
 
+struct FusedAttentionPushConstants {
+    uint32_t batchCount;
+    uint32_t queryCount;
+    uint32_t keyCount;
+    uint32_t queryDepth;
+    uint32_t valueDepth;
+};
+
 struct GemmPushConstants {
     uint32_t rows;
     uint32_t columns;
