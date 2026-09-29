@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// SD1.5 UNet attention at the second latent resolution: 8 heads of width 80.
+#define HEAD_DEPTH 80
+#include "fused_attention_tiled.glsl"
