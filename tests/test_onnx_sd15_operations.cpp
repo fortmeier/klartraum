@@ -18,7 +18,7 @@
  * - Gather selects embedding rows using INT64 token indices.
  * - Conv dispatches every item in a classifier-free-guidance batch.
  * - FusedAttention matches a CPU softmax(Q K) V reference for SD1.5 head widths and uneven query/key counts.
- * - Tiled FusedAttention for head width 40 matches the same reference across partial query groups and key tiles.
+ * - Tiled FusedAttention for head widths 40 and 80 matches the same reference across partial query groups and key tiles.
  **/
 
 #include <algorithm>
@@ -556,22 +556,33 @@ TEST_F(OnnxSd15OperationsTest, FusedAttentionMatchesSoftmaxReference) {
 
 TEST_F(OnnxSd15OperationsTest, TiledFusedAttentionMatchesSoftmaxReference) {
     // 70 queries leave a partial 64-query group; 77 and 300 keys end in
-    // partial 32-key tiles; 4096 keys matches the 64x64 latent self-attention.
-    for (const AttentionShape shape : {AttentionShape{3, 70, 77, 40}, AttentionShape{2, 130, 300, 40},
-                                       AttentionShape{1, 64, 4096, 40}}) {
+    // partial 32-key tiles; 4096 and 1024 keys match the 64x64 and 32x32
+    // latent self-attention of the SD1.5 UNet.
+    const struct {
+        const char* shader;
+        AttentionShape shape;
+    } cases[] = {
+        {"shaders/onnx/fused_attention_tiled_d40.comp.spv", {3, 70, 77, 40}},
+        {"shaders/onnx/fused_attention_tiled_d40.comp.spv", {2, 130, 300, 40}},
+        {"shaders/onnx/fused_attention_tiled_d40.comp.spv", {1, 64, 4096, 40}},
+        {"shaders/onnx/fused_attention_tiled_d80.comp.spv", {3, 70, 77, 80}},
+        {"shaders/onnx/fused_attention_tiled_d80.comp.spv", {1, 64, 1024, 80}},
+    };
+    for (const auto& testCase : cases) {
+        const auto& shape = testCase.shape;
         const size_t qCount = size_t(shape.batch) * shape.queries * shape.depth;
         const size_t kvCount = size_t(shape.batch) * shape.keys * shape.depth;
         const auto q = patternedValues(qCount, 4u, 2.0f);
         const auto k = patternedValues(kvCount, 5u, 2.0f);
         const auto v = patternedValues(kvCount, 6u, 4.0f);
         const auto expected = attentionReference(shape, q, k, v);
-        const auto result = runFusedAttention(*context, "shaders/onnx/fused_attention_tiled_d40.comp.spv",
-                                              shape, 64, q, k, v);
+        const auto result = runFusedAttention(*context, testCase.shader, shape, 64, q, k, v);
         ASSERT_EQ(result.size(), expected.size());
         float maximumError = 0.0f;
         for (size_t index = 0; index < result.size(); ++index) {
             maximumError = std::max(maximumError, std::abs(result[index] - expected[index]));
         }
-        EXPECT_LT(maximumError, 1e-5f) << "queries=" << shape.queries << " keys=" << shape.keys;
+        EXPECT_LT(maximumError, 1e-5f)
+            << "depth=" << shape.depth << " queries=" << shape.queries << " keys=" << shape.keys;
     }
 }
