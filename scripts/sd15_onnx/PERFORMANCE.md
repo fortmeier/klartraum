@@ -84,6 +84,42 @@ remains within the reference tolerances:
 | Final latent after 30 steps | 1.21355e-04 |
 | Decoded image | 8.28959e-04 |
 
+## Theoretical speed-of-light bounds
+
+The roofline estimate uses the RTX 2070 SUPER's 2,560 CUDA cores at its
+1.770 GHz boost clock, or **9.0624 FP32 TFLOP/s**, and its **448 GB/s** memory
+bandwidth. These hardware inputs come from
+[NVIDIA's RTX 2070 SUPER specifications](https://www.nvidia.com/ro-ro/geforce/graphics-cards/rtx-2070-super/).
+
+`analyze_roofline.py` reads the fixed tensor shapes from the exported ONNX
+graphs. It counts two FLOPs per multiply-accumulate in Conv, ConvTranspose,
+MatMul, and Gemm. Minimum operator traffic assumes that every dispatched
+operator reads each input and writes each output exactly once; fused attention
+does not materialize the score or softmax tensors. The roofline floor is the
+larger of `FLOPs / peak FP32 throughput` and `bytes / peak bandwidth`.
+
+```powershell
+cd scripts/sd15_onnx
+.\.venv\Scripts\python.exe analyze_roofline.py
+```
+
+| Stage | Dominant FLOPs | Minimum operator traffic | Compute floor | Bandwidth floor | Roofline floor | Measured efficiency | Remaining theoretical headroom |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CLIP | 26.597 GFLOP | 1.047 GB | 2.935 ms | 2.338 ms | 2.935 ms | 5.83% | 17.17x |
+| UNet average step | 1,606.547 GFLOP | 25.577 GB | 177.276 ms | 57.092 ms | 177.276 ms | 5.22% | 19.14x |
+| UNet, 30 steps | 48,196.406 GFLOP | 767.322 GB | 5,318.283 ms | 1,712.772 ms | 5,318.283 ms | 5.22% | 19.14x |
+| VAE decode | 2,514.519 GFLOP | 28.320 GB | 277.467 ms | 63.214 ms | 277.467 ms | 6.90% | 14.49x |
+| Full pipeline | 50,737.522 GFLOP | 796.689 GB | 5,598.685 ms | 1,778.324 ms | 5,598.685 ms | 5.29% | 18.91x |
+
+These are intentionally optimistic bounds, not expected execution times. They
+assume simultaneous 100% boost-clock FP32 utilization and ideal peak memory
+bandwidth, and omit transcendental cost, reductions, dispatches, barriers,
+dependencies, cache conflicts, and layout overhead. Their useful purpose is to
+show remaining headroom and whether an ideal stage is compute- or
+bandwidth-limited. At present every stage is compute-bound by this model, which
+supports prioritizing attention/convolution arithmetic efficiency and later
+FP16 or cooperative-matrix paths.
+
 ## Adding another cycle
 
 For each new optimization:
