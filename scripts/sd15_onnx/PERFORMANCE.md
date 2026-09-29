@@ -127,7 +127,7 @@ FP16 or cooperative-matrix paths.
 - Date: 2026-09-29
 - Machine: Mac mini (Mac16,10), Apple M4 with a 10-core GPU, 24 GB unified memory
 - Vulkan driver: MoltenVK (Vulkan SDK 1.4.357.1), API 1.4.357
-- Build: Release (`build-release/`, validation layers off)
+- Build: Release (`build/examples/Release/`, Ninja Multi-Config, validation layers off)
 - Image size, scheduler, batch, prompt, and fixtures: as above
   (`data/onnx/sd15_denoiser_512`, 30 DDIM steps, batch 2)
 - Klartraum memory plan: 336.875 MiB allocated for the UNet, identical to the
