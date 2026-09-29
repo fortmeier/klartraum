@@ -201,16 +201,36 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
     }
     pushConstants.dimBias[0] = (biasDim.size() > 0) ? biasDim[0] : 1;
 
-    std::string shaderFilename = "shaders/onnx/conv.comp.spv";
+    const bool specialized3x3 =
+        pushConstants.kernel_shape[0] == 3 && pushConstants.kernel_shape[1] == 3 && pushConstants.strides[0] == 1 &&
+        pushConstants.strides[1] == 1 && pushConstants.dilations[0] == 1 && pushConstants.dilations[1] == 1 &&
+        pushConstants.pads[0] == 1 && pushConstants.pads[1] == 1 && pushConstants.pads[2] == 1 &&
+        pushConstants.pads[3] == 1 && pushConstants.groups[0] == 1;
+    const bool specialized1x1 =
+        pushConstants.kernel_shape[0] == 1 && pushConstants.kernel_shape[1] == 1 && pushConstants.strides[0] == 1 &&
+        pushConstants.strides[1] == 1 && pushConstants.dilations[0] == 1 && pushConstants.dilations[1] == 1 &&
+        pushConstants.pads[0] == 0 && pushConstants.pads[1] == 0 && pushConstants.pads[2] == 0 &&
+        pushConstants.pads[3] == 0 && pushConstants.groups[0] == 1;
+    const std::string shaderFilename = specialized3x3   ? "shaders/onnx/conv_3x3.comp.spv"
+                                       : specialized1x1 ? "shaders/onnx/conv_1x1.comp.spv"
+                                                        : "shaders/onnx/conv.comp.spv";
 
     auto operation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(shaderFilename);
     const auto outputDim = getTensorDimensions(node.output(0), name2ValueInfoProto, graph);
     for (size_t i = 0; i < 4; ++i)
         pushConstants.dimOutput[i] = outputDim[i];
     operation->setPushConstants({pushConstants});
-    operation->setGroupCountX((outputDim[3] + 7) / 8);
-    operation->setGroupCountY((outputDim[2] + 7) / 8);
-    operation->setGroupCountZ(outputDim[0] * outputDim[1]);
+    // Dispatch one invocation per inferred output element. Using the ONNX
+    // output shape also handles asymmetric padding.
+    if (specialized1x1) {
+        operation->setGroupCountX((outputDim[2] * outputDim[3] + 15) / 16);
+        operation->setGroupCountY((outputDim[1] + 15) / 16);
+        operation->setGroupCountZ(outputDim[0]);
+    } else {
+        operation->setGroupCountX((outputDim[3] + 7) / 8);
+        operation->setGroupCountY((outputDim[2] + 7) / 8);
+        operation->setGroupCountZ(outputDim[0] * (specialized3x3 ? (outputDim[1] + 3) / 4 : outputDim[1]));
+    }
 
     return operation;
 }
@@ -420,7 +440,7 @@ ComputeGraphElementPtr createInstanceNormalization(VulkanContext* vulkanContext,
     auto operation = vulkanContext->create<GeneralComputation<InstanceNormalizationPushConstants>>(
         "shaders/onnx/instance_normalization.comp.spv");
     operation->setPushConstants({constants});
-    operation->setGroupCountX((constants.batch * constants.channels + 63) / 64);
+    operation->setGroupCountX(constants.batch * constants.channels);
     return operation;
 }
 
@@ -448,7 +468,7 @@ ComputeGraphElementPtr createMatMul(VulkanContext* vulkanContext, const onnx::No
     }
     auto operation = vulkanContext->create<GeneralComputation<MatMulPushConstants>>("shaders/onnx/matmul.comp.spv");
     operation->setPushConstants({constants});
-    operation->setGroupCount((constants.columns + 7) / 8, (constants.rows + 7) / 8, constants.batchCount);
+    operation->setGroupCount((constants.columns + 31) / 32, (constants.rows + 15) / 16, constants.batchCount);
     return operation;
 }
 
@@ -466,13 +486,13 @@ ComputeGraphElementPtr createFusedAttention(VulkanContext* vulkanContext, const 
     if (key[0] * key[1] != constants.batchCount || value[0] * value[1] != constants.batchCount ||
         key[2] != constants.queryDepth || value[2] != constants.keyCount ||
         output[0] * output[1] != constants.batchCount || output[2] != constants.queryCount ||
-        output[3] != constants.valueDepth || constants.valueDepth > 512) {
+        output[3] != constants.valueDepth || constants.queryDepth > 512 || constants.valueDepth > 512) {
         throw std::runtime_error("Unsupported FusedAttention tensor shapes");
     }
     auto operation =
         vulkanContext->create<GeneralComputation<FusedAttentionPushConstants>>("shaders/onnx/fused_attention.comp.spv");
     operation->setPushConstants({constants});
-    operation->setGroupCount(constants.queryCount, constants.batchCount, 1);
+    operation->setGroupCount((constants.queryCount + 7) / 8, constants.batchCount, 1);
     return operation;
 }
 

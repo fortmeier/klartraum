@@ -4,7 +4,7 @@
 
 #version 450
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(local_size_x = 32, local_size_y = 16, local_size_z = 1) in;
 layout(push_constant) uniform PushConstants {
     uint batchCount;
     uint rows;
@@ -17,18 +17,40 @@ layout(set = 0, binding = 0) restrict readonly buffer LhsBuffer { float lhs[]; }
 layout(set = 0, binding = 1) restrict readonly buffer RhsBuffer { float rhs[]; };
 layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
 
+shared float lhsTile[16][16];
+shared float rhsTile[16][32];
+
 void main() {
     uint column = gl_GlobalInvocationID.x;
     uint row = gl_GlobalInvocationID.y;
     uint batch = gl_GlobalInvocationID.z;
-    if (column >= pc.columns || row >= pc.rows || batch >= pc.batchCount) return;
     uint lhsBatch = pc.lhsBatchCount == 1 ? 0 : batch;
     uint rhsBatch = pc.rhsBatchCount == 1 ? 0 : batch;
     uint lhsOffset = lhsBatch * pc.rows * pc.reduction;
     uint rhsOffset = rhsBatch * pc.reduction * pc.columns;
     float value = 0.0;
-    for (uint k = 0; k < pc.reduction; ++k) {
-        value += lhs[lhsOffset + row * pc.reduction + k] * rhs[rhsOffset + k * pc.columns + column];
+
+    for (uint tile = 0; tile < pc.reduction; tile += 16) {
+        const uint lhsColumn = tile + gl_LocalInvocationID.x;
+        const uint rhsRow = tile + gl_LocalInvocationID.y;
+        if (gl_LocalInvocationID.x < 16) {
+            lhsTile[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
+                row < pc.rows && lhsColumn < pc.reduction
+                    ? lhs[lhsOffset + row * pc.reduction + lhsColumn]
+                    : 0.0;
+        }
+        rhsTile[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
+            rhsRow < pc.reduction && column < pc.columns
+                ? rhs[rhsOffset + rhsRow * pc.columns + column]
+                : 0.0;
+        barrier();
+        for (uint k = 0; k < 16; ++k) {
+            value += lhsTile[gl_LocalInvocationID.y][k] *
+                rhsTile[k][gl_LocalInvocationID.x];
+        }
+        barrier();
     }
-    outputData[(batch * pc.rows + row) * pc.columns + column] = value;
+    if (column < pc.columns && row < pc.rows && batch < pc.batchCount) {
+        outputData[(batch * pc.rows + row) * pc.columns + column] = value;
+    }
 }
