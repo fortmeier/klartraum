@@ -489,6 +489,17 @@ ComputeGraphElementPtr createFusedAttention(VulkanContext* vulkanContext, const 
         output[3] != constants.valueDepth || constants.queryDepth > 512 || constants.valueDepth > 512) {
         throw std::runtime_error("Unsupported FusedAttention tensor shapes");
     }
+    // Head widths 40 and 80 (the SD1.5 UNet's two highest-resolution
+    // attention levels) use the key-tiled kernel with one query per invocation
+    // and 64 queries per group.
+    if (constants.queryDepth == constants.valueDepth && (constants.queryDepth == 40 || constants.queryDepth == 80)) {
+        const std::string shader =
+            "shaders/onnx/fused_attention_tiled_d" + std::to_string(constants.queryDepth) + ".comp.spv";
+        auto operation = vulkanContext->create<GeneralComputation<FusedAttentionPushConstants>>(shader);
+        operation->setPushConstants({constants});
+        operation->setGroupCount((constants.queryCount + 63) / 64, constants.batchCount, 1);
+        return operation;
+    }
     auto operation =
         vulkanContext->create<GeneralComputation<FusedAttentionPushConstants>>("shaders/onnx/fused_attention.comp.spv");
     operation->setPushConstants({constants});
