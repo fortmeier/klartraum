@@ -314,14 +314,21 @@ void OnnxNetwork::printModelInfo() const {
 std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
     // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
     VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    constexpr VkBufferUsageFlags dimensionsUsage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    constexpr VkMemoryPropertyFlags memoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
-        return vulkanContext->create<TensorElement<float>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<float>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
-        return vulkanContext->create<TensorElement<double>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<double>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT32) {
-        return vulkanContext->create<TensorElement<int32_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<int32_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT64) {
-        return vulkanContext->create<TensorElement<int64_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<int64_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     }
 
     throw std::runtime_error("Unsupported data type: " + std::to_string(tensorInfo.dataType));
@@ -330,14 +337,21 @@ std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContex
 std::shared_ptr<TensorElementInterface> createConstantTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
     // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
     VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    constexpr VkBufferUsageFlags dimensionsUsage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    constexpr VkMemoryPropertyFlags memoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
-        return vulkanContext->create<TensorElementSinglePath<float>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<float>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
-        return vulkanContext->create<TensorElementSinglePath<double>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<double>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT32) {
-        return vulkanContext->create<TensorElementSinglePath<int32_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<int32_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT64) {
-        return vulkanContext->create<TensorElementSinglePath<int64_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<int64_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     }
 
     throw std::runtime_error("Unsupported data type: " + std::to_string(tensorInfo.dataType));
