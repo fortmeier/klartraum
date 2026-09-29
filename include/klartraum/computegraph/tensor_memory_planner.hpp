@@ -11,34 +11,50 @@
 
 namespace klartraum {
 
+/**
+ * @brief Describes one logical tensor and the interval in which it must retain its data.
+ *
+ * Lifetimes are inclusive operation indices. Two tensors may share storage only when
+ * their intervals do not overlap and their element types match.
+ */
 struct TensorLifetimeRequest {
-    std::string name;
-    size_t bytes;
-    size_t firstUse;
-    size_t lastUse;
-    std::type_index elementType;
+    std::string name;              ///< Unique logical tensor name.
+    size_t bytes;                  ///< Required storage capacity in bytes.
+    size_t firstUse;               ///< First operation index that accesses the tensor.
+    size_t lastUse;                ///< Last operation index that accesses the tensor.
+    std::type_index elementType;   ///< C++ element type used to keep slots type-compatible.
 };
 
+/** @brief Maps a logical tensor to a reusable physical storage slot. */
 struct TensorMemoryAssignment {
-    std::string name;
-    size_t slot;
+    std::string name; ///< Logical tensor name from TensorLifetimeRequest.
+    size_t slot;      ///< Index into TensorMemoryPlan::slotCapacities.
 };
 
+/** @brief Result of planning reusable storage for a collection of tensor lifetimes. */
 struct TensorMemoryPlan {
-    std::vector<TensorMemoryAssignment> assignments;
-    std::vector<size_t> slotCapacities;
-    size_t logicalBytes = 0;
-    size_t allocatedBytes = 0;
-    size_t peakLiveBytes = 0;
+    std::vector<TensorMemoryAssignment> assignments; ///< One storage assignment per request.
+    std::vector<size_t> slotCapacities;              ///< Required byte capacity of each slot.
+    size_t logicalBytes = 0;   ///< Sum of all logical tensor sizes without reuse.
+    size_t allocatedBytes = 0; ///< Sum of physical slot capacities after reuse.
+    size_t peakLiveBytes = 0;  ///< Maximum logical bytes simultaneously live.
 };
 
 /**
- * Assigns tensors with non-overlapping inclusive lifetimes to reusable storage
- * slots. Slots are kept type-compatible and grow to the largest tensor assigned
- * to them.
+ * @brief Assigns tensors with non-overlapping lifetimes to reusable storage slots.
+ *
+ * Slots remain type-compatible and grow to the largest tensor assigned to them.
+ * The planner is independent of Vulkan allocation; consumers use the returned
+ * assignments to make logical tensors share physical buffers before graph setup.
  */
 class TensorMemoryPlanner {
 public:
+    /**
+     * @brief Builds a deterministic best-fit storage plan.
+     * @param requests Logical tensors with inclusive first/last-use indices.
+     * @return Assignments, slot capacities, and memory-usage statistics.
+     * @throws std::invalid_argument If a name is empty or a lifetime is invalid.
+     */
     static TensorMemoryPlan plan(std::vector<TensorLifetimeRequest> requests) {
         for (const auto& request : requests) {
             if (request.name.empty()) {

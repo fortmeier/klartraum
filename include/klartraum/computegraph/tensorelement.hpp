@@ -52,11 +52,32 @@ public:
      */
     virtual void setDimensions(const std::vector<uint32_t>& newDimensions) = 0;
 
+    /**
+     * @brief Makes this logical tensor use another tensor's physical data buffers.
+     * @param source Tensor whose storage will be shared.
+     * @throws std::logic_error If setup already allocated either tensor's buffers.
+     * @throws std::invalid_argument If the element types, storage modes, or capacities
+     *         are incompatible.
+     * @note The caller must ensure both logical tensor lifetimes do not overlap.
+     */
     virtual void shareDataStorageWith(TensorElementInterface& source) = 0;
+
+    /**
+     * @brief Detaches this tensor from shared storage before graph setup.
+     * @throws std::logic_error If setup already allocated the buffers.
+     */
     virtual void makeDataStorageUnique() = 0;
+
+    /** @brief Returns the capacity in bytes of the underlying shared storage. */
     virtual size_t getStorageCapacityBytes() const = 0;
+
+    /** @brief Returns an identity token shared by tensors using the same storage. */
     virtual const void* getStorageIdentity() const = 0;
+
+    /** @brief Returns the C++ element type stored in the data buffers. */
     virtual std::type_index getElementType() const = 0;
+
+    /** @brief Reports whether all compute paths intentionally use one data buffer. */
     virtual bool isSinglePathStorage() const { return false; }
 
 private:
