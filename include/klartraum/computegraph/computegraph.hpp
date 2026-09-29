@@ -223,14 +223,26 @@ public:
             if (vkQueueSubmit(graphicsQueue, (uint32_t)infos.size(), infos.data(), fence) != VK_SUCCESS)
                 throw std::runtime_error("failed to submit perf-query command buffers!");
 
-            vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
+            const VkResult waitResult = vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
             vkDestroyFence(device, fence, nullptr);
             pfn_ReleaseLock_(device);
+            if (waitResult != VK_SUCCESS) {
+                throw std::runtime_error(
+                    waitResult == VK_ERROR_DEVICE_LOST
+                        ? "GPU device lost while executing compute graph"
+                        : "failed waiting for compute graph fence");
+            }
         } else {
             auto finishSemaphore = submitTo(graphicsQueue, pathId, fence);
-            vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
+            const VkResult waitResult = vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
             vkDestroyFence(device, fence, nullptr);
             (void)finishSemaphore;
+            if (waitResult != VK_SUCCESS) {
+                throw std::runtime_error(
+                    waitResult == VK_ERROR_DEVICE_LOST
+                        ? "GPU device lost while executing compute graph"
+                        : "failed waiting for compute graph fence");
+            }
         }
 
         // Drain graphFinishedSemaphores[pathId].

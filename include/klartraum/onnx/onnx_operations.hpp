@@ -432,6 +432,34 @@ ComputeGraphElementPtr createMatMul(VulkanContext* vulkanContext, const onnx::No
     return operation;
 }
 
+ComputeGraphElementPtr createFusedAttention(
+    VulkanContext* vulkanContext, const onnx::NodeProto& node,
+    const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+    const onnx::GraphProto& graph) {
+    const auto query = getTensorDimensions(node.input(0), infos, graph);
+    const auto key = getTensorDimensions(node.input(1), infos, graph);
+    const auto value = getTensorDimensions(node.input(2), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (query.size() != 4 || key.size() != 4 || value.size() != 4 || output.size() != 4) {
+        throw std::runtime_error("FusedAttention requires rank-four tensors");
+    }
+    FusedAttentionPushConstants constants{
+        query[0] * query[1], query[2], key[3], query[3], value[3]};
+    if (key[0] * key[1] != constants.batchCount ||
+        value[0] * value[1] != constants.batchCount ||
+        key[2] != constants.queryDepth || value[2] != constants.keyCount ||
+        output[0] * output[1] != constants.batchCount ||
+        output[2] != constants.queryCount || output[3] != constants.valueDepth ||
+        constants.valueDepth > 512) {
+        throw std::runtime_error("Unsupported FusedAttention tensor shapes");
+    }
+    auto operation = vulkanContext->create<GeneralComputation<FusedAttentionPushConstants>>(
+        "shaders/onnx/fused_attention.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCount(constants.queryCount, constants.batchCount, 1);
+    return operation;
+}
+
 ComputeGraphElementPtr createGemm(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                   const std::map<std::string, const onnx::ValueInfoProto*>& infos,
                                   const onnx::GraphProto& graph) {
@@ -722,6 +750,8 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
         operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, "shaders/onnx/erf.comp.spv");
     } else if (operationType == "InstanceNormalization") {
         operation = createInstanceNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "FusedAttention") {
+        operation = createFusedAttention(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "MatMul") {
         operation = createMatMul(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Gemm") {
