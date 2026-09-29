@@ -307,6 +307,7 @@ add_executable(
   tests/test_onnx_transpose.cpp
   tests/test_onnx_reference.cpp
   tests/test_onnx_operations.cpp
+  tests/test_layers.cpp
   tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
@@ -342,6 +343,7 @@ set(KLARTRAUM_LIB_SRC
   src/gaussian_splat_rasterizer.cpp
   src/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
+  src/layers.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
