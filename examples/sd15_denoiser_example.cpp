@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -124,6 +125,9 @@ int main(int argc, char** argv) {
         const size_t imageElements = 3 * static_cast<size_t>(imageSize) * imageSize;
         constexpr float guidanceScale = 7.5f;
         constexpr float vaeScalingFactor = 0.18215f;
+        double clipSeconds = 0.0;
+        double denoiseSeconds = 0.0;
+        double decodeSeconds = 0.0;
 
         const auto& directory = options.modelDirectory;
         const auto textEncoderPath = directory / "sd15_text_encoder.onnx";
@@ -174,7 +178,11 @@ int main(int argc, char** argv) {
             graph.compileFrom(textEncoder);
             inputIds->setData(0, tokenIds);
             attentionMask->setData(0, attentionMaskValues);
+            const auto started = std::chrono::steady_clock::now();
             graph.submitAndWait(context.getGraphicsQueue(), 0);
+            clipSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - started).count();
+            std::cout << "Klartraum CLIP inference: " << clipSeconds << " s" << std::endl;
             auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
                 textEncoder->getOutputElement("last_hidden_state"));
             if (!output || output->getDataElementCount() != embeddingElements) {
@@ -221,6 +229,7 @@ int main(int argc, char** argv) {
             std::vector<float> prediction(sampleElements);
             std::vector<float> guided(latentElements);
             for (size_t step = 0; step < timesteps.size(); ++step) {
+                const auto stepStarted = std::chrono::steady_clock::now();
                 std::copy(latents.begin(), latents.end(), batch.begin());
                 std::copy(latents.begin(), latents.end(), batch.begin() + latentElements);
                 sample->setData(0, batch);
@@ -254,8 +263,12 @@ int main(int argc, char** argv) {
                     latents[index] = sqrtPreviousAlpha * predictedOriginal +
                         sqrtPreviousBeta * guided[index];
                 }
+                const double stepSeconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - stepStarted).count();
+                denoiseSeconds += stepSeconds;
                 std::cout << "Completed DDIM step " << (step + 1) << "/"
                           << timesteps.size() << " (t=" << timesteps[step]
+                          << ", " << stepSeconds << " s"
                           << ", max|noise|=" << maximumMagnitude(guided)
                           << ", max|latent|=" << maximumMagnitude(latents) << ")" << std::endl;
             }
@@ -277,7 +290,10 @@ int main(int argc, char** argv) {
             klartraum::ComputeGraph graph(context, 1);
             graph.compileFrom(decoder);
             latent->setData(0, latents);
+            const auto started = std::chrono::steady_clock::now();
             graph.submitAndWait(context.getGraphicsQueue(), 0);
+            decodeSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - started).count();
             auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
                 decoder->getOutputElement("output"));
             decoded.resize(output->getDataElementCount());
@@ -294,6 +310,11 @@ int main(int argc, char** argv) {
             }
         }
         writePpm(options.outputPath, decoded, imageSize);
+        std::cout << "Klartraum inference timing: CLIP=" << clipSeconds
+                  << " s, DDIM UNet=" << denoiseSeconds << " s ("
+                  << denoiseSeconds / timesteps.size() << " s/step), VAE decode="
+                  << decodeSeconds << " s, total="
+                  << clipSeconds + denoiseSeconds + decodeSeconds << " s" << std::endl;
         std::cout << "Wrote " << options.outputPath << std::endl;
         return 0;
     } catch (const std::exception& error) {

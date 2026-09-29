@@ -273,15 +273,15 @@ std::vector<std::string> ClipTokenizer::pretokenize(const std::string& text) con
         }
         if (contractionEnd) {
             while (position < contractionEnd) token += characters[position++].bytes;
-        } else if (isCjkIdeograph(characters[position].codepoint)) {
+        } else if (isNumber(characters[position].codepoint) ||
+                   isCjkIdeograph(characters[position].codepoint)) {
             token = characters[position++].bytes;
         } else {
             const bool letters = isLetter(characters[position].codepoint);
-            const bool numbers = isNumber(characters[position].codepoint);
             while (position < characters.size() && !isWhitespace(characters[position].codepoint) &&
+                   !isNumber(characters[position].codepoint) &&
                    !isCjkIdeograph(characters[position].codepoint) &&
-                   isLetter(characters[position].codepoint) == letters &&
-                   isNumber(characters[position].codepoint) == numbers) {
+                   isLetter(characters[position].codepoint) == letters) {
                 token += characters[position++].bytes;
             }
         }
