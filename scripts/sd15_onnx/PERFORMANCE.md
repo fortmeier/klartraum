@@ -39,10 +39,16 @@ The cumulative reduction is relative to the initial profiled implementation.
 | 8 | Tiled 1x1 convolution plus eight-query attention groups | 8.73691 s | 7.98% faster | 56.20% | Kept |
 | 9 | Explicitly stage 3x3 weights in shared memory | 8.89547 s | 1.81% slower | 55.40% | Rejected; hardware cache was faster |
 | 10 | Final exact-prompt validation run | 8.50328 s | informational | 57.37% | Kept configuration |
+| 11 | Device-local weights and transient tensors | 3.48118 s | 59.06% faster | 82.55% | Kept |
 
-The final full run averaged **8.38943 s per UNet step**, compared with
-**19.8933 s per step** before these cycles: a **57.83% reduction** or
-**2.37x speedup**.
+The device-local profiled run took **3.53021 s** wall time and **3467.05 ms**
+of aggregate GPU operation time. Its largest operation families were fused
+attention at 1425.17 ms, convolution at 1451.70 ms, and MatMul at 459.37 ms.
+MatMul had previously consumed roughly 2.4 seconds by itself.
+
+The final full run averaged **3.39325 s per UNet step**, compared with
+**19.8933 s per step** before these cycles: an **82.94% reduction** or
+**5.86x speedup**.
 
 ## VAE decoder improvement runs
 
@@ -53,6 +59,7 @@ The final full run averaged **8.38943 s per UNet step**, compared with
 | 2 | Add tiled 1x1 convolution | 18.6949 s | 29.09% faster | 77.52% faster | Kept |
 | 3 | Increase attention group from four to eight queries | 18.7705 s | 0.40% slower | 77.43% faster | Kept for its larger 30-step UNet benefit |
 | 4 | Final exact-prompt validation run | 18.6588 s | run variation | 77.56% faster | Final measurement |
+| 5 | Device-local weights and transient tensors | 4.01977 s | 78.46% faster | 95.17% faster | Kept |
 
 ## End-to-end comparison
 
@@ -61,10 +68,14 @@ The final full run averaged **8.38943 s per UNet step**, compared with
 | Python/ONNX Runtime reference | 0.177 s | 160.777 s | 6.500 s | 167.454 s | 1.00x |
 | Klartraum before shader cycles | 0.301 s | 596.800 s | 83.148 s | 680.249 s | 4.06x slower |
 | Klartraum after shader cycles | 0.213 s | 251.683 s | 18.659 s | 270.555 s | 1.62x slower |
+| Klartraum with device-local ONNX storage | 0.050 s | 101.797 s | 4.020 s | 105.868 s | 1.58x faster |
 
-The retained shader cycles reduced Klartraum's total time by **60.23%** and
-made the full pipeline **2.51x faster**. Numerical validation remained within
-the reference tolerances:
+The retained shader cycles reduced Klartraum's original total time by
+**60.23%** and made the full pipeline **2.51x faster**. Device-local storage
+then reduced the retained shader result by a further **60.87%**. Overall,
+Klartraum uses **84.44% less time than its initial implementation** (6.43x
+speedup) and takes **63.22% of the Python reference time**. Numerical validation
+remains within the reference tolerances:
 
 | Validation value | Maximum absolute error |
 |---|---:|
