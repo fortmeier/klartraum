@@ -120,11 +120,14 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
     # Subgroup arithmetic is core in Vulkan 1.1 / SPIR-V 1.3.
     list(APPEND GLSLC_OPTIONS --target-env=vulkan1.1)
   endif()
+  # Shaders #include the .glsl files next to them; recompile when those change.
+  get_filename_component(GLSL_DIRECTORY ${GLSL} DIRECTORY)
+  file(GLOB GLSL_INCLUDES "${GLSL_DIRECTORY}/*.glsl")
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
     COMMAND ${GLSLC} ${GLSLC_OPTIONS} -o ${SPIRV} ${GLSL}
-    DEPENDS ${GLSL}
+    DEPENDS ${GLSL} ${GLSL_INCLUDES}
     COMMENT "Compiling ${GLSL} to ${SPIRV}"
   )
   list(APPEND SPIRV_BINARY_FILES ${SPIRV})
