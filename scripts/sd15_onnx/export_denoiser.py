@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -539,9 +540,12 @@ def main() -> None:
     text_encoder_model = CLIPTextModel.from_pretrained(
         args.model, subfolder="text_encoder"
     ).eval().cpu()
+    clip_started = time.perf_counter()
     input_ids, attention_mask, embeddings = encode_prompt(
         tokenizer, text_encoder_model, args.prompt, args.negative_prompt
     )
+    clip_seconds = time.perf_counter() - clip_started
+    print(f"PyTorch CLIP inference: {clip_seconds:.3f} s")
     tokenizer.save_pretrained(args.onnx_dir)
     text_encoder_path = args.onnx_dir / "sd15_text_encoder.onnx"
     if not args.reuse_models or not text_encoder_path.exists():
@@ -572,6 +576,7 @@ def main() -> None:
             "Unsupported Klartraum CLIP operations "
             f"({len(clip_unsupported)}): {', '.join(sorted(clip_unsupported))}"
         )
+        print(f"Python inference total: {clip_seconds:.3f} s")
         return
     del text_encoder_model, tokenizer
     gc.collect()
@@ -591,8 +596,11 @@ def main() -> None:
     first_timestep_input = None
     first_torch_noise = None
     first_guided_noise = None
+    denoise_started = time.perf_counter()
+    step_seconds = []
     with torch.inference_mode():
-        for timestep in scheduler.timesteps:
+        for step_index, timestep in enumerate(scheduler.timesteps):
+            step_started = time.perf_counter()
             model_sample = scheduler.scale_model_input(torch.cat([latents, latents]), timestep)
             timestep_input = timestep.reshape(1)
             torch_noise = denoiser(model_sample, timestep_input, embeddings)
@@ -604,6 +612,13 @@ def main() -> None:
                 first_timestep_input = timestep_input.clone()
                 first_torch_noise = torch_noise.clone()
                 first_guided_noise = guided_noise.clone()
+            elapsed = time.perf_counter() - step_started
+            step_seconds.append(elapsed)
+            print(
+                f"PyTorch DDIM step {step_index + 1}/{args.steps}: "
+                f"{elapsed:.3f} s (t={int(timestep)})"
+            )
+    denoise_seconds = time.perf_counter() - denoise_started
 
     assert first_model_sample is not None
     assert first_timestep_input is not None
@@ -619,8 +634,18 @@ def main() -> None:
     ).eval().cpu()
     decoder = VaeDecoder(vae).eval()
     decoder_input = latents / vae.config.scaling_factor
+    decode_started = time.perf_counter()
     with torch.inference_mode():
         decoded = decoder(decoder_input)
+    decode_seconds = time.perf_counter() - decode_started
+    inference_seconds = clip_seconds + denoise_seconds + decode_seconds
+    print(
+        "Python inference timing: "
+        f"CLIP={clip_seconds:.3f} s, "
+        f"DDIM UNet={denoise_seconds:.3f} s "
+        f"({denoise_seconds / len(step_seconds):.3f} s/step), "
+        f"VAE decode={decode_seconds:.3f} s, total={inference_seconds:.3f} s"
+    )
     decoder_input_for_export = torch.from_numpy(decoder_input.numpy().copy())
 
     model_path = args.onnx_dir / "sd15_unet.onnx"
