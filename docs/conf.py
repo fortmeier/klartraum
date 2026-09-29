@@ -64,10 +64,16 @@ html_theme = "furo"
 html_title = "Klartraum Engine"
 html_static_path = []
 
-# One privacy notice on klartraum.ai covers the landing page and both
-# documentation sites; Furo renders footer_icons as plain links.
+# One Impressum and one privacy notice on klartraum.ai cover the landing page
+# and both documentation sites; Furo renders footer_icons as plain links.
 html_theme_options = {
     "footer_icons": [
+        {
+            "name": "Impressum",
+            "url": "https://klartraum.ai/impressum.html",
+            "html": "Impressum",
+            "class": "",
+        },
         {
             "name": "Datenschutz / Privacy",
             "url": "https://klartraum.ai/privacy.html",
