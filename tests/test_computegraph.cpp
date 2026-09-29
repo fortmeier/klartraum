@@ -6,6 +6,7 @@
  * - glfwSubmitAndWait: DrawBasics render graph over GLFW paths, simple path cycling with submitAndWait
  * - glfwSubmitTo: DrawBasics render graph over GLFW paths using beginRender/submitTo/endRender
  * - executionOnlyDependenciesAreUnique: resource-order dependencies remain separate from shader inputs
+ * - profilingSpansMultipleQueryPools: a graph with more elements than one timestamp pool holds reports a nonzero GPU time for every dispatch
  **/
 
 #include <map>
@@ -14,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/draw_basics.hpp"
@@ -195,4 +197,57 @@ TEST(ComputeGraph, glfwSubmitTo) {
         vc.endRender(imageIndex, finishSem);
     }
     vkQueueWaitIdle(vc.getGraphicsQueue());
+}
+
+// ----------------------------------------------------------------
+// Test: profilingSpansMultipleQueryPools
+// A chain of dispatches whose element count (dispatches plus their output
+// buffers) exceeds one timestamp query pool. Every dispatch, including those
+// recorded into later pools, must report a positive GPU time.
+// ----------------------------------------------------------------
+TEST(ComputeGraph, profilingSpansMultipleQueryPools) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 64;
+    constexpr int kDispatches = 1100;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+
+    auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto first = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    std::shared_ptr<GeneralComputation<>> last;
+    for (int i = 0; i < kDispatches; ++i) {
+        auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+        op->setName("chain_" + std::to_string(i));
+        if (last) {
+            op->setInput(last, 0, 2);
+        } else {
+            op->setInput(first, 0);
+        }
+        op->setInput(factors, 1);
+        op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+        op->setGroupCountX(kLength);
+        last = op;
+    }
+
+    auto graph = ComputeGraph(vc, 1);
+    graph.enableProfiling();
+    graph.compileFrom(last);
+
+    first->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 3.0f));
+    factors->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 1.0f));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+
+    std::vector<float> output(kLength, 0.0f);
+    last->getOutputElement<BufferElement<FloatBuffer>>(2)->getBuffer(0).memcopyTo(output);
+    for (float value : output) EXPECT_FLOAT_EQ(value, 3.0f);
+
+    int timedDispatches = 0;
+    for (const auto& [name, ms] : graph.getProfilingResults()) {
+        if (name.rfind("chain_", 0) != 0) continue;
+        ++timedDispatches;
+        EXPECT_GT(ms, 0.0f) << name;
+    }
+    EXPECT_EQ(timedDispatches, kDispatches);
 }
