@@ -75,11 +75,17 @@ private:
 template <typename DataType>
 class TensorElement : public TensorElementInterface {
     struct DataStorage {
-        DataStorage(uint32_t capacityElements, VkBufferUsageFlags usageFlags)
-            : capacityElements(capacityElements), usageFlags(usageFlags) {}
+        DataStorage(
+            uint32_t capacityElements,
+            VkBufferUsageFlags usageFlags,
+            VkMemoryPropertyFlags memoryProperties)
+            : capacityElements(capacityElements),
+              usageFlags(usageFlags),
+              memoryProperties(memoryProperties) {}
 
         uint32_t capacityElements;
         VkBufferUsageFlags usageFlags;
+        VkMemoryPropertyFlags memoryProperties;
         std::vector<VulkanBuffer<DataType>> buffers;
     };
 
@@ -102,14 +108,18 @@ public:
         uint32_t height,
         uint32_t width,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkMemoryPropertyFlags dataMemoryProperties =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
         : TensorElementInterface(),
           vulkanContext(vulkanContext),
           dimensions({width, height, depth, batch}),
           dataElements(batch * depth * height * width),
           dataUsageFlags(dataUsageFlags),
           dimUsageFlags(dimUsageFlags),
-          dataStorage(std::make_shared<DataStorage>(dataElements, dataUsageFlags)) {
+          dataMemoryProperties(dataMemoryProperties),
+          dataStorage(std::make_shared<DataStorage>(
+              dataElements, dataUsageFlags, dataMemoryProperties)) {
 
         validateDimensions(dimensions);
     }
@@ -126,14 +136,18 @@ public:
         VulkanContext& vulkanContext,
         const std::vector<uint32_t>& dimensions,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkMemoryPropertyFlags dataMemoryProperties =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
         : TensorElementInterface(),
           vulkanContext(vulkanContext),
           dimensions(dimensions),
           dataElements(prod(dimensions)),
           dataUsageFlags(dataUsageFlags),
           dimUsageFlags(dimUsageFlags),
-          dataStorage(std::make_shared<DataStorage>(dataElements, dataUsageFlags)) {
+          dataMemoryProperties(dataMemoryProperties),
+          dataStorage(std::make_shared<DataStorage>(
+              dataElements, dataUsageFlags, dataMemoryProperties)) {
 
         validateDimensions(this->dimensions);
     }
@@ -152,7 +166,8 @@ public:
             dataStorage->buffers.reserve(numberPaths);
             for (uint32_t i = 0; i < numberPaths; ++i) {
                 dataStorage->buffers.emplace_back(
-                    vulkanContext, dataStorage->capacityElements, dataStorage->usageFlags);
+                    vulkanContext, dataStorage->capacityElements, dataStorage->usageFlags,
+                    dataStorage->memoryProperties);
             }
         } else if (dataStorage->buffers.size() != numberPaths) {
             throw std::runtime_error("TensorElement: shared storage path count mismatch");
@@ -236,6 +251,9 @@ public:
         if (typedSource->dataStorage->usageFlags != dataUsageFlags) {
             throw std::invalid_argument("TensorElement: shared storage usage flags mismatch");
         }
+        if (typedSource->dataStorage->memoryProperties != dataMemoryProperties) {
+            throw std::invalid_argument("TensorElement: shared storage memory properties mismatch");
+        }
         if (!dataStorage->buffers.empty()) {
             throw std::logic_error("TensorElement: storage cannot be replaced after setup");
         }
@@ -246,7 +264,8 @@ public:
         if (!dataStorage->buffers.empty()) {
             throw std::logic_error("TensorElement: storage cannot be detached after setup");
         }
-        dataStorage = std::make_shared<DataStorage>(dataElements, dataUsageFlags);
+        dataStorage = std::make_shared<DataStorage>(
+            dataElements, dataUsageFlags, dataMemoryProperties);
     }
 
     size_t getStorageCapacityBytes() const override {
@@ -313,6 +332,7 @@ private:
     // Buffer usage flags
     VkBufferUsageFlags dataUsageFlags;
     VkBufferUsageFlags dimUsageFlags;
+    VkMemoryPropertyFlags dataMemoryProperties;
 
     // Logical tensors can share this physical storage when their graph
     // lifetimes do not overlap.
@@ -367,8 +387,11 @@ public:
         uint32_t height,
         uint32_t width,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-        : TensorElement<DataType>(vulkanContext, batch, depth, height, width, dataUsageFlags, dimUsageFlags) {
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkMemoryPropertyFlags dataMemoryProperties =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+        : TensorElement<DataType>(vulkanContext, batch, depth, height, width,
+                                  dataUsageFlags, dimUsageFlags, dataMemoryProperties) {
     }
 
     /**
@@ -383,8 +406,11 @@ public:
         VulkanContext& vulkanContext,
         const std::vector<uint32_t>& dimensions,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-        : TensorElement<DataType>(vulkanContext, dimensions, dataUsageFlags, dimUsageFlags) {
+        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkMemoryPropertyFlags dataMemoryProperties =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+        : TensorElement<DataType>(vulkanContext, dimensions, dataUsageFlags,
+                                  dimUsageFlags, dataMemoryProperties) {
     }
 
     virtual ~TensorElementSinglePath() = default;

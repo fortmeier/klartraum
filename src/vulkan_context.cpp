@@ -924,10 +924,18 @@ void VulkanContext::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Vk
     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+        vkDestroyBuffer(device, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
         throw std::runtime_error("failed to allocate buffer memory!");
     }
 
-    vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    if (vkBindBufferMemory(device, buffer, bufferMemory, 0) != VK_SUCCESS) {
+        vkFreeMemory(device, bufferMemory, nullptr);
+        vkDestroyBuffer(device, buffer, nullptr);
+        bufferMemory = VK_NULL_HANDLE;
+        buffer = VK_NULL_HANDLE;
+        throw std::runtime_error("failed to bind buffer memory!");
+    }
 }
 
 float VulkanContext::getTimestampPeriod() const {
@@ -1189,6 +1197,62 @@ void VulkanContext::createCommandPool() {
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
     }    
+}
+
+void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size) {
+    if (size == 0) return;
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate immediate copy command buffer");
+    }
+
+    VkFence fence = VK_NULL_HANDLE;
+    try {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            throw std::runtime_error("failed to begin immediate copy command buffer");
+        }
+
+        VkBufferCopy region{};
+        region.size = size;
+        vkCmdCopyBuffer(commandBuffer, source, destination, 1, &region);
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to end immediate copy command buffer");
+        }
+
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (vkCreateFence(device, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create immediate copy fence");
+        }
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit immediate buffer copy");
+        }
+        if (vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+            throw std::runtime_error("failed to wait for immediate buffer copy");
+        }
+    } catch (...) {
+        if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, nullptr);
+        vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+        throw;
+    }
+
+    vkDestroyFence(device, fence, nullptr);
+    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 
 
