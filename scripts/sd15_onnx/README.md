@@ -80,7 +80,13 @@ prompt conditioning). It applies guidance scale 7.5 and the DDIM update on the
 CPU, then feeds the final latent into the Klartraum VAE decoder.
 It writes `build/TestingOutput/sd15_pipeline_klartraum.ppm` and checks the final
 latent and decoded pixels against the generated Python/ONNX Runtime reference.
-The current experiment deliberately stays at 256x256. The example also accepts
-`--size`, `--model-dir`, `--prompt`, and `--negative-prompt`. Numerical fixture
-checks run for the exported default prompt; arbitrary runtime prompts use the
-same deterministic latent seed and write their result without fixture checks.
+The example supports any exported fixed resolution, including the 128, 256,
+and 512 pixel fixture sets. It accepts `--size`, `--model-dir`, `--prompt`, and
+`--negative-prompt`. Numerical fixture checks run for the exported prompt;
+arbitrary runtime prompts use the same deterministic latent seed and write
+their result without fixture checks.
+
+Use `--profile` to print aggregate operation timings and the twenty slowest
+dispatches for CLIP, UNet, and the VAE decoder. `--max-denoise-steps 1
+--skip-decoder` provides a quick representative UNet profiling run without
+executing all scheduler steps.
