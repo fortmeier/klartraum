@@ -53,6 +53,84 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
         return false;
     }
 
+    // Attention exported by PyTorch is commonly represented as
+    // MatMul(query, key) -> Softmax -> MatMul(probabilities, value). Keeping
+    // those nodes separate materializes an O(sequence^2) score tensor. At the
+    // 4096-token spatial resolution used by SD1.5 at 512x512, one such tensor
+    // occupies 1 GiB and its naive dispatch can trip the Windows GPU watchdog.
+    // Collapse the lossless three-node pattern before tensors are allocated.
+    VkPhysicalDeviceSubgroupProperties subgroupProperties{};
+    subgroupProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+    VkPhysicalDeviceProperties2 deviceProperties{};
+    deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    deviceProperties.pNext = &subgroupProperties;
+    vkGetPhysicalDeviceProperties2(vulkanContext->getPhysicalDevice(), &deviceProperties);
+    const bool canFuseAttention = subgroupProperties.subgroupSize == 32 &&
+                                  (subgroupProperties.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT) != 0 &&
+                                  (subgroupProperties.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) != 0;
+    bool softmaxDefaultIsLastAxis = false;
+    for (const auto& opset : model->opset_import()) {
+        if (opset.domain().empty() || opset.domain() == "ai.onnx") {
+            softmaxDefaultIsLastAxis = opset.version() >= 13;
+        }
+    }
+
+    auto* graph = model->mutable_graph();
+    std::map<std::string, size_t> consumerCounts;
+    for (const auto& node : graph->node()) {
+        for (const auto& name : node.input()) {
+            if (!name.empty())
+                ++consumerCounts[name];
+        }
+    }
+    std::vector<onnx::NodeProto> optimizedNodes;
+    optimizedNodes.reserve(graph->node_size());
+    size_t fusedAttentionCount = 0;
+    for (int index = 0; index < graph->node_size();) {
+        if (index + 2 < graph->node_size()) {
+            const auto& score = graph->node(index);
+            const auto& softmax = graph->node(index + 1);
+            const auto& context = graph->node(index + 2);
+            bool softmaxUsesLastAxis = softmaxDefaultIsLastAxis;
+            for (const auto& attribute : softmax.attribute()) {
+                if (attribute.name() == "axis") {
+                    softmaxUsesLastAxis = attribute.i() == -1;
+                }
+            }
+            if (canFuseAttention && softmaxUsesLastAxis && score.op_type() == "MatMul" &&
+                softmax.op_type() == "Softmax" && context.op_type() == "MatMul" && score.input_size() == 2 &&
+                score.output_size() == 1 && softmax.input_size() == 1 && softmax.output_size() == 1 &&
+                context.input_size() == 2 && context.output_size() == 1 && softmax.input(0) == score.output(0) &&
+                context.input(0) == softmax.output(0) && consumerCounts[score.output(0)] == 1 &&
+                consumerCounts[softmax.output(0)] == 1) {
+                onnx::NodeProto fused = context;
+                fused.set_op_type("FusedAttention");
+                fused.set_name(context.name() + "/KlartraumFusedAttention");
+                fused.clear_input();
+                fused.add_input(score.input(0));
+                fused.add_input(score.input(1));
+                fused.add_input(context.input(1));
+                optimizedNodes.push_back(std::move(fused));
+                index += 3;
+                ++fusedAttentionCount;
+                continue;
+            }
+        }
+        optimizedNodes.push_back(graph->node(index));
+        ++index;
+    }
+    if (fusedAttentionCount > 0) {
+        graph->clear_node();
+        for (auto& node : optimizedNodes)
+            *graph->add_node() = std::move(node);
+        std::cout << "OnnxNetwork: fused " << fusedAttentionCount << " attention score/softmax/value sequences"
+                  << std::endl;
+    } else if (!canFuseAttention) {
+        std::cout << "OnnxNetwork: attention fusion disabled because the device does not expose "
+                     "32-wide compute subgroups with arithmetic operations"
+                  << std::endl;
+    }
+
     input.close();
 
     std::cout << "OnnxNetwork: Model loaded successfully" << std::endl;
