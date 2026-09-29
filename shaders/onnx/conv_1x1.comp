@@ -1,0 +1,60 @@
+#version 450
+
+// A group-one NCHW 1x1 convolution is a matrix multiplication between
+// [output channels, input channels] weights and [input channels, spatial]
+// activations. Tile both operands to reuse them across 16 outputs.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint dilations[2];
+    uint groups[1];
+    uint kernel_shape[2];
+    uint pads[4];
+    uint strides[2];
+    uint dimInput[4];
+    uint dimWeights[4];
+    uint dimBias[1];
+    uint dimOutput[4];
+} pc;
+
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer WeightBuffer { float weights[]; };
+layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer { float bias[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+shared float weightTile[16][16];
+shared float inputTile[16][16];
+
+void main() {
+    const uint spatial = pc.dimOutput[2] * pc.dimOutput[3];
+    const uint spatialIndex = gl_GlobalInvocationID.x;
+    const uint outputChannel = gl_GlobalInvocationID.y;
+    const uint batch = gl_GlobalInvocationID.z;
+    const uint inputChannels = pc.dimInput[1];
+    const uint outputChannels = pc.dimOutput[1];
+    float value = 0.0;
+
+    for (uint tile = 0; tile < inputChannels; tile += 16) {
+        const uint weightInputChannel = tile + gl_LocalInvocationID.x;
+        const uint inputChannel = tile + gl_LocalInvocationID.y;
+        weightTile[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
+            outputChannel < outputChannels && weightInputChannel < inputChannels
+                ? weights[outputChannel * inputChannels + weightInputChannel]
+                : 0.0;
+        inputTile[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
+            inputChannel < inputChannels && spatialIndex < spatial
+                ? inputData[(batch * inputChannels + inputChannel) * spatial + spatialIndex]
+                : 0.0;
+        barrier();
+        for (uint channel = 0; channel < 16; ++channel) {
+            value += weightTile[gl_LocalInvocationID.y][channel] *
+                inputTile[channel][gl_LocalInvocationID.x];
+        }
+        barrier();
+    }
+
+    if (outputChannel < outputChannels && spatialIndex < spatial) {
+        if (pc.dimBias[0] > 0) value += bias[outputChannel];
+        outputData[(batch * outputChannels + outputChannel) * spatial + spatialIndex] = value;
+    }
+}
