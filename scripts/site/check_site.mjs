@@ -21,7 +21,8 @@
  * - reducedMotion: prefers-reduced-motion: reduce creates no animated glyphs and keeps the videos paused
  * - frameBreakout: inside a cross-origin frameset (e.g. a domain forwarding frame), a documentation link navigates the top window
  * - privacyPage: the footer links to privacy.html, which has a German and an English section naming the contact email and no horizontal scroll at 375 px
- * - noThirdPartyRequests: the landing page and the privacy page request nothing outside the site itself
+ * - noThirdPartyRequests: the landing page, the privacy page and the Impressum request nothing outside the site itself
+ * - impressumPage: the footer links to impressum.html, which has a German and an English section naming the postal address and the contact email, and the privacy page names the same postal address
  **/
 
 import { chromium } from "playwright";
@@ -47,6 +48,7 @@ const EXPECTED_LINKS = {
 
 const DARK_BG = "rgb(17, 17, 22)";
 const PRIVACY_CONTACT = "klartraumengine@mailbox.org";
+const POSTAL_ADDRESS = ["c/o POSTFLEX PFX-090-336", "Emsdettener Straße 10", "48268 Greven"];
 
 const MIME = {
     ".html": "text/html; charset=utf-8",
@@ -270,10 +272,32 @@ try {
             const url = request.url();
             if (!url.startsWith(base) && !url.startsWith("data:")) foreign.push(url);
         });
-        for (const path of ["", "privacy.html"]) {
+        for (const path of ["", "privacy.html", "impressum.html"]) {
             await page.goto(base + path, { waitUntil: "networkidle" });
         }
         assert(foreign.length === 0, `requests outside the site: ${foreign.join(", ")}`);
+        await page.close();
+    });
+
+    await check("impressumPage", async () => {
+        const page = await browser.newPage({ viewport: { width: 375, height: 800 } });
+        await page.goto(base, { waitUntil: "load" });
+        const href = await page.$eval("footer a[href='impressum.html']", (a) => a.getAttribute("href"));
+        for (const url of [new URL(href, base).href, new URL("privacy.html", base).href]) {
+            await page.goto(url, { waitUntil: "load" });
+            for (const lang of ["de", "en"]) {
+                const text = await page.$eval(`article#${lang}[lang="${lang}"] address`, (el) => el.textContent);
+                for (const line of POSTAL_ADDRESS) {
+                    assert(text.includes(line), `${url}: the ${lang} address does not contain "${line}"`);
+                }
+            }
+        }
+        await page.goto(new URL(href, base).href, { waitUntil: "load" });
+        for (const lang of ["de", "en"]) {
+            const text = await page.$eval(`article#${lang}[lang="${lang}"]`, (el) => el.textContent);
+            assert(text.includes(PRIVACY_CONTACT), `the ${lang} Impressum does not name ${PRIVACY_CONTACT}`);
+        }
+        await page.screenshot({ path: join(outDir, "site-impressum-375.png"), fullPage: true });
         await page.close();
     });
 } finally {
