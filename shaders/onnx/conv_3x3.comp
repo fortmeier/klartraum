@@ -1,0 +1,84 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Specialized NCHW 3x3 convolution for the stride-one, pad-one, group-one
+// case used by Stable Diffusion residual blocks. Four output channels share
+// the 10x10 input footprint needed by an 8x8 output tile.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(push_constant) uniform PushConstants {
+    uint dilations[2];
+    uint groups[1];
+    uint kernel_shape[2];
+    uint pads[4];
+    uint strides[2];
+    uint dimInput[4];
+    uint dimWeights[4];
+    uint dimBias[1];
+    uint dimOutput[4];
+} pc;
+
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer WeightBuffer { float weights[]; };
+layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer { float bias[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+shared float inputTile[100];
+
+void main() {
+    const uint outputWidth = pc.dimOutput[3];
+    const uint outputHeight = pc.dimOutput[2];
+    const uint outputChannels = pc.dimOutput[1];
+    const uint inputChannels = pc.dimInput[1];
+    const uint inputHeight = pc.dimInput[2];
+    const uint inputWidth = pc.dimInput[3];
+    const uint channelGroupCount = (outputChannels + 3) / 4;
+    const uint batch = gl_WorkGroupID.z / channelGroupCount;
+    const uint outputChannel = (gl_WorkGroupID.z % channelGroupCount) * 4 +
+        gl_LocalInvocationID.z;
+    const uint outputX = gl_GlobalInvocationID.x;
+    const uint outputY = gl_GlobalInvocationID.y;
+    const bool outputIsValid = outputChannel < outputChannels &&
+        outputX < outputWidth && outputY < outputHeight;
+    const uint localIndex = gl_LocalInvocationID.z * 64 +
+        gl_LocalInvocationID.y * 8 + gl_LocalInvocationID.x;
+    const uint inputPlane = inputHeight * inputWidth;
+    const uint inputBatchOffset = batch * inputChannels * inputPlane;
+    float value = 0.0;
+
+    for (uint inputChannel = 0; inputChannel < inputChannels; ++inputChannel) {
+        for (uint tileIndex = localIndex; tileIndex < 100; tileIndex += 256) {
+            const int inputY = int(gl_WorkGroupID.y * 8 + tileIndex / 10) - 1;
+            const int inputX = int(gl_WorkGroupID.x * 8 + tileIndex % 10) - 1;
+            if (inputY >= 0 && inputY < int(inputHeight) &&
+                inputX >= 0 && inputX < int(inputWidth)) {
+                inputTile[tileIndex] = inputData[inputBatchOffset + inputChannel * inputPlane +
+                    uint(inputY) * inputWidth + uint(inputX)];
+            } else {
+                inputTile[tileIndex] = 0.0;
+            }
+        }
+        barrier();
+
+        if (outputIsValid) {
+            const uint weightOffset = (outputChannel * inputChannels + inputChannel) * 9;
+            const uint tileOffset = gl_LocalInvocationID.y * 10 + gl_LocalInvocationID.x;
+            for (uint kernelY = 0; kernelY < 3; ++kernelY) {
+                for (uint kernelX = 0; kernelX < 3; ++kernelX) {
+                    value += inputTile[tileOffset + kernelY * 10 + kernelX] *
+                        weights[weightOffset + kernelY * 3 + kernelX];
+                }
+            }
+        }
+        barrier();
+    }
+
+    if (outputIsValid) {
+        if (pc.dimBias[0] > 0) value += bias[outputChannel];
+        outputData[((batch * outputChannels + outputChannel) * outputHeight + outputY) *
+            outputWidth + outputX] = value;
+    }
+}
