@@ -45,6 +45,9 @@ TEST(ClipTokenizerTest, MatchesHuggingFaceTokens) {
     const auto emoji = tokenizer.encode("\xF0\x9F\x98\x80 red car");
     EXPECT_EQ(std::vector<int64_t>(emoji.begin(), emoji.begin() + 5),
               (std::vector<int64_t>{49406, 7334, 736, 1615, 49407}));
+    const auto numeric = tokenizer.encode("35mm photography");
+    EXPECT_EQ(std::vector<int64_t>(numeric.begin(), numeric.begin() + 6),
+              (std::vector<int64_t>{49406, 274, 276, 2848, 2108, 49407}));
 }
 
 TEST(ClipTokenizerTest, EncodesNegativePromptFirst) {
