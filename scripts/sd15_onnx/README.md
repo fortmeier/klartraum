@@ -90,3 +90,6 @@ Use `--profile` to print aggregate operation timings and the twenty slowest
 dispatches for CLIP, UNet, and the VAE decoder. `--max-denoise-steps 1
 --skip-decoder` provides a quick representative UNet profiling run without
 executing all scheduler steps.
+
+Benchmark results and retained/rejected optimization cycles are recorded in
+[`PERFORMANCE.md`](PERFORMANCE.md).
