@@ -12,5 +12,6 @@ compute-graph
 engine
 frontends
 gaussian-splatting
+layers
 onnx
 ```
