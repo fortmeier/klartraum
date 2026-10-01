@@ -21,6 +21,8 @@ from pathlib import Path
 import onnx
 from onnx import TensorProto
 
+from disclaimer import print_stable_diffusion_notice
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
@@ -211,6 +213,7 @@ def format_row(
 
 
 def main() -> None:
+    print_stable_diffusion_notice()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-dir",
