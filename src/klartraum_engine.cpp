@@ -106,7 +106,7 @@ void KlartraumEngine::step() {
     // can read back the timestamp queries.  This makes each step() synchronous
     // but that is acceptable in a profiling / development build.
     if (profilingEnabled) {
-        vkQueueWaitIdle(graphicsQueue);
+        vulkanContext.queueWaitIdle(graphicsQueue);
         for (auto& cg : computeGraphs) {
             cg->readAndAccumulateTimestamps();
         }
@@ -165,7 +165,7 @@ bool KlartraumEngine::rebuildForSwapChain() {
 }
 
 std::vector<std::pair<std::string, float>> KlartraumEngine::getProfilingResults() {
-    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
+    vulkanContext.queueWaitIdle(vulkanContext.getGraphicsQueue());
     for (auto& cg : computeGraphs) {
         cg->readAndAccumulateTimestamps();
         cg->readAndAccumulatePerformanceCounters();

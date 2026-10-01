@@ -207,39 +207,18 @@ public:
 private:
     // Synchronous staging is for initialization and explicit readback only.
     // Per-frame GPU-only buffers stay in device-local memory.
+    // submitImmediate() waits for the transfer before the temporary staging storage is released.
     void commands(const std::function<void(VkCommandBuffer)>& record) {
-        auto device = vulkanContext.getDevice();
-        VkCommandBuffer cmd{};
-        // A one-time command buffer carries the transfer on the graph's graphics queue.
-        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocation.commandPool = vulkanContext.getCommandPool();
-        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocation.commandBufferCount = 1;
-        if (vkAllocateCommandBuffers(device, &allocation, &cmd) != VK_SUCCESS)
-            throw std::runtime_error("Cannot allocate buffer transfer command");
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &begin);
-        record(cmd);
-        // Make transfer writes visible to later GPU consumers and mapped staging readback.
-        VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0,
-                             nullptr, 0, nullptr);
-        vkEndCommandBuffer(cmd);
-        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &cmd;
-        VkResult result = vkQueueSubmit(vulkanContext.getGraphicsQueue(), 1, &submit, VK_NULL_HANDLE);
-        // Wait for the transfer before releasing its command buffer and temporary staging storage.
-        // This stalls the graphics queue, so use coherent mapped buffers for per-frame uploads.
-        if (result == VK_SUCCESS)
-            result = vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
-        vkFreeCommandBuffers(device, vulkanContext.getCommandPool(), 1, &cmd);
-        if (result != VK_SUCCESS)
-            throw std::runtime_error("Device-local buffer transfer failed");
+        vulkanContext.submitImmediate([&](VkCommandBuffer cmd) {
+            record(cmd);
+            // Make transfer writes visible to later GPU consumers and mapped staging readback.
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0,
+                                 nullptr, 0, nullptr);
+        });
     }
 
 public:
