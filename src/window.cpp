@@ -179,7 +179,7 @@ VkSemaphore Window::submitComposite(VkQueue queue, uint32_t imageIndex, const st
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &compositeFinished[imageIndex];
 
-    if (vkQueueSubmit(queue, 1, &si, fence) != VK_SUCCESS) {
+    if (vulkanContext.queueSubmit(queue, 1, &si, fence) != VK_SUCCESS) {
         throw std::runtime_error("Window::submitComposite: failed to submit!");
     }
     return compositeFinished[imageIndex];
