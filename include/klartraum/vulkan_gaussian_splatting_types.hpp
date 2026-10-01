@@ -59,9 +59,9 @@ struct GsplatConfig {
 struct Gaussian3D {
     std::array<float, 3> position;  // x, y, z
     std::array<float, 4> rotation;  // x, y, z, w
-    std::array<float, 3> scale;     // std::log(scale)
+    std::array<float, 3> scale;     // linear scale (files store its log; loadGaussiansSpz applies exp)
     std::array<float, 3> color;     // rgb sh0 encoding
-    float alpha;                    // inverse logistic
+    float alpha;                    // opacity in [0, 1] (files store its logit; loadGaussiansSpz applies the sigmoid)
     std::array<float, 15> shR;
     std::array<float, 15> shG;
     std::array<float, 15> shB;

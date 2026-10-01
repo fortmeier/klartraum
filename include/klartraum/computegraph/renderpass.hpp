@@ -58,7 +58,7 @@ public:
         colorAttachment.format = swapChainImageFormat;
         colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     
-        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.loadOp = loadExisting ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     
         colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -68,7 +68,9 @@ public:
         // the renderpass so vkQueuePresentKHR accepts it.  For headless
         // offscreen rendering GENERAL is fine. A viewport target overrides this
         // with TRANSFER_SRC_OPTIMAL so the Window composite can blit from it.
-        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // Drawing over the image needs its contents, which its source left in
+        // GENERAL (see ImageViewSrc).
+        colorAttachment.initialLayout = loadExisting ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageLayout defaultFinal = vulkanContext.hasSurface()
                                      ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
                                      : VK_IMAGE_LAYOUT_GENERAL;
@@ -103,7 +105,11 @@ public:
         dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         dependency.srcAccessMask = 0;
         dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        // Loading the contents reads the attachment after its layout
+        // transition, so the transition must be made visible to reads, too.
+        dependency.dstAccessMask = loadExisting
+            ? VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+            : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = &dependency;
@@ -153,7 +159,8 @@ public:
 
         VkImageMemoryBarrier barrierBack = {};
         barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrierBack.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // Keep the contents when drawing over them; else they are discarded.
+        barrierBack.oldLayout = loadExisting ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
         barrierBack.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -164,13 +171,15 @@ public:
         barrierBack.subresourceRange.baseArrayLayer = 0;
         barrierBack.subresourceRange.layerCount = 1;
         
-        barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        barrierBack.srcAccessMask = loadExisting ? VK_ACCESS_MEMORY_WRITE_BIT : VK_ACCESS_SHADER_WRITE_BIT;
+        barrierBack.dstAccessMask = loadExisting
+            ? VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+            : VK_ACCESS_MEMORY_READ_BIT;
         
         vkCmdPipelineBarrier(
             commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            loadExisting ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            loadExisting ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
             0,
             0, nullptr,
             0, nullptr,
@@ -196,6 +205,14 @@ public:
         vkCmdEndRenderPass(commandBuffer);
 
     };
+
+    /**
+     * @brief Draw over the image's contents instead of clearing it first.
+     *
+     * The image must be in VK_IMAGE_LAYOUT_GENERAL when the pass starts, as
+     * ImageViewSrc leaves it. Call before the pass is compiled.
+     */
+    void setLoadExisting(bool load) { loadExisting = load; }
 
     void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) {
         drawComponents.push_back(drawComponent);
@@ -266,6 +283,8 @@ private:
     std::vector<std::shared_ptr<DrawComponent> > drawComponents;
 
     std::vector<ComputeGraphElementPtr> computeDependencies;
+
+    bool loadExisting = false;
 
 };
 
