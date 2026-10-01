@@ -211,6 +211,9 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
 
     renderPass = std::make_shared<RenderPass>(vulkanContext.getSwapChainImageFormat(), extent);
     renderPass->setName("RasterRenderPass");
+    // Splats are drawn over the target's contents (black unless its source
+    // was cleared to something else or not cleared).
+    renderPass->setLoadExisting(true);
     renderPass->setInput(imageViewSrc, 0);
     renderPass->setInput(cameraUBO, 1);
 

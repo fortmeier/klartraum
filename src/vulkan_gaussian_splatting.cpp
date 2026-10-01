@@ -251,6 +251,11 @@ void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shar
     splat->setInput(binScatter, 3, 5);    // totalCount
     splat->setInput(computeBounds, 4, 2); // scratchBounds
     splat->setInput(_imageViewSrc, 5);
+    // Splats are composited over the target's contents, which its source
+    // left in GENERAL (see ImageViewSrc); keep them.
+    splat->setImageLayoutTransition(5, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                    VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
     const uint32_t tbX = config.splatTileX;
     const uint32_t tbY = config.splatTileY;
