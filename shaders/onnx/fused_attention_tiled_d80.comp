@@ -7,4 +7,8 @@
 
 // SD1.5 UNet attention at the second latent resolution: 8 heads of width 80.
 #define HEAD_DEPTH 80
+// Apple GPUs allow 32 KiB of threadgroup memory per workgroup, and Metal places
+// the per-invocation query and accumulator arrays there as well (20 KiB at this
+// width). 16-key tiles keep the total at 30 KiB.
+#define KEY_TILE 16
 #include "fused_attention_tiled.glsl"
