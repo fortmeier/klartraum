@@ -15,6 +15,7 @@ from diffusers import AutoencoderKL
 from onnx import helper, shape_inference
 from onnxsim import simplify
 
+from disclaimer import print_stable_diffusion_notice
 from run_reference import MODEL_ID, DEFAULT_INPUT, load_image, save_image
 
 
@@ -120,6 +121,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    print_stable_diffusion_notice()
     args = parse_args()
     if args.size <= 0 or args.size % 8:
         raise ValueError("--size must be a positive multiple of 8")
