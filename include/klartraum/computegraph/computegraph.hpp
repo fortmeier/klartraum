@@ -34,7 +34,9 @@ public:
         VkCommandPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        poolInfo.queueFamilyIndex = vulkanContext.getQueueFamilyIndices().graphicsAndComputeFamily.value();
+        // Recorded for the queue of the thread that builds the graph (see
+        // VulkanContext::getThreadQueue()); submit it only to queues of that family.
+        poolInfo.queueFamilyIndex = vulkanContext.getThreadQueueFamily();
 
         if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
@@ -159,7 +161,7 @@ public:
     VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId, VkFence fence = VK_NULL_HANDLE) {
         updateElements(pathId);
 
-        if (vkQueueSubmit(graphicsQueue, 1, &pathSubmits[pathId].submitInfo, fence) != VK_SUCCESS) {
+        if (vulkanContext.queueSubmit(graphicsQueue, 1, &pathSubmits[pathId].submitInfo, fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");
         }
 
@@ -189,7 +191,7 @@ public:
                                                        nullptr, /*counterPassIndex=*/0};
             VkSubmitInfo info = pathSubmits[pathId].submitInfo;
             info.pNext = &perfSubmit;
-            if (vkQueueSubmit(graphicsQueue, 1, &info, fence) != VK_SUCCESS)
+            if (vulkanContext.queueSubmit(graphicsQueue, 1, &info, fence) != VK_SUCCESS)
                 throw std::runtime_error("failed to submit perf-query command buffers!");
 
             const VkResult waitResult = vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
@@ -221,8 +223,8 @@ public:
         drainInfo.waitSemaphoreCount = 1;
         drainInfo.pWaitSemaphores    = &graphFinishedSemaphores[pathId];
         drainInfo.pWaitDstStageMask  = &waitStage;
-        vkQueueSubmit(graphicsQueue, 1, &drainInfo, VK_NULL_HANDLE);
-        vkQueueWaitIdle(graphicsQueue);
+        vulkanContext.queueSubmit(graphicsQueue, 1, &drainInfo, VK_NULL_HANDLE);
+        vulkanContext.queueWaitIdle(graphicsQueue);
 
         readAndAccumulateTimestamps_();
         readAndAccumulatePerformanceCounters_();
