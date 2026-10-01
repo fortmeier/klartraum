@@ -6,6 +6,7 @@
 #define KLARTRAUM_VULKAN_CONTEXT_HPP
 
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -208,6 +209,11 @@ public:
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
                       VkDeviceMemory& bufferMemory);
     void copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size);
+    /**
+     * @brief Records commands into a one-time command buffer, submits it to
+     *        the graphics queue and waits for it to finish.
+     */
+    void submitImmediate(const std::function<void(VkCommandBuffer)>& record);
     BackendConfig& getConfig();
 
     std::vector<VkFence> inFlightFences;
