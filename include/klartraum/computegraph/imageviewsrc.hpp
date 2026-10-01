@@ -3,6 +3,7 @@
 
 #include <map>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <vulkan/vulkan.h>
@@ -10,6 +11,43 @@
 #include "klartraum/computegraph/computegraphelement.hpp"
 
 namespace klartraum {
+
+/**
+ * @brief Records a clear of `image` to `color` and leaves it in
+ *        VK_IMAGE_LAYOUT_GENERAL for whatever reads or writes it next.
+ *
+ * The previous contents are discarded; the clear waits for all earlier work
+ * on the queue (e.g. the previous frame's reads of a swapchain image).
+ */
+inline void recordClearImage(VkCommandBuffer commandBuffer, VkImage image, const VkClearColorValue& color) {
+    VkImageSubresourceRange range{};
+    range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    range.levelCount = 1;
+    range.layerCount = 1;
+
+    VkImageMemoryBarrier toTransfer{};
+    toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.image = image;
+    toTransfer.subresourceRange = range;
+    toTransfer.srcAccessMask = 0;
+    toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                         nullptr, 0, nullptr, 1, &toTransfer);
+
+    vkCmdClearColorImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range);
+
+    VkImageMemoryBarrier toGeneral = toTransfer;
+    toGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toGeneral.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toGeneral.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                         nullptr, 0, nullptr, 1, &toGeneral);
+}
 
 class ImageViewSrcInterface : public virtual ComputeGraphElement {
 public:
@@ -32,6 +70,17 @@ public:
     }
 };
 
+/**
+ * @brief The images a graph renders into or reads, one per path.
+ *
+ * By default the source clears its image to opaque black every time its path
+ * runs, before any element that uses it, and leaves it in
+ * VK_IMAGE_LAYOUT_GENERAL: renderers such as the Gaussian-splatting backends
+ * draw over what the image holds, so a fresh frame starts from black.
+ * setClear(false) keeps the previous contents instead; the image must then
+ * already be in VK_IMAGE_LAYOUT_GENERAL. Clearing needs images created with
+ * VK_IMAGE_USAGE_TRANSFER_DST_BIT.
+ */
 class ImageViewSrc : public virtual ImageViewSrcInterface {
 public:
     ImageViewSrc() {};
@@ -59,9 +108,19 @@ public:
         return "ImageViewSrc";
     }
 
-    virtual void _record(VkCommandBuffer commandBuffer) {
+    /** @brief Whether the image is cleared each time its path runs (default: yes). */
+    void setClear(bool clear) { clear_ = clear; }
+    bool clears() const { return clear_; }
+    /** @brief The color the image is cleared to (default: opaque black). */
+    void setClearColor(const VkClearColorValue& color) { clearColor_ = color; }
+    const VkClearColorValue& clearColor() const { return clearColor_; }
 
-    };
+    virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
+        ComputeGraphElement::_record(commandBuffer, pathId);
+        if (clear_ && pathId < images.size()) {
+            recordClearImage(commandBuffer, images[pathId], clearColor_);
+        }
+    }
 
     virtual VkImageView& getImageView(uint32_t pathId) {
         if (pathId >= imageViews.size()) {
@@ -99,6 +158,70 @@ private:
     std::vector<VkImageView> imageViews;
     std::vector<VkImage> images;
     std::vector<VkExtent2D> imageExtents;
+    bool clear_ = true;
+    VkClearColorValue clearColor_ = {{0.0f, 0.0f, 0.0f, 1.0f}};
+};
+
+/**
+ * @brief Stands for the images of the ImageViewSrc at input 0, e.g. a target
+ *        another element (at an output slot) writes: elements that use it
+ *        then run after that element. It does not clear the images.
+ */
+class ImageViewForward : public ImageViewSrc {
+public:
+    ImageViewForward() { setClear(false); }
+
+    const char* getType() const override { return "ImageViewForward"; }
+
+    void checkInput(ComputeGraphElementPtr input, int index = 0) override {
+        if (index != 0 || !std::dynamic_pointer_cast<ImageViewSrc>(input)) {
+            throw std::runtime_error(std::string(getType()) + ": input 0 must be an ImageViewSrc");
+        }
+    }
+
+    VkImageView& getImageView(uint32_t pathId) override { return source().getImageView(pathId); }
+    VkImage& getImage(uint32_t pathId) override { return source().getImage(pathId); }
+    VkExtent2D& getImageExtent(uint32_t pathId) override { return source().getImageExtent(pathId); }
+    std::optional<VkImageLayout> getFinalLayoutOverride() const override {
+        if (inputs.empty()) {
+            return std::nullopt;
+        }
+        auto input =
+            std::dynamic_pointer_cast<ImageViewSrc>(const_cast<ImageViewForward*>(this)->getInputElement(0));
+        return input ? input->getFinalLayoutOverride() : std::nullopt;
+    }
+
+protected:
+    ImageViewSrc& source() {
+        auto input = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
+        if (!input) {
+            throw std::runtime_error(std::string(getType()) + ": input 0 is not an ImageViewSrc");
+        }
+        return *input;
+    }
+};
+
+/**
+ * @brief Clears the images of the ImageViewSrc at input 0 to a color and
+ *        stands for them: connect renderers to it instead of the source.
+ *
+ * For sources that do not clear themselves (ImageViewSrc::setClear(false)) or
+ * should start from another color than black. The images are left in
+ * VK_IMAGE_LAYOUT_GENERAL.
+ */
+class ClearImage : public ImageViewForward {
+public:
+    explicit ClearImage(const VkClearColorValue& color = {{0.0f, 0.0f, 0.0f, 1.0f}}) : color_(color) {}
+
+    const char* getType() const override { return "ClearImage"; }
+
+    void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
+        ComputeGraphElement::_record(commandBuffer, pathId);
+        recordClearImage(commandBuffer, getImage(pathId), color_);
+    }
+
+private:
+    VkClearColorValue color_;
 };
 
 class ImageSrc : public ComputeGraphElement {

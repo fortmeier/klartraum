@@ -1,3 +1,4 @@
+#include <functional>
 #include <vulkan/vulkan.h>
 
 #include "klartraum/vulkan_context.hpp"
@@ -1202,9 +1203,7 @@ void VulkanContext::createCommandPool() {
     }    
 }
 
-void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size) {
-    if (size == 0) return;
-
+void VulkanContext::submitImmediate(const std::function<void(VkCommandBuffer)>& record) {
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.commandPool = commandPool;
@@ -1213,7 +1212,7 @@ void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, V
 
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
     if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate immediate copy command buffer");
+        throw std::runtime_error("failed to allocate an immediate command buffer");
     }
 
     VkFence fence = VK_NULL_HANDLE;
@@ -1222,20 +1221,17 @@ void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, V
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-            throw std::runtime_error("failed to begin immediate copy command buffer");
+            throw std::runtime_error("failed to begin an immediate command buffer");
         }
-
-        VkBufferCopy region{};
-        region.size = size;
-        vkCmdCopyBuffer(commandBuffer, source, destination, 1, &region);
+        record(commandBuffer);
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-            throw std::runtime_error("failed to end immediate copy command buffer");
+            throw std::runtime_error("failed to end an immediate command buffer");
         }
 
         VkFenceCreateInfo fenceInfo{};
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         if (vkCreateFence(device, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create immediate copy fence");
+            throw std::runtime_error("failed to create an immediate submission fence");
         }
 
         VkSubmitInfo submitInfo{};
@@ -1243,10 +1239,10 @@ void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, V
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
         if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
-            throw std::runtime_error("failed to submit immediate buffer copy");
+            throw std::runtime_error("failed to submit immediate commands");
         }
         if (vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-            throw std::runtime_error("failed to wait for immediate buffer copy");
+            throw std::runtime_error("failed to wait for immediate commands");
         }
     } catch (...) {
         if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, nullptr);
@@ -1256,6 +1252,15 @@ void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, V
 
     vkDestroyFence(device, fence, nullptr);
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+}
+
+void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size) {
+    if (size == 0) return;
+    submitImmediate([&](VkCommandBuffer commandBuffer) {
+        VkBufferCopy region{};
+        region.size = size;
+        vkCmdCopyBuffer(commandBuffer, source, destination, 1, &region);
+    });
 }
 
 
