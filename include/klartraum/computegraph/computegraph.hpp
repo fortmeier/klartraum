@@ -24,8 +24,7 @@ public:
     std::vector<VkSemaphore> waitSemaphores;
     std::vector<VkSemaphore> signalSemaphores;
     VkSubmitInfo submitInfo{};
-    std::vector<VkPipelineStageFlags>
-        waitStages; //{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+    std::vector<VkPipelineStageFlags> waitStages;
 };
 
 class ComputeGraph {
@@ -35,9 +34,7 @@ public:
           numberPaths(numberPaths) {
         auto& device = vulkanContext.getDevice();
 
-        all_path_submit_infos.resize(numberPaths);
-        all_path_submit_info_wrappers.resize(numberPaths);
-        allRenderFinishedSemaphores.resize(numberPaths);
+        pathSubmits.resize(numberPaths);
 
         // create the command pool
         VkCommandPoolCreateInfo poolInfo{};
@@ -56,15 +53,6 @@ public:
         // clear the outputs of all elements
         // otherwise we will have dangling pointers in the graph
         clearOutputs();
-
-        // destroy the semaphores
-        for (auto& semaphores : allRenderFinishedSemaphores) {
-            for (auto& semaphore_list : semaphores) {
-                for (auto& semaphore : semaphore_list.second) {
-                    vkDestroySemaphore(device, semaphore.second, nullptr);
-                }
-            }
-        }
 
         for (auto& semaphores : graphFinishedSemaphores) {
             vkDestroySemaphore(device, semaphores, nullptr);
@@ -88,8 +76,6 @@ public:
 
         updateOutputs();
 
-        createRenderFinishedSemaphores();
-
         createGraphFinishedSemaphores();
 
         for (auto& element : ordered_elements) {
@@ -100,7 +86,7 @@ public:
         std::copy_if(ordered_elements.begin(), ordered_elements.end(), std::back_inserter(updatable_elements),
                      [](const ComputeGraphElementPtr& e) { return e->isUpdatable(); });
 
-        commandBuffers.resize(ordered_elements.size() * numberPaths);
+        commandBuffers.resize(numberPaths);
 
         // create the command buffers
         VkCommandBufferAllocateInfo allocInfo{};
@@ -166,22 +152,8 @@ public:
         }
 
         for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
-            for (size_t i = 0; i < ordered_elements.size(); i++) {
-                auto& element = ordered_elements[i];
-                VkCommandBuffer& commandBuffer = commandBuffers[i * numberPaths + pathId];
-                recordCommandBuffer(commandBuffer, element, pathId, (uint32_t)i);
-                // Each element gets its own submit info, which waits on the semaphores its inputs
-                // signal and signals the ones its outputs wait on (getSubmitInfoForElement).
-                SubmitInfoWrapperList& submitInfoWrappers = all_path_submit_info_wrappers[pathId];
-                // The submit info points into the wrapper's vectors. When the list grows, the
-                // wrappers are moved, which keeps the vectors' storage, so the pointers stay valid.
-                SubmitInfoWrapper submitInfoWrapper;
-                submitInfoWrappers.push_back(submitInfoWrapper);
-                SubmitInfoWrapper& submitInfoWrapper2 = submitInfoWrappers.back();
-                getSubmitInfoForElement(submitInfoWrapper2, pathId, element, &commandBuffer);
-                SubmitInfoList& submit_infos = all_path_submit_infos[pathId];
-                submit_infos.push_back(submitInfoWrapper2.submitInfo);
-            }
+            recordPath(commandBuffers[pathId], pathId);
+            setupPathSubmitInfo(pathId);
         }
     }
 
@@ -192,12 +164,8 @@ public:
      */
     VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId, VkFence fence = VK_NULL_HANDLE) {
         updateElements(pathId);
-        auto& submit_infos = all_path_submit_infos[pathId];
 
-        // All elements of the path go to the queue in one submission; the semaphores in their
-        // submit infos order them.
-
-        if (vkQueueSubmit(graphicsQueue, (uint32_t)submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
+        if (vkQueueSubmit(graphicsQueue, 1, &pathSubmits[pathId].submitInfo, fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");
         }
 
@@ -215,22 +183,19 @@ public:
 
         if (perfProfilingEnabled && perfUsingHwCounters && perfQueryPool != VK_NULL_HANDLE) {
             // Acquire the profiling lock that serialises performance-counter collection,
-            // then chain VkPerformanceQuerySubmitInfoKHR onto every VkSubmitInfo so the
-            // driver knows this is pass 0 of the perf-query.
+            // then chain VkPerformanceQuerySubmitInfoKHR onto the path's VkSubmitInfo so
+            // the driver knows this is pass 0 of the perf-query.
             VkAcquireProfilingLockInfoKHR lockInfo{};
             lockInfo.sType = VK_STRUCTURE_TYPE_ACQUIRE_PROFILING_LOCK_INFO_KHR;
             lockInfo.timeout = UINT64_MAX;
             pfn_AcquireLock_(device, &lockInfo);
 
             updateElements(pathId);
-            auto& origInfos = all_path_submit_infos[pathId];
-            std::vector<VkPerformanceQuerySubmitInfoKHR> perfSubmits(origInfos.size());
-            std::vector<VkSubmitInfo> infos = origInfos;
-            for (size_t i = 0; i < infos.size(); ++i) {
-                perfSubmits[i] = {VK_STRUCTURE_TYPE_PERFORMANCE_QUERY_SUBMIT_INFO_KHR, nullptr, /*counterPassIndex=*/0};
-                infos[i].pNext = &perfSubmits[i];
-            }
-            if (vkQueueSubmit(graphicsQueue, (uint32_t)infos.size(), infos.data(), fence) != VK_SUCCESS)
+            VkPerformanceQuerySubmitInfoKHR perfSubmit{VK_STRUCTURE_TYPE_PERFORMANCE_QUERY_SUBMIT_INFO_KHR, nullptr,
+                                                       /*counterPassIndex=*/0};
+            VkSubmitInfo info = pathSubmits[pathId].submitInfo;
+            info.pNext = &perfSubmit;
+            if (vkQueueSubmit(graphicsQueue, 1, &info, fence) != VK_SUCCESS)
                 throw std::runtime_error("failed to submit perf-query command buffers!");
 
             const VkResult waitResult = vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
@@ -285,16 +250,9 @@ private:
         }
     }
 
-    typedef std::vector<VkSubmitInfo> SubmitInfoList;
-    typedef std::vector<SubmitInfoWrapper> SubmitInfoWrapperList;
-
-    std::vector<SubmitInfoList> all_path_submit_infos;
-    std::vector<SubmitInfoWrapperList> all_path_submit_info_wrappers;
-
-    typedef std::map<ComputeGraphElementPtr, VkSemaphore> SemaphoreMap;
-    typedef std::map<ComputeGraphElementPtr, SemaphoreMap> SemaphoreMapMap;
-
-    std::vector<SemaphoreMapMap> allRenderFinishedSemaphores;
+    // One submission per path: the path's command buffer, the external
+    // semaphores its elements wait for, and the graph-finished signal.
+    std::vector<SubmitInfoWrapper> pathSubmits;
 
     std::vector<VkSemaphore> graphFinishedSemaphores;
 
@@ -550,19 +508,39 @@ public:
     }
 
 private:
-    void recordCommandBuffer(VkCommandBuffer commandBuffer, ComputeGraphElementPtr element, uint32_t pathId,
-                             uint32_t elementIdx = 0) {
+    // Records every element of the path, in topological order, into one
+    // command buffer. A full memory barrier separates consecutive elements, so
+    // each element sees all writes of the elements before it; this is what
+    // orders producers before consumers.
+    void recordPath(VkCommandBuffer commandBuffer, uint32_t pathId) {
         vkResetCommandBuffer(commandBuffer, 0);
 
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = 0;
-        beginInfo.pInheritanceInfo = nullptr;
 
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
             throw std::runtime_error("failed to begin recording command buffer!");
         }
 
+        for (size_t i = 0; i < ordered_elements.size(); i++) {
+            if (i > 0) {
+                VkMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+            }
+            recordElement(commandBuffer, ordered_elements[i], pathId, (uint32_t)i);
+        }
+
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to record command buffer!");
+        }
+    }
+
+    void recordElement(VkCommandBuffer commandBuffer, ComputeGraphElementPtr element, uint32_t pathId,
+                       uint32_t elementIdx) {
         VkQueryPool timestampPool = VK_NULL_HANDLE;
         uint32_t timestampQuery = 0;
         if (profilingEnabled && elementIdx / kProfilingElementsPerPool < profilingQueryPools.size()) {
@@ -588,106 +566,39 @@ private:
         if (timestampPool != VK_NULL_HANDLE) {
             vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, timestampQuery + 1);
         }
-
-        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-            throw std::runtime_error("failed to record command buffer!");
-        }
     }
 
-    void getSubmitInfoForElement(SubmitInfoWrapper& submitInfoWrapper, uint32_t pathId, ComputeGraphElementPtr element,
-                                 VkCommandBuffer* pCommandBuffer) {
+    // The path's submission waits for every external semaphore any of its
+    // elements was given (e.g. swapchain image acquisition) and signals the
+    // graph-finished semaphore once the whole command buffer has executed.
+    void setupPathSubmitInfo(uint32_t pathId) {
+        auto& wrapper = pathSubmits[pathId];
+        wrapper.waitSemaphores.clear();
+        wrapper.waitStages.clear();
+        wrapper.signalSemaphores.clear();
 
-        auto& submitInfo = submitInfoWrapper.submitInfo;
-        auto& waitSemaphores = submitInfoWrapper.waitSemaphores;
-        auto& waitStages = submitInfoWrapper.waitStages;
-        auto& signalSemaphores = submitInfoWrapper.signalSemaphores;
-
-        if (element->renderWaitSemaphores.find(pathId) != element->renderWaitSemaphores.end()) {
-            waitSemaphores.push_back(element->renderWaitSemaphores[pathId]);
-            waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-        }
-
-        // for the element, we want to find the semaphores that connect the
-        // element to its inputs (given that the element has inputs)
-        // for that we have to first get the SemphoreMapMap for the pathId
-        // and then find the SemaphoreMap for the element, which
-        // contains the semaphore for the connection between the element and its input element
-        auto& renderFinishedSemaphores = allRenderFinishedSemaphores[pathId];
-        for (auto& inputElement : getPredecessors(element)) {
-
-            auto input_output_map_iter = renderFinishedSemaphores.find(inputElement);
-            if (input_output_map_iter != renderFinishedSemaphores.end()) {
-                // would be better if it would be a map
-                // now find the element in the output of the input element
-                auto element_iter = renderFinishedSemaphores[inputElement].find(element);
-                if (element_iter != renderFinishedSemaphores[inputElement].end()) {
-                    // Only push back if the semaphore is not already in waitSemaphores
-                    if (std::find(waitSemaphores.begin(), waitSemaphores.end(), element_iter->second) ==
-                        waitSemaphores.end()) {
-                        waitSemaphores.push_back(element_iter->second);
-                        waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-                    }
-                } else {
-                    throw std::runtime_error("failed to find the element in the output of the input element!");
-                }
+        for (auto& element : ordered_elements) {
+            auto it = element->renderWaitSemaphores.find(pathId);
+            if (it == element->renderWaitSemaphores.end())
+                continue;
+            if (std::find(wrapper.waitSemaphores.begin(), wrapper.waitSemaphores.end(), it->second) ==
+                wrapper.waitSemaphores.end()) {
+                wrapper.waitSemaphores.push_back(it->second);
+                wrapper.waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
             }
         }
+        wrapper.signalSemaphores.push_back(graphFinishedSemaphores[pathId]);
 
-        auto input_output_map_iter = renderFinishedSemaphores.find(element);
-        if (input_output_map_iter != renderFinishedSemaphores.end()) {
-            for (auto& outputElement : element->outputs) {
-                auto element_iter = renderFinishedSemaphores[element].find(outputElement);
-                if (element_iter != renderFinishedSemaphores[element].end()) {
-                    // Only push back if the semaphore is not already in signalSemaphores
-                    if (std::find(signalSemaphores.begin(), signalSemaphores.end(), element_iter->second) ==
-                        signalSemaphores.end()) {
-                        signalSemaphores.push_back(element_iter->second);
-                    }
-                } else {
-                    throw std::runtime_error("failed to find the semaphore connecting element to the output element!");
-                }
-            }
-        }
-
-        // if it does not have any inputs, we can just use the graph finish semaphore
-        if (element->outputs.size() == 0) {
-            signalSemaphores.push_back(graphFinishedSemaphores[pathId]);
-        }
-
+        auto& submitInfo = wrapper.submitInfo;
+        submitInfo = VkSubmitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = pCommandBuffer;
-
-        submitInfo.waitSemaphoreCount = (uint32_t)waitSemaphores.size();
-        submitInfo.pWaitSemaphores = waitSemaphores.data();
-        submitInfo.pWaitDstStageMask = waitStages.data();
-
-        submitInfo.signalSemaphoreCount = (uint32_t)signalSemaphores.size();
-        submitInfo.pSignalSemaphores = signalSemaphores.data();
-    }
-
-    void createRenderFinishedSemaphores() {
-        auto& device = vulkanContext.getDevice();
-        auto& config = vulkanContext.getConfig();
-
-        // create the render finished semaphores
-        VkSemaphoreCreateInfo semaphoreInfo{};
-        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-        for (uint32_t i = 0; i < numberPaths; i++) {
-            // get the render finished semaphores for this path
-            auto& renderFinishedSemaphores = allRenderFinishedSemaphores[i];
-            // create mulitple semaphores for each element in the path
-            // (one for each output of the element)
-            for (auto& element : ordered_elements) {
-                for (auto& output_element : element->outputs) {
-                    VkSemaphore* finishSemaphore = &renderFinishedSemaphores[element][output_element];
-                    if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, finishSemaphore) != VK_SUCCESS) {
-                        throw std::runtime_error("failed to create render finished semaphore!");
-                    }
-                }
-            }
-        }
+        submitInfo.pCommandBuffers = &commandBuffers[pathId];
+        submitInfo.waitSemaphoreCount = (uint32_t)wrapper.waitSemaphores.size();
+        submitInfo.pWaitSemaphores = wrapper.waitSemaphores.data();
+        submitInfo.pWaitDstStageMask = wrapper.waitStages.data();
+        submitInfo.signalSemaphoreCount = (uint32_t)wrapper.signalSemaphores.size();
+        submitInfo.pSignalSemaphores = wrapper.signalSemaphores.data();
     }
 
     void createGraphFinishedSemaphores() {
