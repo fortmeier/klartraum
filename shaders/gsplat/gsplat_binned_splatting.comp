@@ -138,12 +138,14 @@ void main() {
         if (accum_opacity <= 1.0 - 0.9999) break;
     }
 
-    // finalColor.rgb already holds the premultiplied "over" radiance Σ cᵢ·aᵢ·Tᵢ
-    // against a black background; accum_opacity is the remaining transmittance T.
-    // Coverage (output alpha) is 1 - T — do not rescale rgb by it again.
-    vec4 outputColor = vec4(clamp(finalColor.rgb, vec3(0.0), vec3(1.0)),
-                            clamp(1.0 - accum_opacity, 0.0, 1.0));
+    // finalColor.rgb holds the premultiplied "over" radiance Σ cᵢ·aᵢ·Tᵢ of the
+    // splats; accum_opacity is the remaining transmittance T. The splats are
+    // composited over what the image holds: rgb + T·background, and the
+    // coverage 1 - T·(1 - background alpha).
     if (insideBin) {
+        vec4 background = imageLoad(outputImage, pixelCoord);
+        vec4 outputColor = vec4(clamp(finalColor.rgb + accum_opacity * background.rgb, vec3(0.0), vec3(1.0)),
+                                clamp(1.0 - accum_opacity * (1.0 - background.a), 0.0, 1.0));
         imageStore(outputImage, pixelCoord, outputColor);
     }
 }
