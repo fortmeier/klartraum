@@ -204,6 +204,41 @@ python analyze_roofline.py --fp32-tflops 4.26 --memory-bandwidth-gbps 120 \
 | VAE decode | 590.263 ms | 235.999 ms | 590.263 ms | 10.76% | 10.58% | 9.45x |
 | Full pipeline | 11,910.217 ms | 6,639.078 ms | 11,910.217 ms | 3.81% | 10.86% | 9.21x |
 
+### Single command buffer per graph path
+
+SD1.5 used to hang on KosmicKrisp in the first UNet submission: the fence of
+the batched `vkQueueSubmit` (one command buffer per graph element, chained by
+about 5,000 binary semaphores) never signaled, while submitting the same
+elements one at a time worked. Each graph path is now recorded into one
+command buffer with a full memory barrier between consecutive elements, and
+only external waits and the graph-finished semaphore remain.
+
+The 64-query, 32-key tiled attention kernel for head width 80 also exceeded
+the 32 KiB threadgroup-memory limit of Apple GPUs (Metal reports 40 KiB:
+20 KiB of key/value tiles plus the per-invocation query and accumulator
+arrays). It now stages 16 keys per tile, which measured no slower on either
+driver.
+
+| Driver | DDIM UNet (30 steps) | VAE decode | Total | Final latent error | Decoded image error |
+|---|---:|---:|---:|---:|---:|
+| MoltenVK (SDK 1.4.357.1) | 101.657 s (3.389 s/step) | 5.450 s | 107.179 s | 2.67658e-04 | 4.79594e-04 |
+| KosmicKrisp (API 1.4.359) | 123.941 s (4.131 s/step) | 6.877 s | 130.902 s | 2.67658e-04 | 4.79594e-04 |
+
+On MoltenVK, the step time is unchanged from cycle 2 (3.38 s), so its earlier
+per-dispatch overhead was not the semaphores: the main thread spends the step
+in `vkWaitForFences`, and the per-dispatch timestamps under-report GPU time.
+Emitting barriers only before elements with predecessors (3,237 of the 5,096
+UNet elements have none) changed neither driver's step time. KosmicKrisp is
+about 22% slower per UNet step on the same kernels. Its timestamp queries
+return zero, so `--profile` reports no per-operation GPU time on it.
+
+Select the driver with the loader, for example:
+
+```bash
+VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json \
+  ./build/examples/sd15_denoiser_example --model-dir data/onnx/sd15_denoiser_512 --size 512
+```
+
 ## Adding another cycle
 
 For each new optimization:
