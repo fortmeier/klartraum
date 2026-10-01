@@ -1,5 +1,11 @@
 # Stable Diffusion 1.5 VAE ONNX experiment
 
+NOTICE:
+The scripts in this directory download Stable Diffusion 1.5 weights,
+these are not part of this repository and the user is responsible for its usage.
+
+
+
 This isolated uv project downloads the Stable Diffusion 1.5 VAE, runs its
 encoder and decoder on `data/lantern.jpg`, and exports the two halves for the
 Klartraum ONNX runtime. It deliberately pins ONNX 1.18.0, matching
