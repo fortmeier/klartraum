@@ -21,6 +21,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from export_onnx import Decoder as VaeDecoder
 from export_onnx import export as export_vae_component
 from export_onnx import run_ort as run_vae_ort
+from disclaimer import print_stable_diffusion_notice
 from run_reference import MODEL_ID, save_image
 
 
@@ -524,6 +525,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    print_stable_diffusion_notice()
     args = parse_args()
     if args.size <= 0 or args.size % 8:
         raise ValueError("--size must be a positive multiple of 8")
