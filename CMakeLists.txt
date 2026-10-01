@@ -310,6 +310,7 @@ add_executable(
   tests/test_onnx_reference.cpp
   tests/test_onnx_sd15_operations.cpp
   tests/test_layers.cpp
+  tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
   tests/test_multi_viewport_window.cpp
