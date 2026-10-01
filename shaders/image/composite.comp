@@ -1,0 +1,61 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Draws one image onto another, keeping the target where it is not drawn on.
+// The source is sampled bilinearly; pixel centres are mapped onto each other
+// and reads are clamped to the edge.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint srcWidth;
+    uint srcHeight;
+    uint dstWidth;
+    uint dstHeight;
+    uint mode;  // 0: replace, 1: over (the source's alpha blends it over the target)
+    uint fit;   // 0: stretch, 1: fit (whole source, aspect kept), 2: fill (covers the target, aspect kept)
+} pc;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D sourceImage;
+layout(set = 0, binding = 1, rgba8) uniform image2D targetImage;
+
+vec4 load(ivec2 p) {
+    return imageLoad(sourceImage, clamp(p, ivec2(0), ivec2(pc.srcWidth - 1, pc.srcHeight - 1)));
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= int(pc.dstWidth) || pixel.y >= int(pc.dstHeight)) {
+        return;
+    }
+
+    // The rectangle of the target the source is drawn into.
+    vec2 src = vec2(pc.srcWidth, pc.srcHeight);
+    vec2 dst = vec2(pc.dstWidth, pc.dstHeight);
+    vec2 size = dst;
+    if (pc.fit != 0u) {
+        float scale = pc.fit == 1u ? min(dst.x / src.x, dst.y / src.y) : max(dst.x / src.x, dst.y / src.y);
+        size = src * scale;
+    }
+    vec2 offset = (dst - size) * 0.5;
+    vec2 uv = (vec2(pixel) + 0.5 - offset) / size;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) {
+        return;  // outside the drawn rectangle: the target stays
+    }
+
+    vec2 p = uv * src - 0.5;
+    ivec2 p0 = ivec2(floor(p));
+    vec2 f = p - vec2(p0);
+    vec4 top = mix(load(p0), load(p0 + ivec2(1, 0)), f.x);
+    vec4 bottom = mix(load(p0 + ivec2(0, 1)), load(p0 + ivec2(1, 1)), f.x);
+    vec4 color = mix(top, bottom, f.y);
+
+    if (pc.mode == 1u) {
+        vec4 below = imageLoad(targetImage, pixel);
+        color = vec4(color.rgb * color.a + below.rgb * (1.0 - color.a), color.a + below.a * (1.0 - color.a));
+    }
+    imageStore(targetImage, pixel, color);
+}
