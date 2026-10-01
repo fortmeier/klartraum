@@ -65,6 +65,44 @@ Recording everything into one command buffer removes this overhead.
 - `submitAndWait(queue, pathId)` submits and blocks until the GPU is done,
   which is convenient for tests and one-off computations.
 
+## Queues and threads
+
+Vulkan queues and command pools must not be used from two threads at once.
+`VulkanContext` keeps a lock per queue: submit and wait with
+`queueSubmit()`, `queueWaitIdle()` and `queuePresent()` instead of the
+`vkQueue*` functions.
+
+Long computations can run next to the frames on a worker thread:
+
+```cpp
+std::thread worker([&] {
+    klartraum::VulkanContext::BackgroundQueueScope scope(vulkanContext);
+    klartraum::ComputeGraph graph(vulkanContext, 1);  // records for the background queue
+    graph.compileFrom(root);
+    graph.submitAndWait(vulkanContext.getThreadQueue(), 0);
+});
+```
+
+- `getBackgroundQueue()` is a queue of its own when the device has a second
+  graphics and compute queue (another queue of the graphics family, or a queue
+  of another family; MoltenVK has four families with one queue each).
+  Otherwise it is the graphics queue, and the frames wait while one of its
+  submissions executes.
+- Inside a `BackgroundQueueScope`, `getThreadQueue()` is the background
+  queue; elsewhere it is the graphics queue. A `ComputeGraph` allocates its
+  command buffers for the queue of the thread that creates it, and
+  `submitImmediate()` (and everything built on it, such as buffer uploads)
+  submits to the calling thread's queue.
+- When the background queue belongs to another queue family, buffers made by
+  `VulkanContext::createBuffer()` and offscreen images are shared by both
+  families (`VK_SHARING_MODE_CONCURRENT`), so a result computed on the
+  background queue can be read by the frames without an ownership transfer.
+  Wait for the computation (e.g. `submitAndWait()`) before the frames read
+  it.
+- `vkDeviceWaitIdle()` waits for both queues and needs every queue unused:
+  call it only when no background work is running, e.g. at shutdown. A
+  swapchain recreation waits only for the graphics and present queues.
+
 ## Future: Multi-queue architecture
 
 **Not yet implemented.** When graph branches are independent (no data dependencies),

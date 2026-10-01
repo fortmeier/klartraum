@@ -14,9 +14,15 @@
  * time for every dispatch
  * - longDependencyChainCompletes: a chain of thousands of dependent dispatches (larger than the SD1.5 UNet graph)
  * finishes and applies every dispatch in order
+ * - threadQueueFollowsBackgroundScope: a thread submits to the graphics queue, and to the background queue inside a
+ * BackgroundQueueScope
+ * - backgroundQueueRunsBesideFrames: a graph built and run on a worker thread's background queue computes the right
+ * result while the main thread renders frames, and the main thread reads its output
  **/
 
+#include <atomic>
 #include <map>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -309,4 +315,116 @@ TEST(ComputeGraph, longDependencyChainCompletes) {
         for (float value : output)
             EXPECT_FLOAT_EQ(value, -3.0f) << "run " << run;
     }
+}
+
+// ----------------------------------------------------------------
+// Test: threadQueueFollowsBackgroundScope
+// ----------------------------------------------------------------
+TEST(ComputeGraph, threadQueueFollowsBackgroundScope) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    EXPECT_EQ(vc.getThreadQueue(), vc.getGraphicsQueue());
+    {
+        VulkanContext::BackgroundQueueScope scope(vc);
+        EXPECT_EQ(vc.getThreadQueue(), vc.getBackgroundQueue());
+        EXPECT_EQ(vc.getThreadQueueFamily(), vc.getBackgroundQueueFamily());
+        std::thread other([&] { EXPECT_EQ(vc.getThreadQueue(), vc.getGraphicsQueue()); });
+        other.join();
+    }
+    EXPECT_EQ(vc.getThreadQueue(), vc.getGraphicsQueue());
+}
+
+// ----------------------------------------------------------------
+// Test: backgroundQueueRunsBesideFrames
+// A worker thread builds a chain of negations and runs it on the background
+// queue, then copies the output with submitImmediate (also on the background
+// queue). Meanwhile the main thread renders frames on the graphics queue.
+// Afterwards the main thread copies the worker's output on the graphics
+// queue, which needs the buffers shared between the queue families.
+// ----------------------------------------------------------------
+TEST(ComputeGraph, backgroundQueueRunsBesideFrames) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 64;
+    constexpr int kDispatches = 501;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+    constexpr VkBufferUsageFlags kCopyable =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    auto [rp, numImages] = makeRenderGraph(vc, true);
+    auto frames = ComputeGraph(vc, numImages);
+    frames.compileFrom(rp);
+
+    std::shared_ptr<BufferElement<FloatBuffer>> copied;
+    std::vector<std::vector<float>> workerOutputs;
+    std::string workerError;
+    std::atomic<bool> workerDone{false};
+    std::thread worker([&] {
+        try {
+            VulkanContext::BackgroundQueueScope scope(vc);
+            auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+            auto first = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+            std::shared_ptr<GeneralComputation<>> last;
+            for (int i = 0; i < kDispatches; ++i) {
+                auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+                if (last) {
+                    op->setInput(last, 0, 2);
+                } else {
+                    op->setInput(first, 0);
+                }
+                op->setInput(factors, 1);
+                op->setInput(i + 1 == kDispatches ? std::make_shared<BufferElement<FloatBuffer>>(vc, kLength, kCopyable)
+                                                  : std::make_shared<BufferElement<FloatBuffer>>(vc, kLength),
+                             2);
+                op->setGroupCountX(kLength);
+                last = op;
+            }
+            auto graph = ComputeGraph(vc, 1);
+            graph.compileFrom(last);
+            first->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 3.0f));
+            factors->getBuffer(0).memcopyFrom(std::vector<float>(kLength, -1.0f));
+
+            auto& output = last->getOutputElement<BufferElement<FloatBuffer>>(2)->getBuffer(0);
+            for (int run = 0; run < 3; ++run) {
+                graph.submitAndWait(vc.getThreadQueue(), 0);
+                workerOutputs.emplace_back(kLength, 0.0f);
+                output.memcopyTo(workerOutputs.back());
+            }
+            copied = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength, kCopyable);
+            copied->_setup(vc, 1);
+            vc.copyBufferImmediate(output.getBuffer(), copied->getBuffer(0).getBuffer(), kLength * sizeof(float));
+        } catch (const std::exception& e) {
+            workerError = e.what();
+        }
+        workerDone = true;
+    });
+
+    int framesRendered = 0;
+    while (!workerDone || framesRendered < 3) {
+        auto [imageIndex, fence] = vc.beginRender();
+        VkSemaphore finished = frames.submitTo(vc.getGraphicsQueue(), imageIndex, fence);
+        vc.endRender(imageIndex, finished);
+        ++framesRendered;
+    }
+    worker.join();
+    vc.queueWaitIdle(vc.getGraphicsQueue());
+    ASSERT_EQ(workerError, "");
+
+    ASSERT_EQ(workerOutputs.size(), 3u);
+    for (const auto& output : workerOutputs) {
+        for (float value : output)
+            EXPECT_FLOAT_EQ(value, -3.0f);
+    }
+
+    auto readBack = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    readBack->_setup(vc, 1);
+    vc.copyBufferImmediate(copied->getBuffer(0).getBuffer(), readBack->getBuffer(0).getBuffer(),
+                           kLength * sizeof(float));
+    std::vector<float> values(kLength, 0.0f);
+    readBack->getBuffer(0).memcopyTo(values);
+    for (float value : values)
+        EXPECT_FLOAT_EQ(value, -3.0f);
 }
