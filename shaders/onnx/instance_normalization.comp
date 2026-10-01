@@ -1,0 +1,50 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint batch;
+    uint channels;
+    uint spatialSize;
+    float epsilon;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer ScaleBuffer { float scale[]; };
+layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer { float bias[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+shared float partial[64];
+
+void main() {
+    const uint lane = gl_LocalInvocationID.x;
+    const uint nc = gl_WorkGroupID.x;
+    if (nc >= pc.batch * pc.channels) return;
+    const uint offset = nc * pc.spatialSize;
+
+    float sum = 0.0;
+    for (uint i = lane; i < pc.spatialSize; i += 64) sum += inputData[offset + i];
+    partial[lane] = sum;
+    barrier();
+    for (uint stride = 32; stride > 0; stride /= 2) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        barrier();
+    }
+    const float mean = partial[0] / float(pc.spatialSize);
+
+    float sumSquared = 0.0;
+    for (uint i = lane; i < pc.spatialSize; i += 64) {
+        const float centered = inputData[offset + i] - mean;
+        sumSquared += centered * centered;
+    }
+    partial[lane] = sumSquared;
+    barrier();
+    for (uint stride = 32; stride > 0; stride /= 2) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        barrier();
+    }
+    const float variance = partial[0] / float(pc.spatialSize);
+    float inverseStd = inversesqrt(variance + pc.epsilon);
+    uint channel = nc % pc.channels;
+    for (uint i = lane; i < pc.spatialSize; i += 64) {
+        outputData[offset + i] = (inputData[offset + i] - mean) * inverseStd * scale[channel] + bias[channel];
+    }
+}

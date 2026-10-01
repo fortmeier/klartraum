@@ -1,11 +1,15 @@
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <limits>
 
 #include "klartraum/computegraph/copybuffer.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/noop.hpp"
+#include "klartraum/computegraph/tensor_memory_planner.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/onnx/onnx_push_constants.hpp"
@@ -45,11 +49,148 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
         return false;
     }
 
+    // Attention exported by PyTorch is commonly represented as
+    // MatMul(query, key) -> Softmax -> MatMul(probabilities, value). Keeping
+    // those nodes separate materializes an O(sequence^2) score tensor. At the
+    // 4096-token spatial resolution used by SD1.5 at 512x512, one such tensor
+    // occupies 1 GiB and its naive dispatch can trip the Windows GPU watchdog.
+    // Collapse the lossless three-node pattern before tensors are allocated.
+    VkPhysicalDeviceSubgroupProperties subgroupProperties{};
+    subgroupProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+    VkPhysicalDeviceProperties2 deviceProperties{};
+    deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    deviceProperties.pNext = &subgroupProperties;
+    vkGetPhysicalDeviceProperties2(vulkanContext->getPhysicalDevice(), &deviceProperties);
+    const bool canFuseAttention = subgroupProperties.subgroupSize == 32 &&
+        (subgroupProperties.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT) != 0 &&
+        (subgroupProperties.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) != 0;
+    bool softmaxDefaultIsLastAxis = false;
+    for (const auto& opset : model->opset_import()) {
+        if (opset.domain().empty() || opset.domain() == "ai.onnx") {
+            softmaxDefaultIsLastAxis = opset.version() >= 13;
+        }
+    }
+
+    auto* graph = model->mutable_graph();
+    std::map<std::string, size_t> consumerCounts;
+    for (const auto& node : graph->node()) {
+        for (const auto& name : node.input()) {
+            if (!name.empty()) ++consumerCounts[name];
+        }
+    }
+    std::vector<onnx::NodeProto> optimizedNodes;
+    optimizedNodes.reserve(graph->node_size());
+    size_t fusedAttentionCount = 0;
+    for (int index = 0; index < graph->node_size();) {
+        if (index + 2 < graph->node_size()) {
+            const auto& score = graph->node(index);
+            const auto& softmax = graph->node(index + 1);
+            const auto& context = graph->node(index + 2);
+            bool softmaxUsesLastAxis = softmaxDefaultIsLastAxis;
+            for (const auto& attribute : softmax.attribute()) {
+                if (attribute.name() == "axis") {
+                    softmaxUsesLastAxis = attribute.i() == -1;
+                }
+            }
+            if (canFuseAttention && softmaxUsesLastAxis &&
+                score.op_type() == "MatMul" && softmax.op_type() == "Softmax" &&
+                context.op_type() == "MatMul" && score.input_size() == 2 &&
+                score.output_size() == 1 && softmax.input_size() == 1 &&
+                softmax.output_size() == 1 && context.input_size() == 2 &&
+                context.output_size() == 1 &&
+                softmax.input(0) == score.output(0) &&
+                context.input(0) == softmax.output(0) &&
+                consumerCounts[score.output(0)] == 1 &&
+                consumerCounts[softmax.output(0)] == 1) {
+                onnx::NodeProto fused = context;
+                fused.set_op_type("FusedAttention");
+                fused.set_name(context.name() + "/KlartraumFusedAttention");
+                fused.clear_input();
+                fused.add_input(score.input(0));
+                fused.add_input(score.input(1));
+                fused.add_input(context.input(1));
+                optimizedNodes.push_back(std::move(fused));
+                index += 3;
+                ++fusedAttentionCount;
+                continue;
+            }
+        }
+        optimizedNodes.push_back(graph->node(index));
+        ++index;
+    }
+    if (fusedAttentionCount > 0) {
+        graph->clear_node();
+        for (auto& node : optimizedNodes) *graph->add_node() = std::move(node);
+        std::cout << "OnnxNetwork: fused " << fusedAttentionCount
+                  << " attention score/softmax/value sequences" << std::endl;
+    } else if (!canFuseAttention) {
+        std::cout << "OnnxNetwork: attention fusion disabled because the device does not expose "
+                     "32-wide compute subgroups with arithmetic operations" << std::endl;
+    }
+
     input.close();
 
     std::cout << "OnnxNetwork: Model loaded successfully" << std::endl;
 
     return true;
+}
+
+std::vector<char> OnnxNetwork::readTensorData(const onnx::TensorProto& tensor) const {
+    if (!tensor.raw_data().empty()) {
+        return {tensor.raw_data().begin(), tensor.raw_data().end()};
+    }
+    if (tensor.data_location() != onnx::TensorProto::EXTERNAL) return {};
+
+    std::string location;
+    uint64_t offset = 0;
+    uint64_t length = 0;
+    bool hasLength = false;
+    const auto parseUnsigned = [&](const std::string& value, const char* field) {
+        size_t parsed = 0;
+        uint64_t result = 0;
+        try {
+            result = std::stoull(value, &parsed);
+        } catch (const std::exception&) {
+            throw std::runtime_error("Invalid external tensor " + std::string(field) + " for " + tensor.name());
+        }
+        if (parsed != value.size()) {
+            throw std::runtime_error("Invalid external tensor " + std::string(field) + " for " + tensor.name());
+        }
+        return result;
+    };
+    for (const auto& entry : tensor.external_data()) {
+        if (entry.key() == "location") location = entry.value();
+        else if (entry.key() == "offset") offset = parseUnsigned(entry.value(), "offset");
+        else if (entry.key() == "length") {
+            length = parseUnsigned(entry.value(), "length");
+            hasLength = true;
+        }
+    }
+    if (location.empty()) throw std::runtime_error("External tensor " + tensor.name() + " has no location");
+
+    const std::filesystem::path relativePath(location);
+    if (relativePath.is_absolute()) {
+        throw std::runtime_error("External tensor paths must be relative: " + location);
+    }
+    const auto modelDirectory = std::filesystem::weakly_canonical(std::filesystem::path(modelPath).parent_path());
+    const auto dataPath = std::filesystem::weakly_canonical(modelDirectory / relativePath);
+    const auto relativeToModel = dataPath.lexically_relative(modelDirectory);
+    if (relativeToModel.empty() || *relativeToModel.begin() == "..") {
+        throw std::runtime_error("External tensor path escapes the model directory: " + location);
+    }
+
+    std::ifstream input(dataPath, std::ios::binary | std::ios::ate);
+    if (!input) throw std::runtime_error("Could not open external tensor data: " + dataPath.string());
+    const uint64_t fileSize = static_cast<uint64_t>(input.tellg());
+    if (!hasLength) length = fileSize >= offset ? fileSize - offset : 0;
+    if (offset > fileSize || length > fileSize - offset || length > std::numeric_limits<size_t>::max()) {
+        throw std::runtime_error("External tensor range is outside its data file: " + tensor.name());
+    }
+    input.seekg(static_cast<std::streamoff>(offset));
+    std::vector<char> data(static_cast<size_t>(length));
+    input.read(data.data(), static_cast<std::streamsize>(data.size()));
+    if (!input) throw std::runtime_error("Could not read external tensor data: " + tensor.name());
+    return data;
 }
 
 void OnnxNetwork::printModelInfo() const {
@@ -173,14 +314,21 @@ void OnnxNetwork::printModelInfo() const {
 std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
     // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
     VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    constexpr VkBufferUsageFlags dimensionsUsage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    constexpr VkMemoryPropertyFlags memoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
-        return vulkanContext->create<TensorElement<float>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<float>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
-        return vulkanContext->create<TensorElement<double>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<double>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT32) {
-        return vulkanContext->create<TensorElement<int32_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<int32_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT64) {
-        return vulkanContext->create<TensorElement<int64_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElement<int64_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     }
 
     throw std::runtime_error("Unsupported data type: " + std::to_string(tensorInfo.dataType));
@@ -189,14 +337,21 @@ std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContex
 std::shared_ptr<TensorElementInterface> createConstantTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
     // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
     VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    constexpr VkBufferUsageFlags dimensionsUsage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    constexpr VkMemoryPropertyFlags memoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
-        return vulkanContext->create<TensorElementSinglePath<float>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<float>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
-        return vulkanContext->create<TensorElementSinglePath<double>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<double>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT32) {
-        return vulkanContext->create<TensorElementSinglePath<int32_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<int32_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     } else if (tensorInfo.dataType == onnx::TensorProto::INT64) {
-        return vulkanContext->create<TensorElementSinglePath<int64_t>>(tensorInfo.shape, usage);
+        return vulkanContext->create<TensorElementSinglePath<int64_t>>(
+            tensorInfo.shape, usage, dimensionsUsage, memoryProperties);
     }
 
     throw std::runtime_error("Unsupported data type: " + std::to_string(tensorInfo.dataType));
@@ -215,42 +370,10 @@ std::vector<uint32_t> getTensorShape(const onnx::TypeProto::Tensor& tensorType) 
 }
 
 std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(VulkanContext* vulkanContext, const onnx::NodeProto& node, TensorInfoMap& name2TensorInfo) {
-    auto output = node.output();
-    auto x = output.size();
-    // Create a compute operation for each node
     std::string operationType = node.op_type();
     std::map<std::string, ComputeGraphElementPtr> outputs;
 
-    if (operationType == "Conv") {
-        std::string output0Name = node.output(0);
-
-        auto tensorInfo = name2TensorInfo.at(output0Name);
-        auto dataType = tensorInfo.dataType;
-
-        std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
-        output->setName(output0Name);
-        outputs[output0Name] = output;
-        name2TensorInfo[output0Name] = tensorInfo;
-    } else if (operationType == "ConvTranspose") {
-        std::string output0Name = node.output(0);
-        auto tensorInfo = name2TensorInfo.at(output0Name);
-        auto dataType = tensorInfo.dataType;
-
-        std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
-        output->setName(output0Name);
-        outputs[output0Name] = output;
-        name2TensorInfo[node.output(0)] = tensorInfo;
-    } else if (operationType == "Relu" || operationType == "Reshape" || operationType == "Transpose") {
-        std::string output0Name = node.output(0);
-
-        auto tensorInfo = name2TensorInfo.at(output0Name);
-        auto dataType = tensorInfo.dataType;
-
-        std::shared_ptr<TensorElementInterface> output = createTensor(vulkanContext, tensorInfo);
-        output->setName(output0Name);
-        outputs[output0Name] = output;
-        name2TensorInfo[output0Name] = tensorInfo; // Store the output type for this operation
-    } else if (operationType == "Constant") {
+    if (operationType == "Constant") {
         TensorInfo tensorInfo;
         tensorInfo.shape = {1, 1, 1, 1}; // Default shape
 
@@ -267,7 +390,12 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
         outputs[node.output(0)] = output;
         name2TensorInfo[node.output(0)] = tensorInfo; // Store the output type for this operation
     } else {
-        throw std::runtime_error("Unsupported operation type: " + operationType);
+        for (const auto& outputName : node.output()) {
+            const auto tensorInfo = name2TensorInfo.at(outputName);
+            auto output = createTensor(vulkanContext, tensorInfo);
+            output->setName(outputName);
+            outputs[outputName] = output;
+        }
     }
 
     return outputs;
@@ -277,7 +405,6 @@ void OnnxNetwork::createInitializerTensor(const onnx::TensorProto* initializer,
     TensorInfoMap& name2TensorInfo,
     VulkanContext* vulkanContext)
 {
-    std::cout << "Creating initializer tensor: " << initializer->name() << std::endl;
     std::vector<uint32_t> initShape;
     for (int j = 0; j < initializer->dims_size(); j++) {
         initShape.push_back(initializer->dims(j));
@@ -298,41 +425,23 @@ void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input,
     TensorInfoMap& name2TensorInfo,
     VulkanContext* vulkanContext)
 {
-    std::cout << "Creating input tensor: " << input->name() << std::endl;
-    
     if (input->has_type() && input->type().has_tensor_type()) {
         std::vector<uint32_t> inputShape;
         const onnx::TypeProto::Tensor& tensor_type = input->type().tensor_type();
-        if (tensor_type.has_elem_type()) {
-            std::cout << " (type: " << tensor_type.elem_type() << ")";
-        }
         if (tensor_type.has_shape()) {
-            std::cout << " shape: [";
             for (int j = 0; j < tensor_type.shape().dim_size(); ++j) {
                 const auto& dim = tensor_type.shape().dim(j);
                 if (dim.has_dim_value()) {
-                    std::cout << dim.dim_value();
                     inputShape.push_back(dim.dim_value());
                 } else if (dim.has_dim_param()) {
                     // set dim = 1 for dynamic dimensions
                     // TODO this is a placeholder, should handle dynamic dimensions properly
                     inputShape.push_back(1);
-                    std::cout << dim.dim_param();
-                } else {
-                    std::cout << "?";
                 }
-                std::cout << " ";
             }
-            std::cout << "]";
-        }
-        std::cout << std::endl;
-        size_t tensorSize = 1; // Calculate based on input shape
-        for (const auto& dim : inputShape) {
-            tensorSize *= dim;
         }
         if (true) { // inputShape.size() == 4) {
             onnx::TensorProto::DataType dataType = getTensorDataType(tensor_type);
-            std::cout << "Data type: " << dataType << " ";
             TensorInfo tensorInfo{dataType, inputShape};
             name2TensorInfo[input->name()] = tensorInfo;
 
@@ -340,7 +449,6 @@ void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input,
             tensor->setName(input->name());
             graphDataElements[input->name()] = tensor;
 
-            std::cout << " - size: " << tensorSize << " elements" << std::endl;
         } else {
             std::cout << "Unsupported input shape size: " << inputShape.size() << std::endl;
             throw std::runtime_error("Unsupported input shape size for tensor: " + input->name());
@@ -383,6 +491,14 @@ void OnnxNetwork::createComputeGraph() {
     // 3. Set up compute pipeline stages
     // 4. Handle data dependencies between operations
 
+    std::set<std::string> referencedTensorNames;
+    for (const auto& input : graph.input()) referencedTensorNames.insert(input.name());
+    for (const auto& output : graph.output()) referencedTensorNames.insert(output.name());
+    for (const auto& node : graph.node()) {
+        for (const auto& input : node.input()) if (!input.empty()) referencedTensorNames.insert(input);
+        for (const auto& output : node.output()) if (!output.empty()) referencedTensorNames.insert(output);
+    }
+
     std::vector<const onnx::ValueInfoProto*> infos;
     for (int i = 0; i < graph.input_size(); ++i) {
         infos.push_back(&graph.input(i));
@@ -393,34 +509,17 @@ void OnnxNetwork::createComputeGraph() {
         infos.push_back(&graph.output(i));
     }
 
-    // WTF are actually the value infos, is that need?
     for (int i = 0; i < graph.value_info_size(); ++i) {
-        infos.push_back(&graph.value_info(i));
+        if (referencedTensorNames.count(graph.value_info(i).name())) {
+            infos.push_back(&graph.value_info(i));
+        }
     }
 
     std::vector<const onnx::TensorProto*> initializers;
     for (int i = 0; i < graph.initializer_size(); ++i) {
         const onnx::TensorProto& initializer = graph.initializer(i);
-        auto name = initializer.name();
-        std::cout << "Initializer tensor: " << name << std::endl;
         initializers.push_back(&initializer);
     }
-
-    // Print all info tensor names
-    std::cout << "All tensor names in the graph:" << std::endl;
-    for (const auto* info : infos) {
-        std::cout << "  - " << info->name() << std::endl;
-    }
-    std::cout << std::endl;
-
-    // Print all initializer tensor names
-    std::cout << "All initializer tensor names in the graph:" << std::endl;
-    for (const auto* initializer : initializers) {
-        std::cout << "  - " << initializer->name() << std::endl;
-    }
-
-    // Start with creating info and initializer tensors
-    std::cout << "Creating input tensors:" << std::endl;
 
     // create info buffer tensors
     for (const auto& input : infos) {
@@ -442,6 +541,10 @@ void OnnxNetwork::createComputeGraph() {
     // create klartraum graph elements
     createGraphElementsFromOutputTensors();
 
+    // Derive transient tensor lifetimes from the ONNX producer/consumer graph
+    // and assign non-overlapping tensors to shared physical storage.
+    planTransientTensorStorage();
+
     // finally, connect all operation inputs and outputs
     // in the klartraum compute graph, both inputs and outputs pass
     // through the compute element in the same fashion
@@ -458,7 +561,6 @@ void OnnxNetwork::createGraphElementsFromNodes()
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
         auto name = node.name();
-        std::cout << "Creating operation for node: " << name << std::endl;
         auto operation = createTensorOperation(vulkanContext, node, name2ValueInfoProto, graph);
         std::string operationName = node.op_type() + "_" + std::to_string(i) + "_" + name;
         operation->setName(operationName);
@@ -473,15 +575,19 @@ void OnnxNetwork::createGraphElementsFromOutputTensors()
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
         std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
-        std::cout << " - Created operation outputs for node: " << node.name() << std::endl;
-        // TODO WARNING BUG? ARE MAPS ALWAYS INSERTION ORDERD???
-        // slots start just one after the slots of the inputs
-        int slot = node.input_size();
         for (const auto& [name, output] : outputs) {
-            std::cout << "   - Output " << name << ": " << output << std::endl;
             graphDataElements[name] = output;
+            int slot = 0;
+            for (const auto& inputName : node.input()) {
+                if (!inputName.empty()) ++slot;
+            }
+            for (int outputIndex = 0; outputIndex < node.output_size(); ++outputIndex) {
+                if (node.output(outputIndex) == name) {
+                    slot += outputIndex;
+                    break;
+                }
+            }
             outputName2GraphElementAndSlot[name] = std::make_pair(graphOperationElements[i], slot);
-            slot++;
         }
     }
 }
@@ -503,25 +609,21 @@ void OnnxNetwork::connectGraphElements()
 
         ComputeGraphElementPtr operation = graphOperationElements[i];
 
-        std::string op_type = node.op_type();
-        std::cout << "connecting operation (" << i << "): \"" << name << "\" [" << op_type << "]" << std::endl;
-
         // Get inputs for this operation
         std::vector<std::string> inputNames;
         int startIndex = 0;
         for (int j = 0; j < node.input_size(); j++) {
             auto index = node.input(j);
+            if (index.empty()) continue;
             if (outputName2GraphElementAndSlot.find(index) == outputName2GraphElementAndSlot.end()) {
                 // inde
                 // we have a direct input, so no compute node but a tensor/buffer
-                operation->setInput(graphDataElements.at(index), j);
-                std::cout << " - Input from Data: \"" << index << "\" -> \"" << graphDataElements.at(index)->getName() << "\"" << std::endl;
+                operation->setInput(graphDataElements.at(index), startIndex);
             } else {
                 auto [input, slot] = outputName2GraphElementAndSlot.at(index);
-                operation->setInput(input, j, slot);
-                std::cout << " - Input from Node " << j << ": \"" << index << "\" -> \"" << input->getName() << "\"" << std::endl;
+                operation->setInput(input, startIndex, slot);
             }
-            startIndex = j + 1;
+            ++startIndex;
         }
 
         for (int j = 0; j < node.output_size(); j++) {
@@ -530,7 +632,6 @@ void OnnxNetwork::connectGraphElements()
             if (output == nullptr) {
                 throw std::runtime_error("Output tensor is null for operation output " + std::to_string(j));
             }
-            std::cout << " - Output " << j << ": \"" << index << "\" -> \"" << output->getName() << "\"" << std::endl;
             operation->setInput(output, j + startIndex);
         }
     }
@@ -553,7 +654,6 @@ void OnnxNetwork::storeComputeGraphGroupOutputElements()
         outputNames.push_back(name);
     }
 
-    std::cout << "Output elements: " << std::endl;
     for (uint32_t outputIndex = 0; outputIndex < outputNames.size(); ++outputIndex) {
         const auto& outputName = outputNames[outputIndex];
 
@@ -569,9 +669,225 @@ void OnnxNetwork::storeComputeGraphGroupOutputElements()
                                           ? tensor
                                           : producer->second.first;
 
-        std::cout << " - connected output " << outputName
-                  << " at slot " << outputIndex << std::endl;
     }
+}
+
+void OnnxNetwork::planTransientTensorStorage()
+{
+    const onnx::GraphProto& graph = model->graph();
+    const size_t graphEnd = static_cast<size_t>(graph.node_size());
+
+    struct Lifetime {
+        std::string name;
+        size_t producer;
+        size_t lastUse;
+        std::shared_ptr<TensorElementInterface> tensor;
+    };
+
+    std::map<std::string, Lifetime> lifetimes;
+    for (int nodeIndex = 0; nodeIndex < graph.node_size(); ++nodeIndex) {
+        const auto& node = graph.node(nodeIndex);
+        for (const auto& outputName : node.output()) {
+            const auto element = graphDataElements.find(outputName);
+            if (element == graphDataElements.end()) continue;
+            auto tensor = std::dynamic_pointer_cast<TensorElementInterface>(element->second);
+            if (!tensor || tensor->isSinglePathStorage()) continue;
+            lifetimes.emplace(outputName, Lifetime{
+                outputName,
+                static_cast<size_t>(nodeIndex),
+                static_cast<size_t>(nodeIndex),
+                tensor,
+            });
+        }
+    }
+
+    for (int nodeIndex = 0; nodeIndex < graph.node_size(); ++nodeIndex) {
+        const auto& node = graph.node(nodeIndex);
+        for (const auto& inputName : node.input()) {
+            const auto lifetime = lifetimes.find(inputName);
+            if (lifetime != lifetimes.end()) {
+                lifetime->second.lastUse = std::max(
+                    lifetime->second.lastUse, static_cast<size_t>(nodeIndex));
+            }
+        }
+    }
+    for (const auto& output : graph.output()) {
+        const auto lifetime = lifetimes.find(output.name());
+        if (lifetime != lifetimes.end()) lifetime->second.lastUse = graphEnd;
+    }
+
+    // Metadata-only operations and shape-preserving Slice nodes share their input storage.
+    std::map<std::string, std::string> parent;
+    for (const auto& [name, lifetime] : lifetimes) parent[name] = name;
+    std::function<std::string(const std::string&)> findRoot = [&](const std::string& name) {
+        auto& value = parent.at(name);
+        if (value != name) value = findRoot(value);
+        return value;
+    };
+
+    for (int nodeIndex = 0; nodeIndex < graph.node_size(); ++nodeIndex) {
+        const auto& node = graph.node(nodeIndex);
+        if ((node.op_type() != "Reshape" && node.op_type() != "Unsqueeze" && node.op_type() != "Cast" &&
+             node.op_type() != "Slice") ||
+            node.input_size() < 1 || node.output_size() < 1) continue;
+        const auto input = lifetimes.find(node.input(0));
+        const auto output = lifetimes.find(node.output(0));
+        if (input == lifetimes.end() || output == lifetimes.end()) continue;
+        if (input->second.tensor->getBufferMemSize() != output->second.tensor->getBufferMemSize() ||
+            input->second.tensor->getElementType() != output->second.tensor->getElementType()) continue;
+
+        parent[findRoot(output->first)] = findRoot(input->first);
+        auto operation = vulkanContext->create<NoOp>();
+        operation->setName(graphOperationElements.at(nodeIndex)->getName());
+        graphOperationElements[nodeIndex] = operation;
+        for (const auto& outputName : node.output()) {
+            auto mapping = outputName2GraphElementAndSlot.find(outputName);
+            if (mapping != outputName2GraphElementAndSlot.end()) mapping->second.first = operation;
+        }
+        ++memoryPlanStats.viewAliasCount;
+    }
+
+    struct GroupLifetime {
+        std::string name;
+        size_t producer = graphEnd;
+        size_t lastUse = 0;
+        size_t bytes = 0;
+        std::type_index elementType = typeid(void);
+        std::vector<std::string> members;
+    };
+    std::map<std::string, GroupLifetime> groups;
+    size_t totalLogicalBytes = 0;
+    for (const auto& [name, lifetime] : lifetimes) {
+        const std::string root = findRoot(name);
+        auto [position, inserted] = groups.emplace(root, GroupLifetime{});
+        auto& group = position->second;
+        if (inserted) {
+            group.name = root;
+            group.elementType = lifetime.tensor->getElementType();
+        }
+        group.producer = std::min(group.producer, lifetime.producer);
+        group.lastUse = std::max(group.lastUse, lifetime.lastUse);
+        group.bytes = std::max(group.bytes, lifetime.tensor->getBufferMemSize());
+        group.members.push_back(name);
+        totalLogicalBytes += lifetime.tensor->getBufferMemSize();
+    }
+    for (const auto& [name, group] : groups) {
+        if (group.members.size() > 1) {
+            for (const auto& member : group.members) tensorViewGroups[member] = group.members;
+        }
+    }
+
+    std::vector<TensorLifetimeRequest> requests;
+    requests.reserve(groups.size());
+    for (const auto& [name, group] : groups) {
+        requests.push_back({name, group.bytes, group.producer, group.lastUse, group.elementType});
+    }
+
+    const TensorMemoryPlan plan = TensorMemoryPlanner::plan(std::move(requests));
+    memoryPlanStats.logicalBytes = totalLogicalBytes;
+    memoryPlanStats.allocatedBytes = plan.allocatedBytes;
+    memoryPlanStats.peakLiveBytes = plan.peakLiveBytes;
+    memoryPlanStats.slotCount = plan.slotCapacities.size();
+    memoryPlanStats.tensorCount = lifetimes.size();
+
+    std::map<std::string, size_t> groupToSlot;
+    std::map<size_t, std::string> slotOwner;
+    for (const auto& assignment : plan.assignments) {
+        groupToSlot[assignment.name] = assignment.slot;
+        for (const auto& member : groups.at(assignment.name).members) {
+            const auto owner = slotOwner.find(assignment.slot);
+            if (owner == slotOwner.end() ||
+                lifetimes.at(member).tensor->getBufferMemSize() >
+                    lifetimes.at(owner->second).tensor->getBufferMemSize()) {
+                slotOwner[assignment.slot] = member;
+            }
+        }
+    }
+
+    for (const auto& assignment : plan.assignments) {
+        const std::string& ownerName = slotOwner.at(assignment.slot);
+        for (const auto& member : groups.at(assignment.name).members) {
+            if (member != ownerName) {
+                lifetimes.at(member).tensor->shareDataStorageWith(
+                    *lifetimes.at(ownerName).tensor);
+            }
+        }
+    }
+
+    // Reusing a slot adds a write-after-read dependency between otherwise
+    // independent ONNX branches. The dependency affects scheduling only and
+    // is deliberately not exposed as a shader descriptor input.
+    std::map<size_t, std::vector<const GroupLifetime*>> slotLifetimes;
+    for (const auto& [name, group] : groups) {
+        slotLifetimes[groupToSlot.at(name)].push_back(&group);
+    }
+    for (auto& [slot, values] : slotLifetimes) {
+        std::sort(values.begin(), values.end(), [](const auto* lhs, const auto* rhs) {
+            return lhs->producer < rhs->producer;
+        });
+        for (size_t index = 1; index < values.size(); ++index) {
+            const GroupLifetime& previous = *values[index - 1];
+            const GroupLifetime& current = *values[index];
+            if (previous.lastUse < current.producer && previous.lastUse < graphEnd) {
+                graphOperationElements.at(static_cast<uint32_t>(current.producer))->addDependency(
+                    graphOperationElements.at(static_cast<uint32_t>(previous.lastUse)));
+            }
+        }
+    }
+
+    // Tensor lifetimes above are expressed in ONNX node order. Independent
+    // branches may otherwise be emitted in a different topological order by
+    // ComputeGraph, invalidating those lifetime intervals and overwriting a
+    // reused slot too early. Keep execution consistent with the order used by
+    // the memory plan. The Vulkan queue is serial already, so this adds the
+    // required dependency edges without reducing available device parallelism.
+    for (int nodeIndex = 1; nodeIndex < graph.node_size(); ++nodeIndex) {
+        graphOperationElements.at(nodeIndex)->addDependency(
+            graphOperationElements.at(nodeIndex - 1));
+    }
+
+    std::cout << "OnnxNetwork: transient memory plan: "
+              << memoryPlanStats.tensorCount << " tensors, "
+              << memoryPlanStats.slotCount << " slots, "
+              << memoryPlanStats.logicalBytes << " logical bytes -> "
+              << memoryPlanStats.allocatedBytes << " allocated bytes"
+              << std::endl;
+}
+
+void OnnxNetwork::retainTensor(const std::string& name)
+{
+    const auto element = graphDataElements.find(name);
+    if (element == graphDataElements.end()) {
+        throw std::runtime_error("ONNX tensor " + name + " not found");
+    }
+    if (retainedTensorNames.count(name)) return;
+
+    std::vector<std::string> members{name};
+    const auto viewGroup = tensorViewGroups.find(name);
+    if (viewGroup != tensorViewGroups.end()) members = viewGroup->second;
+
+    std::string ownerName = members.front();
+    auto owner = std::dynamic_pointer_cast<TensorElementInterface>(
+        graphDataElements.at(ownerName));
+    if (!owner || owner->isSinglePathStorage()) {
+        retainedTensorNames.insert(name);
+        return;
+    }
+    for (const auto& member : members) {
+        auto tensor = std::dynamic_pointer_cast<TensorElementInterface>(graphDataElements.at(member));
+        if (tensor->getBufferMemSize() > owner->getBufferMemSize()) {
+            ownerName = member;
+            owner = tensor;
+        }
+    }
+
+    owner->makeDataStorageUnique();
+    for (const auto& member : members) {
+        auto tensor = std::dynamic_pointer_cast<TensorElementInterface>(graphDataElements.at(member));
+        if (member != ownerName) tensor->shareDataStorageWith(*owner);
+        retainedTensorNames.insert(member);
+    }
+    memoryPlanStats.allocatedBytes += owner->getStorageCapacityBytes();
 }
 
 void OnnxNetwork::setInputTensor(const std::string& name,
@@ -641,30 +957,42 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
     for (int i = 0; i < graph.initializer_size(); ++i) {
         const auto& init = graph.initializer(i);
         std::string name = init.name();
-        std::cout << "Creating initializer tensor: " << name << std::endl;
+        if (graphDataElements.find(name) == graphDataElements.end()) {
+            continue;
+        }
         std::vector<uint32_t> initShape;
         for (int j = 0; j < init.dims_size(); j++) {
             initShape.push_back(init.dims(j));
         }
         const auto& dataType = static_cast<onnx::TensorProto::DataType>(init.data_type());
 
-        auto initData = init.raw_data(); // This is where the actual data would be, if needed
+        const auto initData = readTensorData(init);
         if (!initData.empty()) {
             switch (dataType) {
-            case onnx::TensorProto::FLOAT:
-                std::cout << " - Data type: FLOAT" << std::endl;
-                // Copy the data into the initializer tensor
-                auto element = graphDataElements[name];
-                std::shared_ptr<TensorElementSinglePath<float>> elementPtr = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
-                TensorElementSinglePath<float>* tensor = elementPtr.get();
+            case onnx::TensorProto::FLOAT: {
+                auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(graphDataElements.at(name));
+                if (!tensor) throw std::runtime_error("Initializer " + name + " is not a FLOAT tensor");
                 tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
                 break;
-                // TODO support other data types
             }
-        }
-        else if (init.float_data_size() > 0) {
+            case onnx::TensorProto::INT32: {
+                auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(graphDataElements.at(name));
+                if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT32 tensor");
+                tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
+                break;
+            }
+            case onnx::TensorProto::INT64: {
+                auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(graphDataElements.at(name));
+                if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT64 tensor");
+                tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
+                break;
+            }
+            default:
+                throw std::runtime_error("Initializer " + name + " has unsupported raw data type");
+            }
+        } else if (dataType == onnx::TensorProto::FLOAT && init.float_data_size() > 0) {
             std::cout << " - Data type: FLOAT (float_data field)" << std::endl;
-            auto element = graphDataElements[name];
+            auto element = graphDataElements.at(name);
             std::shared_ptr<TensorElementSinglePath<float>> elementPtrSingle = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
             std::shared_ptr<TensorElement<float>> elementPtrMulti = std::dynamic_pointer_cast<TensorElement<float>>(element);
             if (elementPtrSingle) {
@@ -676,6 +1004,14 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
             } else {
                 throw std::runtime_error("Initializer " + name + " has unsupported tensor element type");
             }
+        } else if (dataType == onnx::TensorProto::INT32 && init.int32_data_size() > 0) {
+            auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(graphDataElements.at(name));
+            if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT32 tensor");
+            tensor->getDataBuffer().memcopyFrom(init.int32_data().data(), init.int32_data_size());
+        } else if (dataType == onnx::TensorProto::INT64 && init.int64_data_size() > 0) {
+            auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(graphDataElements.at(name));
+            if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT64 tensor");
+            tensor->getDataBuffer().memcopyFrom(init.int64_data().data(), init.int64_data_size());
         } else {
             throw std::runtime_error("Initializer " + name + " has no data");
         }
@@ -735,9 +1071,14 @@ std::vector<float> OnnxNetwork::getFloatInitializerData(const std::string& name)
             if (init.data_type() != onnx::TensorProto::FLOAT) {
                 throw std::runtime_error("Initializer " + name + " is not of type FLOAT");
             }
-            if (init.has_raw_data()) {
-                return std::vector<float>(reinterpret_cast<const float*>(init.raw_data().data()),
-                                           reinterpret_cast<const float*>(init.raw_data().data()) + (init.raw_data().size() / sizeof(float)));
+            const auto rawData = readTensorData(init);
+            if (!rawData.empty()) {
+                if (rawData.size() % sizeof(float) != 0) {
+                    throw std::runtime_error("Initializer " + name + " has an invalid FLOAT byte count");
+                }
+                std::vector<float> result(rawData.size() / sizeof(float));
+                std::memcpy(result.data(), rawData.data(), rawData.size());
+                return result;
             } else if (init.float_data_size() > 0) {
                 // Data is stored in float_data field
                 const float* data = init.float_data().data();

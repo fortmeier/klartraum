@@ -121,9 +121,14 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
 
   set(SPIRV "${SHADER_BASE_DIR}/${FILE_NAME}.spv")
+  set(GLSLC_OPTIONS)
+  if(FILE_NAME STREQUAL "onnx/fused_attention.comp")
+    # Subgroup arithmetic is core in Vulkan 1.1 / SPIR-V 1.3.
+    list(APPEND GLSLC_OPTIONS --target-env=vulkan1.1)
+  endif()
   add_custom_command(
     OUTPUT ${SPIRV}
-    COMMAND ${GLSLC} -o ${SPIRV} ${GLSL}
+    COMMAND ${GLSLC} ${GLSLC_OPTIONS} -o ${SPIRV} ${GLSL}
     DEPENDS ${GLSL}
     COMMENT "Compiling ${GLSL} to ${SPIRV}"
   )
@@ -290,16 +295,22 @@ add_executable(
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
   tests/test_tensorelement.cpp
+  tests/test_tensor_memory_planner.cpp
+  tests/test_clip_tokenizer.cpp
   tests/test_image_resample.cpp
   tests/test_gaussian_transform.cpp
   tests/test_gaussian_elements.cpp
 
   tests/test_onnx_network.cpp
+  tests/test_onnx_external_data.cpp
   tests/test_onnx_conv.cpp
   tests/test_onnx_conv_transpose.cpp
   tests/test_onnx_relu.cpp
   tests/test_onnx_transpose.cpp
   tests/test_onnx_reference.cpp
+  tests/test_onnx_sd15_operations.cpp
+  tests/test_layers.cpp
+  tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
   tests/test_multi_viewport_window.cpp
@@ -333,6 +344,8 @@ set(KLARTRAUM_LIB_SRC
   src/gaussian_splat_rasterizer.cpp
   src/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
+  src/layers.cpp
+  src/clip_tokenizer.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp

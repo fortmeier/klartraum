@@ -4,6 +4,9 @@
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
+#include <cstring>
+#include <stdexcept>
+#include <vector>
 
 #include <klartraum/vulkan_context.hpp>
 
@@ -12,41 +15,30 @@ namespace klartraum {
 template <typename T>
 class VulkanBuffer {
 public:
-    VulkanBuffer(VulkanContext& kernel, uint32_t size, VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : vulkanContext(kernel), size(size) {
-        auto& device = kernel.getDevice();
-
+    VulkanBuffer(
+        VulkanContext& kernel,
+        uint32_t size,
+        VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkMemoryPropertyFlags memoryProperties =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+        : size(size),
+          usageFlags(usage),
+          memoryProperties(memoryProperties),
+          vulkanContext(kernel) {
         if (size == 0) {
             throw std::invalid_argument("Buffer size must be greater than 0");
         }
-
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(T) * size;
-        bufferInfo.usage = usage;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    
-        if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create compute buffer!");
-        }
-
-        VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
-    
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = vulkanContext.findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate vertex buffer memory!");
-        }
-        vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+        vulkanContext.createBuffer(
+            sizeof(T) * static_cast<VkDeviceSize>(size), usage, memoryProperties,
+            vertexBuffer, vertexBufferMemory);
     }
 
     VulkanBuffer(VulkanBuffer&& other) noexcept
         : size(other.size),
           vertexBuffer(other.vertexBuffer),
           vertexBufferMemory(other.vertexBufferMemory),
+          usageFlags(other.usageFlags),
+          memoryProperties(other.memoryProperties),
           vulkanContext(other.vulkanContext) {
         other.vertexBuffer = VK_NULL_HANDLE;
         other.vertexBufferMemory = VK_NULL_HANDLE;
@@ -59,48 +51,29 @@ public:
     }
 
     void memcopyFrom(const std::vector<T>& src) {
-        auto& device = vulkanContext.getDevice();
-        void* mappedData;
-        vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
         size_t dataSize = sizeof(T) * std::min((uint32_t)src.size(), (uint32_t)size);
-        memcpy(mappedData, src.data(), dataSize);
-        vkUnmapMemory(device, vertexBufferMemory);
+        upload(src.data(), dataSize);
     }
 
     void memcopyFrom(const T* src, size_t count) {
-        auto& device = vulkanContext.getDevice();
-        void* mappedData;
-        vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
         size_t dataSize = sizeof(T) * std::min((uint32_t)count, size);
-        memcpy(mappedData, src, dataSize);
-        vkUnmapMemory(device, vertexBufferMemory);
+        upload(src, dataSize);
     }
 
     void memcopyFrom(const char* src, size_t count) {
-        auto& device = vulkanContext.getDevice();
-        void* mappedData;
-        vkMapMemory(device, vertexBufferMemory, 0, sizeof(char) * size, 0, &mappedData);
         size_t dataSize = std::min(count, sizeof(T) * size_t(size));
-        memcpy(mappedData, src, dataSize);
-        vkUnmapMemory(device, vertexBufferMemory);
+        upload(src, dataSize);
     }
 
     void memcopyTo(std::vector<T>& dst) {
-        auto& device = vulkanContext.getDevice();
-        void* mappedData;
-        vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
         size_t dataSize = sizeof(T) * std::min((uint32_t)dst.size(), (uint32_t)size);
-        memcpy(dst.data(), mappedData, dataSize);
-        vkUnmapMemory(device, vertexBufferMemory);
+        download(dst.data(), dataSize);
     }
 
     void zero()
     {
-        auto& device = vulkanContext.getDevice();
-        void* mappedData;
-        vkMapMemory(device, vertexBufferMemory, 0, sizeof(T) * size, 0, &mappedData);
-        memset(mappedData, 0, sizeof(T) * size);
-        vkUnmapMemory(device, vertexBufferMemory);
+        std::vector<T> zeros(size);
+        upload(zeros.data(), sizeof(T) * size);
     }
 
     void _recordZero(VkCommandBuffer commandBuffer) {
@@ -138,9 +111,95 @@ public:
 private:
     const uint32_t size; // Number of elements in the buffer
 
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+    VkBufferUsageFlags usageFlags;
+    VkMemoryPropertyFlags memoryProperties;
     VulkanContext& vulkanContext;
+
+    bool isHostVisible() const {
+        return (memoryProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+    }
+
+    void upload(const void* source, size_t byteCount) {
+        if (byteCount == 0) return;
+        auto& device = vulkanContext.getDevice();
+
+        if (isHostVisible()) {
+            void* mappedData = nullptr;
+            if (vkMapMemory(device, vertexBufferMemory, 0, byteCount, 0, &mappedData) != VK_SUCCESS) {
+                throw std::runtime_error("failed to map Vulkan buffer for upload");
+            }
+            std::memcpy(mappedData, source, byteCount);
+            vkUnmapMemory(device, vertexBufferMemory);
+            return;
+        }
+        if ((usageFlags & VK_BUFFER_USAGE_TRANSFER_DST_BIT) == 0) {
+            throw std::runtime_error("device-local buffer upload requires TRANSFER_DST usage");
+        }
+
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        vulkanContext.createBuffer(
+            byteCount, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer, stagingMemory);
+        try {
+            void* mappedData = nullptr;
+            if (vkMapMemory(device, stagingMemory, 0, byteCount, 0, &mappedData) != VK_SUCCESS) {
+                throw std::runtime_error("failed to map Vulkan staging buffer for upload");
+            }
+            std::memcpy(mappedData, source, byteCount);
+            vkUnmapMemory(device, stagingMemory);
+            vulkanContext.copyBufferImmediate(stagingBuffer, vertexBuffer, byteCount);
+        } catch (...) {
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingMemory, nullptr);
+            throw;
+        }
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
+    }
+
+    void download(void* destination, size_t byteCount) {
+        if (byteCount == 0) return;
+        auto& device = vulkanContext.getDevice();
+
+        if (isHostVisible()) {
+            void* mappedData = nullptr;
+            if (vkMapMemory(device, vertexBufferMemory, 0, byteCount, 0, &mappedData) != VK_SUCCESS) {
+                throw std::runtime_error("failed to map Vulkan buffer for download");
+            }
+            std::memcpy(destination, mappedData, byteCount);
+            vkUnmapMemory(device, vertexBufferMemory);
+            return;
+        }
+        if ((usageFlags & VK_BUFFER_USAGE_TRANSFER_SRC_BIT) == 0) {
+            throw std::runtime_error("device-local buffer download requires TRANSFER_SRC usage");
+        }
+
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        vulkanContext.createBuffer(
+            byteCount, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer, stagingMemory);
+        try {
+            vulkanContext.copyBufferImmediate(vertexBuffer, stagingBuffer, byteCount);
+            void* mappedData = nullptr;
+            if (vkMapMemory(device, stagingMemory, 0, byteCount, 0, &mappedData) != VK_SUCCESS) {
+                throw std::runtime_error("failed to map Vulkan staging buffer for download");
+            }
+            std::memcpy(destination, mappedData, byteCount);
+            vkUnmapMemory(device, stagingMemory);
+        } catch (...) {
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingMemory, nullptr);
+            throw;
+        }
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
+    }
 
 
 };

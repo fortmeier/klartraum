@@ -18,6 +18,7 @@ layout(push_constant) uniform PushConstants {
     uint dimInput[4];      // [N, C, H, W]
     uint dimWeights[4];    // [output_channels, input_channels/groups, kH, kW]
     uint dimBias[1];       // [output_channels]
+    uint dimOutput[4];     // inferred ONNX output shape
 } pc;
 
 layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
@@ -75,17 +76,20 @@ void main() {
     uint groups = pc.groups[0];
     
     // Calculate output dimensions
-    uint output_H = (input_H + 2 * pad_top - dilation_h * (kernel_h - 1) - 1) / stride_h + 1;
-    uint output_W = (input_W + 2 * pad_left - dilation_w * (kernel_w - 1) - 1) / stride_w + 1;
+    uint output_H = pc.dimOutput[2] == 0
+        ? (input_H + 2 * pad_top - dilation_h * (kernel_h - 1) - 1) / stride_h + 1
+        : pc.dimOutput[2];
+    uint output_W = pc.dimOutput[3] == 0
+        ? (input_W + 2 * pad_left - dilation_w * (kernel_w - 1) - 1) / stride_w + 1
+        : pc.dimOutput[3];
     
-    // Current thread processes output position (gx, gy) for channel gz
-    if (gx >= output_W || gy >= output_H || gz >= weight_OUT_C) {
+    // Z encodes both batch and output channel.
+    if (gx >= output_W || gy >= output_H || gz >= input_N * weight_OUT_C) {
         return; // Out of bounds
     }
-    
-    // For each batch (assuming batch size = 1 for now)
-    uint batch = 0;
-    uint out_channel = gz;
+
+    uint batch = gz / weight_OUT_C;
+    uint out_channel = gz % weight_OUT_C;
     uint out_y = gy;
     uint out_x = gx;
     

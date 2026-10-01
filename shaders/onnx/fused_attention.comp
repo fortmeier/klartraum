@@ -1,0 +1,76 @@
+#version 450
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+// Eight subgroups compute eight query rows together. Key and value rows are
+// staged once per workgroup and shared by all eight queries. Online softmax
+// avoids ever storing the quadratic score matrix.
+layout(local_size_x = 32, local_size_y = 8, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint batchCount;
+    uint queryCount;
+    uint keyCount;
+    uint queryDepth;
+    uint valueDepth;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer QueryBuffer { float queryData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer KeyBuffer { float keyData[]; };
+layout(set = 0, binding = 2) restrict readonly buffer ValueBuffer { float valueData[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+shared float sharedKey[512];
+shared float sharedValue[512];
+
+void main() {
+    const uint lane = gl_SubgroupInvocationID;
+    const uint batch = gl_WorkGroupID.y;
+    const uint queryIndex = gl_WorkGroupID.x * 8 + gl_LocalInvocationID.y;
+    const bool queryIsValid = queryIndex < pc.queryCount;
+    const uint workgroupLane = gl_LocalInvocationID.y * 32 + gl_LocalInvocationID.x;
+
+    // SD1.5 UNet head widths are at most 160 and the VAE attention width is
+    // 512. Sixteen strided accumulators cover both without dynamic arrays.
+    float accumulated[16];
+    for (uint slot = 0; slot < 16; ++slot) accumulated[slot] = 0.0;
+    float runningMaximum = -3.402823466e+38;
+    float runningSum = 0.0;
+
+    const uint queryOffset = (batch * pc.queryCount + queryIndex) * pc.queryDepth;
+    const uint keyBatchOffset = batch * pc.queryDepth * pc.keyCount;
+    const uint valueBatchOffset = batch * pc.keyCount * pc.valueDepth;
+    for (uint keyIndex = 0; keyIndex < pc.keyCount; ++keyIndex) {
+        for (uint depth = workgroupLane; depth < pc.queryDepth; depth += 256) {
+            sharedKey[depth] = keyData[keyBatchOffset + depth * pc.keyCount + keyIndex];
+        }
+        for (uint depth = workgroupLane; depth < pc.valueDepth; depth += 256) {
+            sharedValue[depth] = valueData[valueBatchOffset + keyIndex * pc.valueDepth + depth];
+        }
+        barrier();
+
+        float partialScore = 0.0;
+        for (uint depth = lane; queryIsValid && depth < pc.queryDepth; depth += gl_SubgroupSize) {
+            partialScore += queryData[queryOffset + depth] *
+                sharedKey[depth];
+        }
+        const float score = subgroupAdd(partialScore);
+        const float nextMaximum = max(runningMaximum, score);
+        const float previousScale = exp(runningMaximum - nextMaximum);
+        const float scoreScale = exp(score - nextMaximum);
+        runningSum = runningSum * previousScale + scoreScale;
+        for (uint slot = 0; slot < 16; ++slot) {
+            const uint depth = lane + slot * gl_SubgroupSize;
+            if (queryIsValid && depth < pc.valueDepth) {
+                accumulated[slot] = accumulated[slot] * previousScale +
+                    scoreScale * sharedValue[depth];
+            }
+        }
+        runningMaximum = nextMaximum;
+        barrier();
+    }
+
+    if (!queryIsValid) return;
+    const uint outputOffset = (batch * pc.queryCount + queryIndex) * pc.valueDepth;
+    for (uint slot = 0; slot < 16; ++slot) {
+        const uint depth = lane + slot * gl_SubgroupSize;
+        if (depth < pc.valueDepth) outputData[outputOffset + depth] = accumulated[slot] / runningSum;
+    }
+}

@@ -1,0 +1,381 @@
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/tensorelement.hpp"
+#include "klartraum/headless_frontend.hpp"
+#include "klartraum/onnx/onnx_network.hpp"
+#include "klartraum/sd15/clip_tokenizer.hpp"
+
+namespace {
+
+template <typename T>
+std::vector<T> readTensor(const std::filesystem::path& path, size_t count) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input || static_cast<size_t>(input.tellg()) != count * sizeof(T)) {
+        throw std::runtime_error("Unexpected tensor size in " + path.string());
+    }
+    input.seekg(0);
+    std::vector<T> values(count);
+    input.read(reinterpret_cast<char*>(values.data()), values.size() * sizeof(T));
+    if (!input) throw std::runtime_error("Could not read " + path.string());
+    return values;
+}
+
+template <typename T>
+std::vector<T> readTensor(const std::filesystem::path& path) {
+    const auto bytes = std::filesystem::file_size(path);
+    if (bytes % sizeof(T) != 0) {
+        throw std::runtime_error("Invalid tensor byte count in " + path.string());
+    }
+    return readTensor<T>(path, static_cast<size_t>(bytes / sizeof(T)));
+}
+
+float maximumError(const std::vector<float>& actual, const std::vector<float>& expected) {
+    if (actual.size() != expected.size()) throw std::runtime_error("Reference tensor size mismatch");
+    float result = 0.0f;
+    for (size_t index = 0; index < actual.size(); ++index) {
+        if (!std::isfinite(actual[index]) || !std::isfinite(expected[index])) {
+            return std::numeric_limits<float>::infinity();
+        }
+        result = std::max(result, std::abs(actual[index] - expected[index]));
+    }
+    return result;
+}
+
+float maximumMagnitude(const std::vector<float>& values) {
+    float result = 0.0f;
+    for (float value : values) {
+        if (!std::isfinite(value)) return std::numeric_limits<float>::infinity();
+        result = std::max(result, std::abs(value));
+    }
+    return result;
+}
+
+void writePpm(const std::filesystem::path& path, const std::vector<float>& nchw, uint32_t size) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    if (!output) throw std::runtime_error("Could not create " + path.string());
+    output << "P6\n" << size << " " << size << "\n255\n";
+    const size_t plane = static_cast<size_t>(size) * size;
+    for (size_t pixel = 0; pixel < plane; ++pixel) {
+        for (size_t channel = 0; channel < 3; ++channel) {
+            const float normalized = std::clamp(nchw[channel * plane + pixel], -1.0f, 1.0f);
+            const auto byte = static_cast<unsigned char>((normalized + 1.0f) * 127.5f + 0.5f);
+            output.write(reinterpret_cast<const char*>(&byte), 1);
+        }
+    }
+}
+
+struct Options {
+    std::filesystem::path modelDirectory = "./data/onnx/sd15_denoiser_256";
+    std::filesystem::path outputPath = "build/TestingOutput/sd15_pipeline_klartraum.ppm";
+    uint32_t imageSize = 256;
+    std::string prompt =
+        "a realistic photograph of a traditional Japanese stone lantern in a green garden, "
+        "single gray granite garden lantern, centered, moss, natural daylight";
+    std::string negativePrompt =
+        "person, building, house, flower pot, collage, multiple images, metal, painting, "
+        "illustration, abstract, blurry, distorted, oversaturated, text";
+    size_t maxDenoiseSteps = std::numeric_limits<size_t>::max();
+    bool profile = false;
+    bool skipDecoder = false;
+};
+
+void printProfiling(const std::string& stage, const klartraum::ComputeGraph& graph) {
+    auto results = graph.getProfilingResults();
+    std::map<std::string, double> operationTotals;
+    for (const auto& [name, milliseconds] : results) {
+        const auto separator = name.find('_');
+        operationTotals[name.substr(0, separator)] += milliseconds;
+    }
+    std::vector<std::pair<std::string, double>> sortedTotals(
+        operationTotals.begin(), operationTotals.end());
+    std::sort(sortedTotals.begin(), sortedTotals.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.second > rhs.second;
+    });
+    std::sort(results.begin(), results.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.second > rhs.second;
+    });
+    double totalMilliseconds = 0.0;
+    for (const auto& result : results) totalMilliseconds += result.second;
+    std::cout << stage << " GPU profile: " << totalMilliseconds << " ms across "
+              << results.size() << " dispatches" << std::endl;
+    std::cout << "  Operation totals:";
+    for (size_t index = 0; index < std::min<size_t>(10, sortedTotals.size()); ++index) {
+        std::cout << " " << sortedTotals[index].first << "="
+                  << sortedTotals[index].second << " ms";
+    }
+    std::cout << std::endl;
+    const size_t count = std::min<size_t>(20, results.size());
+    for (size_t index = 0; index < count; ++index) {
+        std::cout << "  " << results[index].second << " ms  " << results[index].first
+                  << std::endl;
+    }
+}
+
+Options parseOptions(int argc, char** argv) {
+    Options options;
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument = argv[index];
+        if (argument == "--model-dir" && index + 1 < argc) {
+            options.modelDirectory = argv[++index];
+        } else if (argument == "--output" && index + 1 < argc) {
+            options.outputPath = argv[++index];
+        } else if (argument == "--size" && index + 1 < argc) {
+            options.imageSize = static_cast<uint32_t>(std::stoul(argv[++index]));
+        } else if (argument == "--prompt" && index + 1 < argc) {
+            options.prompt = argv[++index];
+        } else if (argument == "--negative-prompt" && index + 1 < argc) {
+            options.negativePrompt = argv[++index];
+        } else if (argument == "--max-denoise-steps" && index + 1 < argc) {
+            options.maxDenoiseSteps = std::stoul(argv[++index]);
+        } else if (argument == "--profile") {
+            options.profile = true;
+        } else if (argument == "--skip-decoder") {
+            options.skipDecoder = true;
+        } else {
+            throw std::runtime_error("Unknown or incomplete argument: " + argument);
+        }
+    }
+    return options;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    try {
+        const Options options = parseOptions(argc, argv);
+        if (options.imageSize == 0 || options.imageSize % 8 != 0) {
+            throw std::runtime_error("--size must be a positive multiple of 8");
+        }
+        const uint32_t imageSize = options.imageSize;
+        const uint32_t latentSize = imageSize / 8;
+        const size_t latentElements = 4 * latentSize * latentSize;
+        const size_t sampleElements = 2 * latentElements;
+        constexpr size_t embeddingElements = 2 * 77 * 768;
+        const size_t imageElements = 3 * static_cast<size_t>(imageSize) * imageSize;
+        constexpr float guidanceScale = 7.5f;
+        constexpr float vaeScalingFactor = 0.18215f;
+        double clipSeconds = 0.0;
+        double denoiseSeconds = 0.0;
+        double decodeSeconds = 0.0;
+        size_t denoiseStepCount = 0;
+
+        const auto& directory = options.modelDirectory;
+        const auto textEncoderPath = directory / "sd15_text_encoder.onnx";
+        const auto unetPath = directory / "sd15_unet.onnx";
+        const auto decoderPath = directory / "sd15_vae_decoder.onnx";
+        for (const auto& path : {textEncoderPath, unetPath, decoderPath}) {
+            if (!std::filesystem::exists(path)) {
+                throw std::runtime_error(
+                    "Missing " + path.string() +
+                    "; run scripts/sd15_onnx/export_denoiser.py first");
+            }
+        }
+
+        const auto timesteps = readTensor<int64_t>(directory / "scheduler_timesteps_i64.bin");
+        const auto alphaPairs = readTensor<float>(directory / "scheduler_alphas_f32.bin");
+        if (timesteps.empty() || alphaPairs.size() != timesteps.size() * 2) {
+            throw std::runtime_error("Invalid DDIM scheduler fixtures");
+        }
+        std::vector<float> latents = readTensor<float>(
+            directory / "initial_latents_f32.bin", latentElements);
+
+        klartraum::HeadlessFrontend frontend;
+        auto& context = frontend.getKlartraumEngine().getVulkanContext();
+        klartraum::ClipTokenizer tokenizer(directory);
+        const auto tokenIds = tokenizer.encodePair(options.negativePrompt, options.prompt);
+        const auto attentionMaskValues = tokenizer.attentionMask(tokenIds);
+        bool referencePrompt = false;
+        const auto referenceTokenPath = directory / "prompt_input_ids_i64.bin";
+        if (std::filesystem::exists(referenceTokenPath)) {
+            referencePrompt = tokenIds == readTensor<int64_t>(referenceTokenPath, tokenIds.size());
+        }
+        std::vector<float> embeddingsValues(embeddingElements);
+        {
+            auto textEncoder = context.create<klartraum::OnnxNetwork>(textEncoderPath.string());
+            const auto& memory = textEncoder->getMemoryPlanStats();
+            std::cout << "CLIP transient storage: " << memory.logicalBytes / (1024.0 * 1024.0)
+                      << " logical MiB -> " << memory.allocatedBytes / (1024.0 * 1024.0)
+                      << " allocated MiB in " << memory.slotCount << " slots" << std::endl;
+            constexpr VkBufferUsageFlags inputUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            auto inputIds = context.create<klartraum::TensorElement<int64_t>>(
+                std::vector<uint32_t>{2, 77}, inputUsage);
+            auto attentionMask = context.create<klartraum::TensorElement<int64_t>>(
+                std::vector<uint32_t>{2, 77}, inputUsage);
+            textEncoder->setInputTensor("input_ids", inputIds);
+            textEncoder->setInputTensor("attention_mask", attentionMask);
+            klartraum::ComputeGraph graph(context, 1);
+            if (options.profile) graph.enableProfiling();
+            graph.compileFrom(textEncoder);
+            inputIds->setData(0, tokenIds);
+            attentionMask->setData(0, attentionMaskValues);
+            const auto started = std::chrono::steady_clock::now();
+            graph.submitAndWait(context.getGraphicsQueue(), 0);
+            clipSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - started).count();
+            std::cout << "Klartraum CLIP inference: " << clipSeconds << " s" << std::endl;
+            auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
+                textEncoder->getOutputElement("last_hidden_state"));
+            if (!output || output->getDataElementCount() != embeddingElements) {
+                throw std::runtime_error("Unexpected CLIP text encoder output");
+            }
+            output->getDataBuffer(0).memcopyTo(embeddingsValues);
+            if (referencePrompt) {
+                const float textError = maximumError(
+                    embeddingsValues,
+                    readTensor<float>(directory / "text_encoder_reference_f32.bin", embeddingElements));
+                std::cout << "CLIP text embedding maximum error: " << textError << std::endl;
+                if (textError > 2e-2f) {
+                    throw std::runtime_error("Klartraum CLIP output is outside its reference tolerance");
+                }
+            }
+            if (options.profile) printProfiling("CLIP", graph);
+        }
+        std::cout << "Prompt: " << options.prompt << std::endl;
+        if (!referencePrompt) {
+            std::cout << "Runtime prompt differs from the exported fixture; reference image checks are skipped"
+                      << std::endl;
+        }
+        {
+            auto network = context.create<klartraum::OnnxNetwork>(unetPath.string());
+            const auto& memory = network->getMemoryPlanStats();
+            std::cout << "UNet transient storage: " << memory.logicalBytes / (1024.0 * 1024.0)
+                      << " logical MiB -> " << memory.allocatedBytes / (1024.0 * 1024.0)
+                      << " allocated MiB in " << memory.slotCount << " slots" << std::endl;
+
+            auto sample = context.create<klartraum::TensorElement<float>>(
+                std::vector<uint32_t>{2, 4, latentSize, latentSize});
+            auto timestep = context.create<klartraum::TensorElement<int64_t>>(
+                std::vector<uint32_t>{1});
+            auto embeddings = context.create<klartraum::TensorElement<float>>(
+                std::vector<uint32_t>{2, 77, 768});
+            network->setInputTensor("sample", sample);
+            network->setInputTensor("timestep", timestep);
+            network->setInputTensor("encoder_hidden_states", embeddings);
+
+            klartraum::ComputeGraph graph(context, 1);
+            if (options.profile) graph.enableProfiling();
+            graph.compileFrom(network);
+            embeddings->setData(0, embeddingsValues);
+
+            std::vector<float> batch(sampleElements);
+            std::vector<float> prediction(sampleElements);
+            std::vector<float> guided(latentElements);
+            denoiseStepCount = std::min(timesteps.size(), options.maxDenoiseSteps);
+            for (size_t step = 0; step < denoiseStepCount; ++step) {
+                const auto stepStarted = std::chrono::steady_clock::now();
+                std::copy(latents.begin(), latents.end(), batch.begin());
+                std::copy(latents.begin(), latents.end(), batch.begin() + latentElements);
+                sample->setData(0, batch);
+                timestep->setData(0, std::vector<int64_t>{timesteps[step]});
+                graph.submitAndWait(context.getGraphicsQueue(), 0);
+
+                auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
+                    network->getOutputElement("noise_prediction"));
+                output->getDataBuffer(0).memcopyTo(prediction);
+                if (step == 0 && referencePrompt) {
+                    const float firstStepError = maximumError(
+                        prediction,
+                        readTensor<float>(directory / "unet_reference_f32.bin", sampleElements));
+                    std::cout << "First UNet prediction maximum error: "
+                              << firstStepError << std::endl;
+                }
+                for (size_t index = 0; index < latentElements; ++index) {
+                    guided[index] = prediction[index] + guidanceScale *
+                        (prediction[latentElements + index] - prediction[index]);
+                }
+
+                const float alpha = alphaPairs[step * 2];
+                const float previousAlpha = alphaPairs[step * 2 + 1];
+                const float sqrtAlpha = std::sqrt(alpha);
+                const float sqrtBeta = std::sqrt(1.0f - alpha);
+                const float sqrtPreviousAlpha = std::sqrt(previousAlpha);
+                const float sqrtPreviousBeta = std::sqrt(1.0f - previousAlpha);
+                for (size_t index = 0; index < latentElements; ++index) {
+                    const float predictedOriginal =
+                        (latents[index] - sqrtBeta * guided[index]) / sqrtAlpha;
+                    latents[index] = sqrtPreviousAlpha * predictedOriginal +
+                        sqrtPreviousBeta * guided[index];
+                }
+                const double stepSeconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - stepStarted).count();
+                denoiseSeconds += stepSeconds;
+                std::cout << "Completed DDIM step " << (step + 1) << "/"
+                          << timesteps.size() << " (t=" << timesteps[step]
+                          << ", " << stepSeconds << " s"
+                          << ", max|noise|=" << maximumMagnitude(guided)
+                          << ", max|latent|=" << maximumMagnitude(latents) << ")" << std::endl;
+            }
+            if (options.profile && denoiseStepCount > 0) printProfiling("UNet", graph);
+        }
+
+        float latentError = 0.0f;
+        const bool completedDenoising = options.maxDenoiseSteps >= timesteps.size();
+        if (referencePrompt && completedDenoising) {
+            latentError = maximumError(
+                latents, readTensor<float>(directory / "final_latents_f32.bin", latentElements));
+        }
+        if (options.skipDecoder) {
+            std::cout << "Klartraum inference timing: CLIP=" << clipSeconds
+                      << " s, DDIM UNet=" << denoiseSeconds << " s" << std::endl;
+            return 0;
+        }
+        for (float& value : latents) value /= vaeScalingFactor;
+
+        std::vector<float> decoded;
+        {
+            auto decoder = context.create<klartraum::OnnxNetwork>(decoderPath.string());
+            auto latent = context.create<klartraum::TensorElement<float>>(
+                std::vector<uint32_t>{1, 4, latentSize, latentSize});
+            decoder->setInputTensor("input", latent);
+            klartraum::ComputeGraph graph(context, 1);
+            if (options.profile) graph.enableProfiling();
+            graph.compileFrom(decoder);
+            latent->setData(0, latents);
+            const auto started = std::chrono::steady_clock::now();
+            graph.submitAndWait(context.getGraphicsQueue(), 0);
+            decodeSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - started).count();
+            auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
+                decoder->getOutputElement("output"));
+            decoded.resize(output->getDataElementCount());
+            output->getDataBuffer(0).memcopyTo(decoded);
+            if (options.profile) printProfiling("VAE decoder", graph);
+        }
+
+        if (referencePrompt && completedDenoising) {
+            const float imageError = maximumError(
+                decoded, readTensor<float>(directory / "pipeline_reference_f32.bin", imageElements));
+            std::cout << "Error versus Python/ONNX Runtime: final latent=" << latentError
+                      << ", decoded image=" << imageError << std::endl;
+            if (latentError > 2e-1f || imageError > 2.5e-1f) {
+                throw std::runtime_error("Klartraum pipeline output is outside its reference tolerance");
+            }
+        }
+        writePpm(options.outputPath, decoded, imageSize);
+        std::cout << "Klartraum inference timing: CLIP=" << clipSeconds
+                  << " s, DDIM UNet=" << denoiseSeconds << " s ("
+                  << (denoiseStepCount == 0 ? 0.0 : denoiseSeconds / denoiseStepCount)
+                  << " s/step), VAE decode="
+                  << decodeSeconds << " s, total="
+                  << clipSeconds + denoiseSeconds + decodeSeconds << " s" << std::endl;
+        std::cout << "Wrote " << options.outputPath << std::endl;
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "SD 1.5 denoiser example failed: " << error.what() << std::endl;
+        return 1;
+    }
+}

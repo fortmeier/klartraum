@@ -25,6 +25,18 @@ command buffers; the graph connects them with semaphores.
 ```{doxygenclass} klartraum::TensorElement
 ```
 
+```{doxygenclass} klartraum::TensorMemoryPlanner
+```
+
+```{doxygenstruct} klartraum::TensorLifetimeRequest
+```
+
+```{doxygenstruct} klartraum::TensorMemoryPlan
+```
+
+```{doxygenstruct} klartraum::TensorMemoryAssignment
+```
+
 ```{doxygenclass} klartraum::UniformBufferObject
 ```
 
@@ -48,4 +60,19 @@ command buffers; the graph connects them with semaphores.
 ```
 
 ```{doxygenclass} klartraum::ImageViewSrc
+```
+
+```{doxygenclass} klartraum::ImageViewForward
+```
+
+```{doxygenclass} klartraum::ClearImage
+```
+
+```{doxygenclass} klartraum::ImageComposite
+```
+
+```{doxygenfunction} klartraum::recordClearImage
+```
+
+```{doxygenclass} klartraum::SinglePathImage
 ```
