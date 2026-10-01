@@ -17,7 +17,9 @@
 #endif
 
 #define QUERIES_PER_GROUP 64
+#ifndef KEY_TILE
 #define KEY_TILE 32
+#endif
 #define KEY_BLOCK 8
 
 layout(local_size_x = QUERIES_PER_GROUP, local_size_y = 1, local_size_z = 1) in;
