@@ -61,3 +61,18 @@ command buffers; the graph connects them with semaphores.
 
 ```{doxygenclass} klartraum::ImageViewSrc
 ```
+
+```{doxygenclass} klartraum::ImageViewForward
+```
+
+```{doxygenclass} klartraum::ClearImage
+```
+
+```{doxygenclass} klartraum::ImageComposite
+```
+
+```{doxygenfunction} klartraum::recordClearImage
+```
+
+```{doxygenclass} klartraum::SinglePathImage
+```

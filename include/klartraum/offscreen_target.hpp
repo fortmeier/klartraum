@@ -1,6 +1,8 @@
 #ifndef KLARTRAUM_OFFSCREEN_TARGET_HPP
 #define KLARTRAUM_OFFSCREEN_TARGET_HPP
 
+#include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include <vulkan/vulkan.h>
@@ -79,6 +81,13 @@ public:
         }
 
         setResources(views_, images_, std::vector<VkExtent2D>(numImages, extent));
+        // Start in GENERAL, so that a target that does not clear itself
+        // (setClear(false)) is in a defined layout from its first use.
+        vulkanContext.submitImmediate([&](VkCommandBuffer commandBuffer) {
+            for (VkImage image : images_) {
+                recordClearImage(commandBuffer, image, clearColor());
+            }
+        });
     }
 
     ~OffscreenTarget() {
@@ -105,6 +114,81 @@ private:
     std::vector<VkImage>        images_;
     std::vector<VkDeviceMemory> memories_;
     std::vector<VkImageView>    views_;
+};
+
+/**
+ * @brief One image that every path of a graph reads: a result computed once,
+ *        e.g. by another graph, made available to a graph with several paths.
+ *
+ * getImage() returns the same image for any path id. The image stays in
+ * VK_IMAGE_LAYOUT_GENERAL and is never cleared by the graph; elements of a
+ * graph must only read it. Its contents are replaced from outside the graph
+ * with copyFrom() while no graph that reads it is executing.
+ */
+class SinglePathImage : public ImageViewSrc {
+public:
+    SinglePathImage(VulkanContext& vulkanContext, VkExtent2D extent) : vulkanContext_(vulkanContext) {
+        target_ = std::make_unique<OffscreenTarget>(vulkanContext, extent, 1);
+        setClear(false);
+    }
+
+    const char* getType() const override { return "SinglePathImage"; }
+
+    VkImageView& getImageView(uint32_t) override { return target_->getImageView(0); }
+    VkImage& getImage(uint32_t) override { return target_->getImage(0); }
+    VkExtent2D& getImageExtent(uint32_t) override { return target_->getImageExtent(0); }
+
+    VkExtent2D extent() const { return target_->extent(); }
+
+    /**
+     * @brief Copies `source` (of the same extent and the swapchain's format)
+     *        into the image, waiting for the copy to finish.
+     * @param sourceLayout The layout `source` is in; it is left in it.
+     * @throws std::invalid_argument If the extents differ.
+     */
+    void copyFrom(VkImage source, VkImageLayout sourceLayout, VkExtent2D sourceExtent) {
+        const VkExtent2D ext = extent();
+        if (sourceExtent.width != ext.width || sourceExtent.height != ext.height) {
+            throw std::invalid_argument("SinglePathImage::copyFrom: the extents differ");
+        }
+        VkImage destination = target_->getImage(0);
+        vulkanContext_.submitImmediate([&](VkCommandBuffer commandBuffer) {
+            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            auto barrier = [&](VkImage image, VkImageLayout from, VkImageLayout to, VkAccessFlags srcAccess,
+                               VkAccessFlags dstAccess) {
+                VkImageMemoryBarrier b{};
+                b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                b.oldLayout = from;
+                b.newLayout = to;
+                b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                b.image = image;
+                b.subresourceRange = range;
+                b.srcAccessMask = srcAccess;
+                b.dstAccessMask = dstAccess;
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+            };
+            barrier(source, sourceLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_WRITE_BIT,
+                    VK_ACCESS_TRANSFER_READ_BIT);
+            barrier(destination, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            VkImageCopy region{};
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.extent = {ext.width, ext.height, 1};
+            vkCmdCopyImage(commandBuffer, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            barrier(destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
+            barrier(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sourceLayout, VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+        });
+    }
+
+private:
+    VulkanContext& vulkanContext_;
+    std::unique_ptr<OffscreenTarget> target_;
 };
 
 } // namespace klartraum
