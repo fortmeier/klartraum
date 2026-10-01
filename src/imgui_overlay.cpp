@@ -183,7 +183,7 @@ void ImGuiOverlay::onSwapChainRecreated() {
     if (vulkanContext_.getSwapChainImageFormat() != format_) {
         throw std::runtime_error("ImGuiOverlay: the swapchain format changed on recreation!");
     }
-    vkDeviceWaitIdle(vulkanContext_.getDevice());
+    vulkanContext_.queueWaitIdle(vulkanContext_.getGraphicsQueue());
     destroySwapChainResources();
     createSwapChainResources();
 }
@@ -237,7 +237,7 @@ VkSemaphore ImGuiOverlay::submit(VkQueue queue, uint32_t imageIndex, uint32_t fr
     submitInfo.pCommandBuffers = &cmd;
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &finishedSemaphores_[imageIndex];
-    checkVkResult(vkQueueSubmit(queue, 1, &submitInfo, fence));
+    checkVkResult(vulkanContext_.queueSubmit(queue, 1, &submitInfo, fence));
 
     return finishedSemaphores_[imageIndex];
 }
