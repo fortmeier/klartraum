@@ -1,10 +1,11 @@
 # Stable Diffusion 1.5 VAE ONNX experiment
 
-NOTICE:
-The scripts in this directory download Stable Diffusion 1.5 weights,
-these are not part of this repository and the user is responsible for its usage.
-
-
+> **Warning:** Stable Diffusion is not part of Klartraum. These scripts download
+> and process third-party Stable Diffusion 1.5 model weights, which are
+> distributed by their respective authors under their own license (CreativeML
+> Open RAIL-M). Klartraum neither ships nor endorses these models. You are
+> solely responsible for complying with the model license and for how you use
+> the models and anything they generate.
 
 This isolated uv project downloads the Stable Diffusion 1.5 VAE, runs its
 encoder and decoder on `data/lantern.jpg`, and exports the two halves for the

@@ -14,6 +14,8 @@ import torch
 from diffusers import AutoencoderKL
 from PIL import Image, ImageOps
 
+from disclaimer import print_stable_diffusion_notice
+
 
 MODEL_ID = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -51,6 +53,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    print_stable_diffusion_notice()
     args = parse_args()
     if args.size <= 0 or args.size % 8:
         raise ValueError("--size must be a positive multiple of 8")
