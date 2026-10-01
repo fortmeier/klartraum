@@ -300,7 +300,7 @@ public:
         // submitInfo.signalSemaphoreCount = 1;
         // submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
 
-        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
+        if (vulkanContext->queueSubmit(graphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit inFlightFence");
         }
 
