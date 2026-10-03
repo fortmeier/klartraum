@@ -10,6 +10,7 @@
 #include <iterator>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <queue>
 #include <set>
 #include <string>
@@ -32,21 +33,7 @@ public:
     ComputeGraph(VulkanContext& vulkanContext, uint32_t numberPaths)
         : vulkanContext(vulkanContext),
           numberPaths(numberPaths) {
-        auto& device = vulkanContext.getDevice();
-
         pathSubmits.resize(numberPaths);
-
-        // create the command pool
-        VkCommandPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        // Recorded for the queue of the thread that builds the graph (see
-        // VulkanContext::getThreadQueue()); submit it only to queues of that family.
-        poolInfo.queueFamilyIndex = vulkanContext.getThreadQueueFamily();
-
-        if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create command pool!");
-        }
     }
 
     virtual ~ComputeGraph() {
@@ -60,10 +47,12 @@ public:
             vkDestroySemaphore(device, semaphores, nullptr);
         }
 
-        for (auto& buffer : commandBuffers) {
-            vkFreeCommandBuffers(device, commandPool, 1, &buffer);
+        if (commandPool != VK_NULL_HANDLE) {
+            for (auto& buffer : commandBuffers) {
+                vkFreeCommandBuffers(device, commandPool, 1, &buffer);
+            }
+            vkDestroyCommandPool(device, commandPool, nullptr);
         }
-        vkDestroyCommandPool(device, commandPool, nullptr);
 
         for (VkQueryPool pool : profilingQueryPools)
             vkDestroyQueryPool(device, pool, nullptr);
@@ -71,8 +60,18 @@ public:
             vkDestroyQueryPool(device, perfQueryPool, nullptr);
     }
 
-    void compileFrom(ComputeGraphElementPtr element) {
+    /*
+     * Compiles the graph for the queues of one queue family. The compiled
+     * graph can only be submitted to queues of that family, e.g. pass
+     * VulkanContext::getBackgroundQueueFamily() to submit it to the
+     * background queue. Without a family, the graph is compiled for the
+     * graphics queue.
+     */
+    void compileFrom(ComputeGraphElementPtr element, std::optional<uint32_t> family = std::nullopt) {
         auto& device = vulkanContext.getDevice();
+
+        queueFamily = family.value_or(vulkanContext.getQueueFamily(vulkanContext.getGraphicsQueue()));
+        createCommandPool();
 
         computeOrder(element);
 
@@ -130,10 +129,9 @@ public:
 
             if (perfUsingHwCounters) {
                 // VK_KHR_performance_query path
-                uint32_t qf = vulkanContext.getQueueFamilyIndices().graphicsAndComputeFamily.value();
                 VkQueryPoolPerformanceCreateInfoKHR perfCI{};
                 perfCI.sType = VK_STRUCTURE_TYPE_QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR;
-                perfCI.queueFamilyIndex = qf;
+                perfCI.queueFamilyIndex = queueFamily;
                 perfCI.counterIndexCount = (uint32_t)perfCounterIndices.size();
                 perfCI.pCounterIndices = perfCounterIndices.data();
                 VkQueryPoolCreateInfo qi{};
@@ -160,11 +158,12 @@ public:
     }
 
     /*
-     * Submit the graph to the graphics queue
+     * Submit the graph to a queue of the family it was compiled for
      *
-     * The submit infos will have to be prepared before by calling compile_from
+     * The submit infos will have to be prepared before by calling compileFrom
      */
     VkSemaphore submitTo(VkQueue graphicsQueue, uint32_t pathId, VkFence fence = VK_NULL_HANDLE) {
+        checkQueue(graphicsQueue);
         updateElements(pathId);
 
         if (vulkanContext.queueSubmit(graphicsQueue, 1, &pathSubmits[pathId].submitInfo, fence) != VK_SUCCESS) {
@@ -175,6 +174,7 @@ public:
     }
 
     void submitAndWait(VkQueue graphicsQueue, uint32_t pathId) {
+        checkQueue(graphicsQueue);
         auto& device = vulkanContext.getDevice();
 
         VkFenceCreateInfo fenceInfo{};
@@ -238,8 +238,35 @@ private:
     VulkanContext& vulkanContext;
     uint32_t numberPaths;
 
-    VkCommandPool commandPool;
+    // Created by compileFrom() for the queue family the graph is compiled for.
+    VkCommandPool commandPool = VK_NULL_HANDLE;
+    uint32_t queueFamily = 0;
     std::vector<VkCommandBuffer> commandBuffers;
+
+    void createCommandPool() {
+        if (commandPool != VK_NULL_HANDLE) {
+            throw std::logic_error("compileFrom() may only be called once per graph");
+        }
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        poolInfo.queueFamilyIndex = queueFamily;
+
+        if (vkCreateCommandPool(vulkanContext.getDevice(), &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create command pool!");
+        }
+    }
+
+    // Command buffers may only be submitted to queues of the family their
+    // pool was created for.
+    void checkQueue(VkQueue queue) const {
+        if (commandPool == VK_NULL_HANDLE) {
+            throw std::logic_error("the graph must be compiled with compileFrom() before it is submitted");
+        }
+        if (vulkanContext.getQueueFamily(queue) != queueFamily) {
+            throw std::invalid_argument("the queue does not belong to the queue family the graph was compiled for");
+        }
+    }
 
     std::vector<ComputeGraphElementPtr> ordered_elements;
     // The elements with a host-side update (isUpdatable()), collected once.
