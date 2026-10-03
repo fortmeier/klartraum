@@ -24,41 +24,10 @@ shows the structure; they are not a complete specification of the engine.
 :style: table
 ```
 
-## Compute graph
+```{toctree}
+:maxdepth: 1
 
-```{req} Pre-recorded GPU work
-:id: REQ_GRAPH_PRERECORDED
-:status: implemented
-
-Running a compiled graph shall not record Vulkan command buffers; it shall
-only submit command buffers recorded at compile time.
-```
-
-```{req} Multiple execution paths
-:id: REQ_GRAPH_PATHS
-:status: implemented
-
-A compiled graph shall support a fixed number of execution paths, each with
-its own command buffers, so that several frames can be in flight at once.
-```
-
-```{spec} Topological ordering with Kahn's algorithm
-:id: SPEC_GRAPH_ORDER
-:status: implemented
-:implements: REQ_GRAPH_PRERECORDED
-
-`ComputeGraph::compileFrom()` orders the elements with Kahn's algorithm, sets
-them up and records one command buffer per element and path.
-```
-
-```{test} Headless submit and wait
-:id: TEST_GRAPH_HEADLESS_SUBMIT
-:status: verified
-:verifies: SPEC_GRAPH_ORDER, REQ_GRAPH_PATHS
-:gtest: ComputeGraph.headlessSubmitAndWait
-
-Compiles a render graph over several headless paths and submits each path
-with `submitAndWait`.
+compute-graph
 ```
 
 ## Gaussian splatting

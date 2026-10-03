@@ -14,10 +14,10 @@
  * time for every dispatch
  * - longDependencyChainCompletes: a chain of thousands of dependent dispatches (larger than the SD1.5 UNet graph)
  * finishes and applies every dispatch in order
- * - threadQueueFollowsBackgroundScope: a thread submits to the graphics queue, and to the background queue inside a
- * BackgroundQueueScope
- * - backgroundQueueRunsBesideFrames: a graph built and run on a worker thread's background queue computes the right
- * result while the main thread renders frames, and the main thread reads its output
+ * - submitChecksQueueFamily: a graph compiled for a queue family runs on a queue of that family, and submitting it
+ * uncompiled or to a queue of another family throws
+ * - backgroundQueueRunsBesideFrames: a graph compiled for and run on the background queue by a worker thread computes
+ * the right result while the main thread renders frames, and the main thread reads its output
  **/
 
 #include <atomic>
@@ -318,30 +318,56 @@ TEST(ComputeGraph, longDependencyChainCompletes) {
 }
 
 // ----------------------------------------------------------------
-// Test: threadQueueFollowsBackgroundScope
+// Test: submitChecksQueueFamily
+// A single dispatch compiled for the background queue family. On devices
+// whose background queue has its own family (e.g. MoltenVK), submitting the
+// graph to the graphics queue must throw instead of submitting command
+// buffers to a queue of the wrong family.
 // ----------------------------------------------------------------
-TEST(ComputeGraph, threadQueueFollowsBackgroundScope) {
+TEST(ComputeGraph, submitChecksQueueFamily) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
 
-    EXPECT_EQ(vc.getThreadQueue(), vc.getGraphicsQueue());
-    {
-        VulkanContext::BackgroundQueueScope scope(vc);
-        EXPECT_EQ(vc.getThreadQueue(), vc.getBackgroundQueue());
-        EXPECT_EQ(vc.getThreadQueueFamily(), vc.getBackgroundQueueFamily());
-        std::thread other([&] { EXPECT_EQ(vc.getThreadQueue(), vc.getGraphicsQueue()); });
-        other.join();
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 64;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+
+    auto input = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+    op->setInput(input, 0);
+    op->setInput(factors, 1);
+    op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+    op->setGroupCountX(kLength);
+
+    auto graph = ComputeGraph(vc, 1);
+    EXPECT_THROW(graph.submitAndWait(vc.getBackgroundQueue(), 0), std::logic_error);
+
+    graph.compileFrom(op, vc.getBackgroundQueueFamily());
+    input->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 3.0f));
+    factors->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 2.0f));
+    graph.submitAndWait(vc.getBackgroundQueue(), 0);
+
+    std::vector<float> output(kLength, 0.0f);
+    op->getOutputElement<BufferElement<FloatBuffer>>(2)->getBuffer(0).memcopyTo(output);
+    for (float value : output)
+        EXPECT_FLOAT_EQ(value, 6.0f);
+
+    if (vc.getBackgroundQueueFamily() != vc.getQueueFamily(vc.getGraphicsQueue())) {
+        EXPECT_THROW(graph.submitAndWait(vc.getGraphicsQueue(), 0), std::invalid_argument);
+    } else {
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
     }
-    EXPECT_EQ(vc.getThreadQueue(), vc.getGraphicsQueue());
 }
 
 // ----------------------------------------------------------------
 // Test: backgroundQueueRunsBesideFrames
-// A worker thread builds a chain of negations and runs it on the background
-// queue, then copies the output with submitImmediate (also on the background
-// queue). Meanwhile the main thread renders frames on the graphics queue.
-// Afterwards the main thread copies the worker's output on the graphics
-// queue, which needs the buffers shared between the queue families.
+// A worker thread builds a chain of negations, compiles it for the background
+// queue family and runs it on the background queue, then copies the output
+// with submitImmediate (on the graphics queue). Meanwhile the main thread
+// renders frames on the graphics queue. Afterwards the main thread copies the
+// worker's output again; reading the background queue's result on the
+// graphics queue needs the buffers shared between the queue families.
 // ----------------------------------------------------------------
 TEST(ComputeGraph, backgroundQueueRunsBesideFrames) {
     HeadlessFrontend frontend;
@@ -364,7 +390,6 @@ TEST(ComputeGraph, backgroundQueueRunsBesideFrames) {
     std::atomic<bool> workerDone{false};
     std::thread worker([&] {
         try {
-            VulkanContext::BackgroundQueueScope scope(vc);
             auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
             auto first = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
             std::shared_ptr<GeneralComputation<>> last;
@@ -383,13 +408,13 @@ TEST(ComputeGraph, backgroundQueueRunsBesideFrames) {
                 last = op;
             }
             auto graph = ComputeGraph(vc, 1);
-            graph.compileFrom(last);
+            graph.compileFrom(last, vc.getBackgroundQueueFamily());
             first->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 3.0f));
             factors->getBuffer(0).memcopyFrom(std::vector<float>(kLength, -1.0f));
 
             auto& output = last->getOutputElement<BufferElement<FloatBuffer>>(2)->getBuffer(0);
             for (int run = 0; run < 3; ++run) {
-                graph.submitAndWait(vc.getThreadQueue(), 0);
+                graph.submitAndWait(vc.getBackgroundQueue(), 0);
                 workerOutputs.emplace_back(kLength, 0.0f);
                 output.memcopyTo(workerOutputs.back());
             }
