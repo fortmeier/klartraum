@@ -73,7 +73,9 @@ public:
 
         createGraphFinishedSemaphores();
 
+        const VkQueue setupQueue = vulkanContext.getQueueOfFamily(queueFamily);
         for (auto& element : ordered_elements) {
+            element->_setSetupQueue(setupQueue);
             element->_setup(vulkanContext, numberPaths);
         }
 

@@ -50,6 +50,7 @@ public:
         // ADDEDUM: we setup them, since other is missleading, it should be named scratchBuffers
         // these are not part of the compute graph 
         for (auto& other : otherInputs) {
+            other->_setSetupQueue(this->getSetupQueue());
             other->_setup(vulkanContext, numberPaths);
         }
 
