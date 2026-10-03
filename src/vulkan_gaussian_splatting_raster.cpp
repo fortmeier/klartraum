@@ -31,32 +31,12 @@ void VulkanGaussianSplattingRaster::_setup(VulkanContext& vulkanContext, uint32_
     // constant across frames, so seed it once here rather than every _record —
     // setRecordToZeroRange above only resets instanceCount each frame, leaving
     // this byte range untouched.
-    VkCommandBufferAllocateInfo ai{};
-    ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool        = vulkanContext.getCommandPool();
-    ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(vulkanContext.getDevice(), &ai, &cmd);
-
-    VkCommandBufferBeginInfo bi{};
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &bi);
-
-    for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
-        vkCmdFillBuffer(cmd, drawArgs->getVkBuffer(pathId),
-                        offsetof(VkDrawIndirectCommand, vertexCount), sizeof(uint32_t), 4u);
-    }
-
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo si{};
-    si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1;
-    si.pCommandBuffers    = &cmd;
-    vkQueueSubmit(vulkanContext.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
-    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
-    vkFreeCommandBuffers(vulkanContext.getDevice(), vulkanContext.getCommandPool(), 1, &cmd);
+    vulkanContext.submitImmediate([&](VkCommandBuffer cmd) {
+        for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
+            vkCmdFillBuffer(cmd, drawArgs->getVkBuffer(pathId),
+                            offsetof(VkDrawIndirectCommand, vertexCount), sizeof(uint32_t), 4u);
+        }
+    }, getSetupQueue());
 }
 
 void VulkanGaussianSplattingRaster::checkInput(ComputeGraphElementPtr input, int index) {
