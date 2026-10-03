@@ -51,6 +51,7 @@ public:
         // The other inputs are scratch buffers that are not part of the compute graph, so
         // they are set up here. TODO: rename otherInputs to scratchBuffers.
         for (auto& other : otherInputs) {
+            other->_setSetupQueue(this->getSetupQueue());
             other->_setup(vulkanContext, numberPaths);
         }
 

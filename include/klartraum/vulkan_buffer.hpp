@@ -51,29 +51,32 @@ public:
         vkFreeMemory(device, vertexBufferMemory, nullptr);
     }
 
-    void memcopyFrom(const std::vector<T>& src) {
+    // Uploads and downloads of a device-local buffer go through a staging
+    // buffer, copied on `queue` (default: the graphics queue; see
+    // VulkanContext::submitImmediate()). Host-visible buffers are mapped.
+    void memcopyFrom(const std::vector<T>& src, VkQueue queue = VK_NULL_HANDLE) {
         size_t dataSize = sizeof(T) * std::min((uint32_t)src.size(), (uint32_t)size);
-        upload(src.data(), dataSize);
+        upload(src.data(), dataSize, queue);
     }
 
-    void memcopyFrom(const T* src, size_t count) {
+    void memcopyFrom(const T* src, size_t count, VkQueue queue = VK_NULL_HANDLE) {
         size_t dataSize = sizeof(T) * std::min((uint32_t)count, size);
-        upload(src, dataSize);
+        upload(src, dataSize, queue);
     }
 
-    void memcopyFrom(const char* src, size_t count) {
+    void memcopyFrom(const char* src, size_t count, VkQueue queue = VK_NULL_HANDLE) {
         size_t dataSize = std::min(count, sizeof(T) * size_t(size));
-        upload(src, dataSize);
+        upload(src, dataSize, queue);
     }
 
-    void memcopyTo(std::vector<T>& dst) {
+    void memcopyTo(std::vector<T>& dst, VkQueue queue = VK_NULL_HANDLE) {
         size_t dataSize = sizeof(T) * std::min((uint32_t)dst.size(), (uint32_t)size);
-        download(dst.data(), dataSize);
+        download(dst.data(), dataSize, queue);
     }
 
-    void zero() {
+    void zero(VkQueue queue = VK_NULL_HANDLE) {
         std::vector<T> zeros(size);
-        upload(zeros.data(), sizeof(T) * size);
+        upload(zeros.data(), sizeof(T) * size, queue);
     }
 
     void _recordZero(VkCommandBuffer commandBuffer) {
@@ -113,7 +116,7 @@ private:
 
     bool isHostVisible() const { return (memoryProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0; }
 
-    void upload(const void* source, size_t byteCount) {
+    void upload(const void* source, size_t byteCount, VkQueue queue) {
         if (byteCount == 0)
             return;
         auto& device = vulkanContext.getDevice();
@@ -143,7 +146,7 @@ private:
             }
             std::memcpy(mappedData, source, byteCount);
             vkUnmapMemory(device, stagingMemory);
-            vulkanContext.copyBufferImmediate(stagingBuffer, vertexBuffer, byteCount);
+            vulkanContext.copyBufferImmediate(stagingBuffer, vertexBuffer, byteCount, queue);
         } catch (...) {
             vkDestroyBuffer(device, stagingBuffer, nullptr);
             vkFreeMemory(device, stagingMemory, nullptr);
@@ -153,7 +156,7 @@ private:
         vkFreeMemory(device, stagingMemory, nullptr);
     }
 
-    void download(void* destination, size_t byteCount) {
+    void download(void* destination, size_t byteCount, VkQueue queue) {
         if (byteCount == 0)
             return;
         auto& device = vulkanContext.getDevice();
@@ -177,7 +180,7 @@ private:
                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                    stagingBuffer, stagingMemory);
         try {
-            vulkanContext.copyBufferImmediate(vertexBuffer, stagingBuffer, byteCount);
+            vulkanContext.copyBufferImmediate(vertexBuffer, stagingBuffer, byteCount, queue);
             void* mappedData = nullptr;
             if (vkMapMemory(device, stagingMemory, 0, byteCount, 0, &mappedData) != VK_SUCCESS) {
                 throw std::runtime_error("failed to map Vulkan staging buffer for download");

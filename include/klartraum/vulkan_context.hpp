@@ -202,6 +202,9 @@ public:
     // The queue family of the graphics or the background queue; throws for
     // any other queue.
     uint32_t getQueueFamily(VkQueue queue) const;
+    // The graphics queue for the graphics family, the background queue for the
+    // background family; throws for any other family.
+    VkQueue getQueueOfFamily(uint32_t family) const;
 
     /**
      * @brief A queue for long work next to the frames, e.g. on a worker
@@ -245,13 +248,17 @@ public:
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
                       VkDeviceMemory& bufferMemory);
-    void copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size);
+    // Copies with submitImmediate(), on `queue` (default: the graphics queue).
+    void copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size, VkQueue queue = VK_NULL_HANDLE);
     /**
      * @brief Records commands into a one-time command buffer, submits it to
-     *        the graphics queue and waits for it to finish. Safe to call from
-     *        several threads.
+     *        `queue` and waits for it to finish. Safe to call from several
+     *        threads.
+     * @param queue The graphics queue (the default) or the background queue.
+     *        Work on a worker thread passes the background queue, so that it
+     *        does not wait behind the frames.
      */
-    void submitImmediate(const std::function<void(VkCommandBuffer)>& record);
+    void submitImmediate(const std::function<void(VkCommandBuffer)>& record, VkQueue queue = VK_NULL_HANDLE);
     BackendConfig& getConfig();
 
     std::vector<VkFence> inFlightFences;

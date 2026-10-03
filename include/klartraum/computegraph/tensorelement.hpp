@@ -175,7 +175,7 @@ public:
         // Create dimensions buffer (always 4 elements: width, height, depth, batch)
         dimensionBuffer = std::make_unique<VulkanBuffer<uint32_t>>(vulkanContext, dimensions.size(), dimUsageFlags);
         // Initialize dimensions buffer with the tensor dimensions
-        dimensionBuffer->memcopyFrom(dimensions);
+        dimensionBuffer->memcopyFrom(dimensions, this->getSetupQueue());
 
         if (dataStorage->buffers.empty()) {
             dataStorage->buffers.reserve(numberPaths);
