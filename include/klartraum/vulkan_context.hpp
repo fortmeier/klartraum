@@ -196,33 +196,21 @@ public:
     VkResult queueWaitIdle(VkQueue queue);
     VkResult queuePresent(VkQueue queue, const VkPresentInfoKHR* presentInfo);
 
+    // The queue family of the graphics or the background queue; throws for
+    // any other queue.
+    uint32_t getQueueFamily(VkQueue queue) const;
+
     /**
      * @brief A queue for long work next to the frames, e.g. on a worker
      *        thread: a queue of its own when the device has a second
      *        graphics and compute queue, otherwise the graphics queue.
      *        Buffers and images are then shared by both queue families.
+     *        Compile a graph with getBackgroundQueueFamily() to submit it
+     *        here.
      */
     VkQueue getBackgroundQueue();
     uint32_t getBackgroundQueueFamily() const { return backgroundFamily; }
     bool hasOwnBackgroundQueue() const { return backgroundQueue != graphicsQueue; }
-
-    // The queue the calling thread submits to: the graphics queue, or the
-    // background queue inside a BackgroundQueueScope. Compute graphs and
-    // submitImmediate() record for and submit to it.
-    VkQueue getThreadQueue();
-    uint32_t getThreadQueueFamily();
-
-    // While it lives, the constructing thread submits to the background queue.
-    class BackgroundQueueScope {
-    public:
-        explicit BackgroundQueueScope(VulkanContext& vulkanContext);
-        ~BackgroundQueueScope();
-        BackgroundQueueScope(const BackgroundQueueScope&) = delete;
-        BackgroundQueueScope& operator=(const BackgroundQueueScope&) = delete;
-
-    private:
-        const VulkanContext* previous_;
-    };
 
     // Fills a create info's sharing mode: concurrent between the graphics and
     // the background queue family when they differ, else exclusive.
@@ -256,8 +244,8 @@ public:
     void copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size);
     /**
      * @brief Records commands into a one-time command buffer, submits it to
-     *        the calling thread's queue (see getThreadQueue()) and waits for
-     *        it to finish. Safe to call from several threads.
+     *        the graphics queue and waits for it to finish. Safe to call from
+     *        several threads.
      */
     void submitImmediate(const std::function<void(VkCommandBuffer)>& record);
     BackendConfig& getConfig();
