@@ -62,37 +62,105 @@ Recording everything into one command buffer removes this overhead.
 - `submitTo(queue, pathId)` runs the host-side updates of the path, submits
   the path's single command buffer and returns a semaphore that is signalled when the path
   has finished. The frame loop uses this before presenting.
+- The queue must belong to the queue family the graph was compiled for:
+  `compileFrom(element)` compiles for the graphics queue,
+  `compileFrom(element, family)` for the queues of another family (see
+  [Queues and threads](#queues-and-threads)). Submitting to a queue of
+  another family throws.
 - `submitAndWait(queue, pathId)` submits and blocks until the GPU is done,
   which is convenient for tests and one-off computations.
 
 ## Queues and threads
 
-Vulkan queues and command pools must not be used from two threads at once.
-`VulkanContext` keeps a lock per queue: submit and wait with
-`queueSubmit()`, `queueWaitIdle()` and `queuePresent()` instead of the
-`vkQueue*` functions.
+### The problem: compute graphs on several threads
 
-Long computations can run next to the frames on a worker thread:
+An application has one `VulkanContext`, but it may want to run several
+compute graphs at the same time, each built and submitted by its own thread.
+All of them use what the context provides: its queues, its command pool and
+helpers such as `submitImmediate()`.
+
+The typical case is a long computation next to a frame loop. The main
+thread submits a frame graph to the graphics queue every frame, while a
+worker thread runs a graph that takes up to seconds, e.g. a Stable Diffusion run. Run on the
+main thread instead, it would stop the frame loop and freeze the window.
+
+Sharing one context between threads raises two issues:
+
+1. **Vulkan objects are not thread-safe.** Vulkan does not lock queues or
+   command pools internally; the spec requires the application to *externally
+   synchronize* them. Two threads calling `vkQueueSubmit()` on the same queue
+   at the same time, or recording command buffers from the same command pool,
+   is a data race with undefined behaviour (lost submissions, corrupted driver
+   state, crashes).
+2. **Graphs on one queue do not really run in parallel.** Even with correct
+   locking, if both threads submit to the graphics queue, the frames'
+   submissions queue up behind the worker's long submission. The CPU side of
+   the frame loop keeps running, but in practice each frame waits on the GPU
+   until that submission has finished.
+
+### The solution: locked queues and a background queue
+
+klartraum addresses the first point by how it shares objects between threads:
+
+- **Queues** are shared, so `VulkanContext` keeps a mutex per queue. Submit,
+  wait and present with `queueSubmit()`, `queueWaitIdle()` and
+  `queuePresent()`, never with the `vkQueue*` functions directly.
+- **Command pools** are never shared: each `ComputeGraph` owns its pool.
+
+For the second point it provides a **background queue**: a second queue,
+separate from the graphics queue, that the GPU can work on next to the frames.
+
+### Example
+
+The main thread compiles the frame graph for the graphics queue, with one
+path per swapchain image. A worker thread compiles its graph for the
+background queue's family and submits it to the background queue, while the
+main thread keeps rendering on the graphics queue:
 
 ```cpp
+// Main thread: the frame graph, compiled for the graphics queue.
+// `frameRoot` is the output element of the frame, e.g. a render pass.
+klartraum::ComputeGraph frames(vulkanContext, vulkanContext.getNumberOfSwapChainImages());
+frames.compileFrom(frameRoot);
+
+// Worker thread: the long computation, compiled for the background queue.
+// `root` is its output element, e.g. a UNet.
+std::atomic<bool> done{false};
 std::thread worker([&] {
-    klartraum::VulkanContext::BackgroundQueueScope scope(vulkanContext);
-    klartraum::ComputeGraph graph(vulkanContext, 1);  // records for the background queue
-    graph.compileFrom(root);
-    graph.submitAndWait(vulkanContext.getThreadQueue(), 0);
+    klartraum::ComputeGraph graph(vulkanContext, 1);
+    graph.compileFrom(root, vulkanContext.getBackgroundQueueFamily());
+    graph.submitAndWait(vulkanContext.getBackgroundQueue(), 0);
+    done = true;
 });
+
+// Main thread: the frame loop keeps running on the graphics queue.
+while (!done) {
+    auto [imageIndex, fence] = vulkanContext.beginRender();
+    VkSemaphore finished = frames.submitTo(vulkanContext.getGraphicsQueue(), imageIndex, fence);
+    vulkanContext.endRender(imageIndex, finished);
+}
+worker.join();
+// the result of `root` can now be read by the frames
 ```
+
+### Details
 
 - `getBackgroundQueue()` is a queue of its own when the device has a second
   graphics and compute queue (another queue of the graphics family, or a queue
   of another family; MoltenVK has four families with one queue each).
-  Otherwise it is the graphics queue, and the frames wait while one of its
-  submissions executes.
-- Inside a `BackgroundQueueScope`, `getThreadQueue()` is the background
-  queue; elsewhere it is the graphics queue. A `ComputeGraph` allocates its
-  command buffers for the queue of the thread that creates it, and
-  `submitImmediate()` (and everything built on it, such as buffer uploads)
-  submits to the calling thread's queue.
+  Otherwise, e.g. on KosmicKrisp, which has a single queue, it is the graphics
+  queue itself. A worker thread can then still submit its graph safely, but it
+  does not run in the background: rendering is blocked while one of its
+  submissions executes. Check `hasOwnBackgroundQueue()` to tell the two cases
+  apart.
+- A graph is compiled for one queue family, because Vulkan command buffers
+  can only be submitted to queues of the family their command pool was
+  created for. One thread can compile several graphs for different families
+  and submit each to its own queue.
+- `submitImmediate()` (and everything built on it, such as buffer uploads
+  with `memcopyFrom()`) always submits to the graphics queue, also from a
+  worker thread. Large uploads from a worker therefore briefly hold up the
+  frames ([#40](https://github.com/fortmeier/klartraum/issues/40)).
 - When the background queue belongs to another queue family, buffers made by
   `VulkanContext::createBuffer()` and offscreen images are shared by both
   families (`VK_SHARING_MODE_CONCURRENT`), so a result computed on the
