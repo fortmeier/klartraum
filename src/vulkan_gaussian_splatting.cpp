@@ -293,12 +293,14 @@ void VulkanGaussianSplatting::checkInput(ComputeGraphElementPtr input, int index
 void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
     numberOfPaths = numberPaths;
 
-    vulkanContext.submitImmediate([&](VkCommandBuffer cmd) {
-        for (uint32_t i = 0; i < numberPaths; ++i) {
-            vkCmdFillBuffer(cmd, sortRadixValA->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
-            vkCmdFillBuffer(cmd, sortRadixValB->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
-        }
-    });
+    vulkanContext.submitImmediate(
+        [&](VkCommandBuffer cmd) {
+            for (uint32_t i = 0; i < numberPaths; ++i) {
+                vkCmdFillBuffer(cmd, sortRadixValA->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+                vkCmdFillBuffer(cmd, sortRadixValB->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+            }
+        },
+        getSetupQueue());
 }
 
 void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
