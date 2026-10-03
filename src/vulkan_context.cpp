@@ -1235,13 +1235,16 @@ void VulkanContext::createCommandPool() {
     }    
 }
 
-void VulkanContext::submitImmediate(const std::function<void(VkCommandBuffer)>& record) {
+void VulkanContext::submitImmediate(const std::function<void(VkCommandBuffer)>& record, VkQueue queue) {
+    if (queue == VK_NULL_HANDLE) {
+        queue = graphicsQueue;
+    }
     // A pool per call: pools are externally synchronized, and this may run on
-    // several threads.
+    // several threads, for different queue families.
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    poolInfo.queueFamilyIndex = graphicsFamily;
+    poolInfo.queueFamilyIndex = getQueueFamily(queue);
     VkCommandPool pool = VK_NULL_HANDLE;
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &pool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create an immediate command pool");
@@ -1286,7 +1289,7 @@ void VulkanContext::submitImmediate(const std::function<void(VkCommandBuffer)>& 
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
-        if (queueSubmit(graphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
+        if (queueSubmit(queue, 1, &submitInfo, fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit immediate commands");
         }
         if (vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
@@ -1327,17 +1330,23 @@ uint32_t VulkanContext::getQueueFamily(VkQueue queue) const {
     throw std::invalid_argument("queue is neither the graphics nor the background queue of this context");
 }
 
+VkQueue VulkanContext::getQueueOfFamily(uint32_t family) const {
+    if (family == graphicsFamily) return graphicsQueue;
+    if (family == backgroundFamily) return backgroundQueue;
+    throw std::invalid_argument("queue family is neither the graphics nor the background family of this context");
+}
+
 VkQueue VulkanContext::getBackgroundQueue() {
     return backgroundQueue;
 }
 
-void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size) {
+void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size, VkQueue queue) {
     if (size == 0) return;
     submitImmediate([&](VkCommandBuffer commandBuffer) {
         VkBufferCopy region{};
         region.size = size;
         vkCmdCopyBuffer(commandBuffer, source, destination, 1, &region);
-    });
+    }, queue);
 }
 
 

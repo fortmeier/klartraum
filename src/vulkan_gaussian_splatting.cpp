@@ -296,7 +296,7 @@ void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numb
             vkCmdFillBuffer(cmd, sortRadixValA->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
             vkCmdFillBuffer(cmd, sortRadixValB->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
         }
-    });
+    }, getSetupQueue());
 }
 
 void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
