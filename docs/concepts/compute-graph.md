@@ -168,6 +168,10 @@ worker.join();
   the queue the graph is compiled for: `compileFrom()` hands it to every
   element as `getSetupQueue()` before `_setup()`. An element that sets up
   other elements itself passes it on with `_setSetupQueue()`.
+- Many uploads at once go through a `BatchedUpload`: it gathers the staging
+  copies in large staging buffers and submits one copy per buffer, instead
+  of one submission (and wait) per upload. `OnnxNetwork` uploads its weights
+  and constants this way.
 - When the background queue belongs to another queue family, buffers made by
   `VulkanContext::createBuffer()` and offscreen images are shared by both
   families (`VK_SHARING_MODE_CONCURRENT`), so a result computed on the

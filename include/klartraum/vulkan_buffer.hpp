@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include <klartraum/batched_upload.hpp>
 #include <klartraum/vulkan_context.hpp>
 
 namespace klartraum {
@@ -66,6 +67,23 @@ public:
     void memcopyFrom(const char* src, size_t count, VkQueue queue = VK_NULL_HANDLE) {
         size_t dataSize = std::min(count, sizeof(T) * size_t(size));
         upload(src, dataSize, queue);
+    }
+
+    // Like memcopyFrom(), with `count` values of type Source (bytes for
+    // char), but the staging copy of a device-local buffer is gathered in
+    // `batch` and happens with its next submission (see BatchedUpload).
+    // Host-visible buffers are written right away.
+    template <typename Source>
+    void memcopyFrom(BatchedUpload& batch, const Source* src, size_t count) {
+        const size_t dataSize = std::min(sizeof(Source) * count, getBufferMemSize());
+        if (isHostVisible()) {
+            upload(src, dataSize, VK_NULL_HANDLE);
+            return;
+        }
+        if ((usageFlags & VK_BUFFER_USAGE_TRANSFER_DST_BIT) == 0) {
+            throw std::runtime_error("device-local buffer upload requires TRANSFER_DST usage");
+        }
+        batch.add(vertexBuffer, src, dataSize);
     }
 
     void memcopyTo(std::vector<T>& dst, VkQueue queue = VK_NULL_HANDLE) {
