@@ -953,6 +953,10 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
 
     const onnx::GraphProto& graph = model->graph();
 
+    // The weights and constants are device-local; their staging copies are
+    // submitted in a few large batches, on the queue the graph is compiled for.
+    BatchedUpload batch(vulkanContext, getSetupQueue());
+
     // create all initializers
     for (int i = 0; i < graph.initializer_size(); ++i) {
         const auto& init = graph.initializer(i);
@@ -972,19 +976,19 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
             case onnx::TensorProto::FLOAT: {
                 auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(graphDataElements.at(name));
                 if (!tensor) throw std::runtime_error("Initializer " + name + " is not a FLOAT tensor");
-                tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size(), getSetupQueue());
+                tensor->getDataBuffer().memcopyFrom(batch, initData.data(), initData.size());
                 break;
             }
             case onnx::TensorProto::INT32: {
                 auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(graphDataElements.at(name));
                 if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT32 tensor");
-                tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size(), getSetupQueue());
+                tensor->getDataBuffer().memcopyFrom(batch, initData.data(), initData.size());
                 break;
             }
             case onnx::TensorProto::INT64: {
                 auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(graphDataElements.at(name));
                 if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT64 tensor");
-                tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size(), getSetupQueue());
+                tensor->getDataBuffer().memcopyFrom(batch, initData.data(), initData.size());
                 break;
             }
             default:
@@ -997,21 +1001,21 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
             std::shared_ptr<TensorElement<float>> elementPtrMulti = std::dynamic_pointer_cast<TensorElement<float>>(element);
             if (elementPtrSingle) {
                 TensorElementSinglePath<float>* tensor = elementPtrSingle.get();
-                tensor->getDataBuffer().memcopyFrom(init.float_data().data(), init.float_data_size(), getSetupQueue());
+                tensor->getDataBuffer().memcopyFrom(batch, init.float_data().data(), init.float_data_size());
             } else if (elementPtrMulti) {
                 TensorElement<float>* tensor = elementPtrMulti.get();
-                tensor->getDataBuffer(0).memcopyFrom(init.float_data().data(), init.float_data_size(), getSetupQueue());
+                tensor->getDataBuffer(0).memcopyFrom(batch, init.float_data().data(), init.float_data_size());
             } else {
                 throw std::runtime_error("Initializer " + name + " has unsupported tensor element type");
             }
         } else if (dataType == onnx::TensorProto::INT32 && init.int32_data_size() > 0) {
             auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(graphDataElements.at(name));
             if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT32 tensor");
-            tensor->getDataBuffer().memcopyFrom(init.int32_data().data(), init.int32_data_size(), getSetupQueue());
+            tensor->getDataBuffer().memcopyFrom(batch, init.int32_data().data(), init.int32_data_size());
         } else if (dataType == onnx::TensorProto::INT64 && init.int64_data_size() > 0) {
             auto tensor = std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(graphDataElements.at(name));
             if (!tensor) throw std::runtime_error("Initializer " + name + " is not an INT64 tensor");
-            tensor->getDataBuffer().memcopyFrom(init.int64_data().data(), init.int64_data_size(), getSetupQueue());
+            tensor->getDataBuffer().memcopyFrom(batch, init.int64_data().data(), init.int64_data_size());
         } else {
             throw std::runtime_error("Initializer " + name + " has no data");
         }
@@ -1031,15 +1035,15 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
                     if (type == onnx::TensorProto::FLOAT) {
                         std::shared_ptr<TensorElementSinglePath<float>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(graphDataElements[node.output(0)]);
                         std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
-                        tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize, getSetupQueue());
+                        tensorElement->getDataBuffer().memcopyFrom(batch, dataLocation, dataSize);
                     } else if (type == onnx::TensorProto::INT32) {
                         std::shared_ptr<TensorElementSinglePath<int32_t>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(graphDataElements[node.output(0)]);
                         std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
-                        tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize, getSetupQueue());
+                        tensorElement->getDataBuffer().memcopyFrom(batch, dataLocation, dataSize);
                     } else if (type == onnx::TensorProto::INT64) {
                         std::shared_ptr<TensorElementSinglePath<int64_t>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(graphDataElements[node.output(0)]);
                         std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
-                        tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize, getSetupQueue());
+                        tensorElement->getDataBuffer().memcopyFrom(batch, dataLocation, dataSize);
                     } else {
                         std::cerr << "Unsupported constant data type: " << type << std::endl;
                         throw std::runtime_error("Unsupported constant data type: " + std::to_string(type));
@@ -1048,6 +1052,7 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
             }
         }
     }
+    batch.submit();
 }
 
 void OnnxNetwork::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
