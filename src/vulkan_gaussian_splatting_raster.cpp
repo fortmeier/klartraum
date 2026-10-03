@@ -36,7 +36,7 @@ void VulkanGaussianSplattingRaster::_setup(VulkanContext& vulkanContext, uint32_
             vkCmdFillBuffer(cmd, drawArgs->getVkBuffer(pathId),
                             offsetof(VkDrawIndirectCommand, vertexCount), sizeof(uint32_t), 4u);
         }
-    });
+    }, getSetupQueue());
 }
 
 void VulkanGaussianSplattingRaster::checkInput(ComputeGraphElementPtr input, int index) {

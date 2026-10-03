@@ -115,6 +115,14 @@ public:
         initialized = true;
     };
 
+    // The queue the element's graph is compiled for, set by
+    // ComputeGraph::compileFrom() before _setup(): uploads and other
+    // immediate submissions in _setup() go to it (VK_NULL_HANDLE: the
+    // graphics queue). An element that sets up other elements itself passes
+    // it on.
+    VkQueue getSetupQueue() const { return setupQueue; }
+    void _setSetupQueue(VkQueue queue) { setupQueue = queue; }
+
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
         if (!initialized) {
             throw std::runtime_error("ComputeGraphElement not initialized");
@@ -177,6 +185,7 @@ protected:
     std::map<int, int> srcOutputSlots; //TODO: really should be private
     
     bool initialized = false;
+    VkQueue setupQueue = VK_NULL_HANDLE;
 
     std::string name;
 

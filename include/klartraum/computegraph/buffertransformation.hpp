@@ -71,10 +71,12 @@ public:
         this->vulkanContext = &vulkanContext;
 
         if constexpr (!std::is_void<U>::value) {
+            uboPtr->_setSetupQueue(this->getSetupQueue());
             uboPtr->_setup(vulkanContext, numberPaths);
         }
 
         for (auto& other : otherInputs) {
+            other->_setSetupQueue(this->getSetupQueue());
             other->_setup(vulkanContext, numberPaths);
         }
 

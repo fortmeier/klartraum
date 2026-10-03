@@ -24,7 +24,10 @@ namespace klartraum {
 // so the backends leave it ready for that blit (PRESENT_SRC is illegal here).
 class OffscreenTarget : public ImageViewSrc {
 public:
-    OffscreenTarget(VulkanContext& vulkanContext, VkExtent2D extent, uint32_t numImages)
+    // `queue` takes the initial clear (default: the graphics queue; see
+    // VulkanContext::submitImmediate()).
+    OffscreenTarget(VulkanContext& vulkanContext, VkExtent2D extent, uint32_t numImages,
+                    VkQueue queue = VK_NULL_HANDLE)
         : vulkanContext_(vulkanContext), extent_(extent) {
         auto& device = vulkanContext.getDevice();
         VkFormat format = vulkanContext.getSwapChainImageFormat();
@@ -88,7 +91,7 @@ public:
             for (VkImage image : images_) {
                 recordClearImage(commandBuffer, image, clearColor());
             }
-        });
+        }, queue);
     }
 
     ~OffscreenTarget() {
@@ -128,8 +131,10 @@ private:
  */
 class SinglePathImage : public ImageViewSrc {
 public:
-    SinglePathImage(VulkanContext& vulkanContext, VkExtent2D extent) : vulkanContext_(vulkanContext) {
-        target_ = std::make_unique<OffscreenTarget>(vulkanContext, extent, 1);
+    // `queue` takes the initial clear, see OffscreenTarget.
+    SinglePathImage(VulkanContext& vulkanContext, VkExtent2D extent, VkQueue queue = VK_NULL_HANDLE)
+        : vulkanContext_(vulkanContext) {
+        target_ = std::make_unique<OffscreenTarget>(vulkanContext, extent, 1, queue);
         setClear(false);
     }
 
@@ -145,9 +150,12 @@ public:
      * @brief Copies `source` (of the same extent and the swapchain's format)
      *        into the image, waiting for the copy to finish.
      * @param sourceLayout The layout `source` is in; it is left in it.
+     * @param queue The queue that copies (default: the graphics queue; see
+     *        VulkanContext::submitImmediate()).
      * @throws std::invalid_argument If the extents differ.
      */
-    void copyFrom(VkImage source, VkImageLayout sourceLayout, VkExtent2D sourceExtent) {
+    void copyFrom(VkImage source, VkImageLayout sourceLayout, VkExtent2D sourceExtent,
+                  VkQueue queue = VK_NULL_HANDLE) {
         const VkExtent2D ext = extent();
         if (sourceExtent.width != ext.width || sourceExtent.height != ext.height) {
             throw std::invalid_argument("SinglePathImage::copyFrom: the extents differ");
@@ -184,7 +192,7 @@ public:
                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
             barrier(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sourceLayout, VK_ACCESS_TRANSFER_READ_BIT,
                     VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-        });
+        }, queue);
     }
 
 private:
