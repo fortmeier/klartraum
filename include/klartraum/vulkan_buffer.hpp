@@ -11,6 +11,7 @@
 #include <functional>
 #include <cstring>
 
+#include <klartraum/batched_upload.hpp>
 #include <klartraum/vulkan_context.hpp>
 
 namespace klartraum {
@@ -147,6 +148,20 @@ public:
         size_t dataSize = std::min(count, sizeof(T) * size_t(size));
         memcpy(mappedData, src, dataSize);
         vkUnmapMemory(device, vertexBufferMemory);
+    }
+
+    // Like memcopyFrom(), with `count` values of type Source (bytes for
+    // char), but the staging copy of a device-local buffer is gathered in
+    // `batch` and happens with its next submission (see BatchedUpload).
+    // Host-visible buffers are written right away.
+    template <typename Source>
+    void memcopyFrom(BatchedUpload& batch, const Source* src, size_t count) {
+        const size_t dataSize = std::min(sizeof(Source) * count, getBufferMemSize());
+        if (hostVisible) {
+            memcopyFrom(reinterpret_cast<const char*>(src), dataSize);
+            return;
+        }
+        batch.add(vertexBuffer, src, dataSize);
     }
 
     // Explicit readback for tests or inspection; call after the producing GPU work completes.
