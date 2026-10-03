@@ -1205,11 +1205,11 @@ void VulkanContext::createCommandPool() {
 
 void VulkanContext::submitImmediate(const std::function<void(VkCommandBuffer)>& record) {
     // A pool per call: pools are externally synchronized, and this may run on
-    // several threads, for different queue families.
+    // several threads.
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    poolInfo.queueFamilyIndex = getThreadQueueFamily();
+    poolInfo.queueFamilyIndex = graphicsFamily;
     VkCommandPool pool = VK_NULL_HANDLE;
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &pool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create an immediate command pool");
@@ -1254,7 +1254,7 @@ void VulkanContext::submitImmediate(const std::function<void(VkCommandBuffer)>& 
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
-        if (queueSubmit(getThreadQueue(), 1, &submitInfo, fence) != VK_SUCCESS) {
+        if (queueSubmit(graphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit immediate commands");
         }
         if (vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
@@ -1290,25 +1290,15 @@ VkResult VulkanContext::queuePresent(VkQueue queue, const VkPresentInfoKHR* pres
     return vkQueuePresentKHR(queue, presentInfo);
 }
 
+uint32_t VulkanContext::getQueueFamily(VkQueue queue) const {
+    if (queue == graphicsQueue)
+        return graphicsFamily;
+    if (queue == backgroundQueue)
+        return backgroundFamily;
+    throw std::invalid_argument("queue is neither the graphics nor the background queue of this context");
+}
+
 VkQueue VulkanContext::getBackgroundQueue() { return backgroundQueue; }
-
-namespace {
-// The context whose background queue the calling thread submits to.
-thread_local const VulkanContext* backgroundThreadContext = nullptr;
-} // namespace
-
-VkQueue VulkanContext::getThreadQueue() { return backgroundThreadContext == this ? backgroundQueue : graphicsQueue; }
-
-uint32_t VulkanContext::getThreadQueueFamily() {
-    return backgroundThreadContext == this ? backgroundFamily : graphicsFamily;
-}
-
-VulkanContext::BackgroundQueueScope::BackgroundQueueScope(VulkanContext& vulkanContext)
-    : previous_(backgroundThreadContext) {
-    backgroundThreadContext = &vulkanContext;
-}
-
-VulkanContext::BackgroundQueueScope::~BackgroundQueueScope() { backgroundThreadContext = previous_; }
 
 void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size) {
     if (size == 0)
