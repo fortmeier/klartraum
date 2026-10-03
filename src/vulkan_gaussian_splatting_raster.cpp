@@ -32,12 +32,14 @@ void VulkanGaussianSplattingRaster::_setup(VulkanContext& vulkanContext, uint32_
     // constant across frames, so seed it once here rather than every _record —
     // setRecordToZeroRange above only resets instanceCount each frame, leaving
     // this byte range untouched.
-    vulkanContext.submitImmediate([&](VkCommandBuffer cmd) {
-        for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
-            vkCmdFillBuffer(cmd, drawArgs->getVkBuffer(pathId), offsetof(VkDrawIndirectCommand, vertexCount),
-                            sizeof(uint32_t), 4u);
-        }
-    });
+    vulkanContext.submitImmediate(
+        [&](VkCommandBuffer cmd) {
+            for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
+                vkCmdFillBuffer(cmd, drawArgs->getVkBuffer(pathId), offsetof(VkDrawIndirectCommand, vertexCount),
+                                sizeof(uint32_t), 4u);
+            }
+        },
+        getSetupQueue());
 }
 
 void VulkanGaussianSplattingRaster::checkInput(ComputeGraphElementPtr input, int index) {

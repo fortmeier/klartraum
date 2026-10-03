@@ -157,10 +157,17 @@ worker.join();
   can only be submitted to queues of the family their command pool was
   created for. One thread can compile several graphs for different families
   and submit each to its own queue.
-- `submitImmediate()` (and everything built on it, such as buffer uploads
-  with `memcopyFrom()`) always submits to the graphics queue, also from a
-  worker thread. Large uploads from a worker therefore briefly hold up the
-  frames ([#40](https://github.com/fortmeier/klartraum/issues/40)).
+- Immediate submissions take the queue they run on: `submitImmediate()`,
+  `copyBufferImmediate()`, the staging copies of `VulkanBuffer::memcopyFrom()`
+  and `memcopyTo()` for device-local buffers, and the copies of
+  `SinglePathImage::copyFrom()`. Without one they use the graphics queue. On
+  a worker thread, pass the background queue: the graphics queue also holds
+  the frames, which wait for the swapchain (vsync), so every immediate
+  submission there waits up to a frame.
+- Uploads while a graph is compiled, e.g. an ONNX network's weights, go to
+  the queue the graph is compiled for: `compileFrom()` hands it to every
+  element as `getSetupQueue()` before `_setup()`. An element that sets up
+  other elements itself passes it on with `_setSetupQueue()`.
 - When the background queue belongs to another queue family, buffers made by
   `VulkanContext::createBuffer()` and offscreen images are shared by both
   families (`VK_SHARING_MODE_CONCURRENT`), so a result computed on the

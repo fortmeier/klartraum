@@ -28,7 +28,9 @@ namespace klartraum {
 // so the backends leave it ready for that blit (PRESENT_SRC is illegal here).
 class OffscreenTarget : public ImageViewSrc {
 public:
-    OffscreenTarget(VulkanContext& vulkanContext, VkExtent2D extent, uint32_t numImages)
+    // `queue` takes the initial clear (default: the graphics queue; see
+    // VulkanContext::submitImmediate()).
+    OffscreenTarget(VulkanContext& vulkanContext, VkExtent2D extent, uint32_t numImages, VkQueue queue = VK_NULL_HANDLE)
         : vulkanContext(vulkanContext),
           imageExtent(extent) {
         auto& device = vulkanContext.getDevice();
@@ -87,11 +89,13 @@ public:
         setResources(views, images, std::vector<VkExtent2D>(numImages, extent));
         // Start in GENERAL, so that a target that does not clear itself
         // (setClear(false)) is in a defined layout from its first use.
-        vulkanContext.submitImmediate([&](VkCommandBuffer commandBuffer) {
-            for (VkImage image : images) {
-                recordClearImage(commandBuffer, image, clearColor());
-            }
-        });
+        vulkanContext.submitImmediate(
+            [&](VkCommandBuffer commandBuffer) {
+                for (VkImage image : images) {
+                    recordClearImage(commandBuffer, image, clearColor());
+                }
+            },
+            queue);
     }
 
     ~OffscreenTarget() {
@@ -134,9 +138,10 @@ private:
  */
 class SinglePathImage : public ImageViewSrc {
 public:
-    SinglePathImage(VulkanContext& vulkanContext, VkExtent2D extent)
+    // `queue` takes the initial clear, see OffscreenTarget.
+    SinglePathImage(VulkanContext& vulkanContext, VkExtent2D extent, VkQueue queue = VK_NULL_HANDLE)
         : vulkanContext(vulkanContext) {
-        target = std::make_unique<OffscreenTarget>(vulkanContext, extent, 1);
+        target = std::make_unique<OffscreenTarget>(vulkanContext, extent, 1, queue);
         setClear(false);
     }
 
@@ -152,46 +157,50 @@ public:
      * @brief Copies `source` (of the same extent and the swapchain's format)
      *        into the image, waiting for the copy to finish.
      * @param sourceLayout The layout `source` is in; it is left in it.
+     * @param queue The queue that copies (default: the graphics queue; see
+     *        VulkanContext::submitImmediate()).
      * @throws std::invalid_argument If the extents differ.
      */
-    void copyFrom(VkImage source, VkImageLayout sourceLayout, VkExtent2D sourceExtent) {
+    void copyFrom(VkImage source, VkImageLayout sourceLayout, VkExtent2D sourceExtent, VkQueue queue = VK_NULL_HANDLE) {
         const VkExtent2D ext = extent();
         if (sourceExtent.width != ext.width || sourceExtent.height != ext.height) {
             throw std::invalid_argument("SinglePathImage::copyFrom: the extents differ");
         }
         VkImage destination = target->getImage(0);
-        vulkanContext.submitImmediate([&](VkCommandBuffer commandBuffer) {
-            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            auto barrier = [&](VkImage image, VkImageLayout from, VkImageLayout to, VkAccessFlags srcAccess,
-                               VkAccessFlags dstAccess) {
-                VkImageMemoryBarrier b{};
-                b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                b.oldLayout = from;
-                b.newLayout = to;
-                b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                b.image = image;
-                b.subresourceRange = range;
-                b.srcAccessMask = srcAccess;
-                b.dstAccessMask = dstAccess;
-                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-            };
-            barrier(source, sourceLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_WRITE_BIT,
-                    VK_ACCESS_TRANSFER_READ_BIT);
-            barrier(destination, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-            VkImageCopy region{};
-            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.extent = {ext.width, ext.height, 1};
-            vkCmdCopyImage(commandBuffer, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-            barrier(destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
-                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
-            barrier(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sourceLayout, VK_ACCESS_TRANSFER_READ_BIT,
-                    VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-        });
+        vulkanContext.submitImmediate(
+            [&](VkCommandBuffer commandBuffer) {
+                VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                auto barrier = [&](VkImage image, VkImageLayout from, VkImageLayout to, VkAccessFlags srcAccess,
+                                   VkAccessFlags dstAccess) {
+                    VkImageMemoryBarrier b{};
+                    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    b.oldLayout = from;
+                    b.newLayout = to;
+                    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    b.image = image;
+                    b.subresourceRange = range;
+                    b.srcAccessMask = srcAccess;
+                    b.dstAccessMask = dstAccess;
+                    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+                };
+                barrier(source, sourceLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_WRITE_BIT,
+                        VK_ACCESS_TRANSFER_READ_BIT);
+                barrier(destination, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                VkImageCopy region{};
+                region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.extent = {ext.width, ext.height, 1};
+                vkCmdCopyImage(commandBuffer, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                barrier(destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
+                barrier(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sourceLayout, VK_ACCESS_TRANSFER_READ_BIT,
+                        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+            },
+            queue);
     }
 
 private:
