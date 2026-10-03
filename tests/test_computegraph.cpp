@@ -18,6 +18,10 @@
  * uncompiled or to a queue of another family throws
  * - backgroundQueueRunsBesideFrames: a graph compiled for and run on the background queue by a worker thread computes
  * the right result while the main thread renders frames, and the main thread reads its output
+ * - elementsSetUpOnGraphQueue: compileFrom() hands each element the queue of the family it compiles for
+ * (getSetupQueue()), also to the scratch inputs a GeneralComputation sets up itself
+ * - immediateSubmissionsChooseQueue: submitImmediate(), copyBufferImmediate() and device-local uploads and downloads
+ * run on the background queue when given it
  **/
 
 #include <atomic>
@@ -364,7 +368,7 @@ TEST(ComputeGraph, submitChecksQueueFamily) {
 // Test: backgroundQueueRunsBesideFrames
 // A worker thread builds a chain of negations, compiles it for the background
 // queue family and runs it on the background queue, then copies the output
-// with submitImmediate (on the graphics queue). Meanwhile the main thread
+// with copyBufferImmediate on the background queue. Meanwhile the main thread
 // renders frames on the graphics queue. Afterwards the main thread copies the
 // worker's output again; reading the background queue's result on the
 // graphics queue needs the buffers shared between the queue families.
@@ -420,7 +424,8 @@ TEST(ComputeGraph, backgroundQueueRunsBesideFrames) {
             }
             copied = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength, kCopyable);
             copied->_setup(vc, 1);
-            vc.copyBufferImmediate(output.getBuffer(), copied->getBuffer(0).getBuffer(), kLength * sizeof(float));
+            vc.copyBufferImmediate(output.getBuffer(), copied->getBuffer(0).getBuffer(), kLength * sizeof(float),
+                                   vc.getBackgroundQueue());
         } catch (const std::exception& e) {
             workerError = e.what();
         }
@@ -452,4 +457,96 @@ TEST(ComputeGraph, backgroundQueueRunsBesideFrames) {
     readBack->getBuffer(0).memcopyTo(values);
     for (float value : values)
         EXPECT_FLOAT_EQ(value, -3.0f);
+}
+
+// ----------------------------------------------------------------
+// Test: elementsSetUpOnGraphQueue
+// ----------------------------------------------------------------
+namespace {
+// Remembers the queue it was set up for.
+class SetupQueueProbe : public ComputeGraphElement {
+public:
+    const char* getType() const override { return "SetupQueueProbe"; }
+    void checkInput(ComputeGraphElementPtr, int) override {}
+    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+        ComputeGraphElement::_setup(vulkanContext, numberPaths);
+        setUpOn = getSetupQueue();
+    }
+    void _record(VkCommandBuffer, uint32_t) override {}
+    VkQueue setUpOn = VK_NULL_HANDLE;
+};
+
+// A buffer that remembers the queue it was set up for.
+class SetupQueueBuffer : public BufferElement<VulkanBuffer<float>> {
+public:
+    using BufferElement<VulkanBuffer<float>>::BufferElement;
+    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+        BufferElement<VulkanBuffer<float>>::_setup(vulkanContext, numberPaths);
+        setUpOn = getSetupQueue();
+    }
+    VkQueue setUpOn = VK_NULL_HANDLE;
+};
+} // namespace
+
+TEST(ComputeGraph, elementsSetUpOnGraphQueue) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    auto graphicsProbe = std::make_shared<SetupQueueProbe>();
+    auto graphics = ComputeGraph(vc, 1);
+    graphics.compileFrom(graphicsProbe);
+    EXPECT_EQ(graphicsProbe->setUpOn, vc.getGraphicsQueue());
+
+    auto backgroundProbe = std::make_shared<SetupQueueProbe>();
+    auto background = ComputeGraph(vc, 1);
+    background.compileFrom(backgroundProbe, vc.getBackgroundQueueFamily());
+    EXPECT_EQ(backgroundProbe->setUpOn, vc.getQueueOfFamily(vc.getBackgroundQueueFamily()));
+    if (vc.hasOwnBackgroundQueue() && vc.getBackgroundQueueFamily() != vc.getQueueFamily(vc.getGraphicsQueue())) {
+        EXPECT_EQ(backgroundProbe->setUpOn, vc.getBackgroundQueue());
+    }
+
+    // A GeneralComputation sets up its scratch inputs itself and passes the queue on.
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 16;
+    auto op = std::make_shared<GeneralComputation<>>(vc, "shaders/operator_multiply_scalar_element_wise.comp.spv");
+    auto scratch = std::make_shared<SetupQueueBuffer>(vc, kLength);
+    op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 0);
+    op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 1);
+    op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+    op->setGroupCountX(kLength);
+    op->addScratchBufferElement(scratch);
+    auto withScratch = ComputeGraph(vc, 1);
+    withScratch.compileFrom(op, vc.getBackgroundQueueFamily());
+    EXPECT_EQ(scratch->setUpOn, vc.getQueueOfFamily(vc.getBackgroundQueueFamily()));
+}
+
+// ----------------------------------------------------------------
+// Test: immediateSubmissionsChooseQueue
+// A device-local buffer uploaded and read back through staging copies on the
+// background queue, and a fill recorded with submitImmediate on it.
+// ----------------------------------------------------------------
+TEST(ComputeGraph, immediateSubmissionsChooseQueue) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const VkQueue background = vc.getBackgroundQueue();
+
+    constexpr uint32_t kLength = 256;
+    VulkanBuffer<float> buffer(vc, kLength,
+                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                   VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    std::vector<float> values(kLength);
+    for (uint32_t i = 0; i < kLength; ++i)
+        values[i] = static_cast<float>(i);
+    buffer.memcopyFrom(values, background);
+    std::vector<float> readBack(kLength, -1.0f);
+    buffer.memcopyTo(readBack, background);
+    EXPECT_EQ(readBack, values);
+
+    vc.submitImmediate(
+        [&](VkCommandBuffer commandBuffer) { vkCmdFillBuffer(commandBuffer, buffer.getBuffer(), 0, VK_WHOLE_SIZE, 0); },
+        background);
+    buffer.memcopyTo(readBack); // on the graphics queue
+    for (float value : readBack)
+        EXPECT_EQ(value, 0.0f);
 }
