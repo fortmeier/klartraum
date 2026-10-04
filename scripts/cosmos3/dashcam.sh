@@ -14,6 +14,9 @@
 # the Cosmos3 256 export (data/onnx/cosmos3_256, for its text tower and VAE
 # decoder), and a build of both examples. The 512 denoiser and VAE encoder are
 # exported into data/onnx/cosmos3_512 on the first run (about 15 minutes).
+# If a 320x320 export exists (data/onnx/cosmos3_320, `export_onnx.py prepare` and
+# `vae --skip-ort` with --size 320, about an hour), its decoder decodes the clip
+# in 2x2 tiles of 20x20 latents instead of 3x3 tiles of 16x16.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -40,17 +43,23 @@ klartraum)
         --prompt "$PROMPT" --negative-prompt "$NEGATIVE" --output "$OUT/sd15_klartraum.ppm"
 
     # The text tower does not depend on the video size, and the 512 clip is
-    # decoded in 16x16-latent tiles by the 256 VAE decoder, so both graphs are
-    # shared with cosmos3_256 through hard links (the ONNX loader rejects
-    # external data that resolves outside the model directory).
+    # decoded in tiles by a smaller VAE decoder, so both graphs are shared
+    # through hard links (the ONNX loader rejects external data that resolves
+    # outside the model directory).
+    if [[ -f data/onnx/cosmos3_320/vae_decoder.onnx ]]; then
+        DECODER=data/onnx/cosmos3_320 TILE=(--decoder-tile 20 --decoder-stride 12)
+    else
+        DECODER=data/onnx/cosmos3_256 TILE=(--decoder-tile 16 --decoder-stride 8)
+    fi
     mkdir -p "$MODELS"
-    for file in data/onnx/cosmos3_256/text_kv.onnx* data/onnx/cosmos3_256/vae_decoder.onnx*; do
+    for file in data/onnx/cosmos3_256/text_kv.onnx* "$DECODER"/vae_decoder.onnx* \
+        "$DECODER"/decoder_reference_*_f32.bin; do
         ln -f "$file" "$MODELS/$(basename "$file")"
     done
     cd "$COSMOS"
     CONFIG=(--size 512 --fps 11 --onnx-dir "$MODELS")
     uv run python export_onnx.py prepare "${CONFIG[@]}" --prompt-file "$CAPTION" \
-        --image "$OUT/sd15_klartraum.ppm" --decoder-tile 16 --decoder-stride 8
+        --image "$OUT/sd15_klartraum.ppm" "${TILE[@]}"
     uv run python export_onnx.py text --fixtures-only "${CONFIG[@]}"
     if [[ -f "$MODELS/denoiser.onnx" && -f "$MODELS/vae_encoder.onnx" ]]; then
         uv run python export_onnx.py denoiser --fixtures-only "${CONFIG[@]}"

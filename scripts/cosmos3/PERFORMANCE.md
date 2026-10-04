@@ -27,6 +27,9 @@ the text tower about 28 TFLOP; the M4's FP32 peak is about 4.3 TFLOP/s.
 | 3 | 64x64 tile, 4x4 outputs, 32-step staging | ~1495 GFLOP/s | 3.65 s (GPU 3102 ms, MatMul 2385 ms) | Superseded by 4 |
 | 4 | 64x128 tile, 4x8 outputs, 32-step staging | ~1505 GFLOP/s | 3.62 s (GPU 3033 ms, MatMul 2275 ms) | Kept |
 | 5 | Cycle 4 plus vec4 global loads on aligned in-bounds tiles | ~1495 GFLOP/s | | Rejected (no gain, more code) |
+| 6 | Cycle 4 with 16-step staging (12 KiB shared, two workgroups per core) | ~1530 GFLOP/s | | Rejected (within noise) |
+| 7 | 64x128 tile with 128 invocations, 8x8 outputs each | 970 GFLOP/s | | Rejected (register pressure) |
+| 8 | Cycle 4 with bank-conflict-free left-tile stores | ~1515 GFLOP/s | | Rejected (no gain) |
 
 The global loads are not the limit (cycle 5); the inner product loop is. Without
 cooperative-matrix (simdgroup) access through MoltenVK, larger register blocks
@@ -84,6 +87,7 @@ SD1.5 512 (30 DDIM steps) with MatMul cycle 4: 2.78 s per UNet step (from 3.39 s
 |---|---:|---:|---:|---:|---:|---:|
 | Before | 54 s | 893 s (44.6 s/step) | 578 s | 1536 s | 9.0e-3 | 4.6e-5 |
 | MatMul 4 + Conv3d 2 + Attention 3 | 15 s | 238 s (11.9 s/step) | 280 s | 541 s | 4.8e-3 | 3.8e-5 |
+| + 2x2 tiles of a 320 decoder (stride 12, 128-pixel overlap) | 15 s | 239 s (12.0 s/step) | 197 s | 459 s | 4.8e-3 | 3.8e-5 |
 
 The diffusers bf16 pipeline takes 274 s at 512x512 (its VAE decodes in cached
 temporal chunks); the float32 PyTorch/MPS wrappers about 10 s per step and 42 s
