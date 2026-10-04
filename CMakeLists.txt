@@ -307,6 +307,7 @@ add_executable(
   tests/test_onnx_transpose.cpp
   tests/test_onnx_reference.cpp
   tests/test_onnx_operations.cpp
+  tests/test_onnx_nd_operations.cpp
   tests/test_layers.cpp
   tests/test_render_over_targets.cpp
 
