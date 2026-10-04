@@ -1,0 +1,27 @@
+{
+ "subjects": [
+  {
+   "description": "A car driving forward along a tree-lined two-lane asphalt road on a sunny day",
+   "action": "Drives steadily forward down the road",
+   "number_of_subjects": 1
+  }
+ ],
+ "cinematography": {
+  "camera_motion": "Dashcam mounted behind the windshield, moving forward smoothly along the road",
+  "framing": "Wide forward-facing view of the road ahead"
+ },
+ "style_medium": "Live-action dashcam video",
+ "actions": [
+  {
+   "time": "0:00-0:03",
+   "description": "The car drives forward along the road, the lane markings and the trees on both sides stream past the camera"
+  }
+ ],
+ "temporal_caption": "Dashcam footage of a car driving forward along a sunny tree-lined road; the lane markings and trees on both sides move past as the car advances.",
+ "resolution": {
+  "W": 256,
+  "H": 256
+ },
+ "duration": "3s",
+ "fps": 11.0
+}
