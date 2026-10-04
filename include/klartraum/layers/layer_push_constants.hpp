@@ -90,6 +90,12 @@ struct SoftmaxPushConstants {
     uint32_t axisSize;
 };
 
+struct ReducePushConstants {
+    uint32_t outerCount;
+    uint32_t axisSize;
+    uint32_t innerSize;
+};
+
 struct SplitPushConstants {
     uint32_t outerCount;
     uint32_t axisSize;

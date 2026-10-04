@@ -149,6 +149,14 @@ ComputeGraphElementPtr fusedAttention(VulkanContext& vulkanContext, const Shape&
 ComputeGraphElementPtr softmax(VulkanContext& vulkanContext, const Shape& shape);
 
 /**
+ * @brief Mean over the contiguous axes [@p firstAxis, @p firstAxis + @p axisCount).
+ *
+ * Slots: 0 input, 1 output (the input's shape with the reduced axes removed or kept as 1).
+ */
+ComputeGraphElementPtr reduceMean(VulkanContext& vulkanContext, const Shape& input, uint32_t firstAxis,
+                                  uint32_t axisCount);
+
+/**
  * @brief Joins two tensors along @p axis.
  *
  * Slots: 0 lhs, 1 rhs, 2 output.
