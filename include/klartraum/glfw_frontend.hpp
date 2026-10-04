@@ -69,6 +69,7 @@ private:
     void initialize();
     void shutdown();
     void processGLFWEvents();
+    bool renderFrame();
 
     GLFWwindow* window;
     VkSurfaceKHR surface;
@@ -85,6 +86,12 @@ private:
 
     // Exceptions must not unwind through GLFW's C (and Objective-C) frames.
     std::exception_ptr callbackError;
+
+    // Event callbacks can render while glfwPollEvents() is active. Keep those
+    // frames in the loop(maxFrames) budget and avoid rendering the same loop
+    // iteration a second time after event processing returns.
+    int loopFramesRemaining = -1;
+    bool renderedFromEventCallback = false;
 
 };
 

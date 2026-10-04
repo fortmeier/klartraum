@@ -116,28 +116,52 @@ void GlfwFrontend::loop(int maxFrames) {
     // new swapchain (see KlartraumEngine::setGraphBuilder).
     glfwSetWindowAttrib(window, GLFW_RESIZABLE, klartraumEngine->isResizable() ? GLFW_TRUE : GLFW_FALSE);
 
-    int frameCount = 0;
-    while (!glfwWindowShouldClose(window)) {
-        pollEvents();
+    const int previousFrameBudget = loopFramesRemaining;
+    loopFramesRemaining = maxFrames > 0 ? maxFrames : -1;
+    try {
+        while (!glfwWindowShouldClose(window) && loopFramesRemaining != 0) {
+            renderedFromEventCallback = false;
+            pollEvents();
 
-        // While minimized the framebuffer has zero size and nothing can be
-        // presented; block until the window is restored.
-        int fbWidth, fbHeight;
-        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
-        while ((fbWidth == 0 || fbHeight == 0) && !glfwWindowShouldClose(window)) {
-            glfwWaitEvents();
+            // While minimized the framebuffer has zero size and nothing can be
+            // presented; block until the window is restored.
+            int fbWidth, fbHeight;
             glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+            while ((fbWidth == 0 || fbHeight == 0) && !glfwWindowShouldClose(window)) {
+                glfwWaitEvents();
+                glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+            }
+
+            processGLFWEvents();
+
+            // A resize or refresh callback may already have rendered while
+            // pollEvents() was dispatching native window messages.
+            if (!renderedFromEventCallback) {
+                renderFrame();
+            }
+
+            if (loopFramesRemaining == 0) {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
         }
-
-        processGLFWEvents();
-
-        beforeStep();
-        klartraumEngine->step();
-
-        if (maxFrames > 0 && ++frameCount >= maxFrames)
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
+    } catch (...) {
+        loopFramesRemaining = previousFrameBudget;
+        throw;
     }
+    loopFramesRemaining = previousFrameBudget;
 
+}
+
+bool GlfwFrontend::renderFrame() {
+    if (loopFramesRemaining == 0) {
+        return false;
+    }
+    beforeStep();
+    klartraumEngine->step();
+    if (loopFramesRemaining > 0) {
+        --loopFramesRemaining;
+    }
+    return true;
 }
 
 void GlfwFrontend::shutdown() {
@@ -350,8 +374,7 @@ void GlfwFrontend::renderFromEventCallback()
         return;
     }
     try {
-        beforeStep();
-        klartraumEngine->step();
+        renderedFromEventCallback = renderFrame();
     } catch (...) {
         callbackError = std::current_exception();
     }
