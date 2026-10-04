@@ -1,0 +1,198 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+
+// softmax(query x keyᵀ + bias) x value for 128-wide heads, without storing the
+// score matrix (FlashAttention-style). A workgroup handles 64 queries of one
+// batch-head and walks the keys in tiles of 64:
+//  1. scores S[64 x 64] = Q x Kᵀ, register-blocked like MatMul: invocation
+//     (tx, ty) owns queries 4 ty .. 4 ty + 3 and keys 4 tx .. 4 tx + 3; query
+//     and key slices are staged 32 depth components at a time;
+//  2. bias, masking, and the online softmax on the scores in registers; the
+//     16 invocations sharing a query row (one half of a subgroup) combine
+//     their row maxima and sums with shuffles;
+//  3. O[64 x 128] += P x V with P in shared memory: each invocation owns the
+//     output rows of its queries and columns 4 tx .. and 64 + 4 tx .., so the
+//     per-row rescale stays in registers.
+// Key tiles whose bias masks every (query, key) pair (text padding, the causal
+// upper triangle) are skipped: their weights exp(bias + score - max) are
+// exactly zero in float32 for biases at or below MASKED.
+// One shared pool is reused by the phases (at most 24 KiB at a time).
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint batchCount;
+    uint heads;
+    uint queryCount;
+    uint keyCount;
+    uint biasStrideBatch;
+    uint biasStrideHead;
+    uint biasStrideQuery;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer QueryBuffer { float queryData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer KeyBuffer { float keyData[]; };  // [batch][128][keys]
+layout(set = 0, binding = 2) restrict readonly buffer ValueBuffer { vec4 value4[]; };
+layout(set = 0, binding = 3) restrict readonly buffer BiasBuffer { float biasData[]; };
+layout(set = 0, binding = 4) restrict writeonly buffer OutputBuffer { vec4 output4[]; };
+
+const uint DEPTH = 128;
+const uint QUERIES = 64;
+const uint KEYS = 64;
+const uint CHUNK = 32;        // depth components per staged query/key slice
+const uint VALUE_KEYS = 16;   // keys per staged value slice
+const float LOWEST = -3.402823466e+38;
+const float MASKED = -1.0e6;
+
+// Phase 1: queryChunk [CHUNK][QUERIES / 4] at 0, keyChunk [CHUNK][KEYS / 4] at 512.
+// Phase 3: probabilities [KEYS][QUERIES / 4] at 0, valueChunk [VALUE_KEYS][DEPTH / 4] at 1024.
+shared vec4 pool[1536];
+shared float subgroupBiasMaximum[8];
+
+void main() {
+    const uint tx = gl_LocalInvocationID.x;
+    const uint ty = gl_LocalInvocationID.y;
+    const uint thread = ty * 16 + tx;
+    const uint queryBase = gl_WorkGroupID.x * QUERIES;
+    const uint batch = gl_WorkGroupID.y;
+    const uint queryBatchOffset = batch * pc.queryCount * DEPTH;
+    const uint keyBatchOffset = batch * DEPTH * pc.keyCount;
+    const uint valueBatchVec4 = batch * pc.keyCount * (DEPTH / 4);
+    const uint biasBase = (batch / pc.heads) * pc.biasStrideBatch + (batch % pc.heads) * pc.biasStrideHead;
+
+    // Staging assignments: 8 query components (query thread / 4, depth (thread % 4) * 8 ..)
+    // and 8 key components (depth thread / 8, keys (thread % 8) * 8 ..) per chunk.
+    const uint stageQuery = thread / 4;
+    const uint stageQueryDepth = (thread % 4) * 8;
+    const uint stageKeyDepth = thread / 8;
+    const uint stageKey = (thread % 8) * 8;
+
+    vec4 outputRows[4][2];
+    float runningMaximum[4];
+    float runningSum[4];
+    [[unroll]] for (uint i = 0; i < 4; ++i) {
+        outputRows[i][0] = vec4(0.0);
+        outputRows[i][1] = vec4(0.0);
+        runningMaximum[i] = LOWEST;
+        runningSum[i] = 0.0;
+    }
+
+    for (uint keyBase = 0; keyBase < pc.keyCount; keyBase += KEYS) {
+        // 0. This invocation's biases (keys past the end count as masked); skip fully masked tiles.
+        vec4 bias[4];
+        float biasMaximum = LOWEST;
+        [[unroll]] for (uint i = 0; i < 4; ++i) {
+            const uint query = queryBase + ty * 4 + i;
+            const uint biasRow = biasBase + (query < pc.queryCount ? query : 0) * pc.biasStrideQuery;
+            [[unroll]] for (uint j = 0; j < 4; ++j) {
+                const uint key = keyBase + tx * 4 + j;
+                bias[i][j] = key < pc.keyCount ? biasData[biasRow + key] : LOWEST;
+                if (query < pc.queryCount) biasMaximum = max(biasMaximum, bias[i][j]);
+            }
+        }
+        biasMaximum = subgroupMax(biasMaximum);
+        if (subgroupElect()) subgroupBiasMaximum[gl_SubgroupID] = biasMaximum;
+        barrier();
+        float tileBiasMaximum = LOWEST;
+        [[unroll]] for (uint s = 0; s < 8; ++s) tileBiasMaximum = max(tileBiasMaximum, subgroupBiasMaximum[s]);
+        barrier();
+        if (tileBiasMaximum <= MASKED) continue;
+
+        // 1. Scores for this key tile.
+        vec4 scores[4] = vec4[4](vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));
+        for (uint depthBase = 0; depthBase < DEPTH; depthBase += CHUNK) {
+            const uint query = queryBase + stageQuery;
+            [[unroll]] for (uint i = 0; i < 8; ++i) {
+                const uint depth = stageQueryDepth + i;
+                pool[depth * (QUERIES / 4) + stageQuery / 4][stageQuery % 4] =
+                    query < pc.queryCount ? queryData[queryBatchOffset + query * DEPTH + depthBase + depth] : 0.0;
+            }
+            [[unroll]] for (uint i = 0; i < 8; ++i) {
+                const uint key = keyBase + stageKey + i;
+                pool[512 + stageKeyDepth * (KEYS / 4) + (stageKey + i) / 4][(stageKey + i) % 4] =
+                    key < pc.keyCount ? keyData[keyBatchOffset + (depthBase + stageKeyDepth) * pc.keyCount + key] : 0.0;
+            }
+            barrier();
+            [[unroll]] for (uint d = 0; d < CHUNK; ++d) {
+                const vec4 q = pool[d * (QUERIES / 4) + ty];
+                const vec4 k = pool[512 + d * (KEYS / 4) + tx];
+                scores[0] += q.x * k;
+                scores[1] += q.y * k;
+                scores[2] += q.z * k;
+                scores[3] += q.w * k;
+            }
+            barrier();
+        }
+
+        // 2. Bias, masking, and the online softmax; rows are shared by the 16 tx of one ty.
+        float rescale[4];
+        [[unroll]] for (uint i = 0; i < 4; ++i) {
+            float tileMaximum = LOWEST;
+            [[unroll]] for (uint j = 0; j < 4; ++j) {
+                const uint key = keyBase + tx * 4 + j;
+                scores[i][j] = key < pc.keyCount ? scores[i][j] + bias[i][j] : LOWEST;
+                tileMaximum = max(tileMaximum, scores[i][j]);
+            }
+            tileMaximum = max(tileMaximum, subgroupShuffleXor(tileMaximum, 1));
+            tileMaximum = max(tileMaximum, subgroupShuffleXor(tileMaximum, 2));
+            tileMaximum = max(tileMaximum, subgroupShuffleXor(tileMaximum, 4));
+            tileMaximum = max(tileMaximum, subgroupShuffleXor(tileMaximum, 8));
+            const float newMaximum = max(runningMaximum[i], tileMaximum);
+            rescale[i] = exp(runningMaximum[i] - newMaximum);
+            float tileSum = 0.0;
+            [[unroll]] for (uint j = 0; j < 4; ++j) {
+                const uint key = keyBase + tx * 4 + j;
+                // Every tile holds at least one real key, so newMaximum is finite here.
+                scores[i][j] = key < pc.keyCount ? exp(scores[i][j] - newMaximum) : 0.0;
+                tileSum += scores[i][j];
+            }
+            tileSum += subgroupShuffleXor(tileSum, 1);
+            tileSum += subgroupShuffleXor(tileSum, 2);
+            tileSum += subgroupShuffleXor(tileSum, 4);
+            tileSum += subgroupShuffleXor(tileSum, 8);
+            runningSum[i] = runningSum[i] * rescale[i] + tileSum;
+            runningMaximum[i] = newMaximum;
+            outputRows[i][0] *= rescale[i];
+            outputRows[i][1] *= rescale[i];
+        }
+        // Probabilities as [key][query / 4] for the value product.
+        [[unroll]] for (uint j = 0; j < 4; ++j) {
+            pool[(tx * 4 + j) * (QUERIES / 4) + ty] = vec4(scores[0][j], scores[1][j], scores[2][j], scores[3][j]);
+        }
+
+        // 3. Output += probabilities x values, values staged 16 keys at a time.
+        for (uint valueBase = 0; valueBase < KEYS; valueBase += VALUE_KEYS) {
+            [[unroll]] for (uint r = 0; r < 2; ++r) {
+                const uint element = thread + 256 * r;
+                const uint k = element / (DEPTH / 4);
+                const uint column = element % (DEPTH / 4);
+                const uint key = keyBase + valueBase + k;
+                pool[1024 + k * (DEPTH / 4) + column] =
+                    key < pc.keyCount ? value4[valueBatchVec4 + key * (DEPTH / 4) + column] : vec4(0.0);
+            }
+            barrier();
+            [[unroll]] for (uint k = 0; k < VALUE_KEYS; ++k) {
+                const vec4 p = pool[(valueBase + k) * (QUERIES / 4) + ty];
+                const vec4 v0 = pool[1024 + k * (DEPTH / 4) + tx];
+                const vec4 v1 = pool[1024 + k * (DEPTH / 4) + 16 + tx];
+                [[unroll]] for (uint i = 0; i < 4; ++i) {
+                    outputRows[i][0] += p[i] * v0;
+                    outputRows[i][1] += p[i] * v1;
+                }
+            }
+            barrier();
+        }
+    }
+
+    [[unroll]] for (uint i = 0; i < 4; ++i) {
+        const uint query = queryBase + ty * 4 + i;
+        if (query >= pc.queryCount) continue;
+        const float normalizer = 1.0 / runningSum[i];
+        const uint row = (batch * pc.queryCount + query) * (DEPTH / 4);
+        output4[row + tx] = outputRows[i][0] * normalizer;
+        output4[row + 16 + tx] = outputRows[i][1] * normalizer;
+    }
+}
