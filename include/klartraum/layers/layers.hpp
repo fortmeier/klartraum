@@ -82,6 +82,23 @@ struct ConvAttributes {
     uint32_t group = 1;
 };
 
+struct Conv3dAttributes {
+    std::array<uint32_t, 3> kernelShape{1, 1, 1};
+    std::array<uint32_t, 3> strides{1, 1, 1};
+    std::array<uint32_t, 6> pads{0, 0, 0, 0, 0, 0}; ///< depth, height, width begins, then their ends
+    std::array<uint32_t, 3> dilations{1, 1, 1};
+    uint32_t group = 1;
+};
+
+/**
+ * @brief 3D convolution of an NCDHW input with OIDHW weights.
+ *
+ * Asymmetric pads allow causal temporal convolutions. Slots: 0 input,
+ * 1 weights, 2 bias (O), 3 output of shape @p output.
+ */
+ComputeGraphElementPtr conv3d(VulkanContext& vulkanContext, const Conv3dAttributes& attributes, const Shape& input,
+                              const Shape& weights, const Shape& output);
+
 /**
  * @brief 2D convolution of an NCHW input with OIHW weights.
  *
@@ -147,6 +164,14 @@ ComputeGraphElementPtr fusedAttention(VulkanContext& vulkanContext, const Shape&
  * Slots: 0 input, 1 output (the input's shape).
  */
 ComputeGraphElementPtr softmax(VulkanContext& vulkanContext, const Shape& shape);
+
+/**
+ * @brief Mean over the contiguous axes [@p firstAxis, @p firstAxis + @p axisCount).
+ *
+ * Slots: 0 input, 1 output (the input's shape with the reduced axes removed or kept as 1).
+ */
+ComputeGraphElementPtr reduceMean(VulkanContext& vulkanContext, const Shape& input, uint32_t firstAxis,
+                                  uint32_t axisCount);
 
 /**
  * @brief Joins two tensors along @p axis.
