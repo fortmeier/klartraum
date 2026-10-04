@@ -76,6 +76,8 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
         if (valueInfo->has_type() && valueInfo->type().has_tensor_type()) {
             const onnx::TypeProto::Tensor& tensorType = valueInfo->type().tensor_type();
             if (tensorType.has_shape()) {
+                // A shape without dimensions is a scalar.
+                dimensionsFound = true;
                 for (int i = 0; i < tensorType.shape().dim_size(); ++i) {
                     const auto& dim = tensorType.shape().dim(i);
                     if (dim.has_dim_value()) {
@@ -93,6 +95,7 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
         for (int i = 0; i < graph.initializer_size(); ++i) {
             const auto& init = graph.initializer(i);
             if (init.name() == tensorName) {
+                dimensionsFound = true;
                 for (int j = 0; j < init.dims_size(); ++j) {
                     dimensions.push_back(static_cast<uint32_t>(init.dims(j)));
                     dimensionsFound = true;

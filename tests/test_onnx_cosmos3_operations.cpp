@@ -11,6 +11,7 @@
  * - Add combines two equally shaped rank-six tensors.
  * - Div broadcasts a rank-five per-pixel denominator over the channel axis.
  * - Slice cuts frames out of a rank-five video tensor on its time axis.
+ * - Add broadcasts a rank-zero scalar initializer, as the exporters write epsilon constants.
  **/
 
 #include <cmath>
@@ -98,6 +99,16 @@ public:
         type->mutable_shape()->add_dim()->set_dim_value(static_cast<int64_t>(values.size()));
     }
 
+    void floatInitializer(const std::string& tensor, const Shape& shape, const std::vector<float>& values) {
+        auto* initializer = model.mutable_graph()->add_initializer();
+        initializer->set_name(tensor);
+        initializer->set_data_type(onnx::TensorProto::FLOAT);
+        for (auto dimension : shape)
+            initializer->add_dims(dimension);
+        initializer->set_raw_data(values.data(), values.size() * sizeof(float));
+        setInfo(model.mutable_graph()->add_value_info(), tensor, shape);
+    }
+
     static void ints(onnx::NodeProto* node, const std::string& attribute, const std::vector<int64_t>& values) {
         auto* proto = node->add_attribute();
         proto->set_name(attribute);
@@ -151,8 +162,9 @@ private:
         value->set_name(tensor);
         auto* type = value->mutable_type()->mutable_tensor_type();
         type->set_elem_type(onnx::TensorProto::FLOAT);
+        auto* dims = type->mutable_shape();
         for (auto dimension : shape)
-            type->mutable_shape()->add_dim()->set_dim_value(dimension);
+            dims->add_dim()->set_dim_value(dimension);
     }
 
     std::string name;
@@ -311,5 +323,19 @@ TEST(OnnxCosmos3OperationsTest, SliceCutsFramesFromRankFiveVideo) {
                 expected.push_back(x[(c * 5 + t) * 8 + i]);
         }
     }
+    expectNear(builder.run({{"x", x}}, "y"), expected, 0.0f);
+}
+
+TEST(OnnxCosmos3OperationsTest, AddBroadcastsRankZeroScalarInitializer) {
+    const Shape shape{2, 3, 1};
+    ModelBuilder builder("add_rank0_scalar");
+    builder.input("x", shape);
+    builder.output("y", shape);
+    builder.floatInitializer("epsilon", {}, {0.25f});
+    builder.node("Add", {"x", "epsilon"}, {"y"});
+    const auto x = patternedValues(elementCount(shape), 11);
+    std::vector<float> expected(x);
+    for (auto& value : expected)
+        value += 0.25f;
     expectNear(builder.run({{"x", x}}, "y"), expected, 0.0f);
 }
