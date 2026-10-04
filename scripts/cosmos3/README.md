@@ -186,8 +186,12 @@ Mac mini M4, MoltenVK:
 | Cosmos3 conditioning image (C++ preprocessing) | | max error 0 |
 | Cosmos3 text tower | 15 s | 8.9e-5 relative |
 | Cosmos3 denoiser, 20 steps (2304 video tokens) | 238 s (11.9 s/step) | final latents 4.8e-3 (up to 5.8) |
-| Cosmos3 tiled VAE decode, 9 tiles | 280 s | video mean 3.8e-5, max 9.7e-3 |
-| Cosmos3 total | 541 s | |
+| Cosmos3 tiled VAE decode, 2x2 tiles of 320x320 | 197 s | video mean 3.8e-5, max 9.7e-3 |
+| Cosmos3 total | 459 s | |
+
+With only the 256 decoder (3x3 tiles of 256x256) the decode takes 280 s and the
+total 541 s. `dashcam.sh` uses the 320 decoder when `data/onnx/cosmos3_320`
+exists (`export_onnx.py prepare` and `vae --skip-ort` with `--size 320`).
 
 Kernel improvements are logged in `PERFORMANCE.md`; before them the same run
 took 1536 s (44.6 s per denoising step, 578 s for the decode).
