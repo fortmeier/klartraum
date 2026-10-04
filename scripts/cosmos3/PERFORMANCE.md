@@ -44,6 +44,25 @@ Measured with `cosmos3_example --stage vae --profile`.
 | 1 | Positions decomposed once per invocation, shared tap table, vec4 shared reads | 35.3 s | 28.8 s | Superseded by 2 |
 | 2 | Cycle 1 with 64x128 tiles, 4x8 per invocation | 30.6 s | 28.3 s (~1.4 TFLOP/s) | Kept |
 
+## Attention with bias (text padding, causal mask)
+
+Cosmos3 attention is MatMul -> Add(bias) -> Softmax -> MatMul with 128-wide
+heads, which the unbiased SD1.5 fusion does not match, so the score tensor was
+materialized: [2, 8, 1152, 4096] (302 MB) per denoiser layer at 256x256,
+[2, 8, 4608, 5824] (1.7 GB) at 512x512, and [2, 8, 7040, 3520] in the text tower.
+`FusedAttentionBias` replaces the four nodes. Times below with the MatMul cycle 4
+kernel; the layer benchmark is `LayersTest.fusedAttentionCosmos3Denoiser`
+(one 256x256 denoiser layer).
+
+| Cycle | Variant | Layer benchmark | Denoiser step | Text tower | Decision |
+|---:|---|---:|---:|---:|---|
+| 0 | Unfused MatMul, Add, Softmax, MatMul | 45-60 ms | 3.55 s | 19.5 s | Baseline |
+| 1 | One query per four lanes (32 components each), 16-key tiles, shuffle-summed scores | | ~5.9 s (measured 6.17 s vs 3.53 s) | 34.0 s | Rejected |
+| 2 | FlashAttention-style: 64x64 score tiles register-blocked like MatMul, online softmax with row shuffles, P x V from shared memory | | | | Superseded by 3 |
+| 3 | Cycle 2, skipping key tiles whose bias masks every pair (exactly zero weight) | 15.6 ms | 2.70 s | 14.8 s | Kept |
+
+At 512x512 a denoiser step went from 23.4 s (unfused) to about 17 s with cycle 2.
+
 ## End-to-end, 256x256
 
 | Variant | VAE encode | Text tower | Denoising (20 steps) | VAE decode | Total | Final latents | Video (mean) |
@@ -51,6 +70,7 @@ Measured with `cosmos3_example --stage vae --profile`.
 | Before (cycle 0) | 0.5 s | 54 s | 190 s (9.5 s/step) | 63 s | 317 s | 6.7e-4 | 1.7e-5 |
 | MatMul cycle 4 | 0.5 s | 19.5 s | 70.6 s (3.53 s/step) | 63 s | 163 s | 6.7e-4 | 1.7e-5 |
 | + Conv3d cycle 2 | 0.3 s | 19.4 s | 70.6 s (3.53 s/step) | 30.6 s | 130 s | 6.7e-4 | 1.7e-5 |
+| + Attention cycle 3 | 0.3 s | 14.8 s | 53.9 s (2.70 s/step) | 30.6 s | 108 s | 1.0e-3 | 1.9e-5 |
 
 For comparison: the float32 PyTorch/MPS wrappers take about 2 s per step and
 31 s for the decode; the diffusers bf16 pipeline 124 s in total.
