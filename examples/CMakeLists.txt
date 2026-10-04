@@ -87,3 +87,14 @@ target_link_libraries(sd15_denoiser_example
 )
 
 add_dependencies(sd15_denoiser_example Shaders)
+
+# NVIDIA Cosmos3-Edge image-to-video example (graphs from scripts/cosmos3)
+add_executable(cosmos3_example
+    cosmos3_example.cpp
+)
+
+target_link_libraries(cosmos3_example
+    klartraum_lib
+)
+
+add_dependencies(cosmos3_example Shaders)
