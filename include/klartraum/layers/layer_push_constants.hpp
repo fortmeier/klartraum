@@ -90,6 +90,12 @@ struct SoftmaxPushConstants {
     uint32_t axisSize;
 };
 
+struct ReducePushConstants {
+    uint32_t outerCount;
+    uint32_t axisSize;
+    uint32_t innerSize;
+};
+
 struct SplitPushConstants {
     uint32_t outerCount;
     uint32_t axisSize;
@@ -129,6 +135,14 @@ struct ConvPushConstants {
     uint32_t dimWeights[4];
     uint32_t dimBias[1];
     uint32_t dimOutput[4];
+};
+
+struct Conv3dPushConstants {
+    uint32_t inputChannels, inputDepth, inputHeight, inputWidth;
+    uint32_t outputChannels, outputDepth, outputHeight, outputWidth;
+    uint32_t kernelDepth, kernelHeight, kernelWidth;
+    uint32_t strideDepth, strideHeight, strideWidth;
+    uint32_t padDepth, padHeight, padWidth;
 };
 
 // struct ReshapePushConstants {
