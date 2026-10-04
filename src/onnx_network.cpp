@@ -68,6 +68,8 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
     const bool canFuseAttention = subgroupProperties.subgroupSize == 32 &&
                                   (subgroupProperties.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT) != 0 &&
                                   (subgroupProperties.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) != 0;
+    const bool canFuseBiasedAttention =
+        canFuseAttention && (subgroupProperties.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) != 0;
     bool softmaxDefaultIsLastAxis = false;
     for (const auto& opset : model->opset_import()) {
         if (opset.domain().empty() || opset.domain() == "ai.onnx") {
@@ -86,6 +88,11 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
                 shape.push_back(dimension.dim_value());
         }
     }
+    for (const auto& initializer : graph->initializer()) {
+        auto& shape = declaredShapes[initializer.name()];
+        if (shape.empty())
+            shape.assign(initializer.dims().begin(), initializer.dims().end());
+    }
     auto fusableOperand = [&declaredShapes](const std::string& name) {
         const auto it = declaredShapes.find(name);
         return it != declaredShapes.end() && it->second.size() == 4 && it->second.back() <= 512;
@@ -100,7 +107,50 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
     std::vector<onnx::NodeProto> optimizedNodes;
     optimizedNodes.reserve(graph->node_size());
     size_t fusedAttentionCount = 0;
+    // A biased variant, MatMul -> Add(bias) -> Softmax -> MatMul, carries a key
+    // padding bias or a causal mask (Cosmos3); its 128-wide heads have their own kernel.
+    auto isBiasedAttentionOperand = [&declaredShapes](const std::string& name, size_t depthAxis) {
+        const auto it = declaredShapes.find(name);
+        return it != declaredShapes.end() && it->second.size() == 4 && it->second[depthAxis] == 128;
+    };
+    size_t fusedBiasedAttentionCount = 0;
     for (int index = 0; index < graph->node_size();) {
+        if (canFuseBiasedAttention && index + 3 < graph->node_size()) {
+            const auto& score = graph->node(index);
+            const auto& add = graph->node(index + 1);
+            const auto& softmax = graph->node(index + 2);
+            const auto& context = graph->node(index + 3);
+            bool softmaxUsesLastAxis = softmaxDefaultIsLastAxis;
+            for (const auto& attribute : softmax.attribute()) {
+                if (attribute.name() == "axis")
+                    softmaxUsesLastAxis = attribute.i() == -1 || attribute.i() == 3;
+            }
+            const bool chained = score.op_type() == "MatMul" && add.op_type() == "Add" &&
+                                 softmax.op_type() == "Softmax" && context.op_type() == "MatMul" &&
+                                 score.input_size() == 2 && add.input_size() == 2 && softmax.input_size() == 1 &&
+                                 context.input_size() == 2 &&
+                                 (add.input(0) == score.output(0) || add.input(1) == score.output(0)) &&
+                                 softmax.input(0) == add.output(0) && context.input(0) == softmax.output(0) &&
+                                 consumerCounts[score.output(0)] == 1 && consumerCounts[add.output(0)] == 1 &&
+                                 consumerCounts[softmax.output(0)] == 1;
+            const std::string bias = chained ? (add.input(0) == score.output(0) ? add.input(1) : add.input(0)) : "";
+            if (chained && softmaxUsesLastAxis && declaredShapes.count(bias) &&
+                isBiasedAttentionOperand(score.input(0), 3) && isBiasedAttentionOperand(score.input(1), 2) &&
+                isBiasedAttentionOperand(context.input(1), 3)) {
+                onnx::NodeProto fused = context;
+                fused.set_op_type("FusedAttentionBias");
+                fused.set_name(context.name() + "/KlartraumFusedAttentionBias");
+                fused.clear_input();
+                fused.add_input(score.input(0));
+                fused.add_input(score.input(1));
+                fused.add_input(context.input(1));
+                fused.add_input(bias);
+                optimizedNodes.push_back(std::move(fused));
+                index += 4;
+                ++fusedBiasedAttentionCount;
+                continue;
+            }
+        }
         if (index + 2 < graph->node_size()) {
             const auto& score = graph->node(index);
             const auto& softmax = graph->node(index + 1);
@@ -134,12 +184,12 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
         optimizedNodes.push_back(graph->node(index));
         ++index;
     }
-    if (fusedAttentionCount > 0) {
+    if (fusedAttentionCount > 0 || fusedBiasedAttentionCount > 0) {
         graph->clear_node();
         for (auto& node : optimizedNodes)
             *graph->add_node() = std::move(node);
-        std::cout << "OnnxNetwork: fused " << fusedAttentionCount << " attention score/softmax/value sequences"
-                  << std::endl;
+        std::cout << "OnnxNetwork: fused " << fusedAttentionCount << " attention score/softmax/value sequences and "
+                  << fusedBiasedAttentionCount << " biased ones" << std::endl;
     } else if (!canFuseAttention) {
         std::cout << "OnnxNetwork: attention fusion disabled because the device does not expose "
                      "32-wide compute subgroups with arithmetic operations"

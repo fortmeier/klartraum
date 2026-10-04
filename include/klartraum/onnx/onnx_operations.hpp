@@ -308,6 +308,14 @@ ComputeGraphElementPtr createMatMul(VulkanContext* vulkanContext, const onnx::No
                           getTensorDimensions(node.output(0), infos, graph));
 }
 
+ComputeGraphElementPtr createFusedAttentionBias(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                                const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::fusedAttentionWithBias(
+        *vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+        getTensorDimensions(node.input(1), infos, graph), getTensorDimensions(node.input(2), infos, graph),
+        getTensorDimensions(node.input(3), infos, graph), getTensorDimensions(node.output(0), infos, graph));
+}
+
 ComputeGraphElementPtr createFusedAttention(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                             const ValueInfos& infos, const onnx::GraphProto& graph) {
     return layers::fusedAttention(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
@@ -532,6 +540,8 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
         operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, layers::UnaryOp::Erf);
     } else if (operationType == "InstanceNormalization") {
         operation = createInstanceNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "FusedAttentionBias") {
+        operation = createFusedAttentionBias(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "FusedAttention") {
         operation = createFusedAttention(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "MatMul") {
