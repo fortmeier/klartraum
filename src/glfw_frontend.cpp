@@ -116,6 +116,8 @@ void GlfwFrontend::loop(int maxFrames) {
     // new swapchain (see KlartraumEngine::setGraphBuilder).
     glfwSetWindowAttrib(window, GLFW_RESIZABLE, klartraumEngine->isResizable() ? GLFW_TRUE : GLFW_FALSE);
 
+    // loop() can be called again after a finite run (tests and tools do this).
+    // Save and restore the outer state so the budget exists only for this run.
     const int previousFrameBudget = loopFramesRemaining;
     loopFramesRemaining = maxFrames > 0 ? maxFrames : -1;
     try {
@@ -153,6 +155,9 @@ void GlfwFrontend::loop(int maxFrames) {
 }
 
 bool GlfwFrontend::renderFrame() {
+    // This is the single accounting point for both frame origins. In
+    // particular, a frame rendered while glfwPollEvents() dispatches a native
+    // callback must consume the same finite budget as a normal loop frame.
     if (loopFramesRemaining == 0) {
         return false;
     }
@@ -374,6 +379,9 @@ void GlfwFrontend::renderFromEventCallback()
         return;
     }
     try {
+        // loop() checks this flag after pollEvents() returns. If this callback
+        // produced a frame, the regular path must not immediately produce a
+        // second frame for the same loop iteration.
         renderedFromEventCallback = renderFrame();
     } catch (...) {
         callbackError = std::current_exception();

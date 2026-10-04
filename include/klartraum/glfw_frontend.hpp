@@ -11,18 +11,32 @@
 
 namespace klartraum {
 
-class GlfwFrontend {
 /**
- * @brief User facing class
- * 
+ * @brief Windowed frontend that owns GLFW event processing and frame submission.
+ *
+ * Most frames are rendered by loop() after pending input events have been
+ * processed. A resize or refresh callback may also render synchronously from
+ * inside glfwPollEvents(), because some window systems keep control until an
+ * interactive resize finishes. Both paths go through the same frame routine
+ * and count toward the same finite loop budget.
+ *
+ * @see loop()
+ * @see renderFromEventCallback()
  */
+class GlfwFrontend {
 public:
     GlfwFrontend();
     virtual ~GlfwFrontend();
 
-
-    // Run the render loop.  If maxFrames > 0 the window closes automatically
-    // after that many frames; pass -1 (default) to run until user closes it.
+    /**
+     * @brief Processes window events and renders frames until the window closes.
+     * @param maxFrames Maximum number of frames to render, or a non-positive
+     *        value to continue until the user closes the window.
+     *
+     * A frame rendered synchronously by a resize or refresh callback consumes
+     * the same budget as a normal loop frame. If event processing already
+     * rendered a frame, that loop iteration does not render a duplicate frame.
+     */
     void loop(int maxFrames = -1);
 
 
@@ -33,13 +47,24 @@ public:
 
     void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
-    // Processes pending window events (glfwPollEvents). While the window is
-    // being resized interactively the OS may not return from event processing
-    // until the drag ends, so a resizable engine renders frames from inside
-    // the resize/refresh callbacks; errors raised there are rethrown here.
+    /**
+     * @brief Dispatches pending GLFW events and rethrows callback failures.
+     *
+     * While a window is being resized interactively, the operating system may
+     * not return from event processing until the drag ends. Resize and refresh
+     * callbacks therefore may render frames before this method returns.
+     * Exceptions cannot unwind through GLFW's C callbacks, so callback failures
+     * are captured and rethrown here on the C++ stack.
+     */
     void pollEvents();
 
-    // Renders a frame from within a window event callback (see pollEvents()).
+    /**
+     * @brief Renders one frame synchronously from a GLFW window callback.
+     *
+     * This keeps a resizable window responsive while the native event loop owns
+     * control. It is called by the installed framebuffer-size and refresh
+     * callbacks; applications normally do not call it directly.
+     */
     void renderFromEventCallback();
 
     // Registers a debug-text overlay on `renderPass`, added after any draw
@@ -56,8 +81,11 @@ public:
                     float b = 1.0f, float a = 1.0f);
 
 protected:
-    // Called right before each frame is rendered, both from loop() and from
-    // window event callbacks (see pollEvents()).
+    /**
+     * @brief Hook invoked immediately before every normal or event-driven frame.
+     *
+     * ImGuiFrontend uses this hook to begin, build, and finalize its UI frame.
+     */
     virtual void beforeStep() {}
 
     // While these return true, mouse (buttons, scroll) or keyboard input is
