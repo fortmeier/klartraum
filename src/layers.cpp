@@ -67,8 +67,62 @@ Shape broadcastShape(const Shape& lhs, const Shape& rhs) {
     return result;
 }
 
-ComputeGraphElementPtr binary(VulkanContext& vulkanContext, BinaryOp op, const Shape& lhs, const Shape& rhs,
-                              const Shape& output) {
+namespace {
+
+// Rewrites a broadcast as an equivalent one of the lowest rank: output axes of
+// size one are dropped, and neighbouring axes are merged when each operand
+// either spans both or broadcasts over both. An operand axis larger than its
+// output axis (a declared output shape that only covers the operand's leading
+// slice) keeps the shapes unchanged, so the kernel reads that leading slice.
+void collapseBroadcast(const Shape& lhs, const Shape& rhs, const Shape& output, Shape& lhsOut, Shape& rhsOut,
+                       Shape& outputOut) {
+    const size_t rank = output.size();
+    auto aligned = [rank](const Shape& shape, size_t axis) {
+        const size_t offset = rank - shape.size();
+        return axis < offset ? 1u : shape[axis - offset];
+    };
+    bool consistent = lhs.size() <= rank && rhs.size() <= rank;
+    for (size_t axis = 0; consistent && axis < rank; ++axis) {
+        consistent = aligned(lhs, axis) <= output[axis] && aligned(rhs, axis) <= output[axis];
+    }
+    if (!consistent) {
+        lhsOut = lhs;
+        rhsOut = rhs;
+        outputOut = output;
+        return;
+    }
+    lhsOut.clear();
+    rhsOut.clear();
+    outputOut.clear();
+    int previousPattern = -1;
+    for (size_t axis = 0; axis < rank; ++axis) {
+        if (output[axis] == 1)
+            continue;
+        const uint32_t l = aligned(lhs, axis);
+        const uint32_t r = aligned(rhs, axis);
+        const int pattern = (l == 1 ? 1 : 0) | (r == 1 ? 2 : 0);
+        if (pattern == previousPattern) {
+            lhsOut.back() *= l;
+            rhsOut.back() *= r;
+            outputOut.back() *= output[axis];
+        } else {
+            lhsOut.push_back(l);
+            rhsOut.push_back(r);
+            outputOut.push_back(output[axis]);
+            previousPattern = pattern;
+        }
+    }
+    if (outputOut.empty()) {
+        lhsOut = rhsOut = outputOut = {1};
+    }
+}
+
+} // namespace
+
+ComputeGraphElementPtr binary(VulkanContext& vulkanContext, BinaryOp op, const Shape& lhsShape, const Shape& rhsShape,
+                              const Shape& outputShape) {
+    Shape lhs, rhs, output;
+    collapseBroadcast(lhsShape, rhsShape, outputShape, lhs, rhs, output);
     const char* shader = op == BinaryOp::Add   ? "shaders/onnx/add.comp.spv"
                          : op == BinaryOp::Sub ? "shaders/onnx/sub.comp.spv"
                          : op == BinaryOp::Mul ? "shaders/onnx/mul.comp.spv"
@@ -145,6 +199,47 @@ ComputeGraphElementPtr conv(VulkanContext& vulkanContext, const ConvAttributes& 
         operation->setGroupCountY((output[2] + 7) / 8);
         operation->setGroupCountZ(output[0] * (specialized3x3 ? (output[1] + 3) / 4 : output[1]));
     }
+    return operation;
+}
+
+ComputeGraphElementPtr conv3d(VulkanContext& vulkanContext, const Conv3dAttributes& attributes, const Shape& input,
+                              const Shape& weights, const Shape& output) {
+    if (input.size() != 5 || weights.size() != 5 || output.size() != 5) {
+        throw std::runtime_error("Conv3d requires rank-five NCDHW tensors");
+    }
+    if (attributes.group != 1 || attributes.dilations != std::array<uint32_t, 3>{1, 1, 1}) {
+        throw std::runtime_error("Conv3d supports only group 1 without dilation");
+    }
+    if (weights[1] != input[1] || weights[0] != output[1] || input[0] != output[0]) {
+        throw std::runtime_error("Conv3d weight shape does not match its input and output");
+    }
+    for (size_t axis = 0; axis < 3; ++axis) {
+        const uint32_t padded = input[2 + axis] + attributes.pads[axis] + attributes.pads[3 + axis];
+        if (padded < weights[2 + axis] ||
+            (padded - weights[2 + axis]) / attributes.strides[axis] + 1 != output[2 + axis]) {
+            throw std::runtime_error("Conv3d output shape does not match its pads and strides");
+        }
+    }
+    Conv3dPushConstants constants{input[1],
+                                  input[2],
+                                  input[3],
+                                  input[4],
+                                  output[1],
+                                  output[2],
+                                  output[3],
+                                  output[4],
+                                  weights[2],
+                                  weights[3],
+                                  weights[4],
+                                  attributes.strides[0],
+                                  attributes.strides[1],
+                                  attributes.strides[2],
+                                  attributes.pads[0],
+                                  attributes.pads[1],
+                                  attributes.pads[2]};
+    auto operation = computation(vulkanContext, "shaders/onnx/conv3d.comp.spv", constants);
+    const uint32_t positions = output[2] * output[3] * output[4];
+    operation->setGroupCount((positions + 63) / 64, (output[1] + 63) / 64, output[0]);
     return operation;
 }
 
@@ -277,6 +372,23 @@ ComputeGraphElementPtr softmax(VulkanContext& vulkanContext, const Shape& shape)
     return operation;
 }
 
+ComputeGraphElementPtr reduceMean(VulkanContext& vulkanContext, const Shape& input, uint32_t firstAxis,
+                                  uint32_t axisCount) {
+    if (axisCount == 0 || firstAxis + axisCount > input.size()) {
+        throw std::runtime_error("ReduceMean axes are outside the tensor rank");
+    }
+    ReducePushConstants constants{1, 1, 1};
+    for (uint32_t i = 0; i < firstAxis; ++i)
+        constants.outerCount *= input[i];
+    for (uint32_t i = firstAxis; i < firstAxis + axisCount; ++i)
+        constants.axisSize *= input[i];
+    for (size_t i = firstAxis + axisCount; i < input.size(); ++i)
+        constants.innerSize *= input[i];
+    auto operation = computation(vulkanContext, "shaders/onnx/reduce_mean.comp.spv", constants);
+    operation->setGroupCountX((elementCount(input) / constants.axisSize + 63) / 64);
+    return operation;
+}
+
 ComputeGraphElementPtr concat(VulkanContext& vulkanContext, const Shape& lhs, const Shape& rhs, uint32_t axis,
                               const Shape& output) {
     checkAxis(axis, output, "Concat");
@@ -366,25 +478,35 @@ ComputeGraphElementPtr transpose(VulkanContext& vulkanContext, const Shape& inpu
 
 ComputeGraphElementPtr slice(VulkanContext& vulkanContext, ElementType type, const Shape& input, const Shape& output,
                              uint32_t start, SliceParameters parameters) {
-    if (input.size() != output.size() || input.size() > 4)
+    if (input.size() != output.size())
         throw std::runtime_error("Unsupported Slice rank");
-    SlicePushConstants constants{};
-    constants.rank = static_cast<uint32_t>(input.size());
-    constants.elementCount = elementCount(output);
-    constants.start = start;
-    bool foundAxis = false;
+    size_t axis = input.size();
     for (size_t i = 0; i < input.size(); ++i) {
-        constants.inputDims[i] = input[i];
-        constants.outputDims[i] = output[i];
         if (input[i] != output[i]) {
-            if (foundAxis)
+            if (axis != input.size())
                 throw std::runtime_error("Only single-axis Slice is supported");
-            constants.axis = static_cast<uint32_t>(i);
-            foundAxis = true;
+            axis = i;
         }
     }
-    if (!foundAxis)
+    if (axis == input.size())
         throw std::runtime_error("Slice must change one dimension");
+    // Any single-axis slice is a slice of the middle axis of [outer, axis, inner].
+    uint32_t outer = 1, inner = 1;
+    for (size_t i = 0; i < axis; ++i)
+        outer *= input[i];
+    for (size_t i = axis + 1; i < input.size(); ++i)
+        inner *= input[i];
+    SlicePushConstants constants{};
+    constants.rank = 3;
+    constants.axis = 1;
+    constants.elementCount = elementCount(output);
+    constants.start = start;
+    const uint32_t inputDims[3] = {outer, input[axis], inner};
+    const uint32_t outputDims[3] = {outer, output[axis], inner};
+    for (size_t i = 0; i < 3; ++i) {
+        constants.inputDims[i] = inputDims[i];
+        constants.outputDims[i] = outputDims[i];
+    }
     const std::string suffix = type == ElementType::Int64 ? "_int64" : "";
     const std::string shader = parameters == SliceParameters::StartsEnds       ? "shaders/onnx/slice3" + suffix
                                : parameters == SliceParameters::StartsEndsAxes ? "shaders/onnx/slice" + suffix

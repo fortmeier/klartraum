@@ -76,6 +76,8 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
         if (valueInfo->has_type() && valueInfo->type().has_tensor_type()) {
             const onnx::TypeProto::Tensor& tensorType = valueInfo->type().tensor_type();
             if (tensorType.has_shape()) {
+                // A shape without dimensions is a scalar.
+                dimensionsFound = true;
                 for (int i = 0; i < tensorType.shape().dim_size(); ++i) {
                     const auto& dim = tensorType.shape().dim(i);
                     if (dim.has_dim_value()) {
@@ -93,6 +95,7 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
         for (int i = 0; i < graph.initializer_size(); ++i) {
             const auto& init = graph.initializer(i);
             if (init.name() == tensorName) {
+                dimensionsFound = true;
                 for (int j = 0; j < init.dims_size(); ++j) {
                     dimensions.push_back(static_cast<uint32_t>(init.dims(j)));
                     dimensionsFound = true;
@@ -198,8 +201,43 @@ float getEpsilon(const onnx::NodeProto& node) {
     return epsilon;
 }
 
+ComputeGraphElementPtr createConv3d(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    if (node.input_size() != 3)
+        throw std::runtime_error("Conv3d requires a bias input");
+    const auto weights = getTensorDimensions(node.input(1), infos, graph);
+    layers::Conv3dAttributes attributes;
+    for (size_t axis = 0; axis < 3; ++axis)
+        attributes.kernelShape[axis] = weights[2 + axis];
+    for (const auto& attribute : node.attribute()) {
+        const auto copy = [&attribute](auto& target) {
+            if (static_cast<size_t>(attribute.ints_size()) != target.size()) {
+                throw std::runtime_error("Conv3d attribute " + attribute.name() + " has the wrong length");
+            }
+            for (size_t i = 0; i < target.size(); ++i)
+                target[i] = static_cast<uint32_t>(attribute.ints(i));
+        };
+        if (attribute.name() == "strides")
+            copy(attributes.strides);
+        else if (attribute.name() == "pads")
+            copy(attributes.pads);
+        else if (attribute.name() == "dilations")
+            copy(attributes.dilations);
+        else if (attribute.name() == "group")
+            attributes.group = static_cast<uint32_t>(attribute.i());
+        else if (attribute.name() == "auto_pad" && attribute.s() != "NOTSET") {
+            throw std::runtime_error("Conv3d supports only explicit pads");
+        }
+    }
+    return layers::conv3d(*vulkanContext, attributes, getTensorDimensions(node.input(0), infos, graph), weights,
+                          getTensorDimensions(node.output(0), infos, graph));
+}
+
 ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                   const onnx::GraphProto& graph) {
+    if (getTensorDimensions(node.input(0), infos, graph).size() == 5) {
+        return createConv3d(vulkanContext, node, infos, graph);
+    }
     return layers::conv(*vulkanContext, getConvAttributes(node), getTensorDimensions(node.input(0), infos, graph),
                         getTensorDimensions(node.input(1), infos, graph), getBiasDimensions(node, infos, graph),
                         getTensorDimensions(node.output(0), infos, graph));
@@ -366,6 +404,35 @@ ComputeGraphElementPtr createSoftmax(VulkanContext* vulkanContext, const onnx::N
     return layers::softmax(*vulkanContext, dimensions);
 }
 
+ComputeGraphElementPtr createReduceMean(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                        const ValueInfos& infos, const onnx::GraphProto& graph) {
+    if (node.input_size() != 1)
+        throw std::runtime_error("ReduceMean supports only the axes attribute (opset <= 17)");
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    std::vector<uint32_t> axes;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() != "axes")
+            continue;
+        for (const auto axis : attribute.ints()) {
+            const int64_t normalized = axis < 0 ? axis + static_cast<int64_t>(input.size()) : axis;
+            if (normalized < 0 || normalized >= static_cast<int64_t>(input.size())) {
+                throw std::runtime_error("ReduceMean axis is outside the tensor rank");
+            }
+            axes.push_back(static_cast<uint32_t>(normalized));
+        }
+    }
+    if (axes.empty()) {
+        for (uint32_t axis = 0; axis < input.size(); ++axis)
+            axes.push_back(axis);
+    }
+    std::sort(axes.begin(), axes.end());
+    for (size_t i = 1; i < axes.size(); ++i) {
+        if (axes[i] != axes[i - 1] + 1)
+            throw std::runtime_error("ReduceMean axes must be contiguous");
+    }
+    return layers::reduceMean(*vulkanContext, input, axes.front(), static_cast<uint32_t>(axes.size()));
+}
+
 ComputeGraphElementPtr createSplit(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                    const onnx::GraphProto& graph) {
     if (node.output_size() != 3)
@@ -386,7 +453,7 @@ ComputeGraphElementPtr createSlice(VulkanContext* vulkanContext, const onnx::Nod
                                    const onnx::GraphProto& graph) {
     const auto input = getTensorDimensions(node.input(0), infos, graph);
     const auto output = getTensorDimensions(node.output(0), infos, graph);
-    if (input.size() != output.size() || input.size() > 4)
+    if (input.size() != output.size())
         throw std::runtime_error("Unsupported Slice rank");
     if (input == output) {
         const auto starts = getInt64InitializerValues(node.input(1), graph);
@@ -485,6 +552,8 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
         operation = createReshape(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Softmax") {
         operation = createSoftmax(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "ReduceMean") {
+        operation = createReduceMean(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Split") {
         operation = createSplit(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Resize") {
