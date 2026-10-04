@@ -1,26 +1,35 @@
 {
  "subjects": [
   {
-   "description": "A car driving forward along a tree-lined two-lane asphalt road on a sunny day",
-   "action": "Drives steadily forward down the road",
+   "description": "A straight two-lane asphalt road with painted lane markings, lined with tall green trees and grass verges on both sides",
+   "action": "The road surface and lane markings rush towards the camera and disappear below the bottom of the frame",
    "number_of_subjects": 1
+  },
+  {
+   "description": "Rows of tall leafy trees along both sides of the road",
+   "action": "The trees grow larger as the camera approaches and sweep past the left and right edges of the frame",
+   "number_of_subjects": 2
   }
  ],
  "cinematography": {
-  "camera_motion": "Dashcam mounted behind the windshield, moving forward smoothly along the road",
-  "framing": "Wide forward-facing view of the road ahead"
+  "camera_motion": "The video is captured from a camera mounted on a car driving forward at about 50 km/h; the camera faces forward and travels continuously forward along the road (forward tracking shot)",
+  "framing": "Wide forward-facing dashcam view with the road vanishing point in the center"
  },
  "style_medium": "Live-action dashcam video",
  "actions": [
   {
-   "time": "0:00-0:03",
-   "description": "The car drives forward along the road, the lane markings and the trees on both sides stream past the camera"
+   "time": "0:00-0:01",
+   "description": "The car accelerates forward; the lane markings start streaming towards the camera"
+  },
+  {
+   "time": "0:01-0:03",
+   "description": "The car keeps driving forward; trees on both sides pass by the camera and new trees appear from the distance"
   }
  ],
- "temporal_caption": "Dashcam footage of a car driving forward along a sunny tree-lined road; the lane markings and trees on both sides move past as the car advances.",
+ "temporal_caption": "Forward-facing dashcam footage from a car driving down a tree-lined road at speed: the lane markings stream under the car, the trees on both sides grow larger and sweep past the edges of the frame, and the end of the road keeps receding as the car advances.",
  "resolution": {
-  "W": 256,
-  "H": 256
+  "W": 512,
+  "H": 512
  },
  "duration": "3s",
  "fps": 11.0
