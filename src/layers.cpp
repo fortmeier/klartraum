@@ -239,7 +239,7 @@ ComputeGraphElementPtr conv3d(VulkanContext& vulkanContext, const Conv3dAttribut
                                   attributes.pads[2]};
     auto operation = computation(vulkanContext, "shaders/onnx/conv3d.comp.spv", constants);
     const uint32_t positions = output[2] * output[3] * output[4];
-    operation->setGroupCount((positions + 63) / 64, (output[1] + 63) / 64, output[0]);
+    operation->setGroupCount((positions + 127) / 128, (output[1] + 63) / 64, output[0]);
     return operation;
 }
 
@@ -323,7 +323,7 @@ ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, const Shape& lhs, co
         throw std::runtime_error("Unsupported MatMul right batch broadcasting");
     }
     auto operation = computation(vulkanContext, "shaders/onnx/matmul.comp.spv", constants);
-    operation->setGroupCount((constants.columns + 31) / 32, (constants.rows + 15) / 16, constants.batchCount);
+    operation->setGroupCount((constants.columns + 127) / 128, (constants.rows + 63) / 64, constants.batchCount);
     return operation;
 }
 
