@@ -26,6 +26,7 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/cosmos3/conditioning_image.hpp"
+#include "klartraum/cosmos3/tiled_decode.hpp"
 #include "klartraum/cosmos3/unipc_flow_scheduler.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
@@ -73,6 +74,10 @@ public:
         return it->second[index];
     }
     uint32_t count(const std::string& key, size_t index = 0) const { return static_cast<uint32_t>(number(key, index)); }
+    /** @p key's first value, or @p fallback if config.txt lacks it. */
+    uint32_t countOr(const std::string& key, uint32_t fallback) const {
+        return values.count(key) ? count(key) : fallback;
+    }
 
 private:
     std::map<std::string, std::vector<double>> values;
@@ -369,6 +374,57 @@ std::vector<float> runOnce(klartraum::VulkanContext& context, const Options& opt
     return result;
 }
 
+/**
+ * Decodes [C, T, H, W] latents in overlapping square tiles with a decoder
+ * exported for @p tile x @p tile latents; the graph is compiled once and
+ * submitted per tile, so only one tile's activations are resident.
+ */
+std::vector<float> decodeTiled(klartraum::VulkanContext& context, const Options& options, const LatentShape& shape,
+                               const std::vector<float>& latents, uint32_t tile, uint32_t stride) {
+    const auto loadStarted = std::chrono::steady_clock::now();
+    auto network = context.create<klartraum::OnnxNetwork>((options.modelDirectory / "vae_decoder.onnx").string());
+    auto input = context.create<klartraum::TensorElement<float>>(
+        std::vector<uint32_t>{1, shape.channels, shape.frames, tile, tile}, kInputUsage);
+    network->setInputTensor("latents", input);
+    klartraum::ComputeGraph graph(context, 1);
+    if (options.profile)
+        graph.enableProfiling();
+    graph.compileFrom(network);
+    auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(network->getOutputElement("video"));
+    if (!output)
+        throw std::runtime_error("VAE decoder has no float output video");
+    const auto& memory = network->getMemoryPlanStats();
+    std::cout << "VAE decoder (" << tile << "x" << tile << " latent tiles) loaded in " << secondsSince(loadStarted)
+              << " s, transient storage " << memory.allocatedBytes / (1024.0 * 1024.0) << " MiB" << std::endl;
+
+    std::vector<float> tileLatents(size_t(shape.channels) * shape.frames * tile * tile);
+    std::vector<float> tileVideo(output->getDataElementCount());
+    const uint32_t scale = 16; // Wan2.2 VAE spatial compression
+    const size_t tilePixels = size_t(tile) * scale * tile * scale;
+    const uint32_t frames = uint32_t(tileVideo.size() / (3 * tilePixels));
+    klartraum::TileBlender blender(3, frames, shape.height * scale, shape.width * scale, (tile - stride) * scale);
+    for (uint32_t top : klartraum::tileOffsets(shape.height, tile, stride)) {
+        for (uint32_t left : klartraum::tileOffsets(shape.width, tile, stride)) {
+            for (uint32_t ct = 0; ct < shape.channels * shape.frames; ++ct) {
+                for (uint32_t y = 0; y < tile; ++y) {
+                    std::copy_n(latents.begin() + (size_t(ct) * shape.height + top + y) * shape.width + left, tile,
+                                tileLatents.begin() + (size_t(ct) * tile + y) * tile);
+                }
+            }
+            input->setData(0, tileLatents);
+            const auto started = std::chrono::steady_clock::now();
+            graph.submitAndWait(context.getGraphicsQueue(), 0);
+            output->getDataBuffer(0).memcopyTo(tileVideo);
+            blender.add(tileVideo, tile * scale, tile * scale, top * scale, left * scale);
+            std::cout << "  tile (" << top << ", " << left << ") in " << secondsSince(started) << " s" << std::endl;
+        }
+    }
+    std::cout << "Klartraum VAE decoder (tiled): " << secondsSince(loadStarted) << " s" << std::endl;
+    if (options.profile)
+        printProfiling("VAE decoder", graph);
+    return blender.result();
+}
+
 void requireClose(const std::string& label, const Comparison& check, float relativeTolerance) {
     std::cout << label << ": max error " << check.maxError << " (max |ref| " << check.maxReference << ")" << std::endl;
     if (!(check.maxError <= relativeTolerance * std::max(check.maxReference, 1e-6f))) {
@@ -428,12 +484,15 @@ int main(int argc, char** argv) {
         const size_t frameLatentElements = size_t(shape.height) * shape.width;
         const auto totalStarted = std::chrono::steady_clock::now();
 
+        const uint32_t decoderTile = config.countOr("decoder_tile", 0);
+        const uint32_t decoderStride = config.countOr("decoder_stride", 0);
         if (options.stage == "vae") {
-            // Decoder alone on the exported decoder fixture.
-            const auto input = readTensor<float>(directory / "decoder_reference_input_f32.bin", shape.elements());
-            const auto video =
-                runOnce(context, options, "vae_decoder.onnx", "latents",
-                        {1, shape.channels, shape.frames, shape.height, shape.width}, input, "video", "VAE decoder");
+            // Decoder alone on the exported decoder fixture, at the decoder's own (tile) size.
+            const uint32_t h = decoderTile ? decoderTile : shape.height, w = decoderTile ? decoderTile : shape.width;
+            const auto input = readTensor<float>(directory / "decoder_reference_input_f32.bin",
+                                                 size_t(shape.channels) * shape.frames * h * w);
+            const auto video = runOnce(context, options, "vae_decoder.onnx", "latents",
+                                       {1, shape.channels, shape.frames, h, w}, input, "video", "VAE decoder");
             requireClose(
                 "Decoded video",
                 compare(video, readTensor<float>(directory / "decoder_reference_output_f32.bin", video.size())), 1e-3f);
@@ -521,10 +580,11 @@ int main(int argc, char** argv) {
                 2e-2f);
         }
 
-        // 4. Wan VAE decode of the whole clip.
-        auto video =
-            runOnce(context, options, "vae_decoder.onnx", "latents",
-                    {1, shape.channels, shape.frames, shape.height, shape.width}, latents, "video", "VAE decoder");
+        // 4. Wan VAE decode, of the whole clip or in overlapping tiles.
+        auto video = decoderTile ? decodeTiled(context, options, shape, latents, decoderTile, decoderStride)
+                                 : runOnce(context, options, "vae_decoder.onnx", "latents",
+                                           {1, shape.channels, shape.frames, shape.height, shape.width}, latents,
+                                           "video", "VAE decoder");
         for (auto& value : video)
             value = std::clamp(value, -1.0f, 1.0f);
         if (steps == timesteps.size()) {

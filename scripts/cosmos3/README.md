@@ -151,25 +151,44 @@ kernels are not yet tuned for this model.
 ## Dashcam example: Stable Diffusion 1.5 -> Cosmos3
 
 `dashcam.sh` chains two models: SD1.5 generates a road scene from text, and
-Cosmos3 animates it into a 3 s forward-driving clip (33 frames at 11 fps, so the
-existing 33-frame export is reused; the frame rate only enters through the
-caption and the host-side rotary tables). The caption is
-`captions/dashcam.json`, a full structured caption passed unchanged
-(`--raw-prompt` / `--prompt-file`).
+Cosmos3 animates it into a 3 s forward-driving clip at 512x512 (33 frames at
+11 fps; the frame rate only enters through the caption and the host-side rotary
+tables). The caption is `captions/dashcam.json`, a full structured caption
+passed unchanged (`--raw-prompt` / `--prompt-file`) that describes the camera
+motion and the scenery passing by.
 
 ```bash
 scripts/cosmos3/dashcam.sh reference   # diffusers: sd15_text_to_image.py, then run_reference.py
 scripts/cosmos3/dashcam.sh klartraum   # both models on Klartraum
 ```
 
-The `klartraum` mode runs `sd15_denoiser_example` at 512x512 (needs
-`data/onnx/sd15_denoiser_512`), writes `data/onnx/cosmos3_dashcam/` with hard
-links to the `cosmos3_256` graphs and the fixtures for this prompt and image
-(`export_onnx.py prepare|text|denoiser --fixtures-only|pipeline`), and then runs
-`cosmos3_example --image` on the SD1.5 output, with every stage check active.
-Outputs go to `build/TestingOutput/dashcam/`.
+At 256x256 the same image and caption give no forward motion: the clip either
+stays still or, with a higher guidance scale, cuts to a different road. At
+512x512 the lane markings stream under the car and the trees pass by.
 
-Mac mini M4, MoltenVK: SD1.5 on Klartraum 107 s (30 DDIM steps at 3.4 s), Cosmos3
-on Klartraum 318 s; the decoded clip differs from the float32 PyTorch reference
-by a mean of 3.0e-6 (max 1.3e-4). The diffusers references take 40 s (SD1.5, 30
-steps) and 126 s (Cosmos3, bf16).
+The `klartraum` mode runs `sd15_denoiser_example` at 512x512 (needs
+`data/onnx/sd15_denoiser_512`) and Cosmos3 from `data/onnx/cosmos3_512`. The
+text tower does not depend on the video size and is shared with
+`cosmos3_256`. A whole-clip float32 VAE decode at 512x512 does not fit in 24 GB,
+so `prepare --decoder-tile 16 --decoder-stride 8` selects a tiled decode: the
+256 decoder runs on 3x3 overlapping 16x16-latent tiles that are blended with
+linear ramps over the 128-pixel overlaps (`klartraum::TileBlender`, mirrored by
+`tiled_decode` in `export_onnx.py`). The decoder graph is shared with
+`cosmos3_256` as well. The 512 denoiser and VAE encoder are exported once
+(`reference`, `denoiser`, `vae`), then `cosmos3_example --image` runs on the SD1.5
+output with every stage check active. Outputs go to `build/TestingOutput/dashcam/`.
+
+Mac mini M4, MoltenVK:
+
+| Stage | Klartraum | Check vs float32 PyTorch |
+|-------|-----------|--------------------------|
+| SD1.5 512, 30 DDIM steps | 107 s | (validated graph; no fixture for this prompt) |
+| Cosmos3 conditioning image (C++ preprocessing) | | max error 0 |
+| Cosmos3 text tower | 54 s | 6.1e-5 relative |
+| Cosmos3 denoiser, 20 steps (2304 video tokens) | 893 s (44.6 s/step) | final latents 9.0e-3 (up to 5.8) |
+| Cosmos3 tiled VAE decode, 9 tiles | 578 s | video mean 4.6e-5, max 1.8e-2 |
+| Cosmos3 total | 1536 s | |
+
+The diffusers references take 40 s (SD1.5, 30 steps) and 274 s (Cosmos3 512,
+bf16); the float32 PyTorch/MPS wrappers take about 10 s per denoising step and
+42 s per decoder tile.
