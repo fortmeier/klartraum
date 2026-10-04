@@ -12,8 +12,14 @@
  * - Div broadcasts a rank-five per-pixel denominator over the channel axis.
  * - Slice cuts frames out of a rank-five video tensor on its time axis.
  * - Add broadcasts a rank-zero scalar initializer, as the exporters write epsilon constants.
+ * - Conv3d with a causal 3x3x3 kernel (two leading time pads) matches a CPU reference across tile boundaries.
+ * - Conv3d downsamples spatially with stride two and trailing-only pads.
+ * - Conv3d applies a causal 3x1x1 temporal kernel.
+ * - Conv3d applies a pointwise 1x1x1 kernel with bias.
+ * - Single-head rank-three attention with a 1024-wide head runs unfused and matches a CPU reference.
  **/
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -338,4 +344,132 @@ TEST(OnnxCosmos3OperationsTest, AddBroadcastsRankZeroScalarInitializer) {
     for (auto& value : expected)
         value += 0.25f;
     expectNear(builder.run({{"x", x}}, "y"), expected, 0.0f);
+}
+
+namespace {
+
+struct Conv3dCase {
+    Shape input;                  // N, C, D, H, W
+    Shape weights;                // O, C, kD, kH, kW
+    std::vector<int64_t> strides; // D, H, W
+    std::vector<int64_t> pads;    // D, H, W begins, then ends
+};
+
+Shape conv3dOutputShape(const Conv3dCase& c) {
+    Shape output{c.input[0], c.weights[0], 0, 0, 0};
+    for (size_t axis = 0; axis < 3; ++axis) {
+        const int64_t padded = c.input[2 + axis] + c.pads[axis] + c.pads[3 + axis];
+        output[2 + axis] = static_cast<uint32_t>((padded - c.weights[2 + axis]) / c.strides[axis] + 1);
+    }
+    return output;
+}
+
+std::vector<float> conv3dReference(const Conv3dCase& c, const std::vector<float>& x, const std::vector<float>& w,
+                                   const std::vector<float>& b) {
+    const Shape out = conv3dOutputShape(c);
+    std::vector<float> y(elementCount(out));
+    const auto& in = c.input;
+    const auto& k = c.weights;
+    for (uint32_t n = 0; n < out[0]; ++n)
+        for (uint32_t o = 0; o < out[1]; ++o)
+            for (uint32_t d = 0; d < out[2]; ++d)
+                for (uint32_t h = 0; h < out[3]; ++h)
+                    for (uint32_t wo = 0; wo < out[4]; ++wo) {
+                        double sum = b[o];
+                        for (uint32_t ci = 0; ci < in[1]; ++ci)
+                            for (uint32_t kd = 0; kd < k[2]; ++kd)
+                                for (uint32_t kh = 0; kh < k[3]; ++kh)
+                                    for (uint32_t kw = 0; kw < k[4]; ++kw) {
+                                        const int64_t id = int64_t(d) * c.strides[0] + kd - c.pads[0];
+                                        const int64_t ih = int64_t(h) * c.strides[1] + kh - c.pads[1];
+                                        const int64_t iw = int64_t(wo) * c.strides[2] + kw - c.pads[2];
+                                        if (id < 0 || ih < 0 || iw < 0 || id >= in[2] || ih >= in[3] || iw >= in[4])
+                                            continue;
+                                        sum += double(x[(((size_t(n) * in[1] + ci) * in[2] + id) * in[3] + ih) * in[4] +
+                                                        iw]) *
+                                               w[(((size_t(o) * k[1] + ci) * k[2] + kd) * k[3] + kh) * k[4] + kw];
+                                    }
+                        y[(((size_t(n) * out[1] + o) * out[2] + d) * out[3] + h) * out[4] + wo] = float(sum);
+                    }
+    return y;
+}
+
+void runConv3dCase(const std::string& name, const Conv3dCase& c, uint32_t seed) {
+    const Shape output = conv3dOutputShape(c);
+    ModelBuilder builder(name);
+    builder.input("x", c.input);
+    builder.output("y", output);
+    const auto x = patternedValues(elementCount(c.input), seed);
+    const auto w = patternedValues(elementCount(c.weights), seed + 1);
+    const auto b = patternedValues(c.weights[0], seed + 2);
+    builder.floatInitializer("w", c.weights, w);
+    builder.floatInitializer("b", {c.weights[0]}, b);
+    auto* node = builder.node("Conv", {"x", "w", "b"}, {"y"});
+    ModelBuilder::ints(node, "kernel_shape", {c.weights[2], c.weights[3], c.weights[4]});
+    ModelBuilder::ints(node, "strides", c.strides);
+    ModelBuilder::ints(node, "pads", c.pads);
+    ModelBuilder::ints(node, "dilations", {1, 1, 1});
+    ModelBuilder::integer(node, "group", 1);
+    expectNear(builder.run({{"x", x}}, "y"), conv3dReference(c, x, w, b), 2e-5f);
+}
+
+} // namespace
+
+TEST(OnnxCosmos3OperationsTest, Conv3dCausalKernelAcrossTiles) {
+    runConv3dCase("conv3d_causal_3x3x3", {{1, 5, 4, 9, 11}, {70, 5, 3, 3, 3}, {1, 1, 1}, {2, 1, 1, 0, 1, 1}}, 20);
+}
+
+TEST(OnnxCosmos3OperationsTest, Conv3dStridedSpatialDownsampling) {
+    runConv3dCase("conv3d_stride2", {{1, 6, 2, 10, 12}, {8, 6, 1, 3, 3}, {1, 2, 2}, {0, 0, 0, 0, 1, 1}}, 30);
+}
+
+TEST(OnnxCosmos3OperationsTest, Conv3dCausalTemporalKernel) {
+    runConv3dCase("conv3d_temporal", {{1, 7, 5, 4, 6}, {14, 7, 3, 1, 1}, {1, 1, 1}, {2, 0, 0, 0, 0, 0}}, 40);
+}
+
+TEST(OnnxCosmos3OperationsTest, Conv3dPointwiseWithBias) {
+    runConv3dCase("conv3d_pointwise", {{1, 48, 3, 4, 4}, {48, 48, 1, 1, 1}, {1, 1, 1}, {0, 0, 0, 0, 0, 0}}, 50);
+}
+
+TEST(OnnxCosmos3OperationsTest, WideRankThreeAttentionRunsUnfused) {
+    // Wan VAE mid-block attention: [frames, tokens, channels] with one 1024-wide head.
+    const uint32_t frames = 2, tokens = 5, width = 1024;
+    ModelBuilder builder("attention_rank3_wide");
+    builder.input("q", {frames, tokens, width});
+    builder.input("kt", {frames, width, tokens});
+    builder.input("v", {frames, tokens, width});
+    builder.output("y", {frames, tokens, width});
+    // Intermediate value_info, as the exporters write it.
+    builder.output("scores", {frames, tokens, tokens});
+    builder.output("probabilities", {frames, tokens, tokens});
+    builder.node("MatMul", {"q", "kt"}, {"scores"});
+    builder.node("Softmax", {"scores"}, {"probabilities"});
+    builder.node("MatMul", {"probabilities", "v"}, {"y"});
+    const auto q = patternedValues(size_t(frames) * tokens * width, 60);
+    const auto kt = patternedValues(size_t(frames) * width * tokens, 61);
+    const auto v = patternedValues(size_t(frames) * tokens * width, 62);
+    std::vector<float> expected(size_t(frames) * tokens * width);
+    for (uint32_t f = 0; f < frames; ++f) {
+        for (uint32_t i = 0; i < tokens; ++i) {
+            std::vector<double> scores(tokens);
+            double maximum = -1e300, sum = 0.0;
+            for (uint32_t j = 0; j < tokens; ++j) {
+                double score = 0.0;
+                for (uint32_t d = 0; d < width; ++d) {
+                    score += double(q[(size_t(f) * tokens + i) * width + d]) * kt[(size_t(f) * width + d) * tokens + j];
+                }
+                scores[j] = score;
+                maximum = std::max(maximum, score);
+            }
+            for (auto& score : scores)
+                sum += (score = std::exp(score - maximum));
+            for (uint32_t d = 0; d < width; ++d) {
+                double value = 0.0;
+                for (uint32_t j = 0; j < tokens; ++j)
+                    value += scores[j] * v[(size_t(f) * tokens + j) * width + d];
+                expected[(size_t(f) * tokens + i) * width + d] = float(value / sum);
+            }
+        }
+    }
+    expectNear(builder.run({{"q", q}, {"kt", kt}, {"v", v}}, "y"), expected, 1e-5f);
 }

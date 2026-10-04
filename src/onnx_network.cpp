@@ -76,6 +76,20 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
     }
 
     auto* graph = model->mutable_graph();
+    // The fused kernel handles rank-four attention with head widths up to 512;
+    // other attention keeps its separate MatMul/Softmax/MatMul nodes.
+    std::map<std::string, std::vector<int64_t>> declaredShapes;
+    for (const auto* values : {&graph->input(), &graph->value_info(), &graph->output()}) {
+        for (const auto& value : *values) {
+            auto& shape = declaredShapes[value.name()];
+            for (const auto& dimension : value.type().tensor_type().shape().dim())
+                shape.push_back(dimension.dim_value());
+        }
+    }
+    auto fusableOperand = [&declaredShapes](const std::string& name) {
+        const auto it = declaredShapes.find(name);
+        return it != declaredShapes.end() && it->second.size() == 4 && it->second.back() <= 512;
+    };
     std::map<std::string, size_t> consumerCounts;
     for (const auto& node : graph->node()) {
         for (const auto& name : node.input()) {
@@ -102,7 +116,8 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
                 score.output_size() == 1 && softmax.input_size() == 1 && softmax.output_size() == 1 &&
                 context.input_size() == 2 && context.output_size() == 1 && softmax.input(0) == score.output(0) &&
                 context.input(0) == softmax.output(0) && consumerCounts[score.output(0)] == 1 &&
-                consumerCounts[softmax.output(0)] == 1) {
+                consumerCounts[softmax.output(0)] == 1 && fusableOperand(score.input(0)) &&
+                fusableOperand(context.input(1))) {
                 onnx::NodeProto fused = context;
                 fused.set_op_type("FusedAttention");
                 fused.set_name(context.name() + "/KlartraumFusedAttention");
