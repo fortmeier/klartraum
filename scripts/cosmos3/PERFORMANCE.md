@@ -32,12 +32,25 @@ The global loads are not the limit (cycle 5); the inner product loop is. Without
 cooperative-matrix (simdgroup) access through MoltenVK, larger register blocks
 lose to register pressure (cycle 2).
 
+## Conv3d kernel (Wan VAE)
+
+The 256x256 decoder performs about 40 TFLOP of convolution (largest: 512 and 256
+output channels with 3x3x3 kernels at 64x64 and 128x128).
+Measured with `cosmos3_example --stage vae --profile`.
+
+| Cycle | Variant | VAE decode (wall) | GPU Conv | Decision |
+|---:|---|---:|---:|---|
+| 0 | 64x64 implicit-GEMM tile, 4x4 per invocation, per-element tap/position division | 62.9 s | 39.8 s | Baseline |
+| 1 | Positions decomposed once per invocation, shared tap table, vec4 shared reads | 35.3 s | 28.8 s | Superseded by 2 |
+| 2 | Cycle 1 with 64x128 tiles, 4x8 per invocation | 30.6 s | 28.3 s (~1.4 TFLOP/s) | Kept |
+
 ## End-to-end, 256x256
 
 | Variant | VAE encode | Text tower | Denoising (20 steps) | VAE decode | Total | Final latents | Video (mean) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Before (cycle 0) | 0.5 s | 54 s | 190 s (9.5 s/step) | 63 s | 317 s | 6.7e-4 | 1.7e-5 |
 | MatMul cycle 4 | 0.5 s | 19.5 s | 70.6 s (3.53 s/step) | 63 s | 163 s | 6.7e-4 | 1.7e-5 |
+| + Conv3d cycle 2 | 0.3 s | 19.4 s | 70.6 s (3.53 s/step) | 30.6 s | 130 s | 6.7e-4 | 1.7e-5 |
 
 For comparison: the float32 PyTorch/MPS wrappers take about 2 s per step and
 31 s for the decode; the diffusers bf16 pipeline 124 s in total.
