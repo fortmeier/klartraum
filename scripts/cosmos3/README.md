@@ -182,12 +182,15 @@ Mac mini M4, MoltenVK:
 
 | Stage | Klartraum | Check vs float32 PyTorch |
 |-------|-----------|--------------------------|
-| SD1.5 512, 30 DDIM steps | 107 s | (validated graph; no fixture for this prompt) |
+| SD1.5 512, 30 DDIM steps | 88 s | (validated graph; no fixture for this prompt) |
 | Cosmos3 conditioning image (C++ preprocessing) | | max error 0 |
-| Cosmos3 text tower | 54 s | 6.1e-5 relative |
-| Cosmos3 denoiser, 20 steps (2304 video tokens) | 893 s (44.6 s/step) | final latents 9.0e-3 (up to 5.8) |
-| Cosmos3 tiled VAE decode, 9 tiles | 578 s | video mean 4.6e-5, max 1.8e-2 |
-| Cosmos3 total | 1536 s | |
+| Cosmos3 text tower | 15 s | 8.9e-5 relative |
+| Cosmos3 denoiser, 20 steps (2304 video tokens) | 238 s (11.9 s/step) | final latents 4.8e-3 (up to 5.8) |
+| Cosmos3 tiled VAE decode, 9 tiles | 280 s | video mean 3.8e-5, max 9.7e-3 |
+| Cosmos3 total | 541 s | |
+
+Kernel improvements are logged in `PERFORMANCE.md`; before them the same run
+took 1536 s (44.6 s per denoising step, 578 s for the decode).
 
 The diffusers references take 40 s (SD1.5, 30 steps) and 274 s (Cosmos3 512,
 bf16); the float32 PyTorch/MPS wrappers take about 10 s per denoising step and
