@@ -201,8 +201,43 @@ float getEpsilon(const onnx::NodeProto& node) {
     return epsilon;
 }
 
+ComputeGraphElementPtr createConv3d(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    if (node.input_size() != 3)
+        throw std::runtime_error("Conv3d requires a bias input");
+    const auto weights = getTensorDimensions(node.input(1), infos, graph);
+    layers::Conv3dAttributes attributes;
+    for (size_t axis = 0; axis < 3; ++axis)
+        attributes.kernelShape[axis] = weights[2 + axis];
+    for (const auto& attribute : node.attribute()) {
+        const auto copy = [&attribute](auto& target) {
+            if (static_cast<size_t>(attribute.ints_size()) != target.size()) {
+                throw std::runtime_error("Conv3d attribute " + attribute.name() + " has the wrong length");
+            }
+            for (size_t i = 0; i < target.size(); ++i)
+                target[i] = static_cast<uint32_t>(attribute.ints(i));
+        };
+        if (attribute.name() == "strides")
+            copy(attributes.strides);
+        else if (attribute.name() == "pads")
+            copy(attributes.pads);
+        else if (attribute.name() == "dilations")
+            copy(attributes.dilations);
+        else if (attribute.name() == "group")
+            attributes.group = static_cast<uint32_t>(attribute.i());
+        else if (attribute.name() == "auto_pad" && attribute.s() != "NOTSET") {
+            throw std::runtime_error("Conv3d supports only explicit pads");
+        }
+    }
+    return layers::conv3d(*vulkanContext, attributes, getTensorDimensions(node.input(0), infos, graph), weights,
+                          getTensorDimensions(node.output(0), infos, graph));
+}
+
 ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                   const onnx::GraphProto& graph) {
+    if (getTensorDimensions(node.input(0), infos, graph).size() == 5) {
+        return createConv3d(vulkanContext, node, infos, graph);
+    }
     return layers::conv(*vulkanContext, getConvAttributes(node), getTensorDimensions(node.input(0), infos, graph),
                         getTensorDimensions(node.input(1), infos, graph), getBiasDimensions(node, infos, graph),
                         getTensorDimensions(node.output(0), infos, graph));

@@ -137,6 +137,14 @@ struct ConvPushConstants {
     uint32_t dimOutput[4];
 };
 
+struct Conv3dPushConstants {
+    uint32_t inputChannels, inputDepth, inputHeight, inputWidth;
+    uint32_t outputChannels, outputDepth, outputHeight, outputWidth;
+    uint32_t kernelDepth, kernelHeight, kernelWidth;
+    uint32_t strideDepth, strideHeight, strideWidth;
+    uint32_t padDepth, padHeight, padWidth;
+};
+
 // struct ReshapePushConstants {
 //     uint32_t dimInput[4];
 //     uint32_t dimShape[6];
