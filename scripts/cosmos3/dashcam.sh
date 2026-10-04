@@ -5,13 +5,15 @@
 # SPDX-License-Identifier: MIT
 
 # Two-step dashcam example: Stable Diffusion 1.5 text-to-image, then
-# Cosmos3-Edge image-to-video (33 frames at 11 fps, 3 s). See README.md.
+# Cosmos3-Edge image-to-video (512x512, 33 frames at 11 fps, 3 s). See README.md.
 #
 #   scripts/cosmos3/dashcam.sh reference   # both models with diffusers
 #   scripts/cosmos3/dashcam.sh klartraum   # both models on Klartraum
 #
 # The klartraum mode needs the SD1.5 512 export (data/onnx/sd15_denoiser_512),
-# the Cosmos3 export (data/onnx/cosmos3_256), and a build of both examples.
+# the Cosmos3 256 export (data/onnx/cosmos3_256, for its text tower and VAE
+# decoder), and a build of both examples. The 512 denoiser and VAE encoder are
+# exported into data/onnx/cosmos3_512 on the first run (about 15 minutes).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -28,32 +30,39 @@ reference)
     uv run python sd15_text_to_image.py --prompt "$PROMPT" --negative-prompt "$NEGATIVE" \
         --output "$OUT/sd15_reference.png"
     uv run python run_reference.py --raw-prompt --prompt "$(cat "$CAPTION")" \
-        --image "$OUT/sd15_reference.png" --num-frames 33 --fps 11 \
+        --image "$OUT/sd15_reference.png" --size 512 512 --num-frames 33 --fps 11 \
         --output-dir "$OUT" --name cosmos3_reference
     ;;
 klartraum)
-    FIXTURES="$REPO/data/onnx/cosmos3_dashcam"
+    MODELS="$REPO/data/onnx/cosmos3_512"
     cd "$REPO"
     ./build/examples/sd15_denoiser_example --size 512 --model-dir data/onnx/sd15_denoiser_512 \
         --prompt "$PROMPT" --negative-prompt "$NEGATIVE" --output "$OUT/sd15_klartraum.ppm"
 
-    # The graphs are shared with cosmos3_256 through hard links (the ONNX loader
-    # rejects external data that resolves outside the model directory); the
-    # prompt- and image-dependent fixtures are generated for this run.
-    mkdir -p "$FIXTURES"
-    for file in data/onnx/cosmos3_256/*.onnx data/onnx/cosmos3_256/*.onnx.data \
-        data/onnx/cosmos3_256/decoder_reference_*_f32.bin; do
-        ln -f "$file" "$FIXTURES/$(basename "$file")"
+    # The text tower does not depend on the video size, and the 512 clip is
+    # decoded in 16x16-latent tiles by the 256 VAE decoder, so both graphs are
+    # shared with cosmos3_256 through hard links (the ONNX loader rejects
+    # external data that resolves outside the model directory).
+    mkdir -p "$MODELS"
+    for file in data/onnx/cosmos3_256/text_kv.onnx* data/onnx/cosmos3_256/vae_decoder.onnx*; do
+        ln -f "$file" "$MODELS/$(basename "$file")"
     done
     cd "$COSMOS"
-    uv run python export_onnx.py prepare --fps 11 --prompt-file "$CAPTION" \
-        --image "$OUT/sd15_klartraum.ppm" --onnx-dir "$FIXTURES"
-    uv run python export_onnx.py text --fixtures-only --onnx-dir "$FIXTURES"
-    uv run python export_onnx.py denoiser --fixtures-only --onnx-dir "$FIXTURES"
-    uv run python export_onnx.py pipeline --onnx-dir "$FIXTURES" --video-dir "$OUT"
+    CONFIG=(--size 512 --fps 11 --onnx-dir "$MODELS")
+    uv run python export_onnx.py prepare "${CONFIG[@]}" --prompt-file "$CAPTION" \
+        --image "$OUT/sd15_klartraum.ppm" --decoder-tile 16 --decoder-stride 8
+    uv run python export_onnx.py text --fixtures-only "${CONFIG[@]}"
+    if [[ -f "$MODELS/denoiser.onnx" && -f "$MODELS/vae_encoder.onnx" ]]; then
+        uv run python export_onnx.py denoiser --fixtures-only "${CONFIG[@]}"
+    else
+        uv run python export_onnx.py reference "${CONFIG[@]}"
+        uv run python export_onnx.py denoiser "${CONFIG[@]}"
+        uv run python export_onnx.py vae "${CONFIG[@]}"
+    fi
+    uv run python export_onnx.py pipeline "${CONFIG[@]}" --video-dir "$OUT"
 
     cd "$REPO"
-    ./build/examples/cosmos3_example --model-dir "$FIXTURES" --image "$OUT/sd15_klartraum.ppm" \
+    ./build/examples/cosmos3_example --model-dir "$MODELS" --image "$OUT/sd15_klartraum.ppm" \
         --output-dir "$OUT/klartraum" --name dashcam
     ffmpeg -y -loglevel error -i "$OUT/klartraum/dashcam_klartraum.y4m" -pix_fmt yuv420p "$OUT/dashcam_klartraum.mp4"
     echo "wrote $OUT/dashcam_klartraum.mp4"
