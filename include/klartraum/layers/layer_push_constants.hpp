@@ -50,6 +50,16 @@ struct FusedAttentionPushConstants {
     uint32_t valueDepth;
 };
 
+struct FusedAttentionBiasPushConstants {
+    uint32_t batchCount; ///< B x H
+    uint32_t heads;      ///< H
+    uint32_t queryCount;
+    uint32_t keyCount;
+    uint32_t biasStrideBatch; ///< bias elements between batches (0: broadcast)
+    uint32_t biasStrideHead;  ///< bias elements between heads (0: broadcast)
+    uint32_t biasStrideQuery; ///< bias elements between queries (0: broadcast)
+};
+
 struct GemmPushConstants {
     uint32_t rows;
     uint32_t columns;
