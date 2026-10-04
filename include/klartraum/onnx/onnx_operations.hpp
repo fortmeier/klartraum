@@ -366,6 +366,35 @@ ComputeGraphElementPtr createSoftmax(VulkanContext* vulkanContext, const onnx::N
     return layers::softmax(*vulkanContext, dimensions);
 }
 
+ComputeGraphElementPtr createReduceMean(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                        const ValueInfos& infos, const onnx::GraphProto& graph) {
+    if (node.input_size() != 1)
+        throw std::runtime_error("ReduceMean supports only the axes attribute (opset <= 17)");
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    std::vector<uint32_t> axes;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() != "axes")
+            continue;
+        for (const auto axis : attribute.ints()) {
+            const int64_t normalized = axis < 0 ? axis + static_cast<int64_t>(input.size()) : axis;
+            if (normalized < 0 || normalized >= static_cast<int64_t>(input.size())) {
+                throw std::runtime_error("ReduceMean axis is outside the tensor rank");
+            }
+            axes.push_back(static_cast<uint32_t>(normalized));
+        }
+    }
+    if (axes.empty()) {
+        for (uint32_t axis = 0; axis < input.size(); ++axis)
+            axes.push_back(axis);
+    }
+    std::sort(axes.begin(), axes.end());
+    for (size_t i = 1; i < axes.size(); ++i) {
+        if (axes[i] != axes[i - 1] + 1)
+            throw std::runtime_error("ReduceMean axes must be contiguous");
+    }
+    return layers::reduceMean(*vulkanContext, input, axes.front(), static_cast<uint32_t>(axes.size()));
+}
+
 ComputeGraphElementPtr createSplit(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                    const onnx::GraphProto& graph) {
     if (node.output_size() != 3)
@@ -386,7 +415,7 @@ ComputeGraphElementPtr createSlice(VulkanContext* vulkanContext, const onnx::Nod
                                    const onnx::GraphProto& graph) {
     const auto input = getTensorDimensions(node.input(0), infos, graph);
     const auto output = getTensorDimensions(node.output(0), infos, graph);
-    if (input.size() != output.size() || input.size() > 4)
+    if (input.size() != output.size())
         throw std::runtime_error("Unsupported Slice rank");
     if (input == output) {
         const auto starts = getInt64InitializerValues(node.input(1), graph);
@@ -485,6 +514,8 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
         operation = createReshape(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Softmax") {
         operation = createSoftmax(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "ReduceMean") {
+        operation = createReduceMean(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Split") {
         operation = createSplit(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Resize") {
