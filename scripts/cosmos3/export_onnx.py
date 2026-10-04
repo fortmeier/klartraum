@@ -77,7 +77,8 @@ NEG_INF_BIAS = -1.0e9
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("stage", choices=["prepare", "reference", "text", "denoiser", "vae", "pipeline", "postprocess"])
+    parser.add_argument("stage", choices=["prepare", "reference", "text", "denoiser", "vae", "vae_chunks", "pipeline",
+                                          "postprocess"])
     parser.add_argument("--size", type=int, default=256, help="square output size, multiple of 32")
     parser.add_argument("--num-frames", type=int, default=33)
     parser.add_argument("--fps", type=float, default=16.0)
@@ -102,6 +103,8 @@ def parse_args() -> argparse.Namespace:
         help="prepare: decode in square latent tiles of this size (0: whole clip), e.g. 16 to reuse a 256 decoder",
     )
     parser.add_argument("--decoder-stride", type=int, default=8, help="prepare: latent stride between decoder tiles")
+    parser.add_argument("--decoder-chunked", action="store_true",
+                        help="prepare: decode one latent frame at a time (vae_chunks stage) instead of the whole clip")
     parser.add_argument("--video-dir", type=Path, default=REPO_ROOT / "build" / "TestingOutput" / "cosmos3")
     args = parser.parse_args()
     if args.onnx_dir is None:
@@ -426,6 +429,7 @@ def stage_prepare(args: argparse.Namespace) -> None:
         "base_fps": tconfig["base_fps"],
         "vae_latents_mean": pipe.vae.config.latents_mean, "vae_latents_std": pipe.vae.config.latents_std,
         "decoder_tile": args.decoder_tile, "decoder_stride": args.decoder_stride,
+        "decoder_chunked": int(args.decoder_chunked),
     }
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.json").write_text(json.dumps(config, indent=1))
@@ -955,6 +959,167 @@ class VaeDecoder(torch.nn.Module):
         return unpatchify_video(x, self.patch)
 
 
+# ---------------------------------------------------------------------------
+# Wan2.2 VAE decoder, one latent frame at a time
+# ---------------------------------------------------------------------------
+#
+# The whole-clip decoder's activations grow with the clip; at 512x512 they do
+# not fit in 24 GB. Decoding one latent frame at a time keeps only one chunk's
+# activations plus, for every causal convolution, the last kt - 1 frames of its
+# input (the zero padding of the whole-clip formulation for the first chunk).
+# The first-chunk rules become a separate first-chunk graph: its temporal
+# upsamplers pass the frame through (their time convolutions start on the next
+# chunk with a zero cache), and its duplicate-upsample shortcuts are trimmed.
+# Both graphs see the caches in the same traversal order.
+
+
+class CacheStream:
+    """Feature caches of one decoder chunk: read from `inputs` (None for the first chunk) and collected in `outputs`."""
+
+    def __init__(self, inputs=None):
+        self.inputs = list(inputs) if inputs is not None else None
+        self.outputs: list[torch.Tensor] = []
+
+    def next_input(self) -> torch.Tensor:
+        return self.inputs[len(self.outputs)]
+
+
+def zero_frames(x: torch.Tensor, frames: int) -> torch.Tensor:
+    """`frames` zero frames shaped like x's; computed from x so that tracing records no large constants."""
+    zero = x[:, :, :1] * 0.0
+    return zero if frames == 1 else torch.cat([zero] * frames, dim=2)
+
+
+def cached_causal_conv(conv: torch.nn.Conv3d, x: torch.Tensor, caches: CacheStream) -> torch.Tensor:
+    kt, kh, kw = dims(conv.weight)[2:]
+    spatial = (kw // 2, kw // 2, kh // 2, kh // 2)
+    if kt == 1:
+        return F.conv3d(F.pad(x, (*spatial, 0, 0)), conv.weight, conv.bias)
+    if caches.inputs is None:
+        # First chunk: zero padding in front, as in the whole-clip formulation.
+        t = dims(x)[2]
+        caches.outputs.append(x[:, :, -(kt - 1):] if t >= kt - 1 else torch.cat([zero_frames(x, kt - 1 - t), x], dim=2))
+        x = F.pad(x, (*spatial, kt - 1, 0))
+    else:
+        x = torch.cat([caches.next_input(), x], dim=2)
+        caches.outputs.append(x[:, :, -(kt - 1):])
+        x = F.pad(x, (*spatial, 0, 0))
+    return F.conv3d(x, conv.weight, conv.bias)
+
+
+def cached_residual_block(block, x: torch.Tensor, caches: CacheStream) -> torch.Tensor:
+    shortcut = x if isinstance(block.conv_shortcut, torch.nn.Identity) else cached_causal_conv(
+        block.conv_shortcut, x, caches)
+    x = cached_causal_conv(block.conv1, silu(channel_rms(x, block.norm1)), caches)
+    x = cached_causal_conv(block.conv2, silu(channel_rms(x, block.norm2)), caches)
+    return x + shortcut
+
+
+def cached_mid_block(block, x: torch.Tensor, caches: CacheStream) -> torch.Tensor:
+    x = cached_residual_block(block.resnets[0], x, caches)
+    for attention, resnet in zip(block.attentions, block.resnets[1:]):
+        x = cached_residual_block(resnet, attention_block(attention, x), caches)
+    return x
+
+
+def cached_upsample(resample, x: torch.Tensor, caches: CacheStream, first: bool) -> torch.Tensor:
+    b, c, t, h, w = dims(x)
+    if resample.mode == "upsample3d":
+        if first:
+            # Frame 0 passes through; the time convolution starts on the next chunk with a zero cache.
+            caches.outputs.append(zero_frames(x, dims(resample.time_conv.weight)[2] - 1))
+        else:
+            x = cached_causal_conv(resample.time_conv, x, caches)
+            x = x.reshape(b, 2, c, t, h, w).permute(0, 2, 3, 1, 4, 5).reshape(b, c, 2 * t, h, w)
+            t = 2 * t
+    x = F.interpolate(x.reshape(b, c * t, h, w), scale_factor=2.0, mode="nearest").reshape(b, c, t, 2 * h, 2 * w)
+    return spatial_conv(resample.resample[1], x)
+
+
+class VaeDecoderChunk(torch.nn.Module):
+    """One latent frame [1, 48, 1, h, w] plus caches -> video frames (1 for the first chunk, else 4) plus caches."""
+
+    def __init__(self, whole: VaeDecoder, first: bool):
+        super().__init__()
+        self.decoder = whole.decoder
+        self.patch = whole.patch
+        self.post_quant = whole.post_quant
+        self.first = first
+
+    def forward(self, latent: torch.Tensor, *caches_in: torch.Tensor):
+        caches = CacheStream(None if self.first else caches_in)
+        decoder = self.decoder
+        x = F.conv3d(latent, self.post_quant.weight, self.post_quant.bias)
+        x = cached_causal_conv(decoder.conv_in, x, caches)
+        x = cached_mid_block(decoder.mid_block, x, caches)
+        for block in decoder.up_blocks:
+            block_input = x
+            for resnet in block.resnets:
+                x = cached_residual_block(resnet, x, caches)
+            if block.upsampler is not None:
+                x = cached_upsample(block.upsampler, x, caches, self.first)
+            if block.avg_shortcut is not None:
+                x = x + dup_up(block.avg_shortcut, block_input, first_chunk_trim=self.first)
+        x = cached_causal_conv(decoder.conv_out, silu(channel_rms(x, decoder.norm_out)), caches)
+        return (unpatchify_video(x, self.patch), *caches.outputs)
+
+
+def chunked_decode(first: VaeDecoderChunk, chunk: VaeDecoderChunk, latents: torch.Tensor,
+                   device: torch.device) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    """[1, 48, T, h, w] -> video [1, 3, 4T - 3, H, W] (unclamped); also returns chunk 1's input caches."""
+    with torch.no_grad():
+        video, *caches = first(latents[:, :, :1].to(device))
+        frames = [video.cpu()]
+        first_caches = [c.cpu() for c in caches]
+        for t in range(1, dims(latents)[2]):
+            video, *caches = chunk(latents[:, :, t : t + 1].to(device), *caches)
+            frames.append(video.cpu())
+    return torch.cat(frames, dim=2), first_caches
+
+
+def stage_vae_chunks(args: argparse.Namespace) -> None:
+    """Export the first-chunk and per-chunk decoders and check them against diffusers' cached decode."""
+    out = args.onnx_dir
+    cfg = load_config(out)
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    vae = AutoencoderKLWan.from_pretrained(MODEL_ID, subfolder="vae", torch_dtype=torch.float32).eval()
+    mean = torch.tensor(cfg["vae_latents_mean"], dtype=torch.float32)
+    inv_std = 1.0 / torch.tensor(cfg["vae_latents_std"], dtype=torch.float32)
+    whole = VaeDecoder(vae, mean, inv_std).eval()
+    first = VaeDecoderChunk(whole, first=True).eval().to(device)
+    chunk = VaeDecoderChunk(whole, first=False).eval().to(device)
+    latents = torch.from_numpy(load(out, "initial_latents_f32.bin")).unsqueeze(0)
+    started = time.perf_counter()
+    video, first_caches = chunked_decode(first, chunk, latents, device)
+    print(f"  chunked PyTorch decode in {time.perf_counter() - started:.1f}s, output {dims(video)}, "
+          f"{len(first_caches)} caches", flush=True)
+    with torch.no_grad():
+        reference = vae.to(device).decode(
+            (latents / inv_std.view(1, -1, 1, 1, 1) + mean.view(1, -1, 1, 1, 1)).to(device)).sample.cpu()
+    report("chunked decoder vs diffusers (clamped)", video.clamp(-1, 1).numpy(), reference.numpy())
+    vae.to("cpu")
+    save(out, "decoder_reference_input_f32.bin", latents[0].numpy())
+    save(out, "decoder_reference_output_f32.bin", video[0].numpy())
+
+    first.to("cpu")
+    chunk.to("cpu")
+    cache_in = [f"cache_in_{i}" for i in range(len(first_caches))]
+    cache_out = [f"cache_out_{i}" for i in range(len(first_caches))]
+    latent0, latent1 = latents[:, :, :1].contiguous(), latents[:, :, 1:2].contiguous()
+    export_graph(first, (latent0,), ["latents"], ["video", *cache_out], out / "vae_decoder_first.onnx")
+    export_graph(chunk, (latent1, *first_caches), ["latents", *cache_in], ["video", *cache_out],
+                 out / "vae_decoder_chunk.onnx")
+    if not args.skip_ort:
+        with torch.no_grad():
+            expected = chunk(latent1, *first_caches)
+        result = run_ort(out / "vae_decoder_chunk.onnx",
+                         {"latents": latent1.numpy(), **{n: c.numpy() for n, c in zip(cache_in, first_caches)}})
+        report("ORT vs PyTorch decoder chunk (video)", result[0], expected[0].numpy())
+    cfg["decoder_caches"] = len(first_caches)
+    (out / "config.json").write_text(json.dumps(cfg, indent=1))
+    write_text_config(out, cfg)
+
+
 def stage_vae(args: argparse.Namespace) -> None:
     out = args.onnx_dir
     cfg = load_config(out)
@@ -975,6 +1140,9 @@ def stage_vae(args: argparse.Namespace) -> None:
 
     if cfg.get("decoder_tile", 0):
         print("  decoder_tile is set: the decoder is not exported; link a decoder of the tile size", flush=True)
+        return
+    if cfg.get("decoder_chunked", 0):
+        print("  decoder_chunked is set: export the chunk decoders with the vae_chunks stage", flush=True)
         return
     decoder = VaeDecoder(vae, mean, inv_std).eval()
     latents = torch.from_numpy(load(out, "initial_latents_f32.bin")).unsqueeze(0)
@@ -1126,7 +1294,11 @@ def stage_pipeline(args: argparse.Namespace) -> None:
     inv_std = 1.0 / torch.tensor(cfg["vae_latents_std"], dtype=torch.float32)
     decoder = VaeDecoder(vae, mean, inv_std).eval().to(device)
     started = time.perf_counter()
-    if cfg.get("decoder_tile", 0):
+    if cfg.get("decoder_chunked", 0):
+        first = VaeDecoderChunk(decoder, first=True).eval()
+        chunk = VaeDecoderChunk(decoder, first=False).eval()
+        video = chunked_decode(first, chunk, latents.unsqueeze(0), device)[0].clamp(-1.0, 1.0)[0]
+    elif cfg.get("decoder_tile", 0):
         video = tiled_decode(decoder, latents.unsqueeze(0), cfg["decoder_tile"], cfg["decoder_stride"], device)
         video = video.clamp(-1.0, 1.0)[0]
     else:
@@ -1149,6 +1321,7 @@ def main() -> None:
         "text": stage_text,
         "denoiser": stage_denoiser,
         "vae": stage_vae,
+        "vae_chunks": stage_vae_chunks,
         "pipeline": stage_pipeline,
         "postprocess": stage_postprocess,
     }[args.stage](args)

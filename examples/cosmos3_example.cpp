@@ -452,6 +452,108 @@ std::vector<float> decodeTiled(klartraum::VulkanContext& context, const Options&
     return blender.result();
 }
 
+/**
+ * Decodes [C, T, H, W] latents one latent frame at a time: the first-chunk
+ * decoder yields frame 0, the per-chunk decoder four frames per further latent
+ * frame. Both pass the last input frames of every causal convolution on as
+ * caches, so only one chunk's activations are resident.
+ */
+std::vector<float> decodeChunked(klartraum::VulkanContext& context, const Options& options, const LatentShape& shape,
+                                 const std::vector<float>& latents, uint32_t cacheCount, uint32_t height,
+                                 uint32_t width) {
+    const auto started = std::chrono::steady_clock::now();
+    const size_t plane = size_t(height) * width;
+    const uint32_t frames = 4 * shape.frames - 3;
+    std::vector<float> video(size_t(3) * frames * plane);
+    const std::vector<uint32_t> latentShape{1, shape.channels, 1, shape.height, shape.width};
+    std::vector<float> latentFrame(size_t(shape.channels) * shape.height * shape.width);
+    auto selectLatentFrame = [&](uint32_t t) {
+        for (uint32_t c = 0; c < shape.channels; ++c) {
+            std::copy_n(latents.begin() + (size_t(c) * shape.frames + t) * shape.height * shape.width,
+                        size_t(shape.height) * shape.width,
+                        latentFrame.begin() + size_t(c) * shape.height * shape.width);
+        }
+    };
+    // Copies a chunk's [1, 3, n, H, W] frames to frame `first` of the [3, frames, H, W] video.
+    auto placeFrames = [&](const std::vector<float>& chunk, uint32_t first) {
+        const uint32_t n = uint32_t(chunk.size() / (3 * plane));
+        for (uint32_t c = 0; c < 3; ++c) {
+            std::copy_n(chunk.begin() + size_t(c) * n * plane, n * plane,
+                        video.begin() + (size_t(c) * frames + first) * plane);
+        }
+    };
+    auto outputOf = [](const std::shared_ptr<klartraum::OnnxNetwork>& network, const std::string& name) {
+        auto output = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(network->getOutputElement(name));
+        if (!output)
+            throw std::runtime_error("VAE chunk decoder has no float output " + name);
+        return output;
+    };
+
+    std::vector<std::vector<float>> caches(cacheCount);
+    std::vector<std::vector<uint32_t>> cacheShapes(cacheCount);
+    {
+        auto network =
+            context.create<klartraum::OnnxNetwork>((options.modelDirectory / "vae_decoder_first.onnx").string());
+        auto input = context.create<klartraum::TensorElement<float>>(latentShape, kInputUsage);
+        network->setInputTensor("latents", input);
+        klartraum::ComputeGraph graph(context, 1);
+        graph.compileFrom(network);
+        selectLatentFrame(0);
+        input->setData(0, latentFrame);
+        graph.submitAndWait(context.getGraphicsQueue(), 0);
+        auto output = outputOf(network, "video");
+        std::vector<float> chunk(output->getDataElementCount());
+        output->getDataBuffer(0).memcopyTo(chunk);
+        placeFrames(chunk, 0);
+        for (uint32_t i = 0; i < cacheCount; ++i) {
+            auto cache = outputOf(network, "cache_out_" + std::to_string(i));
+            caches[i].resize(cache->getDataElementCount());
+            cache->getDataBuffer(0).memcopyTo(caches[i]);
+            cacheShapes[i] = cache->getDimensions();
+        }
+    }
+    size_t cacheBytes = 0;
+    for (const auto& cache : caches)
+        cacheBytes += cache.size() * sizeof(float);
+    std::cout << "VAE decoder first chunk in " << secondsSince(started) << " s, " << cacheCount << " caches of "
+              << cacheBytes / (1024.0 * 1024.0) << " MiB" << std::endl;
+
+    auto network = context.create<klartraum::OnnxNetwork>((options.modelDirectory / "vae_decoder_chunk.onnx").string());
+    auto input = context.create<klartraum::TensorElement<float>>(latentShape, kInputUsage);
+    network->setInputTensor("latents", input);
+    std::vector<std::shared_ptr<klartraum::TensorElement<float>>> cacheInputs;
+    for (uint32_t i = 0; i < cacheCount; ++i) {
+        cacheInputs.push_back(context.create<klartraum::TensorElement<float>>(cacheShapes[i], kInputUsage));
+        network->setInputTensor("cache_in_" + std::to_string(i), cacheInputs.back());
+    }
+    klartraum::ComputeGraph graph(context, 1);
+    if (options.profile)
+        graph.enableProfiling();
+    graph.compileFrom(network);
+    std::cout << "VAE chunk decoder loaded, transient storage "
+              << network->getMemoryPlanStats().allocatedBytes / (1024.0 * 1024.0) << " MiB" << std::endl;
+    auto output = outputOf(network, "video");
+    std::vector<float> chunk(output->getDataElementCount());
+    for (uint32_t t = 1; t < shape.frames; ++t) {
+        const auto chunkStarted = std::chrono::steady_clock::now();
+        selectLatentFrame(t);
+        input->setData(0, latentFrame);
+        for (uint32_t i = 0; i < cacheCount; ++i)
+            cacheInputs[i]->setData(0, caches[i]);
+        graph.submitAndWait(context.getGraphicsQueue(), 0);
+        output->getDataBuffer(0).memcopyTo(chunk);
+        placeFrames(chunk, 4 * t - 3);
+        for (uint32_t i = 0; i < cacheCount; ++i) {
+            outputOf(network, "cache_out_" + std::to_string(i))->getDataBuffer(0).memcopyTo(caches[i]);
+        }
+        std::cout << "  latent frame " << t << " in " << secondsSince(chunkStarted) << " s" << std::endl;
+    }
+    std::cout << "Klartraum VAE decoder (chunked): " << secondsSince(started) << " s" << std::endl;
+    if (options.profile)
+        printProfiling("VAE chunk decoder", graph);
+    return video;
+}
+
 void requireClose(const std::string& label, const Comparison& check, float relativeTolerance) {
     std::cout << label << ": max error " << check.maxError << " (max |ref| " << check.maxReference << ")" << std::endl;
     if (!(check.maxError <= relativeTolerance * std::max(check.maxReference, 1e-6f))) {
@@ -513,6 +615,15 @@ int main(int argc, char** argv) {
 
         const uint32_t decoderTile = config.countOr("decoder_tile", 0);
         const uint32_t decoderStride = config.countOr("decoder_stride", 0);
+        const uint32_t decoderCaches = config.countOr("decoder_chunked", 0) ? config.count("decoder_caches") : 0;
+        if (options.stage == "vae" && decoderCaches) {
+            const auto input = readTensor<float>(directory / "decoder_reference_input_f32.bin", shape.elements());
+            const auto video = decodeChunked(context, options, shape, input, decoderCaches, size, size);
+            requireClose(
+                "Decoded video",
+                compare(video, readTensor<float>(directory / "decoder_reference_output_f32.bin", video.size())), 1e-3f);
+            return 0;
+        }
         if (options.stage == "vae") {
             // Decoder alone on the exported decoder fixture, at the decoder's own (tile) size.
             const uint32_t h = decoderTile ? decoderTile : shape.height, w = decoderTile ? decoderTile : shape.width;
@@ -607,11 +718,12 @@ int main(int argc, char** argv) {
                 2e-2f);
         }
 
-        // 4. Wan VAE decode, of the whole clip or in overlapping tiles.
-        auto video = decoderTile ? decodeTiled(context, options, shape, latents, decoderTile, decoderStride)
-                                 : runOnce(context, options, "vae_decoder.onnx", "latents",
-                                           {1, shape.channels, shape.frames, shape.height, shape.width}, latents,
-                                           "video", "VAE decoder");
+        // 4. Wan VAE decode: of the whole clip, one latent frame at a time, or in overlapping tiles.
+        auto video = decoderCaches ? decodeChunked(context, options, shape, latents, decoderCaches, size, size)
+                     : decoderTile ? decodeTiled(context, options, shape, latents, decoderTile, decoderStride)
+                                   : runOnce(context, options, "vae_decoder.onnx", "latents",
+                                             {1, shape.channels, shape.frames, shape.height, shape.width}, latents,
+                                             "video", "VAE decoder");
         for (auto& value : video)
             value = std::clamp(value, -1.0f, 1.0f);
         if (steps == timesteps.size()) {
