@@ -9,13 +9,18 @@
  *   (the VAE decoder's latent scaling) without an ONNX model
  * - softmaxRowsSumToOne: last-axis softmax matches a CPU softmax
  * - batchedMatMul: a batch of matrix products matches the CPU, with the right side broadcast
+ * - matMulOddSizes: sizes that are not multiples of any tile, both sides batched, match the CPU
+ * - matMulCosmos3Projection: a [1152, 2048] x [2048, 2048] weight product (Cosmos3 denoiser at
+ *   256x256) matches the CPU on sampled outputs; prints its GPU throughput
  * - conv3x3WithBias: the specialized 3x3 convolution with padding and bias matches a CPU convolution
  * - layerNormalization: last-axis normalization with scale and bias matches the CPU
  **/
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
+#include <iostream>
 #include <memory>
 #include <numeric>
 #include <vector>
@@ -163,6 +168,69 @@ TEST_F(LayersTest, batchedMatMul) {
         }
     }
     expectNear(actual, expected, 1e-5f);
+}
+
+TEST_F(LayersTest, matMulOddSizes) {
+    const Shape lhs{3, 67, 45};
+    const Shape rhs{3, 45, 70};
+    const Shape output{3, 67, 70};
+    const auto l = ramp(3 * 67 * 45, 0.05f, -0.5f);
+    const auto r = ramp(3 * 45 * 70, 0.03f, -0.3f);
+    const auto actual =
+        run(layers::matMul(*vc, lhs, rhs, output), {{tensor(lhs), l}, {tensor(rhs), r}}, tensor(output));
+    std::vector<float> expected(3 * 67 * 70, 0.0f);
+    for (size_t batch = 0; batch < 3; ++batch) {
+        for (size_t row = 0; row < 67; ++row) {
+            for (size_t column = 0; column < 70; ++column) {
+                double sum = 0.0;
+                for (size_t k = 0; k < 45; ++k) {
+                    sum += double(l[(batch * 67 + row) * 45 + k]) * r[(batch * 45 + k) * 70 + column];
+                }
+                expected[(batch * 67 + row) * 70 + column] = float(sum);
+            }
+        }
+    }
+    expectNear(actual, expected, 1e-4f);
+}
+
+TEST_F(LayersTest, matMulCosmos3Projection) {
+    const uint32_t rows = 1152, reduction = 2048, columns = 2048;
+    const Shape lhs{rows, reduction};
+    const Shape rhs{reduction, columns};
+    const Shape output{rows, columns};
+    std::vector<float> l(size_t(rows) * reduction), r(size_t(reduction) * columns);
+    for (size_t i = 0; i < l.size(); ++i)
+        l[i] = float(int((i * 2654435761u) % 2001) - 1000) * 1e-3f;
+    for (size_t i = 0; i < r.size(); ++i)
+        r[i] = float(int((i * 40503u) % 2001) - 1000) * 2e-5f;
+
+    auto layer = layers::matMul(*vc, lhs, rhs, output);
+    auto lhsTensor = tensor(lhs), rhsTensor = tensor(rhs), outputTensor = tensor(output);
+    layer->setInput(lhsTensor, 0);
+    layer->setInput(rhsTensor, 1);
+    layer->setInput(outputTensor, 2);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(layer);
+    lhsTensor->getDataBuffer(0).memcopyFrom(l);
+    rhsTensor->getDataBuffer(0).memcopyFrom(r);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0); // warm-up
+    const int repeats = 20;
+    const auto started = std::chrono::steady_clock::now();
+    for (int i = 0; i < repeats; ++i)
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() / repeats;
+    std::cout << "matMulCosmos3Projection: " << seconds * 1e3 << " ms, "
+              << 2.0 * rows * reduction * columns / seconds * 1e-9 << " GFLOP/s" << std::endl;
+
+    std::vector<float> actual(size_t(rows) * columns);
+    outputTensor->getDataBuffer(0).memcopyTo(actual);
+    for (uint32_t sample = 0; sample < 256; ++sample) {
+        const uint32_t row = (sample * 977) % rows, column = (sample * 1531 + 7) % columns;
+        double expected = 0.0;
+        for (uint32_t k = 0; k < reduction; ++k)
+            expected += double(l[size_t(row) * reduction + k]) * r[size_t(k) * columns + column];
+        EXPECT_NEAR(actual[size_t(row) * columns + column], expected, 1e-4) << "row " << row << " column " << column;
+    }
 }
 
 TEST_F(LayersTest, conv3x3WithBias) {
