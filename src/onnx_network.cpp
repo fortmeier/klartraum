@@ -446,6 +446,9 @@ void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input, TensorInfo
                 }
             }
         }
+        // A scalar is stored like a one-element tensor; both broadcast identically.
+        if (inputShape.empty())
+            inputShape.push_back(1);
         if (true) { // inputShape.size() == 4) {
             onnx::TensorProto::DataType dataType = getTensorDataType(tensor_type);
             TensorInfo tensorInfo{dataType, inputShape};
