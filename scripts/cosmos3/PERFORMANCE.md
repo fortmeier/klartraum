@@ -77,3 +77,14 @@ For comparison: the float32 PyTorch/MPS wrappers take about 2 s per step and
 
 SD1.5 512 (30 DDIM steps) with MatMul cycle 4: 2.78 s per UNet step (from 3.39 s),
 89.1 s in total, with unchanged errors (final latent 2.68e-4, decoded image 4.80e-4).
+
+## End-to-end, 512x512 (dashcam, `data/onnx/cosmos3_512`, 2304 video tokens, 3x3-tile decode)
+
+| Variant | Text tower | Denoising (20 steps) | Tiled VAE decode | Total | Final latents | Video (mean) |
+|---|---:|---:|---:|---:|---:|---:|
+| Before | 54 s | 893 s (44.6 s/step) | 578 s | 1536 s | 9.0e-3 | 4.6e-5 |
+| MatMul 4 + Conv3d 2 + Attention 3 | 15 s | 238 s (11.9 s/step) | 280 s | 541 s | 4.8e-3 | 3.8e-5 |
+
+The diffusers bf16 pipeline takes 274 s at 512x512 (its VAE decodes in cached
+temporal chunks); the float32 PyTorch/MPS wrappers about 10 s per step and 42 s
+per decoder tile.
