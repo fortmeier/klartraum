@@ -363,6 +363,36 @@ ComputeGraphElementPtr fusedAttention(VulkanContext& vulkanContext, const Shape&
     return operation;
 }
 
+ComputeGraphElementPtr fusedAttentionWithBias(VulkanContext& vulkanContext, const Shape& query, const Shape& key,
+                                              const Shape& value, const Shape& bias, const Shape& output) {
+    if (query.size() != 4 || key.size() != 4 || value.size() != 4 || output.size() != 4 || bias.empty() ||
+        bias.size() > 4) {
+        throw std::runtime_error("FusedAttentionWithBias requires rank-four tensors and a bias of rank 1 to 4");
+    }
+    const uint32_t depth = 128;
+    FusedAttentionBiasPushConstants constants{query[0] * query[1], query[1], query[2], key[3]};
+    if (query[3] != depth || key[0] != query[0] || key[1] != query[1] || key[2] != depth || value[0] != query[0] ||
+        value[1] != query[1] || value[2] != constants.keyCount || value[3] != depth || output != query) {
+        throw std::runtime_error("Unsupported FusedAttentionWithBias tensor shapes");
+    }
+    // Bias dimensions right-aligned to [B, H, queries, keys]; broadcast axes get stride zero.
+    uint32_t b[4];
+    padDimensions(bias, b);
+    const uint32_t full[4] = {query[0], query[1], constants.queryCount, constants.keyCount};
+    for (int i = 0; i < 4; ++i) {
+        if (b[i] != 1 && b[i] != full[i])
+            throw std::runtime_error("FusedAttentionWithBias bias cannot be broadcast");
+    }
+    if (b[3] != constants.keyCount)
+        throw std::runtime_error("FusedAttentionWithBias bias must span the keys");
+    constants.biasStrideQuery = b[2] == 1 ? 0 : b[3];
+    constants.biasStrideHead = b[1] == 1 ? 0 : b[2] * b[3];
+    constants.biasStrideBatch = b[0] == 1 ? 0 : b[1] * b[2] * b[3];
+    auto operation = computation(vulkanContext, "shaders/onnx/fused_attention_bias_d128.comp.spv", constants);
+    operation->setGroupCount((constants.queryCount + 63) / 64, constants.batchCount, 1);
+    return operation;
+}
+
 ComputeGraphElementPtr softmax(VulkanContext& vulkanContext, const Shape& shape) {
     if (shape.empty())
         throw std::runtime_error("Softmax requires rank >= 1");

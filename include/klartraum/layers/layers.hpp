@@ -159,6 +159,19 @@ ComputeGraphElementPtr fusedAttention(VulkanContext& vulkanContext, const Shape&
                                       const Shape& value, const Shape& output);
 
 /**
+ * @brief `softmax(query x keyᵀ + bias) x value` for rank-four B x H x queries x 128
+ * tensors, as one kernel that never stores the score matrix.
+ *
+ * The additive bias is broadcast to B x H x queries x keys from the right
+ * (e.g. a per-batch key-padding bias [B, 1, 1, keys] or a causal [queries, keys] mask).
+ *
+ * Slots: 0 query, 1 key (B x H x 128 x keys), 2 value (B x H x keys x 128), 3 bias, 4 output.
+ * @throws std::runtime_error If the head width is not 128 or the bias cannot be broadcast.
+ */
+ComputeGraphElementPtr fusedAttentionWithBias(VulkanContext& vulkanContext, const Shape& query, const Shape& key,
+                                              const Shape& value, const Shape& bias, const Shape& output);
+
+/**
  * @brief Softmax over the last axis.
  *
  * Slots: 0 input, 1 output (the input's shape).
