@@ -239,7 +239,7 @@ ComputeGraphElementPtr conv3d(VulkanContext& vulkanContext, const Conv3dAttribut
                                   attributes.pads[2]};
     auto operation = computation(vulkanContext, "shaders/onnx/conv3d.comp.spv", constants);
     const uint32_t positions = output[2] * output[3] * output[4];
-    operation->setGroupCount((positions + 63) / 64, (output[1] + 63) / 64, output[0]);
+    operation->setGroupCount((positions + 127) / 128, (output[1] + 63) / 64, output[0]);
     return operation;
 }
 
