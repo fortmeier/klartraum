@@ -1,0 +1,24 @@
+[project]
+name = "klartraum-cosmos3"
+version = "0.1.0"
+description = "NVIDIA Cosmos 3 Edge image-to-video reference experiment for Klartraum"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "accelerate==1.15.0",
+    "diffusers",
+    "huggingface-hub==1.33.0",
+    "imageio==2.38.0",
+    "imageio-ffmpeg==0.6.0",
+    "numpy==2.5.3",
+    "pillow==12.3.0",
+    "safetensors==0.8.0",
+    "torch==2.14.1",
+    "torchvision==0.29.1",
+    "transformers==5.18.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+diffusers = { git = "https://github.com/huggingface/diffusers", rev = "8b33bfc04b6b5e8bb58a58e55f68746c1bbee4cd" }
