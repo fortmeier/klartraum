@@ -202,6 +202,47 @@ ComputeGraphElementPtr conv(VulkanContext& vulkanContext, const ConvAttributes& 
     return operation;
 }
 
+ComputeGraphElementPtr conv3d(VulkanContext& vulkanContext, const Conv3dAttributes& attributes, const Shape& input,
+                              const Shape& weights, const Shape& output) {
+    if (input.size() != 5 || weights.size() != 5 || output.size() != 5) {
+        throw std::runtime_error("Conv3d requires rank-five NCDHW tensors");
+    }
+    if (attributes.group != 1 || attributes.dilations != std::array<uint32_t, 3>{1, 1, 1}) {
+        throw std::runtime_error("Conv3d supports only group 1 without dilation");
+    }
+    if (weights[1] != input[1] || weights[0] != output[1] || input[0] != output[0]) {
+        throw std::runtime_error("Conv3d weight shape does not match its input and output");
+    }
+    for (size_t axis = 0; axis < 3; ++axis) {
+        const uint32_t padded = input[2 + axis] + attributes.pads[axis] + attributes.pads[3 + axis];
+        if (padded < weights[2 + axis] ||
+            (padded - weights[2 + axis]) / attributes.strides[axis] + 1 != output[2 + axis]) {
+            throw std::runtime_error("Conv3d output shape does not match its pads and strides");
+        }
+    }
+    Conv3dPushConstants constants{input[1],
+                                  input[2],
+                                  input[3],
+                                  input[4],
+                                  output[1],
+                                  output[2],
+                                  output[3],
+                                  output[4],
+                                  weights[2],
+                                  weights[3],
+                                  weights[4],
+                                  attributes.strides[0],
+                                  attributes.strides[1],
+                                  attributes.strides[2],
+                                  attributes.pads[0],
+                                  attributes.pads[1],
+                                  attributes.pads[2]};
+    auto operation = computation(vulkanContext, "shaders/onnx/conv3d.comp.spv", constants);
+    const uint32_t positions = output[2] * output[3] * output[4];
+    operation->setGroupCount((positions + 63) / 64, (output[1] + 63) / 64, output[0]);
+    return operation;
+}
+
 ComputeGraphElementPtr convTranspose(VulkanContext& vulkanContext, const ConvAttributes& attributes, const Shape& input,
                                      const Shape& weights, const Shape& bias) {
     if (input.size() != 4 || weights.size() < 2)
