@@ -323,7 +323,7 @@ ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, const Shape& lhs, co
         throw std::runtime_error("Unsupported MatMul right batch broadcasting");
     }
     auto operation = computation(vulkanContext, "shaders/onnx/matmul.comp.spv", constants);
-    operation->setGroupCount((constants.columns + 31) / 32, (constants.rows + 15) / 16, constants.batchCount);
+    operation->setGroupCount((constants.columns + 127) / 128, (constants.rows + 63) / 64, constants.batchCount);
     return operation;
 }
 

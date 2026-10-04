@@ -4,7 +4,13 @@
 
 #version 450
 
-layout(local_size_x = 32, local_size_y = 16, local_size_z = 1) in;
+// Batched MatMul, output [batch, rows, columns] = lhs [batch, rows, reduction] x rhs [batch, reduction, columns].
+// A workgroup computes a 64x128 output tile; each invocation keeps a 4x8 block
+// of it in registers (rows 4 ty .. 4 ty + 3, columns 4 tx .. and 64 + 4 tx ..),
+// so neighbouring invocations read neighbouring vec4s of the shared tiles and
+// every staged value feeds several FMAs. Tiles are staged 32 reduction steps at
+// a time, the left one transposed so that both are read as vec4 rows.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 layout(push_constant) uniform PushConstants {
     uint batchCount;
     uint rows;
@@ -17,40 +23,71 @@ layout(set = 0, binding = 0) restrict readonly buffer LhsBuffer { float lhs[]; }
 layout(set = 0, binding = 1) restrict readonly buffer RhsBuffer { float rhs[]; };
 layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
 
-shared float lhsTile[16][16];
-shared float rhsTile[16][32];
+const uint TILE_ROWS = 64;
+const uint TILE_COLUMNS = 128;
+const uint STEP = 32;
+
+shared vec4 lhsTile[STEP][TILE_ROWS / 4];
+shared vec4 rhsTile[STEP][TILE_COLUMNS / 4];
 
 void main() {
-    uint column = gl_GlobalInvocationID.x;
-    uint row = gl_GlobalInvocationID.y;
-    uint batch = gl_GlobalInvocationID.z;
-    uint lhsBatch = pc.lhsBatchCount == 1 ? 0 : batch;
-    uint rhsBatch = pc.rhsBatchCount == 1 ? 0 : batch;
-    uint lhsOffset = lhsBatch * pc.rows * pc.reduction;
-    uint rhsOffset = rhsBatch * pc.reduction * pc.columns;
-    float value = 0.0;
+    const uint tx = gl_LocalInvocationID.x;
+    const uint ty = gl_LocalInvocationID.y;
+    const uint thread = ty * 16 + tx;
+    const uint rowBase = gl_WorkGroupID.y * TILE_ROWS;
+    const uint columnBase = gl_WorkGroupID.x * TILE_COLUMNS;
+    const uint batch = gl_WorkGroupID.z;
+    const uint lhsOffset = (pc.lhsBatchCount == 1 ? 0 : batch) * pc.rows * pc.reduction;
+    const uint rhsOffset = (pc.rhsBatchCount == 1 ? 0 : batch) * pc.reduction * pc.columns;
 
-    for (uint tile = 0; tile < pc.reduction; tile += 16) {
-        const uint lhsColumn = tile + gl_LocalInvocationID.x;
-        const uint rhsRow = tile + gl_LocalInvocationID.y;
-        if (gl_LocalInvocationID.x < 16) {
-            lhsTile[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
-                row < pc.rows && lhsColumn < pc.reduction
-                    ? lhs[lhsOffset + row * pc.reduction + lhsColumn]
-                    : 0.0;
+    // Each invocation stages eight values of each tile per step: the left tile
+    // as 64 rows x 32 steps, the right tile as 32 steps x 128 columns.
+    const uint lhsLoadRow = thread / 4;            // 0..63
+    const uint lhsLoadStep = (thread % 4) * 8;     // 0, 8, 16, 24
+    const uint rhsLoadStep = thread / 32;          // 0..7, +8, +16, +24
+    const uint rhsLoadColumn = (thread % 32) * 4;  // 0..124
+
+    vec4 accumulator[4][2];
+    for (uint i = 0; i < 4; ++i) { accumulator[i][0] = vec4(0.0); accumulator[i][1] = vec4(0.0); }
+
+    for (uint k0 = 0; k0 < pc.reduction; k0 += STEP) {
+        const uint row = rowBase + lhsLoadRow;
+        for (uint i = 0; i < 8; ++i) {
+            const uint k = k0 + lhsLoadStep + i;
+            lhsTile[lhsLoadStep + i][lhsLoadRow / 4][lhsLoadRow % 4] =
+                row < pc.rows && k < pc.reduction ? lhs[lhsOffset + row * pc.reduction + k] : 0.0;
         }
-        rhsTile[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
-            rhsRow < pc.reduction && column < pc.columns
-                ? rhs[rhsOffset + rhsRow * pc.columns + column]
-                : 0.0;
+        for (uint part = 0; part < 4; ++part) {
+            const uint k = k0 + rhsLoadStep + part * 8;
+            vec4 r;
+            for (uint i = 0; i < 4; ++i) {
+                const uint column = columnBase + rhsLoadColumn + i;
+                r[i] = k < pc.reduction && column < pc.columns ? rhs[rhsOffset + k * pc.columns + column] : 0.0;
+            }
+            rhsTile[rhsLoadStep + part * 8][rhsLoadColumn / 4] = r;
+        }
         barrier();
-        for (uint k = 0; k < 16; ++k) {
-            value += lhsTile[gl_LocalInvocationID.y][k] *
-                rhsTile[k][gl_LocalInvocationID.x];
+        for (uint s = 0; s < STEP; ++s) {
+            const vec4 a = lhsTile[s][ty];
+            const vec4 b0 = rhsTile[s][tx];
+            const vec4 b1 = rhsTile[s][16 + tx];
+            for (uint i = 0; i < 4; ++i) {
+                accumulator[i][0] += a[i] * b0;
+                accumulator[i][1] += a[i] * b1;
+            }
         }
         barrier();
     }
-    if (column < pc.columns && row < pc.rows && batch < pc.batchCount) {
-        outputData[(batch * pc.rows + row) * pc.columns + column] = value;
+
+    if (batch >= pc.batchCount) return;
+    for (uint i = 0; i < 4; ++i) {
+        const uint row = rowBase + ty * 4 + i;
+        if (row >= pc.rows) continue;
+        for (uint part = 0; part < 2; ++part) {
+            for (uint j = 0; j < 4; ++j) {
+                const uint column = columnBase + part * 64 + tx * 4 + j;
+                if (column < pc.columns) outputData[(batch * pc.rows + row) * pc.columns + column] = accumulator[i][part][j];
+            }
+        }
     }
 }
