@@ -95,6 +95,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="text/denoiser: write the PyTorch fixtures for the existing graphs without exporting them",
     )
+    parser.add_argument(
+        "--decoder-tile",
+        type=int,
+        default=0,
+        help="prepare: decode in square latent tiles of this size (0: whole clip), e.g. 16 to reuse a 256 decoder",
+    )
+    parser.add_argument("--decoder-stride", type=int, default=8, help="prepare: latent stride between decoder tiles")
     parser.add_argument("--video-dir", type=Path, default=REPO_ROOT / "build" / "TestingOutput" / "cosmos3")
     args = parser.parse_args()
     if args.onnx_dir is None:
@@ -418,6 +425,7 @@ def stage_prepare(args: argparse.Namespace) -> None:
         "modality_margin": tconfig["unified_3d_mrope_temporal_modality_margin"],
         "base_fps": tconfig["base_fps"],
         "vae_latents_mean": pipe.vae.config.latents_mean, "vae_latents_std": pipe.vae.config.latents_std,
+        "decoder_tile": args.decoder_tile, "decoder_stride": args.decoder_stride,
     }
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.json").write_text(json.dumps(config, indent=1))
@@ -965,6 +973,9 @@ def stage_vae(args: argparse.Namespace) -> None:
         (result,) = run_ort(path, {"image": image.numpy()})
         report("ORT vs PyTorch encoder", result, latent.numpy())
 
+    if cfg.get("decoder_tile", 0):
+        print("  decoder_tile is set: the decoder is not exported; link a decoder of the tile size", flush=True)
+        return
     decoder = VaeDecoder(vae, mean, inv_std).eval()
     latents = torch.from_numpy(load(out, "initial_latents_f32.bin")).unsqueeze(0)
     started = time.perf_counter()
@@ -995,6 +1006,56 @@ def stage_postprocess(args: argparse.Namespace) -> None:
         onnx.save_model(model, str(path))
         write_operator_report(path)
         print(f"  {name}: hoisted {hoisted} constants", flush=True)
+
+
+def tile_offsets(size: int, tile: int, stride: int) -> list[int]:
+    """Tile starts advancing by ``stride``, the last one aligned to the end (klartraum::tileOffsets)."""
+    if tile <= 0 or tile > size or stride <= 0 or stride > tile:
+        raise ValueError(f"invalid tiling: size {size}, tile {tile}, stride {stride}")
+    offsets = list(range(0, size - tile, stride))
+    return offsets + [size - tile]
+
+
+def blend_ramp(length: int, ramp: int, ramp_start: bool, ramp_end: bool) -> torch.Tensor:
+    """Linear blend weights towards neighbouring tiles, capped at one (klartraum::blendRamp)."""
+    i = torch.arange(length, dtype=torch.float32)
+    weights = torch.ones(length)
+    if ramp_start:
+        weights = torch.minimum(weights, (i + 0.5) / ramp)
+    if ramp_end:
+        weights = torch.minimum(weights, (length - i - 0.5) / ramp)
+    return weights
+
+
+def tiled_decode(decoder: torch.nn.Module, latents: torch.Tensor, tile: int, stride: int,
+                 device: torch.device) -> torch.Tensor:
+    """Decode [1, C, T, h, w] latents in overlapping square tiles and blend them (klartraum::TileBlender).
+
+    Each tile runs the fixed-size decoder; overlaps are blended with linear
+    ramps over the overlap width, so the decoder's memory stays that of one tile.
+    """
+    _, _, _, height, width = latents.shape
+    ys, xs = tile_offsets(height, tile, stride), tile_offsets(width, tile, stride)
+    total, weight = None, None
+    for top in ys:
+        for left in xs:
+            started = time.perf_counter()
+            with torch.no_grad():
+                part = decoder(latents[..., top : top + tile, left : left + tile].to(device)).cpu()
+            scale = part.shape[-1] // tile
+            ramp = (tile - stride) * scale
+            size = tile * scale
+            rows = blend_ramp(size, ramp, top > 0, top + tile < height)
+            columns = blend_ramp(size, ramp, left > 0, left + tile < width)
+            w = rows[:, None] * columns[None, :]
+            if total is None:
+                total = torch.zeros(part.shape[:3] + (height * scale, width * scale))
+                weight = torch.zeros(height * scale, width * scale)
+            y0, x0 = top * scale, left * scale
+            total[..., y0 : y0 + size, x0 : x0 + size] += part * w
+            weight[y0 : y0 + size, x0 : x0 + size] += w
+            print(f"  tile ({top}, {left}) decoded in {time.perf_counter() - started:.1f}s", flush=True)
+    return total / weight
 
 
 def make_scheduler(cfg: dict) -> UniPCMultistepScheduler:
@@ -1065,8 +1126,12 @@ def stage_pipeline(args: argparse.Namespace) -> None:
     inv_std = 1.0 / torch.tensor(cfg["vae_latents_std"], dtype=torch.float32)
     decoder = VaeDecoder(vae, mean, inv_std).eval().to(device)
     started = time.perf_counter()
-    with torch.no_grad():
-        video = decoder(latents.unsqueeze(0).to(device)).clamp(-1.0, 1.0).cpu()[0]
+    if cfg.get("decoder_tile", 0):
+        video = tiled_decode(decoder, latents.unsqueeze(0), cfg["decoder_tile"], cfg["decoder_stride"], device)
+        video = video.clamp(-1.0, 1.0)[0]
+    else:
+        with torch.no_grad():
+            video = decoder(latents.unsqueeze(0).to(device)).clamp(-1.0, 1.0).cpu()[0]
     print(f"  decoded in {time.perf_counter() - started:.1f}s", flush=True)
     save(out, "reference_video_f32.bin", video.numpy())
     path = args.video_dir / "reference_fp32_wrappers.mp4"

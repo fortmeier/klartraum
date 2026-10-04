@@ -265,6 +265,7 @@ add_executable(
   tests/test_clip_tokenizer.cpp
   tests/test_unipc_flow_scheduler.cpp
   tests/test_cosmos3_conditioning_image.cpp
+  tests/test_cosmos3_tiled_decode.cpp
   tests/test_image_resample.cpp
   tests/test_gaussian_transform.cpp
   tests/test_gaussian_elements.cpp
@@ -315,6 +316,7 @@ set(KLARTRAUM_LIB_SRC
   src/clip_tokenizer.cpp
   src/unipc_flow_scheduler.cpp
   src/cosmos3_conditioning_image.cpp
+  src/cosmos3_tiled_decode.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
