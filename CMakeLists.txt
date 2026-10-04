@@ -113,8 +113,8 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
   set(GLSLC_OPTIONS)
-  if(FILE_NAME STREQUAL "onnx/fused_attention.comp")
-    # Subgroup arithmetic is core in Vulkan 1.1 / SPIR-V 1.3.
+  if(FILE_NAME STREQUAL "onnx/fused_attention.comp" OR FILE_NAME STREQUAL "onnx/fused_attention_bias_d128.comp")
+    # Subgroup operations are core in Vulkan 1.1 / SPIR-V 1.3.
     list(APPEND GLSLC_OPTIONS --target-env=vulkan1.1)
   endif()
   add_custom_command(
