@@ -8,7 +8,13 @@
 // output positions, reduced over input channels x kernel taps. The input
 // columns are gathered on the fly, so any kernel, stride, and asymmetric
 // (e.g. causal) padding works without an im2col buffer. A workgroup computes
-// a 64 x 64 tile; every invocation accumulates 4 x 4 outputs from shared tiles.
+// a 64 x 128 tile (channels x positions); every invocation accumulates 4 x 8
+// outputs (positions 4 tx .. and 64 + 4 tx ..) from shared tiles read as vec4s.
+//
+// The gather avoids per-element integer division: an invocation always stages
+// the same output position (its column of the input tile), decomposed once,
+// and the input channel / kernel tap of each reduction step of a tile is
+// decomposed once per workgroup into a shared table.
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(push_constant) uniform PushConstants {
@@ -37,11 +43,16 @@ layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer { float bias[];
 layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
 
 const uint TILE_M = 64;
-const uint TILE_N = 64;
+const uint TILE_N = 128;
 const uint TILE_K = 16;
 
-shared float weightTile[TILE_K][TILE_M];
-shared float inputTile[TILE_K][TILE_N];
+shared vec4 weightTile[TILE_K][TILE_M / 4];  // [k][channel / 4]
+shared vec4 inputTile[TILE_K][TILE_N / 4];   // [k][position / 4]
+// Per reduction step of the current tile: offset of (input channel, kd, kh, kw)
+// relative to the input origin, and the tap (kd, kh, kw); offset -1 marks steps
+// past the reduction.
+shared int tapOffset[TILE_K];
+shared ivec3 tapKernel[TILE_K];
 
 void main() {
     const uint localIndex = gl_LocalInvocationIndex;
@@ -56,72 +67,86 @@ void main() {
     const uint reduction = pc.inputChannels * kernelVolume;
     const uint outputPlane = pc.outputHeight * pc.outputWidth;
     const uint positions = pc.outputDepth * outputPlane;
-    const uint inputPlane = pc.inputHeight * pc.inputWidth;
-    const uint inputVolume = pc.inputDepth * inputPlane;
-    const uint inputBatchOffset = batch * pc.inputChannels * inputVolume;
+    const int inputPlane = int(pc.inputHeight * pc.inputWidth);
+    const int inputVolume = int(pc.inputDepth) * inputPlane;
+    const uint inputBatchOffset = batch * pc.inputChannels * uint(inputVolume);
 
-    float accumulator[4][4];
-    for (uint i = 0; i < 4; ++i)
-        for (uint j = 0; j < 4; ++j) accumulator[i][j] = 0.0;
+    // The input-tile column this invocation stages: steps localIndex / 128 + 2 r, position localIndex % 128.
+    const uint stageColumn = localIndex % TILE_N;
+    const uint stageStep = localIndex / TILE_N;  // 0..1
+    const uint stagePosition = positionBase + stageColumn;
+    const bool stageValid = stagePosition < positions;
+    const uint od = stagePosition / outputPlane;
+    const uint oh = (stagePosition / pc.outputWidth) % pc.outputHeight;
+    const uint ow = stagePosition % pc.outputWidth;
+    const ivec3 origin = ivec3(od * pc.strideDepth, oh * pc.strideHeight, ow * pc.strideWidth) -
+        ivec3(pc.padDepth, pc.padHeight, pc.padWidth);
+    const ivec3 inputExtent = ivec3(pc.inputDepth, pc.inputHeight, pc.inputWidth);
+    const int originOffset = origin.x * inputPlane + origin.y * int(pc.inputWidth) + origin.z;
+
+    vec4 accumulator[4][2];
+    for (uint i = 0; i < 4; ++i) { accumulator[i][0] = vec4(0.0); accumulator[i][1] = vec4(0.0); }
 
     for (uint kBase = 0; kBase < reduction; kBase += TILE_K) {
+        if (localIndex < TILE_K) {
+            const uint tap = kBase + localIndex;
+            if (tap < reduction) {
+                const uint inputChannel = tap / kernelVolume;
+                const uint kernelOffset = tap - inputChannel * kernelVolume;
+                const int kd = int(kernelOffset / kernelPlane);
+                const int kh = int((kernelOffset / pc.kernelWidth) % pc.kernelHeight);
+                const int kw = int(kernelOffset % pc.kernelWidth);
+                tapKernel[localIndex] = ivec3(kd, kh, kw);
+                tapOffset[localIndex] = int(inputChannel) * inputVolume + kd * inputPlane + kh * int(pc.inputWidth) + kw;
+            } else {
+                tapOffset[localIndex] = -1;
+            }
+        }
         // Weights are [outputChannels][reduction]: neighbouring invocations read neighbouring taps.
         for (uint element = localIndex; element < TILE_M * TILE_K; element += 256) {
             const uint m = element / TILE_K;
             const uint k = element % TILE_K;
             const uint channel = channelBase + m;
             const uint tap = kBase + k;
-            weightTile[k][m] = channel < pc.outputChannels && tap < reduction
+            weightTile[k][m / 4][m % 4] = channel < pc.outputChannels && tap < reduction
                 ? weights[channel * reduction + tap] : 0.0;
         }
-        // Input columns: neighbouring invocations read neighbouring output positions.
-        for (uint element = localIndex; element < TILE_K * TILE_N; element += 256) {
-            const uint k = element / TILE_N;
-            const uint n = element % TILE_N;
-            const uint tap = kBase + k;
-            const uint position = positionBase + n;
+        barrier();
+        for (uint k = stageStep; k < TILE_K; k += 2) {
             float value = 0.0;
-            if (tap < reduction && position < positions) {
-                const uint inputChannel = tap / kernelVolume;
-                const uint kernelOffset = tap - inputChannel * kernelVolume;
-                const uint kd = kernelOffset / kernelPlane;
-                const uint kh = (kernelOffset / pc.kernelWidth) % pc.kernelHeight;
-                const uint kw = kernelOffset % pc.kernelWidth;
-                const uint od = position / outputPlane;
-                const uint oh = (position / pc.outputWidth) % pc.outputHeight;
-                const uint ow = position % pc.outputWidth;
-                const int id = int(od * pc.strideDepth + kd) - int(pc.padDepth);
-                const int ih = int(oh * pc.strideHeight + kh) - int(pc.padHeight);
-                const int iw = int(ow * pc.strideWidth + kw) - int(pc.padWidth);
-                if (id >= 0 && id < int(pc.inputDepth) && ih >= 0 && ih < int(pc.inputHeight) &&
-                    iw >= 0 && iw < int(pc.inputWidth)) {
-                    value = inputData[inputBatchOffset + inputChannel * inputVolume + uint(id) * inputPlane +
-                                      uint(ih) * pc.inputWidth + uint(iw)];
+            const int offset = tapOffset[k];
+            if (stageValid && offset >= 0) {
+                const ivec3 at = origin + tapKernel[k];
+                if (all(greaterThanEqual(at, ivec3(0))) && all(lessThan(at, inputExtent))) {
+                    value = inputData[inputBatchOffset + uint(originOffset + offset)];
                 }
             }
-            inputTile[k][n] = value;
+            inputTile[k][stageColumn / 4][stageColumn % 4] = value;
         }
         barrier();
 
         for (uint k = 0; k < TILE_K; ++k) {
-            float a[4];
-            float b[4];
-            for (uint i = 0; i < 4; ++i) a[i] = weightTile[k][ty + 16 * i];
-            for (uint j = 0; j < 4; ++j) b[j] = inputTile[k][tx + 16 * j];
-            for (uint i = 0; i < 4; ++i)
-                for (uint j = 0; j < 4; ++j) accumulator[i][j] += a[i] * b[j];
+            const vec4 a = weightTile[k][ty];
+            const vec4 b0 = inputTile[k][tx];
+            const vec4 b1 = inputTile[k][16 + tx];
+            for (uint i = 0; i < 4; ++i) {
+                accumulator[i][0] += a[i] * b0;
+                accumulator[i][1] += a[i] * b1;
+            }
         }
         barrier();
     }
 
     for (uint i = 0; i < 4; ++i) {
-        const uint channel = channelBase + ty + 16 * i;
+        const uint channel = channelBase + ty * 4 + i;
         if (channel >= pc.outputChannels) continue;
         const float channelBias = bias[channel];
         const uint outputOffset = (batch * pc.outputChannels + channel) * positions;
-        for (uint j = 0; j < 4; ++j) {
-            const uint position = positionBase + tx + 16 * j;
-            if (position < positions) outputData[outputOffset + position] = accumulator[i][j] + channelBias;
+        for (uint part = 0; part < 2; ++part) {
+            for (uint j = 0; j < 4; ++j) {
+                const uint position = positionBase + part * 64 + tx * 4 + j;
+                if (position < positions) outputData[outputOffset + position] = accumulator[i][part][j] + channelBias;
+            }
         }
     }
 }
