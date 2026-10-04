@@ -10,6 +10,7 @@
 // Every stage is checked against the Python fixtures exported with the graphs.
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cmath>
@@ -149,6 +150,32 @@ void printProfiling(const std::string& stage, const klartraum::ComputeGraph& gra
     std::cout << stage << " GPU profile: " << total << " ms across " << results.size() << " dispatches\n ";
     for (size_t i = 0; i < std::min<size_t>(10, sorted.size()); ++i) {
         std::cout << " " << sorted[i].first << "=" << sorted[i].second << " ms";
+    }
+    std::cout << std::endl;
+    std::vector<std::pair<std::string, double>> slowest(results.begin(), results.end());
+    std::sort(slowest.begin(), slowest.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::cout << "  slowest dispatches:";
+    for (size_t i = 0; i < std::min<size_t>(5, slowest.size()); ++i) {
+        std::cout << "\n    " << slowest[i].first << " " << slowest[i].second << " ms";
+    }
+    // Totals per node kind: the name without digits, so all layers of one projection add up.
+    std::map<std::string, std::pair<double, size_t>> kinds;
+    for (const auto& [name, milliseconds] : results) {
+        std::string kind;
+        for (char c : name) {
+            if (!std::isdigit(static_cast<unsigned char>(c)))
+                kind += c;
+        }
+        kinds[kind].first += milliseconds;
+        ++kinds[kind].second;
+    }
+    std::vector<std::pair<std::string, std::pair<double, size_t>>> byKind(kinds.begin(), kinds.end());
+    std::sort(byKind.begin(), byKind.end(),
+              [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+    std::cout << "\n  by node kind:";
+    for (size_t i = 0; i < std::min<size_t>(15, byKind.size()); ++i) {
+        std::cout << "\n    " << byKind[i].first << " " << byKind[i].second.first << " ms (" << byKind[i].second.second
+                  << "x)";
     }
     std::cout << std::endl;
 }
