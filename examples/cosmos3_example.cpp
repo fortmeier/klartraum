@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/cosmos3/conditioning_image.hpp"
 #include "klartraum/cosmos3/unipc_flow_scheduler.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
@@ -98,6 +99,8 @@ Comparison compare(const std::vector<float>& actual, const std::vector<float>& e
 struct Options {
     fs::path modelDirectory = "./data/onnx/cosmos3_256";
     fs::path outputDirectory = "build/TestingOutput/cosmos3";
+    fs::path image; ///< conditioning PPM; empty: the exported image_f32.bin
+    std::string name = "lantern_orbit";
     std::string stage = "all"; ///< all, text, step, vae
     size_t maxSteps = std::numeric_limits<size_t>::max();
     bool profile = false;
@@ -111,6 +114,10 @@ Options parseOptions(int argc, char** argv) {
             options.modelDirectory = argv[++index];
         } else if (argument == "--output-dir" && index + 1 < argc) {
             options.outputDirectory = argv[++index];
+        } else if (argument == "--image" && index + 1 < argc) {
+            options.image = argv[++index];
+        } else if (argument == "--name" && index + 1 < argc) {
+            options.name = argv[++index];
         } else if (argument == "--stage" && index + 1 < argc) {
             options.stage = argv[++index];
         } else if (argument == "--max-steps" && index + 1 < argc) {
@@ -370,21 +377,21 @@ void requireClose(const std::string& label, const Comparison& check, float relat
 }
 
 /** Writes [3, T, H, W] frames in [-1, 1] as PPM images and one 4:4:4 YUV4MPEG2 video. */
-void writeVideo(const fs::path& directory, const std::vector<float>& video, uint32_t frames, uint32_t height,
-                uint32_t width, uint32_t fps) {
+void writeVideo(const fs::path& directory, const std::string& name, const std::vector<float>& video, uint32_t frames,
+                uint32_t height, uint32_t width, uint32_t fps) {
     fs::create_directories(directory);
     const size_t plane = size_t(height) * width;
     const size_t channelStride = size_t(frames) * plane;
     auto byte = [](float value) {
         return static_cast<unsigned char>(std::clamp((value + 1.0f) * 127.5f + 0.5f, 0.0f, 255.0f));
     };
-    std::ofstream y4m(directory / "lantern_orbit_klartraum.y4m", std::ios::binary);
+    std::ofstream y4m(directory / (name + "_klartraum.y4m"), std::ios::binary);
     y4m << "YUV4MPEG2 W" << width << " H" << height << " F" << fps << ":1 Ip A1:1 C444\n";
     std::vector<unsigned char> yuv(3 * plane);
     for (uint32_t t = 0; t < frames; ++t) {
-        char name[64];
-        std::snprintf(name, sizeof(name), "frame_%03u.ppm", t);
-        std::ofstream ppm(directory / name, std::ios::binary);
+        char frameName[64];
+        std::snprintf(frameName, sizeof(frameName), "frame_%03u.ppm", t);
+        std::ofstream ppm(directory / frameName, std::ios::binary);
         ppm << "P6\n" << width << " " << height << "\n255\n";
         for (size_t i = 0; i < plane; ++i) {
             const size_t offset = size_t(t) * plane + i;
@@ -434,7 +441,12 @@ int main(int argc, char** argv) {
         }
 
         // 1. Conditioning frame: Wan VAE encode of the preprocessed image.
-        const auto image = readTensor<float>(directory / "image_f32.bin", size_t(3) * size * size);
+        const auto exportedImage = readTensor<float>(directory / "image_f32.bin", size_t(3) * size * size);
+        std::vector<float> image = exportedImage;
+        if (!options.image.empty()) {
+            image = klartraum::preprocessConditioningImage(klartraum::readPpm(options.image), size, size);
+            requireClose("Conditioning image", compare(image, exportedImage), 1e-5f);
+        }
         auto condition = runOnce(context, options, "vae_encoder.onnx", "image", {1, 3, 1, size, size}, image, "latent",
                                  "VAE encoder");
         requireClose("Condition latent",
@@ -536,10 +548,11 @@ int main(int argc, char** argv) {
             }
         }
         std::cout << "Frame 0 mean error vs the conditioning image: " << frameZeroError / (3.0 * plane) << std::endl;
-        writeVideo(options.outputDirectory, video, frames, size, size, static_cast<uint32_t>(config.number("fps")));
+        writeVideo(options.outputDirectory, options.name, video, frames, size, size,
+                   static_cast<uint32_t>(config.number("fps")));
         std::cout << "Denoising " << denoiseSeconds << " s (" << denoiseSeconds / std::max<size_t>(steps, 1)
                   << " s/step), total " << secondsSince(totalStarted) << " s" << std::endl;
-        std::cout << "Wrote " << (options.outputDirectory / "lantern_orbit_klartraum.y4m") << std::endl;
+        std::cout << "Wrote " << (options.outputDirectory / (options.name + "_klartraum.y4m")) << std::endl;
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Cosmos3 example failed: " << error.what() << std::endl;

@@ -86,9 +86,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--flow-shift", type=float, default=12.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
+    parser.add_argument("--prompt-file", type=Path, default=None, help="full JSON caption, used unchanged")
     parser.add_argument("--image", type=Path, default=DEFAULT_IMAGE)
     parser.add_argument("--onnx-dir", type=Path, default=None)
     parser.add_argument("--skip-ort", action="store_true", help="skip the ONNX Runtime comparison")
+    parser.add_argument(
+        "--fixtures-only",
+        action="store_true",
+        help="text/denoiser: write the PyTorch fixtures for the existing graphs without exporting them",
+    )
+    parser.add_argument("--video-dir", type=Path, default=REPO_ROOT / "build" / "TestingOutput" / "cosmos3")
     args = parser.parse_args()
     if args.onnx_dir is None:
         args.onnx_dir = REPO_ROOT / "data" / "onnx" / f"cosmos3_{args.size}"
@@ -330,7 +337,11 @@ def stage_prepare(args: argparse.Namespace) -> None:
     )
     tconfig = Cosmos3OmniTransformer.load_config(MODEL_ID, subfolder="transformer")
     negative = json.dumps(json.loads(Path(hf_hub_download(MODEL_ID, "assets/negative_prompt.json")).read_text()))
-    prompt = structured_prompt(args.prompt, frames, fps, size, size)
+    prompt = (
+        json.dumps(json.loads(args.prompt_file.read_text()))
+        if args.prompt_file
+        else structured_prompt(args.prompt, frames, fps, size, size)
+    )
     cond_ids, uncond_ids = pipe.tokenize_prompt(
         prompt, negative, num_frames=frames, height=size, width=size, fps=fps,
         add_resolution_template=False, add_duration_template=False,
@@ -399,7 +410,7 @@ def stage_prepare(args: argparse.Namespace) -> None:
     config = {
         "size": size, "num_frames": frames, "fps": fps, "steps": args.steps,
         "guidance_scale": args.guidance_scale, "flow_shift": args.flow_shift, "seed": args.seed,
-        "prompt": args.prompt, "text_length": text_length, "prompt_lengths": lengths,
+        "prompt": prompt if args.prompt_file else args.prompt, "text_length": text_length, "prompt_lengths": lengths,
         "latent_shape": list(latents.shape), "patch": patch, "num_tokens": num_tokens,
         "tokens_per_frame": tokens_per_frame, "num_layers": tconfig["num_hidden_layers"],
         "kv_heads": tconfig["num_key_value_heads"], "head_dim": tconfig["head_dim"],
@@ -699,6 +710,8 @@ def stage_text(args: argparse.Namespace) -> None:
     names = kv_names(cfg["num_layers"])
     for name, value in zip(names, kv):
         save(out, f"{name}_f32.bin", value)
+    if args.fixtures_only:
+        return
     path = out / "text_kv.onnx"
     export_graph(module, torch_inputs, list(feeds), names, path)
     del module, transformer
@@ -736,6 +749,8 @@ def stage_denoiser(args: argparse.Namespace) -> None:
         velocity = module(*torch_inputs).numpy()
     print(f"  PyTorch denoiser in {time.perf_counter() - started:.1f}s", flush=True)
     save(out, "denoiser_step0_output_f32.bin", velocity)
+    if args.fixtures_only:
+        return
 
     reference = load(out, "reference_step0_velocity_f32.bin")
     shape = tuple(cfg["latent_shape"])
@@ -1054,7 +1069,7 @@ def stage_pipeline(args: argparse.Namespace) -> None:
         video = decoder(latents.unsqueeze(0).to(device)).clamp(-1.0, 1.0).cpu()[0]
     print(f"  decoded in {time.perf_counter() - started:.1f}s", flush=True)
     save(out, "reference_video_f32.bin", video.numpy())
-    path = REPO_ROOT / "build" / "TestingOutput" / "cosmos3" / "reference_fp32_wrappers.mp4"
+    path = args.video_dir / "reference_fp32_wrappers.mp4"
     write_video(video.numpy(), path, cfg["fps"])
     print(f"  wrote {path}", flush=True)
 
