@@ -169,14 +169,21 @@ stays still or, with a higher guidance scale, cuts to a different road. At
 The `klartraum` mode runs `sd15_denoiser_example` at 512x512 (needs
 `data/onnx/sd15_denoiser_512`) and Cosmos3 from `data/onnx/cosmos3_512`. The
 text tower does not depend on the video size and is shared with
-`cosmos3_256`. A whole-clip float32 VAE decode at 512x512 does not fit in 24 GB,
-so `prepare --decoder-tile 16 --decoder-stride 8` selects a tiled decode: the
-256 decoder runs on 3x3 overlapping 16x16-latent tiles that are blended with
-linear ramps over the 128-pixel overlaps (`klartraum::TileBlender`, mirrored by
-`tiled_decode` in `export_onnx.py`). The decoder graph is shared with
-`cosmos3_256` as well. The 512 denoiser and VAE encoder are exported once
-(`reference`, `denoiser`, `vae`), then `cosmos3_example --image` runs on the SD1.5
-output with every stage check active. Outputs go to `build/TestingOutput/dashcam/`.
+`cosmos3_256`. A whole-clip float32 VAE decode at 512x512 does not fit in
+24 GB, so `prepare --decoder-chunked` selects decoding one latent frame at a
+time: `export_onnx.py vae_chunks` exports a first-chunk decoder
+(`vae_decoder_first.onnx`, frame 0) and a per-chunk decoder
+(`vae_decoder_chunk.onnx`, four frames per further latent frame) that pass the
+last input frames of all 32 causal convolutions on as caches. The result
+equals diffusers' cached decode (max error 1.9e-5 at 512x512). The 512 denoiser
+and VAE encoder are exported once (`reference`, `denoiser`, `vae`), then
+`cosmos3_example --image` runs on the SD1.5 output with every stage check
+active. Outputs go to `build/TestingOutput/dashcam/`.
+
+`prepare --decoder-tile N --decoder-stride S` instead decodes overlapping
+square tiles with a decoder exported for N x N latents, blended with linear
+ramps (`klartraum::TileBlender`); at 512x512, 2x2 tiles of a 320 decoder take
+197 s and 3x3 tiles of the 256 decoder 280 s.
 
 Mac mini M4, MoltenVK:
 
@@ -186,12 +193,8 @@ Mac mini M4, MoltenVK:
 | Cosmos3 conditioning image (C++ preprocessing) | | max error 0 |
 | Cosmos3 text tower | 15 s | 8.9e-5 relative |
 | Cosmos3 denoiser, 20 steps (2304 video tokens) | 238 s (11.9 s/step) | final latents 4.8e-3 (up to 5.8) |
-| Cosmos3 tiled VAE decode, 2x2 tiles of 320x320 | 197 s | video mean 3.8e-5, max 9.7e-3 |
-| Cosmos3 total | 459 s | |
-
-With only the 256 decoder (3x3 tiles of 256x256) the decode takes 280 s and the
-total 541 s. `dashcam.sh` uses the 320 decoder when `data/onnx/cosmos3_320`
-exists (`export_onnx.py prepare` and `vae --skip-ort` with `--size 320`).
+| Cosmos3 VAE decode, one latent frame at a time | 129 s | video mean 3.8e-5, max 9.6e-3 |
+| Cosmos3 total | 388 s | |
 
 Kernel improvements are logged in `PERFORMANCE.md`; before them the same run
 took 1536 s (44.6 s per denoising step, 578 s for the decode).
