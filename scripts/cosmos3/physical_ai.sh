@@ -41,7 +41,7 @@ klartraum)
     MODELS="$REPO/data/onnx/cosmos3_512"
     FIXTURES="$REPO/data/onnx/cosmos3_demo_$SCENE"
     mkdir -p "$FIXTURES"
-    for file in text_kv denoiser vae_encoder vae_decoder_first vae_decoder_chunk; do
+    for file in text_kv text_kv_cond_512 denoiser vae_encoder vae_decoder_first vae_decoder_chunk; do
         ln -f "$MODELS/$file.onnx" "$FIXTURES/$file.onnx"
         ln -f "$MODELS/$file.onnx.data" "$FIXTURES/$file.onnx.data"
     done
