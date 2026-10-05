@@ -202,3 +202,32 @@ took 1536 s (44.6 s per denoising step, 578 s for the decode).
 The diffusers references take 40 s (SD1.5, 30 steps) and 274 s (Cosmos3 512,
 bf16); the float32 PyTorch/MPS wrappers take about 10 s per denoising step and
 42 s per decoder tile.
+
+## Physical-AI demo scenes
+
+`physical_ai.sh` generates short clips of the kind used in physical-AI demos.
+Each scene in `physical_ai_scenes.json` has an SD1.5 prompt for the start image
+and a structured Cosmos3 caption that spells out the motion; all run at
+512x512 with 33 frames at 11 fps.
+
+```bash
+scripts/cosmos3/physical_ai.sh reference drone_farmland   # SD1.5 + Cosmos3 with diffusers (~5 min)
+scripts/cosmos3/physical_ai.sh klartraum drone_farmland   # Cosmos3 on Klartraum (~6.5 min)
+```
+
+The `klartraum` mode starts from the reference SD1.5 image, shares the
+`data/onnx/cosmos3_512` graphs, and runs `cosmos3_example --skip-checks`: no
+float32 reference is computed, so only `export_onnx.py prepare` runs in Python.
+
+First results (diffusers reference, seed 0):
+
+| Scene | Result |
+|-------|--------|
+| `drone_farmland` | Good: the drone flies forward and turns, fields and a farmhouse sweep out of the frame |
+| `robot_arm` | Partly: a two-finger gripper enters, carries a red cube, and drops it into a box (the SD1.5 image has no clear arm) |
+| `pedestrian_crossing` | Partly: cars drive through the scene and a small pedestrian walks; the camera stays still |
+| `warehouse_robot` | Nearly static |
+| `robot_vacuum` | Fails: an unrelated device descends onto the vacuum, which does not move |
+
+On Klartraum, `drone_farmland` and `robot_arm` reproduce the reference clips
+closely (394 s and 396 s).
