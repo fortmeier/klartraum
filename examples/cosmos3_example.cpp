@@ -7,7 +7,8 @@
 // Runs the graphs exported by scripts/cosmos3/export_onnx.py one stage at a
 // time so that only one model is resident: the text tower (once per prompt
 // pair), then the video denoiser (once per scheduler step), then the Wan VAE.
-// Every stage is checked against the Python fixtures exported with the graphs.
+// Every stage is checked against the Python fixtures exported with the graphs;
+// with --skip-checks only the inputs written by `export_onnx.py prepare` are read.
 
 #include <algorithm>
 #include <cctype>
@@ -110,6 +111,7 @@ struct Options {
     std::string stage = "all"; ///< all, text, step, vae
     size_t maxSteps = std::numeric_limits<size_t>::max();
     bool profile = false;
+    bool check = true; ///< compare stages with the float32 reference fixtures
 };
 
 Options parseOptions(int argc, char** argv) {
@@ -130,6 +132,8 @@ Options parseOptions(int argc, char** argv) {
             options.maxSteps = std::stoul(argv[++index]);
         } else if (argument == "--profile") {
             options.profile = true;
+        } else if (argument == "--skip-checks") {
+            options.check = false;
         } else {
             throw std::runtime_error("Unknown or incomplete argument: " + argument);
         }
@@ -489,8 +493,8 @@ std::vector<float> decodeChunked(klartraum::VulkanContext& context, const Option
         return output;
     };
 
-    std::vector<std::vector<float>> caches(cacheCount);
-    std::vector<std::vector<uint32_t>> cacheShapes(cacheCount);
+    std::vector<std::vector<float>> caches;
+    std::vector<std::vector<uint32_t>> cacheShapes;
     {
         auto network =
             context.create<klartraum::OnnxNetwork>((options.modelDirectory / "vae_decoder_first.onnx").string());
@@ -498,6 +502,17 @@ std::vector<float> decodeChunked(klartraum::VulkanContext& context, const Option
         network->setInputTensor("latents", input);
         klartraum::ComputeGraph graph(context, 1);
         graph.compileFrom(network);
+        // Without a count from config.txt, every cache_out_<i> the first-chunk graph produces.
+        if (cacheCount == 0) {
+            try {
+                while (network->getOutputElement("cache_out_" + std::to_string(cacheCount)))
+                    ++cacheCount;
+            } catch (const std::runtime_error&) {
+                // getOutputElement throws past the last cache output.
+            }
+        }
+        caches.resize(cacheCount);
+        cacheShapes.resize(cacheCount);
         selectLatentFrame(0);
         input->setData(0, latentFrame);
         graph.submitAndWait(context.getGraphicsQueue(), 0);
@@ -615,8 +630,9 @@ int main(int argc, char** argv) {
 
         const uint32_t decoderTile = config.countOr("decoder_tile", 0);
         const uint32_t decoderStride = config.countOr("decoder_stride", 0);
-        const uint32_t decoderCaches = config.countOr("decoder_chunked", 0) ? config.count("decoder_caches") : 0;
-        if (options.stage == "vae" && decoderCaches) {
+        const bool decoderChunked = config.countOr("decoder_chunked", 0) != 0;
+        const uint32_t decoderCaches = config.countOr("decoder_caches", 0);
+        if (options.stage == "vae" && decoderChunked) {
             const auto input = readTensor<float>(directory / "decoder_reference_input_f32.bin", shape.elements());
             const auto video = decodeChunked(context, options, shape, input, decoderCaches, size, size);
             requireClose(
@@ -669,8 +685,9 @@ int main(int argc, char** argv) {
         if (timesteps != referenceTimesteps)
             throw std::runtime_error("Scheduler timesteps differ from the export");
         const float guidance = static_cast<float>(config.number("guidance_scale"));
-        const auto referenceLatents =
-            readTensor<float>(directory / "reference_step_latents_f32.bin", timesteps.size() * shape.elements());
+        const auto referenceLatents = options.check ? readTensor<float>(directory / "reference_step_latents_f32.bin",
+                                                                        timesteps.size() * shape.elements())
+                                                    : std::vector<float>{};
         const size_t steps = std::min(timesteps.size(), options.maxSteps);
         double denoiseSeconds = 0.0;
         {
@@ -680,7 +697,7 @@ int main(int argc, char** argv) {
             for (size_t step = 0; step < steps; ++step) {
                 const auto started = std::chrono::steady_clock::now();
                 const auto velocity = denoiser.predict(latents, timesteps[step]);
-                if (step == 0) {
+                if (step == 0 && options.check) {
                     requireClose("Step-0 velocity",
                                  compare(velocity, readTensor<float>(directory / "denoiser_step0_output_f32.bin",
                                                                      velocity.size())),
@@ -700,18 +717,21 @@ int main(int argc, char** argv) {
                 scheduler.step(guided, latents);
                 const double seconds = secondsSince(started);
                 denoiseSeconds += seconds;
-                const std::vector<float> reference(referenceLatents.begin() + step * shape.elements(),
-                                                   referenceLatents.begin() + (step + 1) * shape.elements());
-                const auto drift = compare(latents, reference);
                 std::cout << "Step " << step + 1 << "/" << timesteps.size() << " t=" << timesteps[step] << " in "
-                          << seconds << " s, latent max error vs float32 reference " << drift.maxError << std::endl;
+                          << seconds << " s";
+                if (options.check) {
+                    const std::vector<float> reference(referenceLatents.begin() + step * shape.elements(),
+                                                       referenceLatents.begin() + (step + 1) * shape.elements());
+                    std::cout << ", latent max error vs float32 reference " << compare(latents, reference).maxError;
+                }
+                std::cout << std::endl;
             }
             if (options.profile && steps > 0)
                 printProfiling("Denoiser", denoiser.computeGraph());
         }
         if (options.stage == "step")
             return 0;
-        if (steps == timesteps.size()) {
+        if (steps == timesteps.size() && options.check) {
             requireClose(
                 "Final latents",
                 compare(latents, readTensor<float>(directory / "reference_final_latents_f32.bin", latents.size())),
@@ -719,14 +739,14 @@ int main(int argc, char** argv) {
         }
 
         // 4. Wan VAE decode: of the whole clip, one latent frame at a time, or in overlapping tiles.
-        auto video = decoderCaches ? decodeChunked(context, options, shape, latents, decoderCaches, size, size)
-                     : decoderTile ? decodeTiled(context, options, shape, latents, decoderTile, decoderStride)
-                                   : runOnce(context, options, "vae_decoder.onnx", "latents",
-                                             {1, shape.channels, shape.frames, shape.height, shape.width}, latents,
-                                             "video", "VAE decoder");
+        auto video = decoderChunked ? decodeChunked(context, options, shape, latents, decoderCaches, size, size)
+                     : decoderTile  ? decodeTiled(context, options, shape, latents, decoderTile, decoderStride)
+                                    : runOnce(context, options, "vae_decoder.onnx", "latents",
+                                              {1, shape.channels, shape.frames, shape.height, shape.width}, latents,
+                                              "video", "VAE decoder");
         for (auto& value : video)
             value = std::clamp(value, -1.0f, 1.0f);
-        if (steps == timesteps.size()) {
+        if (steps == timesteps.size() && options.check) {
             const auto reference = readTensor<float>(directory / "reference_video_f32.bin", video.size());
             const auto check = compare(video, reference);
             double meanError = 0.0;
