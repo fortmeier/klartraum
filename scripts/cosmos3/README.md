@@ -239,3 +239,43 @@ First results (diffusers reference, seed 0):
 
 On Klartraum, `drone_farmland` and `robot_arm` reproduce the reference clips
 closely (394 s and 396 s).
+
+## Warehouse clips at the documented settings
+
+Cosmos3-Edge is specified for 256p/480p video at 12-30 fps with 50-150 frames;
+its model card example is 832x480, 121 frames at 24 fps, 20 steps, guidance 6,
+flow shift 12. `export_onnx.py --size` takes `WIDTH HEIGHT` for such non-square
+videos. Export this configuration once (the text graphs are shared with
+`cosmos3_256`, hard-linked into the directory first):
+
+```bash
+D=../../data/onnx/cosmos3_832x480
+C=(--size 832 480 --num-frames 121 --fps 24 --onnx-dir $D)
+uv run python export_onnx.py prepare "${C[@]}" --prompt-file <caption.json> --image <start.ppm> --decoder-chunked
+uv run python export_onnx.py text --fixtures-only "${C[@]}"
+uv run python export_onnx.py denoiser "${C[@]}" --skip-ort
+uv run python export_onnx.py vae "${C[@]}" --skip-ort
+uv run python export_onnx.py vae_chunks "${C[@]}" --skip-ort --skip-decode-check
+```
+
+At this size (12090 video tokens) the export wrapper computes attention in query
+chunks below 1 GiB each, which Klartraum fuses chunk by chunk, and the whole-clip
+diffusers comparisons are skipped (`--skip-decode-check`; the denoiser compares
+with diffusers only if the `reference` stage ran). `cosmos3_example --stage step`
+still checks the text tower and the first denoiser step (max error 3.2e-5).
+
+`warehouse.sh` then generates the scenes of `warehouse_scenes.json` entirely on
+Klartraum: an SD1.5 start image (centre-cropped to 16:9), `prepare
+--skip-encode-check`, and `cosmos3_example --skip-checks`. On the M4 one clip
+takes about 46 minutes (100 s per denoising step, 11 minutes to decode 31 latent
+frames). Mean absolute difference from frame 0 after 5 s (8-bit):
+
+| Scene | Motion | Result |
+|-------|--------|--------|
+| `forklift` | 28.7 | A forklift drives towards the camera and turns; the racks stay stable |
+| `aisle_robot` | 39.2 | Forward drive down the aisle; racks and boxes pass on both sides |
+| `conveyor` | 29.9 | Parcels move along the line |
+| `picking_arm` | 8.4 (23 midway) | A gripper lifts the orange arm's head and sets it back; no clean box pick |
+
+The aisle scene, nearly static at 512x512 with 33 frames at 11 fps, moves at
+these settings.
