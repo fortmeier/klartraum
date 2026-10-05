@@ -164,6 +164,18 @@ ComputeGraphElementPtr conv(VulkanContext& vulkanContext, const ConvAttributes& 
                             const Shape& weights, const Shape& bias, const Shape& output) {
     if (output.size() != 4)
         throw std::runtime_error("Conv requires a rank-four output");
+    // Ungrouped, undilated convolutions with a per-channel bias run as depth-one 3D
+    // convolutions: NCHW is NC1HW in memory, and the implicit-GEMM kernel is faster.
+    if (attributes.group == 1 && attributes.dilations == std::array<uint32_t, 2>{1, 1} && input.size() == 4 &&
+        weights.size() == 4 && bias.size() == 1 && bias[0] == output[1]) {
+        Conv3dAttributes volume;
+        volume.kernelShape = {1, weights[2], weights[3]};
+        volume.strides = {1, attributes.strides[0], attributes.strides[1]};
+        volume.pads = {0, attributes.pads[0], attributes.pads[1], 0, attributes.pads[2], attributes.pads[3]};
+        return conv3d(vulkanContext, volume, {input[0], input[1], 1, input[2], input[3]},
+                      {weights[0], weights[1], 1, weights[2], weights[3]},
+                      {output[0], output[1], 1, output[2], output[3]});
+    }
     ConvPushConstants constants;
     std::copy(attributes.dilations.begin(), attributes.dilations.end(), constants.dilations);
     constants.groups[0] = attributes.group;
@@ -305,7 +317,31 @@ ComputeGraphElementPtr layerNormalization(VulkanContext& vulkanContext, const Sh
     return operation;
 }
 
+namespace {
+
+ComputeGraphElementPtr matMulWithShader(VulkanContext& vulkanContext, const std::string& shader, const Shape& lhs,
+                                        const Shape& rhs, const Shape& output);
+
+} // namespace
+
 ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, const Shape& lhs, const Shape& rhs, const Shape& output) {
+    return matMulWithShader(vulkanContext, "shaders/onnx/matmul.comp.spv", lhs, rhs, output);
+}
+
+ComputeGraphElementPtr matMulReluSquare(VulkanContext& vulkanContext, const Shape& lhs, const Shape& rhs,
+                                        const Shape& output) {
+    return matMulWithShader(vulkanContext, "shaders/onnx/matmul_relu_square.comp.spv", lhs, rhs, output);
+}
+
+ComputeGraphElementPtr matMulAdd(VulkanContext& vulkanContext, const Shape& lhs, const Shape& rhs,
+                                 const Shape& output) {
+    return matMulWithShader(vulkanContext, "shaders/onnx/matmul_residual.comp.spv", lhs, rhs, output);
+}
+
+namespace {
+
+ComputeGraphElementPtr matMulWithShader(VulkanContext& vulkanContext, const std::string& shader, const Shape& lhs,
+                                        const Shape& rhs, const Shape& output) {
     if (lhs.size() < 2 || rhs.size() < 2 || output.size() < 2) {
         throw std::runtime_error("MatMul requires rank >= 2");
     }
@@ -322,10 +358,12 @@ ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, const Shape& lhs, co
     if (constants.rhsBatchCount != 1 && constants.rhsBatchCount != constants.batchCount) {
         throw std::runtime_error("Unsupported MatMul right batch broadcasting");
     }
-    auto operation = computation(vulkanContext, "shaders/onnx/matmul.comp.spv", constants);
+    auto operation = computation(vulkanContext, shader, constants);
     operation->setGroupCount((constants.columns + 127) / 128, (constants.rows + 63) / 64, constants.batchCount);
     return operation;
 }
+
+} // namespace
 
 ComputeGraphElementPtr gemm(VulkanContext& vulkanContext, const Shape& input, const Shape& weights) {
     if (input.size() != 2 || weights.size() != 2)
@@ -390,6 +428,26 @@ ComputeGraphElementPtr fusedAttentionWithBias(VulkanContext& vulkanContext, cons
     constants.biasStrideBatch = b[0] == 1 ? 0 : b[1] * b[2] * b[3];
     auto operation = computation(vulkanContext, "shaders/onnx/fused_attention_bias_d128.comp.spv", constants);
     operation->setGroupCount((constants.queryCount + 63) / 64, constants.batchCount, 1);
+    return operation;
+}
+
+ComputeGraphElementPtr rmsNormalization(VulkanContext& vulkanContext, const Shape& input) {
+    if (input.empty())
+        throw std::runtime_error("RMS normalization requires rank >= 1");
+    RmsNormalizationPushConstants constants{elementCount(input) / input.back(), input.back()};
+    auto operation = computation(vulkanContext, "shaders/onnx/rms_norm.comp.spv", constants);
+    // Eight rows (subgroups) per workgroup.
+    operation->setGroupCountX((constants.rows + 7) / 8);
+    return operation;
+}
+
+ComputeGraphElementPtr channelRmsNormalization(VulkanContext& vulkanContext, const Shape& input, bool silu) {
+    if (input.size() < 2)
+        throw std::runtime_error("Channel RMS normalization requires rank >= 2");
+    ChannelRmsNormalizationPushConstants constants{input[0], input[1], elementCount(input) / (input[0] * input[1]),
+                                                   silu ? 1u : 0u};
+    auto operation = computation(vulkanContext, "shaders/onnx/channel_rms_norm.comp.spv", constants);
+    operation->setGroupCount((constants.positions + 255) / 256, constants.batch, 1);
     return operation;
 }
 
