@@ -43,8 +43,13 @@ klartraum)
     # cosmos3_256 through hard links (the ONNX loader rejects external data that
     # resolves outside the model directory). A whole-clip VAE decode at 512 does
     # not fit in 24 GB, so the clip is decoded one latent frame at a time.
+    # The conditional prompt runs alone in a 512-token text graph; the fixed
+    # negative prompt's keys and values are cached in data/onnx/text_kv_cache.
+    if [[ ! -f data/onnx/cosmos3_256/text_kv_cond_512.onnx ]]; then
+        (cd "$COSMOS" && uv run python export_onnx.py text_cond --onnx-dir "$REPO/data/onnx/cosmos3_256" --skip-ort)
+    fi
     mkdir -p "$MODELS"
-    for file in data/onnx/cosmos3_256/text_kv.onnx*; do
+    for file in data/onnx/cosmos3_256/text_kv.onnx* data/onnx/cosmos3_256/text_kv_cond_512.onnx*; do
         ln -f "$file" "$MODELS/$(basename "$file")"
     done
     cd "$COSMOS"
