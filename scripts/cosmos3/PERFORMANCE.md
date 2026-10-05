@@ -66,6 +66,22 @@ kernel; the layer benchmark is `LayersTest.fusedAttentionCosmos3Denoiser`
 
 At 512x512 a denoiser step went from 23.4 s (unfused) to about 17 s with cycle 2.
 
+## Fusions of memory-bound chains
+
+| Variant | Denoiser step 256 | Denoiser step 512 | Text tower | Decision |
+|---|---:|---:|---:|---|
+| Before | 2.70 s | 11.8 s | 14.8 s | Baseline |
+| MatMul epilogues: ReLU² (MatMul -> Relu -> Mul) and residual Add | 2.64 s | | 14.6 s | Kept |
+| + last-axis RMS normalization in one pass (6 nodes -> 1) | 2.57 s | 11.2 s | 14.2 s | Kept |
+
+Also measured and rejected for the MatMul kernel: register prefetch of the next
+tile (~1440 GFLOP/s), double-buffered shared tiles (~1470), explicit fma() (~1510),
+128x128 tiles with 512 invocations (~1290), no shared memory at all (~1250), and
+Conv3d with 32-step staging (31.6 s vs 30.6 s decode). A pure-register FMA probe
+reaches 2.24 TFLOP/s FP32 (2.62 TFLOP/s FP16) on this M4 through MoltenVK, so
+the MatMul kernel runs at about 67% of the measured peak; KosmicKrisp runs it at
+656 GFLOP/s.
+
 ## End-to-end, 256x256
 
 | Variant | VAE encode | Text tower | Denoising (20 steps) | VAE decode | Total | Final latents | Video (mean) |
@@ -74,6 +90,7 @@ At 512x512 a denoiser step went from 23.4 s (unfused) to about 17 s with cycle 2
 | MatMul cycle 4 | 0.5 s | 19.5 s | 70.6 s (3.53 s/step) | 63 s | 163 s | 6.7e-4 | 1.7e-5 |
 | + Conv3d cycle 2 | 0.3 s | 19.4 s | 70.6 s (3.53 s/step) | 30.6 s | 130 s | 6.7e-4 | 1.7e-5 |
 | + Attention cycle 3 | 0.3 s | 14.8 s | 53.9 s (2.70 s/step) | 30.6 s | 108 s | 1.0e-3 | 1.9e-5 |
+| + fusions | 0.3 s | 14.2 s | 51.2 s (2.56 s/step) | 30.5 s | 105 s | 4.1e-4 | 7.7e-6 |
 
 For comparison: the float32 PyTorch/MPS wrappers take about 2 s per step and
 31 s for the decode; the diffusers bf16 pipeline 124 s in total.
