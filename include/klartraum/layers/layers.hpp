@@ -227,6 +227,14 @@ ComputeGraphElementPtr concat(VulkanContext& vulkanContext, const Shape& lhs, co
                               const Shape& output);
 
 /**
+ * @brief Joins three to eight tensors along @p axis.
+ *
+ * Slots: 0 .. N-1 inputs, N output.
+ */
+ComputeGraphElementPtr concat(VulkanContext& vulkanContext, const std::vector<Shape>& inputs, uint32_t axis,
+                              const Shape& output);
+
+/**
  * @brief Splits a tensor along @p axis into three outputs, the first two with
  * @p firstSize and @p secondSize elements on that axis.
  *

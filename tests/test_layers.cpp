@@ -25,6 +25,8 @@
  *   the CPU for 2048-wide rows (Cosmos3 hidden states) and 128-wide rows (per-head q/k norms)
  * - channelRmsNormalization: channel-axis RMS normalization with a per-channel scale, with and
  *   without the following SiLU (the Wan VAE's norm + nonlinearity), matches the CPU for rank five and four
+ * - concatSixInputs: six tensors of different sizes along axis 2 (the denoiser's attention chunks)
+ *   and three along the last axis are joined in order
  * - conv3x3WithBias: the specialized 3x3 convolution with padding and bias matches a CPU convolution
  * - layerNormalization: last-axis normalization with scale and bias matches the CPU
  **/
@@ -506,6 +508,42 @@ TEST_F(LayersTest, channelRmsNormalization) {
             }
             expectNear(actual, expected, 1e-5f);
         }
+    }
+}
+
+TEST_F(LayersTest, concatSixInputs) {
+    struct Case {
+        std::vector<Shape> inputs;
+        uint32_t axis;
+    };
+    const std::vector<Case> cases = {
+        {{{2, 3, 5, 4}, {2, 3, 1, 4}, {2, 3, 7, 4}, {2, 3, 2, 4}, {2, 3, 3, 4}, {2, 3, 6, 4}}, 2},
+        {{{3, 2}, {3, 5}, {3, 1}}, 1},
+    };
+    for (const auto& c : cases) {
+        Shape output = c.inputs[0];
+        output[c.axis] = 0;
+        for (const auto& input : c.inputs)
+            output[c.axis] += input[c.axis];
+        std::vector<std::pair<std::shared_ptr<Tensor>, std::vector<float>>> inputs;
+        for (size_t i = 0; i < c.inputs.size(); ++i) {
+            inputs.push_back({tensor(c.inputs[i]), ramp(layers::elementCount(c.inputs[i]), 0.1f, float(10 * i))});
+        }
+        const auto actual = run(layers::concat(*vc, c.inputs, c.axis, output), inputs, tensor(output));
+        uint32_t outer = 1, inner = 1;
+        for (uint32_t i = 0; i < c.axis; ++i)
+            outer *= output[i];
+        for (size_t i = c.axis + 1; i < output.size(); ++i)
+            inner *= output[i];
+        std::vector<float> expected;
+        for (uint32_t o = 0; o < outer; ++o) {
+            for (size_t i = 0; i < c.inputs.size(); ++i) {
+                const size_t block = size_t(c.inputs[i][c.axis]) * inner;
+                expected.insert(expected.end(), inputs[i].second.begin() + o * block,
+                                inputs[i].second.begin() + (o + 1) * block);
+            }
+        }
+        expectNear(actual, expected, 0.0f);
     }
 }
 
