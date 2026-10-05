@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/copybuffer.hpp"
+#include "klartraum/computegraph/noop.hpp"
 #include "klartraum/cosmos3/conditioning_image.hpp"
 #include "klartraum/cosmos3/tiled_decode.hpp"
 #include "klartraum/cosmos3/unipc_flow_scheduler.hpp"
@@ -457,10 +459,24 @@ std::vector<float> decodeTiled(klartraum::VulkanContext& context, const Options&
 }
 
 /**
+ * Copies a cache output back into its cache input once the whole network has
+ * run: input 2 is the network itself, which orders the copy after all of it.
+ */
+class CacheHandoff : public klartraum::CopyBuffer {
+public:
+    using klartraum::CopyBuffer::CopyBuffer;
+    void checkInput(klartraum::ComputeGraphElementPtr input, int index) override {
+        if (index != 2)
+            klartraum::CopyBuffer::checkInput(input, index);
+    }
+};
+
+/**
  * Decodes [C, T, H, W] latents one latent frame at a time: the first-chunk
  * decoder yields frame 0, the per-chunk decoder four frames per further latent
  * frame. Both pass the last input frames of every causal convolution on as
- * caches, so only one chunk's activations are resident.
+ * caches, so only one chunk's activations are resident. The per-chunk graph
+ * copies its cache outputs into its cache inputs on the GPU.
  */
 std::vector<float> decodeChunked(klartraum::VulkanContext& context, const Options& options, const LatentShape& shape,
                                  const std::vector<float>& latents, uint32_t cacheCount, uint32_t height,
@@ -541,10 +557,24 @@ std::vector<float> decodeChunked(klartraum::VulkanContext& context, const Option
         cacheInputs.push_back(context.create<klartraum::TensorElement<float>>(cacheShapes[i], kInputUsage));
         network->setInputTensor("cache_in_" + std::to_string(i), cacheInputs.back());
     }
+    auto sink = context.create<klartraum::NoOp>();
+    sink->setInput(network, 0);
+    for (uint32_t i = 0; i < cacheCount; ++i) {
+        auto handoff = context.create<CacheHandoff>();
+        handoff->setName("cache_handoff_" + std::to_string(i));
+        handoff->setSrcIndex(0);
+        handoff->setDstIndex(1);
+        handoff->setInput(outputOf(network, "cache_out_" + std::to_string(i)), 0);
+        handoff->setInput(cacheInputs[i], 1);
+        handoff->setInput(network, 2);
+        sink->setInput(handoff, int(i) + 1);
+    }
     klartraum::ComputeGraph graph(context, 1);
     if (options.profile)
         graph.enableProfiling();
-    graph.compileFrom(network);
+    graph.compileFrom(sink);
+    for (uint32_t i = 0; i < cacheCount; ++i)
+        cacheInputs[i]->setData(0, caches[i]);
     std::cout << "VAE chunk decoder loaded, transient storage "
               << network->getMemoryPlanStats().allocatedBytes / (1024.0 * 1024.0) << " MiB" << std::endl;
     auto output = outputOf(network, "video");
@@ -553,14 +583,9 @@ std::vector<float> decodeChunked(klartraum::VulkanContext& context, const Option
         const auto chunkStarted = std::chrono::steady_clock::now();
         selectLatentFrame(t);
         input->setData(0, latentFrame);
-        for (uint32_t i = 0; i < cacheCount; ++i)
-            cacheInputs[i]->setData(0, caches[i]);
         graph.submitAndWait(context.getGraphicsQueue(), 0);
         output->getDataBuffer(0).memcopyTo(chunk);
         placeFrames(chunk, 4 * t - 3);
-        for (uint32_t i = 0; i < cacheCount; ++i) {
-            outputOf(network, "cache_out_" + std::to_string(i))->getDataBuffer(0).memcopyTo(caches[i]);
-        }
         std::cout << "  latent frame " << t << " in " << secondsSince(chunkStarted) << " s" << std::endl;
     }
     std::cout << "Klartraum VAE decoder (chunked): " << secondsSince(started) << " s" << std::endl;
