@@ -121,3 +121,16 @@ per decoder tile.
 At 256x256 the chunked decoder takes 33.9 s against 30.6 s for the whole-clip
 graph, with 1.1 GB instead of 4.2 GB of transient storage, so the 256 export
 keeps the whole-clip decoder.
+
+## Where the time goes now (2026-10-05)
+
+512x512 dashcam, 370 s: text tower 1 s, denoiser 230-235 s (weight MatMuls
+~13 TFLOP and fused attention ~4.5 TFLOP per step, both at ~1.5 TFLOP/s), VAE
+decode 126-128 s (convolutions at ~1.5 TFLOP/s). 256x256: 91 s.
+
+The kernels run at about 67% of the measured FP32 FMA peak (2.24 TFLOP/s through
+MoltenVK; PyTorch/MPS reaches about that with simdgroup matrices, which Vulkan on
+macOS does not expose). A fully FP16 MatMul (FP16 tiles and accumulators) runs at
+2.13 TFLOP/s, 1.42x, but accumulating in FP16 fails the MatMul tests; an FP16-storage
+/ FP32-accumulate mode would trade the float32 reference checks for an estimated
+1.2-1.3x and is not implemented.
