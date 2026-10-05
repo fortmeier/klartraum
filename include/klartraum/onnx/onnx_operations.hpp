@@ -378,9 +378,15 @@ ComputeGraphElementPtr createLayerNormalization(VulkanContext* vulkanContext, co
 
 ComputeGraphElementPtr createConcat(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                     const onnx::GraphProto& graph) {
-    if (node.input_size() != 2)
-        throw std::runtime_error("Only two-input Concat is supported");
     const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (node.input_size() > 2) {
+        std::vector<layers::Shape> inputs;
+        for (const auto& name : node.input())
+            inputs.push_back(getTensorDimensions(name, infos, graph));
+        return layers::concat(*vulkanContext, inputs, getAxis(node, 0, output.size()), output);
+    }
+    if (node.input_size() != 2)
+        throw std::runtime_error("Concat needs at least two inputs");
     return layers::concat(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
                           getTensorDimensions(node.input(1), infos, graph), getAxis(node, 0, output.size()), output);
 }

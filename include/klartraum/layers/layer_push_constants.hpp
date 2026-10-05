@@ -92,6 +92,14 @@ struct ConcatPushConstants {
     uint32_t elementCount;
 };
 
+struct ConcatNPushConstants {
+    uint32_t outerCount;
+    uint32_t innerSize;
+    uint32_t elementCount;
+    uint32_t totalAxis;
+    uint32_t axisSize[8];
+};
+
 struct ExpandPushConstants {
     uint32_t elementCount;
     uint32_t rank;

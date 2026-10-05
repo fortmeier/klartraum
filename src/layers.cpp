@@ -491,6 +491,33 @@ ComputeGraphElementPtr concat(VulkanContext& vulkanContext, const Shape& lhs, co
     return operation;
 }
 
+ComputeGraphElementPtr concat(VulkanContext& vulkanContext, const std::vector<Shape>& inputs, uint32_t axis,
+                              const Shape& output) {
+    if (inputs.size() < 3 || inputs.size() > 8)
+        throw std::runtime_error("Concat supports 3 to 8 inputs here");
+    checkAxis(axis, output, "Concat");
+    ConcatNPushConstants constants{};
+    constants.outerCount = 1;
+    constants.innerSize = 1;
+    for (uint32_t i = 0; i < axis; ++i)
+        constants.outerCount *= output[i];
+    for (size_t i = axis + 1; i < output.size(); ++i)
+        constants.innerSize *= output[i];
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        if (inputs[i].size() != output.size())
+            throw std::runtime_error("Concat inputs must share the output's rank");
+        constants.axisSize[i] = inputs[i][axis];
+        constants.totalAxis += inputs[i][axis];
+    }
+    if (constants.totalAxis != output[axis])
+        throw std::runtime_error("Concat input sizes do not sum to the output");
+    constants.elementCount = elementCount(output);
+    auto operation =
+        computation(vulkanContext, "shaders/onnx/concat" + std::to_string(inputs.size()) + ".comp.spv", constants);
+    operation->setGroupCountX((constants.elementCount + 63) / 64);
+    return operation;
+}
+
 ComputeGraphElementPtr split3(VulkanContext& vulkanContext, const Shape& input, uint32_t axis, uint32_t firstSize,
                               uint32_t secondSize) {
     checkAxis(axis, input, "Split");
