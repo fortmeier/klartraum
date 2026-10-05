@@ -1,0 +1,35 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+// RMS normalization over the last axis: x / sqrt(mean(x^2) + eps) * scale.
+// One 32-wide subgroup per row: the lanes sum strided squares, the subgroup
+// adds them up, and the lanes write the normalized row.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint rows;
+    uint width;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer EpsBuffer { float eps[]; };
+layout(set = 0, binding = 2) restrict readonly buffer ScaleBuffer { float scale[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+void main() {
+    const uint row = gl_WorkGroupID.x * (256 / 32) + gl_SubgroupID;
+    if (row >= pc.rows) return;
+    const uint lane = gl_SubgroupInvocationID;
+    const uint offset = row * pc.width;
+    float sum = 0.0;
+    for (uint i = lane; i < pc.width; i += gl_SubgroupSize) {
+        const float value = inputData[offset + i];
+        sum += value * value;
+    }
+    const float inverse = inversesqrt(subgroupAdd(sum) / float(pc.width) + eps[0]);
+    for (uint i = lane; i < pc.width; i += gl_SubgroupSize) {
+        outputData[offset + i] = inputData[offset + i] * inverse * scale[i];
+    }
+}
