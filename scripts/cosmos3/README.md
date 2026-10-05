@@ -123,6 +123,14 @@ to `build/TestingOutput/cosmos3/` as `frame_###.ppm` and as
 ffmpeg -i build/TestingOutput/cosmos3/lantern_orbit_klartraum.y4m -pix_fmt yuv420p lantern_orbit.mp4
 ```
 
+If `text_kv_cond_<N>.onnx` exists (`export_onnx.py text_cond --text-bucket N`,
+default 512), only the conditional prompt runs per call, padded to N tokens: the
+text tower is causal, so its real tokens do not depend on the padding, and the
+denoiser masks the padded positions. The unconditional prompt is the
+checkpoint's fixed negative prompt; its keys and values are computed once with
+`text_kv.onnx` and cached in `data/onnx/text_kv_cache/` (807 MB), keyed by its
+token ids. The text tower then takes about 1 s instead of 14 s.
+
 `--stage text|step|vae` stops after the text tower or the first denoising
 pass, or checks only the VAE decoder; `--max-steps N` shortens the loop,
 `--profile` prints per-operation GPU times. `--image file.ppm` preprocesses the
@@ -191,10 +199,10 @@ Mac mini M4, MoltenVK:
 |-------|-----------|--------------------------|
 | SD1.5 512, 30 DDIM steps | 54 s | (validated graph; no fixture for this prompt) |
 | Cosmos3 conditioning image (C++ preprocessing) | | max error 0 |
-| Cosmos3 text tower | 15 s | 8.9e-5 relative |
-| Cosmos3 denoiser, 20 steps (2304 video tokens) | 238 s (11.9 s/step) | final latents 4.8e-3 (up to 5.8) |
-| Cosmos3 VAE decode, one latent frame at a time | 129 s | video mean 3.8e-5, max 9.6e-3 |
-| Cosmos3 total | 388 s | |
+| Cosmos3 text tower (conditional prompt, cached negative prompt) | 1 s | 3.2e-5 relative |
+| Cosmos3 denoiser, 20 steps (2304 video tokens) | 230 s (11.5 s/step) | final latents 1.8e-3 (up to 5.8) |
+| Cosmos3 VAE decode, one latent frame at a time | 129 s | video mean 3.2e-5, max 5.5e-3 |
+| Cosmos3 total | 369 s | |
 
 Kernel improvements are logged in `PERFORMANCE.md`; before them the same run
 took 1536 s (44.6 s per denoising step, 578 s for the decode).
