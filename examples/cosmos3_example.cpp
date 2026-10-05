@@ -199,23 +199,25 @@ struct TextKeyValues {
     std::vector<std::vector<float>> values;
 };
 
-TextKeyValues runTextTower(klartraum::VulkanContext& context, const Config& config, const Options& options) {
-    const auto& directory = options.modelDirectory;
-    const uint32_t textLength = config.count("text_length");
+/**
+ * Runs a text-tower graph on [batch, length] token ids and rotary tables and
+ * returns every layer's keys [batch, KV, D, length] and values [batch, KV, length, D].
+ */
+TextKeyValues runTextGraph(klartraum::VulkanContext& context, const Config& config, const Options& options,
+                           const fs::path& graphPath, uint32_t batch, uint32_t length, const std::vector<int64_t>& ids,
+                           const std::vector<float>& cos, const std::vector<float>& sin, const std::string& label) {
     const uint32_t headDim = config.count("head_dim");
     const uint32_t kvHeads = config.count("kv_heads");
     const uint32_t layers = config.count("num_layers");
-    const size_t ropeElements = size_t(2) * textLength * headDim;
-    const size_t kvElements = size_t(2) * kvHeads * textLength * headDim;
-
+    const size_t kvElements = size_t(batch) * kvHeads * length * headDim;
     const auto loadStarted = std::chrono::steady_clock::now();
-    auto network = context.create<klartraum::OnnxNetwork>((directory / "text_kv.onnx").string());
+    auto network = context.create<klartraum::OnnxNetwork>(graphPath.string());
     auto inputIds =
-        context.create<klartraum::TensorElement<int64_t>>(std::vector<uint32_t>{2, textLength}, kInputUsage);
+        context.create<klartraum::TensorElement<int64_t>>(std::vector<uint32_t>{batch, length}, kInputUsage);
     auto ropeCos =
-        context.create<klartraum::TensorElement<float>>(std::vector<uint32_t>{2, textLength, headDim}, kInputUsage);
+        context.create<klartraum::TensorElement<float>>(std::vector<uint32_t>{batch, length, headDim}, kInputUsage);
     auto ropeSin =
-        context.create<klartraum::TensorElement<float>>(std::vector<uint32_t>{2, textLength, headDim}, kInputUsage);
+        context.create<klartraum::TensorElement<float>>(std::vector<uint32_t>{batch, length, headDim}, kInputUsage);
     network->setInputTensor("input_ids", inputIds);
     network->setInputTensor("rope_cos", ropeCos);
     network->setInputTensor("rope_sin", ropeSin);
@@ -227,19 +229,17 @@ TextKeyValues runTextTower(klartraum::VulkanContext& context, const Config& conf
     if (options.profile)
         graph.enableProfiling();
     graph.compileFrom(network);
-    std::cout << "Text tower loaded in " << secondsSince(loadStarted) << " s" << std::endl;
-
-    inputIds->setData(0, readTensor<int64_t>(directory / "input_ids_i64.bin", size_t(2) * textLength));
-    ropeCos->setData(0, readTensor<float>(directory / "text_rope_cos_f32.bin", ropeElements));
-    ropeSin->setData(0, readTensor<float>(directory / "text_rope_sin_f32.bin", ropeElements));
+    std::cout << label << " loaded in " << secondsSince(loadStarted) << " s" << std::endl;
+    inputIds->setData(0, ids);
+    ropeCos->setData(0, cos);
+    ropeSin->setData(0, sin);
     const auto started = std::chrono::steady_clock::now();
     graph.submitAndWait(context.getGraphicsQueue(), 0);
-    std::cout << "Klartraum text tower: " << secondsSince(started) << " s" << std::endl;
+    std::cout << "Klartraum " << label << ": " << secondsSince(started) << " s" << std::endl;
     if (options.profile)
-        printProfiling("Text tower", graph);
+        printProfiling(label, graph);
 
     TextKeyValues result;
-    float worstRelative = 0.0f;
     for (uint32_t layer = 0; layer < layers; ++layer) {
         for (const char* kind : {"k", "v"}) {
             const std::string name = std::string("text_") + kind + "_" + std::to_string(layer);
@@ -249,16 +249,136 @@ TextKeyValues runTextTower(klartraum::VulkanContext& context, const Config& conf
             }
             std::vector<float> values(kvElements);
             output->getDataBuffer(0).memcopyTo(values);
+            (kind[0] == 'k' ? result.keys : result.values).push_back(std::move(values));
+        }
+    }
+    return result;
+}
+
+/** Smallest exported conditional-prompt bucket (text_kv_cond_<N>.onnx) holding @p length tokens; 0 if none. */
+uint32_t conditionalTextBucket(const fs::path& directory, uint32_t length) {
+    uint32_t best = 0;
+    for (const auto& entry : fs::directory_iterator(directory)) {
+        const std::string name = entry.path().filename().string();
+        const std::string prefix = "text_kv_cond_", suffix = ".onnx";
+        if (name.size() <= prefix.size() + suffix.size() || name.compare(0, prefix.size(), prefix) != 0 ||
+            name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
+            continue;
+        }
+        const std::string digits = name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+        if (digits.empty() || !std::all_of(digits.begin(), digits.end(), ::isdigit))
+            continue;
+        const uint32_t bucket = uint32_t(std::stoul(digits));
+        if (bucket >= length && (best == 0 || bucket < best))
+            best = bucket;
+    }
+    return best;
+}
+
+/**
+ * Text keys and values [2, KV, D, T] / [2, KV, T, D] of both guidance prompts.
+ *
+ * With a conditional-prompt bucket graph, only the conditional prompt runs per
+ * call: the tower is causal, so its real tokens do not depend on the padding,
+ * and padded positions are masked by the denoiser's text bias (they stay zero).
+ * The unconditional prompt is the checkpoint's fixed negative prompt; its keys
+ * and values are computed once with the full-length graph and cached in a
+ * text_kv_cache directory beside the model directory (they do not depend on the
+ * video size), keyed by its token ids.
+ */
+TextKeyValues runTextTower(klartraum::VulkanContext& context, const Config& config, const Options& options) {
+    const auto& directory = options.modelDirectory;
+    const uint32_t textLength = config.count("text_length");
+    const uint32_t headDim = config.count("head_dim");
+    const uint32_t kvHeads = config.count("kv_heads");
+    const uint32_t layers = config.count("num_layers");
+    const uint32_t lengths[2] = {config.count("prompt_lengths", 0), config.count("prompt_lengths", 1)};
+    const size_t rowElements = size_t(textLength) * headDim;
+    const auto ids = readTensor<int64_t>(directory / "input_ids_i64.bin", size_t(2) * textLength);
+    const auto cos = readTensor<float>(directory / "text_rope_cos_f32.bin", 2 * rowElements);
+    const auto sin = readTensor<float>(directory / "text_rope_sin_f32.bin", 2 * rowElements);
+
+    uint64_t hash = 1469598103934665603ull ^ textLength; // FNV-1a over the unconditional token ids
+    for (uint32_t i = 0; i < textLength; ++i)
+        hash = (hash ^ uint64_t(ids[textLength + i])) * 1099511628211ull;
+    char hex[17];
+    std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash));
+    const fs::path cacheDirectory = fs::absolute(directory).lexically_normal().parent_path() / "text_kv_cache";
+    const fs::path cachePath = cacheDirectory / (std::string("text_kv_uncond_") + hex + ".bin");
+    const size_t branchKv = size_t(kvHeads) * textLength * headDim;
+    const uint32_t bucket = conditionalTextBucket(directory, lengths[0]);
+
+    TextKeyValues result;
+    if (bucket == 0 || !fs::exists(cachePath)) {
+        result = runTextGraph(context, config, options, directory / "text_kv.onnx", 2, textLength, ids, cos, sin,
+                              "text tower");
+        if (bucket != 0) {
+            fs::create_directories(cacheDirectory);
+            std::ofstream cache(cachePath, std::ios::binary);
+            for (uint32_t layer = 0; layer < layers; ++layer) {
+                cache.write(reinterpret_cast<const char*>(result.keys[layer].data() + branchKv),
+                            branchKv * sizeof(float));
+                cache.write(reinterpret_cast<const char*>(result.values[layer].data() + branchKv),
+                            branchKv * sizeof(float));
+            }
+            std::cout << "Cached the unconditional text keys and values in " << cachePath << std::endl;
+        }
+    } else {
+        const std::vector<int64_t> condIds(ids.begin(), ids.begin() + bucket);
+        const std::vector<float> condCos(cos.begin(), cos.begin() + size_t(bucket) * headDim);
+        const std::vector<float> condSin(sin.begin(), sin.begin() + size_t(bucket) * headDim);
+        const auto cond =
+            runTextGraph(context, config, options, directory / ("text_kv_cond_" + std::to_string(bucket) + ".onnx"), 1,
+                         bucket, condIds, condCos, condSin, "conditional text tower");
+        const auto cached = readTensor<float>(cachePath, size_t(layers) * 2 * branchKv);
+        for (uint32_t layer = 0; layer < layers; ++layer) {
+            std::vector<float> keys(2 * branchKv, 0.0f), values(2 * branchKv, 0.0f);
+            for (uint32_t row = 0; row < kvHeads * headDim; ++row) { // keys: [KV * D] rows of positions
+                std::copy_n(cond.keys[layer].begin() + size_t(row) * bucket, bucket,
+                            keys.begin() + size_t(row) * textLength);
+            }
+            for (uint32_t head = 0; head < kvHeads; ++head) { // values: [KV] blocks of [positions, D]
+                std::copy_n(cond.values[layer].begin() + size_t(head) * bucket * headDim, size_t(bucket) * headDim,
+                            values.begin() + size_t(head) * textLength * headDim);
+            }
+            const auto layerCache = cached.begin() + size_t(layer) * 2 * branchKv;
+            std::copy_n(layerCache, branchKv, keys.begin() + branchKv);
+            std::copy_n(layerCache + branchKv, branchKv, values.begin() + branchKv);
+            result.keys.push_back(std::move(keys));
+            result.values.push_back(std::move(values));
+        }
+    }
+
+    // Reference check on the real tokens of both prompts (padding is masked downstream).
+    float worstRelative = 0.0f;
+    for (uint32_t layer = 0; layer < layers; ++layer) {
+        for (const char* kind : {"k", "v"}) {
+            const std::string name = std::string("text_") + kind + "_" + std::to_string(layer);
             const auto fixture = directory / (name + "_f32.bin");
-            if (fs::exists(fixture)) {
-                const auto check = compare(values, readTensor<float>(fixture, kvElements));
-                worstRelative = std::max(worstRelative, check.maxError / std::max(check.maxReference, 1e-6f));
-                if (layer == 0 || layer == layers - 1 || !std::isfinite(check.maxError)) {
-                    std::cout << "  " << name << ": max error " << check.maxError << " (max |ref| "
-                              << check.maxReference << ")" << std::endl;
+            if (!options.check || !fs::exists(fixture))
+                continue;
+            const auto reference = readTensor<float>(fixture, 2 * branchKv);
+            const auto& actual = (kind[0] == 'k' ? result.keys : result.values)[layer];
+            Comparison check;
+            for (uint32_t branch = 0; branch < 2; ++branch) {
+                for (uint32_t head = 0; head < kvHeads; ++head) {
+                    for (uint32_t position = 0; position < lengths[branch]; ++position) {
+                        for (uint32_t d = 0; d < headDim; ++d) {
+                            const size_t index =
+                                kind[0] == 'k'
+                                    ? ((size_t(branch) * kvHeads + head) * headDim + d) * textLength + position
+                                    : ((size_t(branch) * kvHeads + head) * textLength + position) * headDim + d;
+                            check.maxError = std::max(check.maxError, std::abs(actual[index] - reference[index]));
+                            check.maxReference = std::max(check.maxReference, std::abs(reference[index]));
+                        }
+                    }
                 }
             }
-            (kind[0] == 'k' ? result.keys : result.values).push_back(std::move(values));
+            worstRelative = std::max(worstRelative, check.maxError / std::max(check.maxReference, 1e-6f));
+            if (layer == 0 || layer == layers - 1 || !std::isfinite(check.maxError)) {
+                std::cout << "  " << name << ": max error " << check.maxError << " (max |ref| " << check.maxReference
+                          << ")" << std::endl;
+            }
         }
     }
     std::cout << "Text K/V worst relative error: " << worstRelative << std::endl;

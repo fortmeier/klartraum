@@ -77,8 +77,8 @@ NEG_INF_BIAS = -1.0e9
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("stage", choices=["prepare", "reference", "text", "denoiser", "vae", "vae_chunks", "pipeline",
-                                          "postprocess"])
+    parser.add_argument("stage", choices=["prepare", "reference", "text", "text_cond", "denoiser", "vae", "vae_chunks",
+                                          "pipeline", "postprocess"])
     parser.add_argument("--size", type=int, default=256, help="square output size, multiple of 32")
     parser.add_argument("--num-frames", type=int, default=33)
     parser.add_argument("--fps", type=float, default=16.0)
@@ -105,6 +105,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decoder-stride", type=int, default=8, help="prepare: latent stride between decoder tiles")
     parser.add_argument("--decoder-chunked", action="store_true",
                         help="prepare: decode one latent frame at a time (vae_chunks stage) instead of the whole clip")
+    parser.add_argument("--text-bucket", type=int, default=512,
+                        help="text_cond: padded length of the conditional prompt graph")
     parser.add_argument("--video-dir", type=Path, default=REPO_ROOT / "build" / "TestingOutput" / "cosmos3")
     args = parser.parse_args()
     if args.onnx_dir is None:
@@ -734,6 +736,43 @@ def stage_text(args: argparse.Namespace) -> None:
         print(f"  worst ORT text K/V error {worst:.3e}", flush=True)
 
 
+def stage_text_cond(args: argparse.Namespace) -> None:
+    """Export the text tower for the conditional prompt alone, padded to --text-bucket tokens.
+
+    The tower is causal, so the keys and values of the real tokens do not depend
+    on the padding; the unconditional (fixed negative) prompt is computed once with
+    the full-length graph and cached by the runtime.
+    """
+    out = args.onnx_dir
+    cfg = load_config(out)
+    bucket, length = args.text_bucket, cfg["prompt_lengths"][0]
+    if length > bucket:
+        raise ValueError(f"conditional prompt has {length} tokens, more than the bucket of {bucket}")
+    transformer = load_transformer(keep="text")
+    module = TextKV(transformer, bucket).eval()
+    feeds = text_feeds(out)
+    feeds = {name: np.ascontiguousarray(value[:1, :bucket]) for name, value in feeds.items()}
+    torch_inputs = tuple(torch.from_numpy(feeds[name]) for name in ("input_ids", "rope_cos", "rope_sin"))
+    started = time.perf_counter()
+    with torch.no_grad():
+        kv = [t.numpy() for t in module(*torch_inputs)]
+    print(f"  PyTorch conditional text tower in {time.perf_counter() - started:.1f}s", flush=True)
+    names = kv_names(cfg["num_layers"])
+    worst = 0.0
+    for name, value in zip(names, kv):
+        if (out / f"{name}_f32.bin").exists():
+            full = load(out, f"{name}_f32.bin")[:1]
+            if name.startswith("text_k"):
+                worst = max(worst, report(name, value[..., :length], full[..., :length]))
+            else:
+                worst = max(worst, report(name, value[:, :, :length], full[:, :, :length]))
+    print(f"  worst bucketed vs full-length text K/V error {worst:.3e}", flush=True)
+    path = out / f"text_kv_cond_{bucket}.onnx"
+    export_graph(module, torch_inputs, list(feeds), names, path)
+    del module, transformer
+    gc.collect()
+
+
 def denoiser_feeds(out: Path, cfg: dict, step: int = 0) -> dict[str, np.ndarray]:
     latents = torch.from_numpy(load(out, "initial_latents_f32.bin"))
     feeds = {
@@ -1319,6 +1358,7 @@ def main() -> None:
         "prepare": stage_prepare,
         "reference": stage_reference,
         "text": stage_text,
+        "text_cond": stage_text_cond,
         "denoiser": stage_denoiser,
         "vae": stage_vae,
         "vae_chunks": stage_vae_chunks,
