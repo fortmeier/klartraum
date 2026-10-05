@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// MatMul followed by a residual Add of the output's shape.
+#define EPILOGUE_RESIDUAL
+#include "matmul.glsl"
