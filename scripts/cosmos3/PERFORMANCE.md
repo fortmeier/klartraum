@@ -91,6 +91,7 @@ the MatMul kernel runs at about 67% of the measured peak; KosmicKrisp runs it at
 | + Conv3d cycle 2 | 0.3 s | 19.4 s | 70.6 s (3.53 s/step) | 30.6 s | 130 s | 6.7e-4 | 1.7e-5 |
 | + Attention cycle 3 | 0.3 s | 14.8 s | 53.9 s (2.70 s/step) | 30.6 s | 108 s | 1.0e-3 | 1.9e-5 |
 | + fusions | 0.3 s | 14.2 s | 51.2 s (2.56 s/step) | 30.5 s | 105 s | 4.1e-4 | 7.7e-6 |
+| + conditional text bucket, cached negative prompt | 0.3 s | 1.0 s | 51.3 s (2.56 s/step) | 30.7 s | 91 s | 4.1e-4 | 7.7e-6 |
 
 For comparison: the float32 PyTorch/MPS wrappers take about 2 s per step and
 31 s for the decode; the diffusers bf16 pipeline 124 s in total.
@@ -106,6 +107,7 @@ SD1.5 512 (30 DDIM steps) with MatMul cycle 4: 2.78 s per UNet step (from 3.39 s
 | MatMul 4 + Conv3d 2 + Attention 3 | 15 s | 238 s (11.9 s/step) | 280 s | 541 s | 4.8e-3 | 3.8e-5 |
 | + 2x2 tiles of a 320 decoder (stride 12, 128-pixel overlap) | 15 s | 239 s (12.0 s/step) | 197 s | 459 s | 4.8e-3 | 3.8e-5 |
 | + chunked decode (one latent frame at a time, exact) | 15 s | 236 s (11.8 s/step) | 129 s | 388 s | 4.8e-3 | 3.8e-5 |
+| + fusions, conditional text bucket, GPU cache handoff | 1.0 s | 230 s (11.5 s/step) | 129 s | 369 s | 1.8e-3 | 3.2e-5 |
 
 The diffusers bf16 pipeline takes 274 s at 512x512 (its VAE decodes in cached
 temporal chunks); the float32 PyTorch/MPS wrappers about 10 s per step and 42 s
