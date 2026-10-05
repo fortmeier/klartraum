@@ -200,9 +200,9 @@ Mac mini M4, MoltenVK:
 | SD1.5 512, 30 DDIM steps | 54 s | (validated graph; no fixture for this prompt) |
 | Cosmos3 conditioning image (C++ preprocessing) | | max error 0 |
 | Cosmos3 text tower (conditional prompt, cached negative prompt) | 1 s | 3.2e-5 relative |
-| Cosmos3 denoiser, 20 steps (2304 video tokens) | 230 s (11.5 s/step) | final latents 1.8e-3 (up to 5.8) |
-| Cosmos3 VAE decode, one latent frame at a time | 129 s | video mean 3.2e-5, max 5.5e-3 |
-| Cosmos3 total | 369 s | |
+| Cosmos3 denoiser, 20 steps (2304 video tokens) | 230-235 s (11.5-11.8 s/step) | final latents 1.9e-3 (up to 5.8) |
+| Cosmos3 VAE decode, one latent frame at a time | 126-128 s | video mean 2.9e-5, max 3.9e-3 |
+| Cosmos3 total | 369-373 s | |
 
 Kernel improvements are logged in `PERFORMANCE.md`; before them the same run
 took 1536 s (44.6 s per denoising step, 578 s for the decode).
