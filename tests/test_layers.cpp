@@ -10,6 +10,8 @@
  * - softmaxRowsSumToOne: last-axis softmax matches a CPU softmax
  * - batchedMatMul: a batch of matrix products matches the CPU, with the right side broadcast
  * - matMulOddSizes: sizes that are not multiples of any tile, both sides batched, match the CPU
+ * - matMulReluSquareEpilogue: the ReLU² epilogue stores max(x, 0)^2 of the product (odd sizes, batched)
+ * - matMulResidualEpilogue: the residual epilogue stores the product plus a tensor of the output's shape
  * - matMulCosmos3Projection: a [1152, 2048] x [2048, 2048] weight product (Cosmos3 denoiser at
  *   256x256) matches the CPU on sampled outputs; prints its GPU throughput
  * - fusedAttentionWithKeyPaddingBias: 128-wide attention with a per-batch [B, 1, 1, keys] bias
@@ -19,6 +21,8 @@
  * - fusedAttentionCosmos3Denoiser: at the 256x256 Cosmos3 denoiser shapes (text padding in the
  *   first guidance branch) the fused kernel matches the unfused MatMul/Add/Softmax/MatMul chain;
  *   prints the wall time of both
+ * - rmsNormalizationLastAxis: last-axis RMS normalization with eps and a per-element scale matches
+ *   the CPU for 2048-wide rows (Cosmos3 hidden states) and 128-wide rows (per-head q/k norms)
  * - conv3x3WithBias: the specialized 3x3 convolution with padding and bias matches a CPU convolution
  * - layerNormalization: last-axis normalization with scale and bias matches the CPU
  **/
@@ -197,6 +201,54 @@ TEST_F(LayersTest, matMulOddSizes) {
             }
         }
     }
+    expectNear(actual, expected, 1e-4f);
+}
+
+namespace {
+
+/** CPU [B, M, K] x [B, K, N] in double precision. */
+std::vector<double> matMulReference(const std::vector<float>& l, const std::vector<float>& r, uint32_t batches,
+                                    uint32_t rows, uint32_t reduction, uint32_t columns) {
+    std::vector<double> result(size_t(batches) * rows * columns, 0.0);
+    for (uint32_t b = 0; b < batches; ++b)
+        for (uint32_t i = 0; i < rows; ++i)
+            for (uint32_t j = 0; j < columns; ++j)
+                for (uint32_t k = 0; k < reduction; ++k)
+                    result[(size_t(b) * rows + i) * columns + j] += double(l[(size_t(b) * rows + i) * reduction + k]) *
+                                                                    r[(size_t(b) * reduction + k) * columns + j];
+    return result;
+}
+
+} // namespace
+
+TEST_F(LayersTest, matMulReluSquareEpilogue) {
+    const Shape lhs{2, 67, 45}, rhs{2, 45, 70}, output{2, 67, 70};
+    const auto l = ramp(2 * 67 * 45, 0.05f, -0.5f);
+    const auto r = ramp(2 * 45 * 70, 0.03f, -0.3f);
+    const auto actual =
+        run(layers::matMulReluSquare(*vc, lhs, rhs, output), {{tensor(lhs), l}, {tensor(rhs), r}}, tensor(output));
+    const auto product = matMulReference(l, r, 2, 67, 45, 70);
+    std::vector<float> expected(product.size());
+    size_t negatives = 0;
+    for (size_t i = 0; i < product.size(); ++i) {
+        negatives += product[i] < 0.0;
+        expected[i] = float(std::max(product[i], 0.0) * std::max(product[i], 0.0));
+    }
+    ASSERT_GT(negatives, product.size() / 10); // the clamp is exercised
+    expectNear(actual, expected, 1e-4f);
+}
+
+TEST_F(LayersTest, matMulResidualEpilogue) {
+    const Shape lhs{2, 67, 45}, rhs{2, 45, 70}, output{2, 67, 70};
+    const auto l = ramp(2 * 67 * 45, 0.05f, -0.5f);
+    const auto r = ramp(2 * 45 * 70, 0.03f, -0.3f);
+    const auto residual = ramp(2 * 67 * 70, 0.11f, 2.0f);
+    const auto actual = run(layers::matMulAdd(*vc, lhs, rhs, output),
+                            {{tensor(lhs), l}, {tensor(rhs), r}, {tensor(output), residual}}, tensor(output));
+    const auto product = matMulReference(l, r, 2, 67, 45, 70);
+    std::vector<float> expected(product.size());
+    for (size_t i = 0; i < product.size(); ++i)
+        expected[i] = float(product[i] + residual[i]);
     expectNear(actual, expected, 1e-4f);
 }
 
@@ -396,6 +448,29 @@ TEST_F(LayersTest, fusedAttentionCosmos3Denoiser) {
     std::vector<float> unfusedResult(unfusedOut->getDataElementCount());
     unfusedOut->getDataBuffer(0).memcopyTo(unfusedResult);
     expectNear(fusedResult, unfusedResult, 1e-4f);
+}
+
+TEST_F(LayersTest, rmsNormalizationLastAxis) {
+    for (const Shape shape : {Shape{3, 37, 2048}, Shape{2, 5, 16, 128}}) {
+        const uint32_t width = shape.back();
+        const uint32_t rows = layers::elementCount(shape) / width;
+        const auto x = ramp(layers::elementCount(shape), 0.37f, -3.0f);
+        const auto scale = ramp(width, 0.05f, 0.4f);
+        const std::vector<float> eps{1e-6f};
+        const auto actual = run(layers::rmsNormalization(*vc, shape),
+                                {{tensor(shape), x}, {tensor({1}), eps}, {tensor({width}), scale}}, tensor(shape));
+        std::vector<float> expected(x.size());
+        for (uint32_t row = 0; row < rows; ++row) {
+            double sum = 0.0;
+            for (uint32_t i = 0; i < width; ++i)
+                sum += double(x[size_t(row) * width + i]) * x[size_t(row) * width + i];
+            const double inverse = 1.0 / std::sqrt(sum / width + eps[0]);
+            for (uint32_t i = 0; i < width; ++i) {
+                expected[size_t(row) * width + i] = float(x[size_t(row) * width + i] * inverse * scale[i]);
+            }
+        }
+        expectNear(actual, expected, 1e-5f);
+    }
 }
 
 TEST_F(LayersTest, conv3x3WithBias) {

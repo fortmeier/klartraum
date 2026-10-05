@@ -142,6 +142,21 @@ ComputeGraphElementPtr layerNormalization(VulkanContext& vulkanContext, const Sh
 ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, const Shape& lhs, const Shape& rhs, const Shape& output);
 
 /**
+ * @brief MatMul whose outputs are stored as max(x, 0)^2.
+ *
+ * Slots as matMul(): 0 left, 1 right, 2 output.
+ */
+ComputeGraphElementPtr matMulReluSquare(VulkanContext& vulkanContext, const Shape& lhs, const Shape& rhs,
+                                        const Shape& output);
+
+/**
+ * @brief MatMul plus a residual of the output's shape.
+ *
+ * Slots: 0 left, 1 right, 2 residual, 3 output.
+ */
+ComputeGraphElementPtr matMulAdd(VulkanContext& vulkanContext, const Shape& lhs, const Shape& rhs, const Shape& output);
+
+/**
  * @brief `output = input x weightsᵀ + bias` for a rows x K input and
  * columns x K weights.
  *
@@ -170,6 +185,14 @@ ComputeGraphElementPtr fusedAttention(VulkanContext& vulkanContext, const Shape&
  */
 ComputeGraphElementPtr fusedAttentionWithBias(VulkanContext& vulkanContext, const Shape& query, const Shape& key,
                                               const Shape& value, const Shape& bias, const Shape& output);
+
+/**
+ * @brief RMS normalization over the last axis: x / sqrt(mean(x^2) + eps) * scale.
+ *
+ * Slots: 0 input, 1 eps (one element), 2 scale (last-axis length), 3 output
+ * (the input's shape).
+ */
+ComputeGraphElementPtr rmsNormalization(VulkanContext& vulkanContext, const Shape& input);
 
 /**
  * @brief Softmax over the last axis.
