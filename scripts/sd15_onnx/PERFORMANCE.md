@@ -239,6 +239,19 @@ VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json \
   ./build/examples/sd15_denoiser_example --model-dir data/onnx/sd15_denoiser_512 --size 512
 ```
 
+### Cosmos3 kernels on the M4 (2026-10-05)
+
+The MatMul and Conv3d kernels written for Cosmos3 (`scripts/cosmos3/PERFORMANCE.md`)
+also serve SD1.5: register-blocked 64x128 MatMul tiles, and every ungrouped,
+undilated 2D convolution with a bias running as a depth-one Conv3d (implicit GEMM).
+MoltenVK, 512x512, 30 DDIM steps:
+
+| Variant | DDIM UNet (30 steps) | VAE decode | Total | Final latent error | Decoded image error |
+|---|---:|---:|---:|---:|---:|
+| Before | 101.657 s (3.389 s/step) | 5.450 s | 107.179 s | 2.67658e-04 | 4.79594e-04 |
+| Register-blocked MatMul | 83.349 s (2.778 s/step) | 5.666 s | 89.074 s | 2.67658e-04 | 4.79594e-04 |
+| + 2D convolutions as Conv3d | 51.196 s (1.707 s/step) | 2.444 s | 53.696 s | 2.67658e-04 | 4.79594e-04 |
+
 ## Adding another cycle
 
 For each new optimization:
