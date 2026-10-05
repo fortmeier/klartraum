@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// MatMul followed by ReLU² (Cosmos3's MLP activation): stores max(x, 0)^2.
+#define EPILOGUE_RELU_SQUARE
+#include "matmul.glsl"
