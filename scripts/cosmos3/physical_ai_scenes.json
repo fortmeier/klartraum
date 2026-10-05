@@ -1,0 +1,174 @@
+{
+ "robot_arm": {
+  "sd_prompt": "photo of an industrial robot arm on a workbench in a bright lab, a red cube lies on the table next to a cardboard box, realistic photograph, sharp focus",
+  "caption": {
+   "subjects": [
+    {
+     "description": "A white six-axis industrial robot arm with a two-finger gripper mounted on a workbench",
+     "action": "Moves down, grasps the red cube, lifts it and places it into the cardboard box",
+     "number_of_subjects": 1
+    },
+    {
+     "description": "A small red cube on the table",
+     "action": "Is picked up by the gripper and carried into the box",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "Static camera on a tripod",
+    "framing": "Medium shot of the robot arm, the cube and the box"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:01",
+     "description": "The robot arm lowers its gripper towards the red cube and closes the fingers around it"
+    },
+    {
+     "time": "0:01-0:03",
+     "description": "The arm lifts the cube, swings to the side and drops it into the cardboard box"
+    }
+   ],
+   "temporal_caption": "A white industrial robot arm grasps a red cube from the workbench, lifts it and places it into a cardboard box.",
+   "resolution": {
+    "W": 512,
+    "H": 512
+   },
+   "duration": "3s",
+   "fps": 11.0
+  }
+ },
+ "warehouse_robot": {
+  "sd_prompt": "view from a mobile robot driving through a modern warehouse aisle, tall shelves with boxes on both sides, polished concrete floor, bright lights, realistic photograph",
+  "caption": {
+   "subjects": [
+    {
+     "description": "A long warehouse aisle between tall metal shelves stacked with cardboard boxes",
+     "action": "The shelves and boxes stream past both sides of the frame as the robot drives forward",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "The video is captured from a camera mounted on an autonomous mobile robot driving forward along the aisle; continuous forward tracking shot",
+    "framing": "Forward-facing view with the vanishing point of the aisle in the center"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:03",
+     "description": "The robot drives steadily forward; shelves pass on both sides and the end of the aisle comes closer"
+    }
+   ],
+   "temporal_caption": "Forward-facing camera footage from a mobile robot driving through a warehouse aisle; the shelves stream past and the end of the aisle approaches.",
+   "resolution": {
+    "W": 512,
+    "H": 512
+   },
+   "duration": "3s",
+   "fps": 11.0
+  }
+ },
+ "pedestrian_crossing": {
+  "sd_prompt": "dashcam photo from a car on a city street, a pedestrian about to cross at a zebra crossing ahead, parked cars, buildings, daylight, realistic photograph",
+  "caption": {
+   "subjects": [
+    {
+     "description": "A pedestrian in a dark jacket at the curb",
+     "action": "Steps onto the zebra crossing and walks across the street from left to right",
+     "number_of_subjects": 1
+    },
+    {
+     "description": "A city street with a zebra crossing, parked cars and buildings",
+     "action": "Approaches slowly as the car rolls forward and brakes",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "Dashcam behind the windshield of a car rolling slowly forward and braking before the crossing",
+    "framing": "Forward-facing dashcam view of the street and the crossing"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:01",
+     "description": "The pedestrian steps off the curb onto the zebra crossing"
+    },
+    {
+     "time": "0:01-0:03",
+     "description": "The pedestrian walks across the street in front of the car while the car slows down"
+    }
+   ],
+   "temporal_caption": "Dashcam footage: a pedestrian walks across a zebra crossing in front of the slowly braking car.",
+   "resolution": {
+    "W": 512,
+    "H": 512
+   },
+   "duration": "3s",
+   "fps": 11.0
+  }
+ },
+ "drone_farmland": {
+  "sd_prompt": "aerial drone photo flying low over green farmland with crop rows and a dirt road, sunny day, realistic photograph",
+  "caption": {
+   "subjects": [
+    {
+     "description": "Green farmland with straight crop rows and a dirt road",
+     "action": "The crop rows and the road sweep under the camera as the drone flies forward",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "Aerial drone flying forward low over the fields at constant altitude; continuous forward tracking shot",
+    "framing": "Wide aerial view tilted towards the horizon"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:03",
+     "description": "The drone flies forward; the crop rows stream under the camera and new fields appear at the horizon"
+    }
+   ],
+   "temporal_caption": "Aerial drone footage flying forward low over green farmland; crop rows and a dirt road stream under the camera.",
+   "resolution": {
+    "W": 512,
+    "H": 512
+   },
+   "duration": "3s",
+   "fps": 11.0
+  }
+ },
+ "robot_vacuum": {
+  "sd_prompt": "photo of a round robot vacuum cleaner on a wooden floor in a bright living room, sofa and rug in the background, realistic photograph",
+  "caption": {
+   "subjects": [
+    {
+     "description": "A round black robot vacuum cleaner",
+     "action": "Drives forward across the wooden floor, turns and continues along the rug",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "Static camera at floor height",
+    "framing": "Medium shot of the robot vacuum and the living room"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:02",
+     "description": "The robot vacuum drives forward across the wooden floor towards the rug"
+    },
+    {
+     "time": "0:02-0:03",
+     "description": "It turns to the right and continues along the edge of the rug"
+    }
+   ],
+   "temporal_caption": "A round robot vacuum cleaner drives across the wooden floor of a living room and turns along the rug.",
+   "resolution": {
+    "W": 512,
+    "H": 512
+   },
+   "duration": "3s",
+   "fps": 11.0
+  }
+ }
+}
