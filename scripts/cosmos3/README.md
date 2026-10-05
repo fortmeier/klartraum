@@ -226,7 +226,7 @@ First results (diffusers reference, seed 0):
 | `drone_farmland` | Good: the drone flies forward and turns, fields and a farmhouse sweep out of the frame |
 | `robot_arm` | Partly: a two-finger gripper enters, carries a red cube, and drops it into a box (the SD1.5 image has no clear arm) |
 | `pedestrian_crossing` | Partly: cars drive through the scene and a small pedestrian walks; the camera stays still |
-| `warehouse_robot` | Nearly static |
+| `warehouse_robot` | Nearly static, also with seeds 1 and 2 (the symmetric aisle offers little to pass by) |
 | `robot_vacuum` | Fails: an unrelated device descends onto the vacuum, which does not move |
 
 On Klartraum, `drone_farmland` and `robot_arm` reproduce the reference clips
