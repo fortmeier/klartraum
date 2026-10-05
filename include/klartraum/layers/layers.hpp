@@ -195,6 +195,15 @@ ComputeGraphElementPtr fusedAttentionWithBias(VulkanContext& vulkanContext, cons
 ComputeGraphElementPtr rmsNormalization(VulkanContext& vulkanContext, const Shape& input);
 
 /**
+ * @brief RMS normalization over the channel axis of an N x C x ... tensor, as
+ * the Wan VAE writes it: x / sqrt(mean_c(x^2) + eps) * scale[c], optionally
+ * followed by SiLU (y * sigmoid(y)).
+ *
+ * Slots: 0 input, 1 eps (one element), 2 scale (C), 3 output (the input's shape).
+ */
+ComputeGraphElementPtr channelRmsNormalization(VulkanContext& vulkanContext, const Shape& input, bool silu);
+
+/**
  * @brief Softmax over the last axis.
  *
  * Slots: 0 input, 1 output (the input's shape).
