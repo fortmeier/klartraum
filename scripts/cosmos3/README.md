@@ -189,7 +189,7 @@ Mac mini M4, MoltenVK:
 
 | Stage | Klartraum | Check vs float32 PyTorch |
 |-------|-----------|--------------------------|
-| SD1.5 512, 30 DDIM steps | 88 s | (validated graph; no fixture for this prompt) |
+| SD1.5 512, 30 DDIM steps | 54 s | (validated graph; no fixture for this prompt) |
 | Cosmos3 conditioning image (C++ preprocessing) | | max error 0 |
 | Cosmos3 text tower | 15 s | 8.9e-5 relative |
 | Cosmos3 denoiser, 20 steps (2304 video tokens) | 238 s (11.9 s/step) | final latents 4.8e-3 (up to 5.8) |
