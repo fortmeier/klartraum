@@ -60,6 +60,11 @@ struct FusedAttentionBiasPushConstants {
     uint32_t biasStrideQuery; ///< bias elements between queries (0: broadcast)
 };
 
+struct RmsNormalizationPushConstants {
+    uint32_t rows;
+    uint32_t width;
+};
+
 struct GemmPushConstants {
     uint32_t rows;
     uint32_t columns;

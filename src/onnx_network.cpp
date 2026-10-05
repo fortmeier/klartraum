@@ -196,6 +196,146 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
                   << std::endl;
     }
 
+    // MatMul epilogues: MatMul -> Relu -> Mul(r, r) stores ReLU² directly, and
+    // MatMul -> Add of a residual with the output's shape adds it on store, so
+    // neither intermediate is written and read back. Last-axis RMS
+    // normalizations collapse into one pass.
+    {
+        std::map<std::string, size_t> consumers;
+        for (const auto& node : graph->node()) {
+            for (const auto& name : node.input()) {
+                if (!name.empty())
+                    ++consumers[name];
+            }
+        }
+        std::set<std::string> graphOutputs;
+        for (const auto& output : graph->output())
+            graphOutputs.insert(output.name());
+        auto intermediate = [&](const std::string& name, size_t uses) {
+            return consumers[name] == uses && !graphOutputs.count(name);
+        };
+        auto sameShape = [&declaredShapes](const std::string& a, const std::string& b) {
+            const auto first = declaredShapes.find(a), second = declaredShapes.find(b);
+            return first != declaredShapes.end() && second != declaredShapes.end() && !first->second.empty() &&
+                   first->second == second->second;
+        };
+        auto elementsOf = [&declaredShapes](const std::string& name) -> int64_t {
+            const auto it = declaredShapes.find(name);
+            if (it == declaredShapes.end())
+                return -1;
+            int64_t count = 1;
+            for (const auto dimension : it->second)
+                count *= dimension;
+            return count;
+        };
+        // RMS normalization over the last axis, as PyTorch exports it:
+        // Mul(x, x) -> ReduceMean(-1) -> Add(eps) -> Sqrt -> Div(x, .) -> Mul(scale).
+        auto rmsNormalization = [&](int index) -> std::optional<onnx::NodeProto> {
+            if (index + 5 >= graph->node_size())
+                return std::nullopt;
+            const auto& square = graph->node(index);
+            const auto& mean = graph->node(index + 1);
+            const auto& add = graph->node(index + 2);
+            const auto& root = graph->node(index + 3);
+            const auto& divide = graph->node(index + 4);
+            const auto& scale = graph->node(index + 5);
+            if (square.op_type() != "Mul" || square.input_size() != 2 || square.input(0) != square.input(1) ||
+                mean.op_type() != "ReduceMean" || mean.input_size() != 1 || mean.input(0) != square.output(0) ||
+                add.op_type() != "Add" || add.input_size() != 2 || root.op_type() != "Sqrt" ||
+                root.input(0) != add.output(0) || divide.op_type() != "Div" || divide.input_size() != 2 ||
+                scale.op_type() != "Mul" || scale.input_size() != 2) {
+                return std::nullopt;
+            }
+            const std::string& x = square.input(0);
+            const auto shape = declaredShapes.find(x);
+            if (shape == declaredShapes.end() || shape->second.empty())
+                return std::nullopt;
+            const int64_t rank = int64_t(shape->second.size());
+            bool lastAxis = false, keepDims = true;
+            for (const auto& attribute : mean.attribute()) {
+                if (attribute.name() == "axes") {
+                    lastAxis = attribute.ints_size() == 1 && (attribute.ints(0) == -1 || attribute.ints(0) == rank - 1);
+                }
+                if (attribute.name() == "keepdims")
+                    keepDims = attribute.i() != 0;
+            }
+            const bool meanFirst = add.input(0) == mean.output(0);
+            const std::string eps = meanFirst ? add.input(1) : add.input(0);
+            const bool divideFirst = scale.input(0) == divide.output(0);
+            const std::string weight = divideFirst ? scale.input(1) : scale.input(0);
+            if (!lastAxis || !keepDims || (!meanFirst && add.input(1) != mean.output(0)) || elementsOf(eps) != 1 ||
+                divide.input(0) != x || divide.input(1) != root.output(0) ||
+                (!divideFirst && scale.input(1) != divide.output(0)) || elementsOf(weight) != shape->second.back() ||
+                !intermediate(square.output(0), 1) || !intermediate(mean.output(0), 1) ||
+                !intermediate(add.output(0), 1) || !intermediate(root.output(0), 1) ||
+                !intermediate(divide.output(0), 1)) {
+                return std::nullopt;
+            }
+            onnx::NodeProto fused = scale;
+            fused.set_op_type("RmsNormalization");
+            fused.set_name(scale.name() + "/KlartraumRmsNormalization");
+            fused.clear_input();
+            fused.add_input(x);
+            fused.add_input(eps);
+            fused.add_input(weight);
+            return fused;
+        };
+        std::vector<onnx::NodeProto> nodes;
+        size_t reluSquares = 0, residuals = 0, rmsNormalizations = 0;
+        for (int index = 0; index < graph->node_size();) {
+            if (auto fused = rmsNormalization(index)) {
+                nodes.push_back(std::move(*fused));
+                index += 6;
+                ++rmsNormalizations;
+                continue;
+            }
+            const auto& matmul = graph->node(index);
+            if (matmul.op_type() == "MatMul" && matmul.output_size() == 1 && index + 1 < graph->node_size() &&
+                intermediate(matmul.output(0), 1)) {
+                const auto& next = graph->node(index + 1);
+                if (next.op_type() == "Relu" && next.input(0) == matmul.output(0) && index + 2 < graph->node_size()) {
+                    const auto& square = graph->node(index + 2);
+                    if (square.op_type() == "Mul" && square.input_size() == 2 && square.input(0) == next.output(0) &&
+                        square.input(1) == next.output(0) && intermediate(next.output(0), 2)) {
+                        onnx::NodeProto fused = matmul;
+                        fused.set_op_type("MatMulReluSquare");
+                        fused.set_name(matmul.name() + "/KlartraumReluSquare");
+                        fused.set_output(0, square.output(0));
+                        nodes.push_back(std::move(fused));
+                        index += 3;
+                        ++reluSquares;
+                        continue;
+                    }
+                }
+                if (next.op_type() == "Add" && next.input_size() == 2 &&
+                    (next.input(0) == matmul.output(0)) != (next.input(1) == matmul.output(0))) {
+                    const std::string residual = next.input(0) == matmul.output(0) ? next.input(1) : next.input(0);
+                    if (sameShape(residual, next.output(0)) && sameShape(matmul.output(0), next.output(0))) {
+                        onnx::NodeProto fused = matmul;
+                        fused.set_op_type("MatMulAdd");
+                        fused.set_name(matmul.name() + "/KlartraumResidual");
+                        fused.add_input(residual);
+                        fused.set_output(0, next.output(0));
+                        nodes.push_back(std::move(fused));
+                        index += 2;
+                        ++residuals;
+                        continue;
+                    }
+                }
+            }
+            nodes.push_back(graph->node(index));
+            ++index;
+        }
+        if (reluSquares + residuals + rmsNormalizations > 0) {
+            graph->clear_node();
+            for (auto& node : nodes)
+                *graph->add_node() = std::move(node);
+            std::cout << "OnnxNetwork: fused " << reluSquares << " MatMul/ReLU², " << residuals
+                      << " MatMul/residual-Add, and " << rmsNormalizations << " RMS normalization sequences"
+                      << std::endl;
+        }
+    }
+
     input.close();
 
     std::cout << "OnnxNetwork: Model loaded successfully" << std::endl;
