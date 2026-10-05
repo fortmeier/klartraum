@@ -68,6 +68,7 @@ from run_reference import DEFAULT_IMAGE, DEFAULT_PROMPT, MODEL_ID, structured_pr
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NEG_INF_BIAS = -1.0e9
+ATTENTION_CHUNK_BYTES = 1 << 30
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +80,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=["prepare", "reference", "text", "text_cond", "denoiser", "vae", "vae_chunks",
                                           "pipeline", "postprocess"])
-    parser.add_argument("--size", type=int, default=256, help="square output size, multiple of 32")
+    parser.add_argument("--size", type=int, nargs="+", default=[256], metavar="SIZE",
+                        help="output size, multiples of 32: one value (square) or WIDTH HEIGHT")
     parser.add_argument("--num-frames", type=int, default=33)
     parser.add_argument("--fps", type=float, default=16.0)
     parser.add_argument("--steps", type=int, default=20)
@@ -105,12 +107,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decoder-stride", type=int, default=8, help="prepare: latent stride between decoder tiles")
     parser.add_argument("--decoder-chunked", action="store_true",
                         help="prepare: decode one latent frame at a time (vae_chunks stage) instead of the whole clip")
+    parser.add_argument("--skip-encode-check", action="store_true",
+                        help="prepare: skip comparing the one-frame encode with a whole-clip encode of the image")
+    parser.add_argument("--skip-decode-check", action="store_true",
+                        help="vae_chunks: export without decoding the whole clip and comparing it with diffusers")
     parser.add_argument("--text-bucket", type=int, default=512,
                         help="text_cond: padded length of the conditional prompt graph")
     parser.add_argument("--video-dir", type=Path, default=REPO_ROOT / "build" / "TestingOutput" / "cosmos3")
     args = parser.parse_args()
+    if len(args.size) not in (1, 2) or any(v % 32 for v in args.size):
+        parser.error("--size takes one or two multiples of 32")
+    args.width, args.height = args.size[0], args.size[-1]
     if args.onnx_dir is None:
-        args.onnx_dir = REPO_ROOT / "data" / "onnx" / f"cosmos3_{args.size}"
+        args.onnx_dir = REPO_ROOT / "data" / "onnx" / (
+            f"cosmos3_{args.width}" if args.width == args.height else f"cosmos3_{args.width}x{args.height}")
     return args
 
 
@@ -194,10 +204,26 @@ def grouped_attention(q: torch.Tensor, k_t: torch.Tensor, v: torch.Tensor, bias:
     h // groups, so the groups of one KV head become consecutive query rows.
     """
     b, t, h, d = q.shape
-    kv = k_t.shape[1]
-    q = q.permute(0, 2, 1, 3).reshape(b, kv, (h // kv) * t, d) * (1.0 / math.sqrt(d))
-    scores = torch.matmul(q, k_t) + bias
-    context = torch.matmul(torch.softmax(scores, dim=-1), v)
+    kv, keys = k_t.shape[1], k_t.shape[3]
+    rows = (h // kv) * t
+    q = q.permute(0, 2, 1, 3).reshape(b, kv, rows, d) * (1.0 / math.sqrt(d))
+    # Score tensors above ATTENTION_CHUNK_BYTES are computed in query chunks, so
+    # neither PyTorch nor the traced graph materializes them whole; each chunk is
+    # its own MatMul -> Add -> Softmax -> MatMul sequence (fused by Klartraum).
+    chunk = max(64, (ATTENTION_CHUNK_BYTES // (b * kv * keys * 4)) // 64 * 64)
+    if rows <= chunk:
+        context = torch.matmul(torch.softmax(torch.matmul(q, k_t) + bias, dim=-1), v)
+    else:
+        parts = []
+        for start in range(0, rows, chunk):
+            stop = min(start + chunk, rows)
+            part_bias = bias[..., start:stop, :] if bias.dim() >= 2 and bias.shape[-2] == rows else bias
+            parts.append(torch.matmul(torch.softmax(torch.matmul(q[:, :, start:stop], k_t) + part_bias, dim=-1), v))
+        # Klartraum concatenates two inputs at a time: join the chunks as a balanced tree.
+        while len(parts) > 1:
+            parts = [torch.cat(parts[i : i + 2], dim=2) if i + 1 < len(parts) else parts[i]
+                     for i in range(0, len(parts), 2)]
+        context = parts[0]
     return context.reshape(b, h, t, d).permute(0, 2, 1, 3).reshape(b, t, h * d)
 
 
@@ -343,7 +369,7 @@ def load_transformer(keep: str | None) -> Cosmos3OmniTransformer:
 def stage_prepare(args: argparse.Namespace) -> None:
     """Tokenize, encode the conditioning frame, sample noise, and build host-side tables."""
     out = args.onnx_dir
-    size, frames, fps = args.size, args.num_frames, args.fps
+    width, height, frames, fps = args.width, args.height, args.num_frames, args.fps
     pipe = Cosmos3OmniPipeline.from_pretrained(
         MODEL_ID, transformer=None, torch_dtype=torch.float32, enable_safety_checker=False
     )
@@ -352,10 +378,10 @@ def stage_prepare(args: argparse.Namespace) -> None:
     prompt = (
         json.dumps(json.loads(args.prompt_file.read_text()))
         if args.prompt_file
-        else structured_prompt(args.prompt, frames, fps, size, size)
+        else structured_prompt(args.prompt, frames, fps, height, width)
     )
     cond_ids, uncond_ids = pipe.tokenize_prompt(
-        prompt, negative, num_frames=frames, height=size, width=size, fps=fps,
+        prompt, negative, num_frames=frames, height=height, width=width, fps=fps,
         add_resolution_template=False, add_duration_template=False,
     )
     lengths = [len(cond_ids), len(uncond_ids)]
@@ -367,17 +393,21 @@ def stage_prepare(args: argparse.Namespace) -> None:
 
     # Conditioning frame: the VAE is temporally causal, so latent frame 0 only
     # depends on pixel frame 0 and a one-frame encode reproduces the pipeline.
-    image = _preprocess_conditioning_image(Image.open(args.image).convert("RGB"), height=size, width=size)
+    image = _preprocess_conditioning_image(Image.open(args.image).convert("RGB"), height=height, width=width)
     with torch.no_grad():
-        clip = image.unsqueeze(2).expand(-1, -1, frames, -1, -1).contiguous()
-        full = pipe._encode_video(clip)
         single = pipe._encode_video(image.unsqueeze(2).contiguous())
-    report("one-frame encode vs full-clip latent 0", single[:, :, 0].numpy(), full[:, :, 0].numpy())
+        if args.skip_encode_check:
+            # Only latent frame 0 is used; the others start as noise.
+            full = single.expand(-1, -1, (frames - 1) // 4 + 1, -1, -1).clone()
+        else:
+            clip = image.unsqueeze(2).expand(-1, -1, frames, -1, -1).contiguous()
+            full = pipe._encode_video(clip)
+            report("one-frame encode vs full-clip latent 0", single[:, :, 0].numpy(), full[:, :, 0].numpy())
     latent_t = full.shape[2]
-    latent_hw = size // 16
+    latent_h, latent_w = height // 16, width // 16
     patch = tconfig["latent_patch_size"]
-    grid = latent_hw // patch
-    tokens_per_frame = grid * grid
+    grid_h, grid_w = latent_h // patch, latent_w // patch
+    tokens_per_frame = grid_h * grid_w
     num_tokens = latent_t * tokens_per_frame
 
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
@@ -398,7 +428,7 @@ def stage_prepare(args: argparse.Namespace) -> None:
         text_cos.append(cos)
         text_sin.append(sin_rot)
         vision_ids, _ = get_3d_mrope_ids_vae_tokens(
-            grid_t=latent_t, grid_h=grid, grid_w=grid,
+            grid_t=latent_t, grid_h=grid_h, grid_w=grid_w,
             temporal_offset=next_offset + tconfig["unified_3d_mrope_temporal_modality_margin"],
             reset_spatial_indices=tconfig["unified_3d_mrope_reset_spatial_ids"],
             fps=fps, base_fps=float(tconfig["base_fps"]), temporal_compression_factor=4,
@@ -420,7 +450,7 @@ def stage_prepare(args: argparse.Namespace) -> None:
     scheduler.set_timesteps(args.steps, sigmas=sigmas)
 
     config = {
-        "size": size, "num_frames": frames, "fps": fps, "steps": args.steps,
+        "width": width, "height": height, "num_frames": frames, "fps": fps, "steps": args.steps,
         "guidance_scale": args.guidance_scale, "flow_shift": args.flow_shift, "seed": args.seed,
         "prompt": prompt if args.prompt_file else args.prompt, "text_length": text_length, "prompt_lengths": lengths,
         "latent_shape": list(latents.shape), "patch": patch, "num_tokens": num_tokens,
@@ -462,7 +492,8 @@ def stage_reference(args: argparse.Namespace) -> None:
     latents = torch.from_numpy(load(out, "initial_latents_f32.bin"))
     timestep = float(load(out, "timesteps_f32.bin")[0])
     vision_ids = [torch.from_numpy(load(out, f"vision_position_ids_{i}_f32.bin")) for i in range(2)]
-    lt, grid, per_frame = cfg["latent_shape"][1], cfg["latent_shape"][2] // cfg["patch"], cfg["tokens_per_frame"]
+    lt, per_frame = cfg["latent_shape"][1], cfg["tokens_per_frame"]
+    grid_h, grid_w = cfg["latent_shape"][2] // cfg["patch"], cfg["latent_shape"][3] // cfg["patch"]
     velocities = []
     for branch in range(2):
         length = cfg["prompt_lengths"][branch]
@@ -477,7 +508,7 @@ def stage_reference(args: argparse.Namespace) -> None:
                 und_len=length,
                 sequence_length=length + cfg["num_tokens"],
                 vision_tokens=[latents.unsqueeze(0)],
-                vision_token_shapes=[(lt, grid, grid)],
+                vision_token_shapes=[(lt, grid_h, grid_w)],
                 vision_sequence_indexes=torch.arange(length, length + cfg["num_tokens"]),
                 vision_mse_loss_indexes=torch.arange(length + per_frame, length + cfg["num_tokens"]),
                 vision_timesteps=torch.full(((lt - 1) * per_frame,), timestep),
@@ -803,11 +834,14 @@ def stage_denoiser(args: argparse.Namespace) -> None:
     if args.fixtures_only:
         return
 
-    reference = load(out, "reference_step0_velocity_f32.bin")
-    shape = tuple(cfg["latent_shape"])
-    for branch in range(2):
-        unpacked = unpatchify(torch.from_numpy(velocity[branch]), shape, cfg["patch"]).numpy()
-        report(f"wrapper vs diffusers velocity, branch {branch}", unpacked[:, 1:], reference[branch][:, 1:])
+    if (out / "reference_step0_velocity_f32.bin").exists():
+        reference = load(out, "reference_step0_velocity_f32.bin")
+        shape = tuple(cfg["latent_shape"])
+        for branch in range(2):
+            unpacked = unpatchify(torch.from_numpy(velocity[branch]), shape, cfg["patch"]).numpy()
+            report(f"wrapper vs diffusers velocity, branch {branch}", unpacked[:, 1:], reference[branch][:, 1:])
+    else:
+        print("  no reference stage output: the wrapper is not compared with diffusers", flush=True)
 
     path = out / "denoiser.onnx"
     export_graph(module, torch_inputs, list(feeds), ["velocity"], path)
@@ -1129,16 +1163,22 @@ def stage_vae_chunks(args: argparse.Namespace) -> None:
     chunk = VaeDecoderChunk(whole, first=False).eval().to(device)
     latents = torch.from_numpy(load(out, "initial_latents_f32.bin")).unsqueeze(0)
     started = time.perf_counter()
-    video, first_caches = chunked_decode(first, chunk, latents, device)
-    print(f"  chunked PyTorch decode in {time.perf_counter() - started:.1f}s, output {dims(video)}, "
-          f"{len(first_caches)} caches", flush=True)
-    with torch.no_grad():
-        reference = vae.to(device).decode(
-            (latents / inv_std.view(1, -1, 1, 1, 1) + mean.view(1, -1, 1, 1, 1)).to(device)).sample.cpu()
-    report("chunked decoder vs diffusers (clamped)", video.clamp(-1, 1).numpy(), reference.numpy())
-    vae.to("cpu")
-    save(out, "decoder_reference_input_f32.bin", latents[0].numpy())
-    save(out, "decoder_reference_output_f32.bin", video[0].numpy())
+    if args.skip_decode_check:
+        with torch.no_grad():
+            _, *caches = first(latents[:, :, :1].to(device))
+        first_caches = [c.cpu() for c in caches]
+        print(f"  first chunk in {time.perf_counter() - started:.1f}s, {len(first_caches)} caches", flush=True)
+    else:
+        video, first_caches = chunked_decode(first, chunk, latents, device)
+        print(f"  chunked PyTorch decode in {time.perf_counter() - started:.1f}s, output {dims(video)}, "
+              f"{len(first_caches)} caches", flush=True)
+        with torch.no_grad():
+            reference = vae.to(device).decode(
+                (latents / inv_std.view(1, -1, 1, 1, 1) + mean.view(1, -1, 1, 1, 1)).to(device)).sample.cpu()
+        report("chunked decoder vs diffusers (clamped)", video.clamp(-1, 1).numpy(), reference.numpy())
+        vae.to("cpu")
+        save(out, "decoder_reference_input_f32.bin", latents[0].numpy())
+        save(out, "decoder_reference_output_f32.bin", video[0].numpy())
 
     first.to("cpu")
     chunk.to("cpu")

@@ -768,7 +768,9 @@ int main(int argc, char** argv) {
         const LatentShape shape{config.count("latent_shape", 0), config.count("latent_shape", 1),
                                 config.count("latent_shape", 2), config.count("latent_shape", 3),
                                 config.count("patch")};
-        const uint32_t size = config.count("size");
+        // Square exports record "size"; others "width" and "height".
+        const uint32_t width = config.countOr("width", config.countOr("size", 0));
+        const uint32_t height = config.countOr("height", config.countOr("size", 0));
         const uint32_t frames = config.count("num_frames");
         const size_t frameLatentElements = size_t(shape.height) * shape.width;
         const auto totalStarted = std::chrono::steady_clock::now();
@@ -779,7 +781,7 @@ int main(int argc, char** argv) {
         const uint32_t decoderCaches = config.countOr("decoder_caches", 0);
         if (options.stage == "vae" && decoderChunked) {
             const auto input = readTensor<float>(directory / "decoder_reference_input_f32.bin", shape.elements());
-            const auto video = decodeChunked(context, options, shape, input, decoderCaches, size, size);
+            const auto video = decodeChunked(context, options, shape, input, decoderCaches, height, width);
             requireClose(
                 "Decoded video",
                 compare(video, readTensor<float>(directory / "decoder_reference_output_f32.bin", video.size())), 1e-3f);
@@ -799,14 +801,14 @@ int main(int argc, char** argv) {
         }
 
         // 1. Conditioning frame: Wan VAE encode of the preprocessed image.
-        const auto exportedImage = readTensor<float>(directory / "image_f32.bin", size_t(3) * size * size);
+        const auto exportedImage = readTensor<float>(directory / "image_f32.bin", size_t(3) * height * width);
         std::vector<float> image = exportedImage;
         if (!options.image.empty()) {
-            image = klartraum::preprocessConditioningImage(klartraum::readPpm(options.image), size, size);
+            image = klartraum::preprocessConditioningImage(klartraum::readPpm(options.image), width, height);
             requireClose("Conditioning image", compare(image, exportedImage), 1e-5f);
         }
-        auto condition = runOnce(context, options, "vae_encoder.onnx", "image", {1, 3, 1, size, size}, image, "latent",
-                                 "VAE encoder");
+        auto condition = runOnce(context, options, "vae_encoder.onnx", "image", {1, 3, 1, height, width}, image,
+                                 "latent", "VAE encoder");
         requireClose("Condition latent",
                      compare(condition, readTensor<float>(directory / "condition_latent_f32.bin", condition.size())),
                      1e-3f);
@@ -830,9 +832,12 @@ int main(int argc, char** argv) {
         if (timesteps != referenceTimesteps)
             throw std::runtime_error("Scheduler timesteps differ from the export");
         const float guidance = static_cast<float>(config.number("guidance_scale"));
-        const auto referenceLatents = options.check ? readTensor<float>(directory / "reference_step_latents_f32.bin",
-                                                                        timesteps.size() * shape.elements())
-                                                    : std::vector<float>{};
+        // The float32 pipeline fixtures (export_onnx.py pipeline) are optional.
+        const bool pipelineReference = options.check && fs::exists(directory / "reference_step_latents_f32.bin");
+        const auto referenceLatents =
+            pipelineReference
+                ? readTensor<float>(directory / "reference_step_latents_f32.bin", timesteps.size() * shape.elements())
+                : std::vector<float>{};
         const size_t steps = std::min(timesteps.size(), options.maxSteps);
         double denoiseSeconds = 0.0;
         {
@@ -864,7 +869,7 @@ int main(int argc, char** argv) {
                 denoiseSeconds += seconds;
                 std::cout << "Step " << step + 1 << "/" << timesteps.size() << " t=" << timesteps[step] << " in "
                           << seconds << " s";
-                if (options.check) {
+                if (pipelineReference) {
                     const std::vector<float> reference(referenceLatents.begin() + step * shape.elements(),
                                                        referenceLatents.begin() + (step + 1) * shape.elements());
                     std::cout << ", latent max error vs float32 reference " << compare(latents, reference).maxError;
@@ -876,7 +881,7 @@ int main(int argc, char** argv) {
         }
         if (options.stage == "step")
             return 0;
-        if (steps == timesteps.size() && options.check) {
+        if (steps == timesteps.size() && pipelineReference) {
             requireClose(
                 "Final latents",
                 compare(latents, readTensor<float>(directory / "reference_final_latents_f32.bin", latents.size())),
@@ -884,14 +889,14 @@ int main(int argc, char** argv) {
         }
 
         // 4. Wan VAE decode: of the whole clip, one latent frame at a time, or in overlapping tiles.
-        auto video = decoderChunked ? decodeChunked(context, options, shape, latents, decoderCaches, size, size)
+        auto video = decoderChunked ? decodeChunked(context, options, shape, latents, decoderCaches, height, width)
                      : decoderTile  ? decodeTiled(context, options, shape, latents, decoderTile, decoderStride)
                                     : runOnce(context, options, "vae_decoder.onnx", "latents",
                                               {1, shape.channels, shape.frames, shape.height, shape.width}, latents,
                                               "video", "VAE decoder");
         for (auto& value : video)
             value = std::clamp(value, -1.0f, 1.0f);
-        if (steps == timesteps.size() && options.check) {
+        if (steps == timesteps.size() && pipelineReference) {
             const auto reference = readTensor<float>(directory / "reference_video_f32.bin", video.size());
             const auto check = compare(video, reference);
             double meanError = 0.0;
@@ -905,14 +910,14 @@ int main(int argc, char** argv) {
         }
         // Frame 0 reproduces the conditioning image.
         double frameZeroError = 0.0;
-        const size_t plane = size_t(size) * size;
+        const size_t plane = size_t(height) * width;
         for (uint32_t c = 0; c < 3; ++c) {
             for (size_t i = 0; i < plane; ++i) {
                 frameZeroError += std::abs(video[size_t(c) * frames * plane + i] - image[size_t(c) * plane + i]);
             }
         }
         std::cout << "Frame 0 mean error vs the conditioning image: " << frameZeroError / (3.0 * plane) << std::endl;
-        writeVideo(options.outputDirectory, options.name, video, frames, size, size,
+        writeVideo(options.outputDirectory, options.name, video, frames, height, width,
                    static_cast<uint32_t>(config.number("fps")));
         std::cout << "Denoising " << denoiseSeconds << " s (" << denoiseSeconds / std::max<size_t>(steps, 1)
                   << " s/step), total " << secondsSince(totalStarted) << " s" << std::endl;

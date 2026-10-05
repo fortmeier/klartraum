@@ -1,0 +1,145 @@
+{
+ "forklift": {
+  "sd_prompt": "photo of a yellow forklift carrying a wooden pallet of cardboard boxes across a large modern warehouse, tall blue shelving racks, polished concrete floor, bright overhead lights, realistic photograph, wide shot",
+  "caption": {
+   "subjects": [
+    {
+     "description": "A yellow forklift with a driver, carrying a wooden pallet stacked with cardboard boxes",
+     "action": "Drives across the warehouse floor from left to right, turns slightly and continues towards the shelves",
+     "number_of_subjects": 1
+    },
+    {
+     "description": "Tall blue shelving racks filled with boxes",
+     "action": "Stand still in the background",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "Static camera on a tripod at eye level",
+    "framing": "Wide shot of the warehouse floor and the forklift"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:02",
+     "description": "The forklift drives forward across the warehouse floor carrying the pallet"
+    },
+    {
+     "time": "0:02-0:05",
+     "description": "The forklift turns towards the shelving racks and keeps driving, the pallet swaying slightly on the forks"
+    }
+   ],
+   "temporal_caption": "A yellow forklift carries a pallet of boxes across a bright warehouse floor and turns towards the tall shelving racks.",
+   "resolution": {
+    "W": 832,
+    "H": 480
+   },
+   "duration": "5s",
+   "fps": 24.0
+  }
+ },
+ "aisle_robot": {
+  "sd_prompt": "view from a low mobile robot driving through a narrow warehouse aisle, tall shelves with boxes on both sides, pallets and boxes standing on the floor close by, polished concrete floor, realistic photograph",
+  "caption": {
+   "subjects": [
+    {
+     "description": "A narrow warehouse aisle between tall shelves stacked with cardboard boxes, with pallets standing on the floor",
+     "action": "The shelves, boxes and pallets rush past both sides of the frame as the robot drives forward quickly",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "The video is captured from a camera mounted on an autonomous mobile robot driving forward quickly along the aisle; continuous forward tracking shot",
+    "framing": "Low forward-facing view with the end of the aisle in the center"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:05",
+     "description": "The robot drives quickly forward; pallets and shelves sweep past the left and right edges of the frame and the end of the aisle comes closer"
+    }
+   ],
+   "temporal_caption": "Forward-facing camera footage from a mobile robot driving quickly through a warehouse aisle; pallets and shelves sweep past on both sides.",
+   "resolution": {
+    "W": 832,
+    "H": 480
+   },
+   "duration": "5s",
+   "fps": 24.0
+  }
+ },
+ "picking_arm": {
+  "sd_prompt": "photo of a large orange industrial robotic arm with a gripper, mounted next to a conveyor belt, holding a cardboard box in the air, warehouse in the background, realistic photograph, wide shot",
+  "caption": {
+   "subjects": [
+    {
+     "description": "An orange six-axis industrial robot arm with a suction gripper",
+     "action": "Picks a cardboard box from the conveyor, swings it over and places it on the stacked pallet, then returns to the conveyor",
+     "number_of_subjects": 1
+    },
+    {
+     "description": "Cardboard boxes on a moving conveyor belt",
+     "action": "Move along the belt towards the robot",
+     "number_of_subjects": 3
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "Static camera",
+    "framing": "Medium shot of the robot arm, the conveyor and the pallet"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:02",
+     "description": "The robot arm lowers its suction gripper onto a box on the conveyor and lifts it"
+    },
+    {
+     "time": "0:02-0:05",
+     "description": "The arm swings the box over to the pallet, sets it down on the stack and swings back while the next box arrives on the conveyor"
+    }
+   ],
+   "temporal_caption": "An orange industrial robot arm picks a cardboard box from a conveyor belt and stacks it on a pallet while the next box arrives.",
+   "resolution": {
+    "W": 832,
+    "H": 480
+   },
+   "duration": "5s",
+   "fps": 24.0
+  }
+ },
+ "conveyor": {
+  "sd_prompt": "photo of many cardboard parcels on a long conveyor belt in a parcel sorting warehouse, rollers and metal frames, bright lights, realistic photograph",
+  "caption": {
+   "subjects": [
+    {
+     "description": "Cardboard parcels of different sizes on a long conveyor belt",
+     "action": "Travel steadily along the belt from the back towards the front of the frame and leave the frame",
+     "number_of_subjects": 6
+    },
+    {
+     "description": "A parcel sorting line with rollers and metal frames",
+     "action": "The belt runs continuously",
+     "number_of_subjects": 1
+    }
+   ],
+   "cinematography": {
+    "camera_motion": "Static camera above the conveyor",
+    "framing": "Medium-wide shot along the conveyor belt"
+   },
+   "style_medium": "Live-action video",
+   "actions": [
+    {
+     "time": "0:00-0:05",
+     "description": "Parcels move steadily along the conveyor towards the camera; new parcels keep arriving from the back"
+    }
+   ],
+   "temporal_caption": "Cardboard parcels travel steadily along a conveyor belt in a sorting warehouse, new parcels arriving from the back.",
+   "resolution": {
+    "W": 832,
+    "H": 480
+   },
+   "duration": "5s",
+   "fps": 24.0
+  }
+ }
+}
