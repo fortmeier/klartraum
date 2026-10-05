@@ -65,6 +65,13 @@ struct RmsNormalizationPushConstants {
     uint32_t width;
 };
 
+struct ChannelRmsNormalizationPushConstants {
+    uint32_t batch;
+    uint32_t channels;
+    uint32_t positions;
+    uint32_t silu;
+};
+
 struct GemmPushConstants {
     uint32_t rows;
     uint32_t columns;

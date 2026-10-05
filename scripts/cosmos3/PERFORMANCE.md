@@ -74,6 +74,11 @@ At 512x512 a denoiser step went from 23.4 s (unfused) to about 17 s with cycle 2
 | MatMul epilogues: ReLU² (MatMul -> Relu -> Mul) and residual Add | 2.64 s | | 14.6 s | Kept |
 | + last-axis RMS normalization in one pass (6 nodes -> 1) | 2.57 s | 11.2 s | 14.2 s | Kept |
 
+The Wan VAE's channel RMS normalization and the SiLU after it (8 nodes) also
+run as one kernel: VAE decode 30.1 s instead of 30.6 s at 256x256, 125.7 s
+instead of 128.1 s for the chunked 512x512 decode (within run-to-run variation
+end to end).
+
 Also measured and rejected for the MatMul kernel: register prefetch of the next
 tile (~1440 GFLOP/s), double-buffered shared tiles (~1470), explicit fma() (~1510),
 128x128 tiles with 512 invocations (~1290), no shared memory at all (~1250), and

@@ -313,6 +313,16 @@ ComputeGraphElementPtr createRmsNormalization(VulkanContext* vulkanContext, cons
     return layers::rmsNormalization(*vulkanContext, getTensorDimensions(node.input(0), infos, graph));
 }
 
+ComputeGraphElementPtr createChannelRmsNormalization(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                                     const ValueInfos& infos, const onnx::GraphProto& graph) {
+    bool silu = false;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == "silu")
+            silu = attribute.i() != 0;
+    }
+    return layers::channelRmsNormalization(*vulkanContext, getTensorDimensions(node.input(0), infos, graph), silu);
+}
+
 ComputeGraphElementPtr createMatMulReluSquare(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                               const ValueInfos& infos, const onnx::GraphProto& graph) {
     return layers::matMulReluSquare(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
@@ -559,6 +569,8 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
         operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, layers::UnaryOp::Erf);
     } else if (operationType == "InstanceNormalization") {
         operation = createInstanceNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "ChannelRmsNormalization") {
+        operation = createChannelRmsNormalization(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "RmsNormalization") {
         operation = createRmsNormalization(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "MatMulReluSquare") {

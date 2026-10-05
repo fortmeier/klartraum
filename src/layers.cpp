@@ -441,6 +441,16 @@ ComputeGraphElementPtr rmsNormalization(VulkanContext& vulkanContext, const Shap
     return operation;
 }
 
+ComputeGraphElementPtr channelRmsNormalization(VulkanContext& vulkanContext, const Shape& input, bool silu) {
+    if (input.size() < 2)
+        throw std::runtime_error("Channel RMS normalization requires rank >= 2");
+    ChannelRmsNormalizationPushConstants constants{input[0], input[1], elementCount(input) / (input[0] * input[1]),
+                                                   silu ? 1u : 0u};
+    auto operation = computation(vulkanContext, "shaders/onnx/channel_rms_norm.comp.spv", constants);
+    operation->setGroupCount((constants.positions + 255) / 256, constants.batch, 1);
+    return operation;
+}
+
 ComputeGraphElementPtr softmax(VulkanContext& vulkanContext, const Shape& shape) {
     if (shape.empty())
         throw std::runtime_error("Softmax requires rank >= 1");

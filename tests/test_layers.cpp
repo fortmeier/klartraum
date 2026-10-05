@@ -23,6 +23,8 @@
  *   prints the wall time of both
  * - rmsNormalizationLastAxis: last-axis RMS normalization with eps and a per-element scale matches
  *   the CPU for 2048-wide rows (Cosmos3 hidden states) and 128-wide rows (per-head q/k norms)
+ * - channelRmsNormalization: channel-axis RMS normalization with a per-channel scale, with and
+ *   without the following SiLU (the Wan VAE's norm + nonlinearity), matches the CPU for rank five and four
  * - conv3x3WithBias: the specialized 3x3 convolution with padding and bias matches a CPU convolution
  * - layerNormalization: last-axis normalization with scale and bias matches the CPU
  **/
@@ -470,6 +472,40 @@ TEST_F(LayersTest, rmsNormalizationLastAxis) {
             }
         }
         expectNear(actual, expected, 1e-5f);
+    }
+}
+
+TEST_F(LayersTest, channelRmsNormalization) {
+    for (const Shape shape : {Shape{1, 64, 2, 5, 7}, Shape{2, 96, 3, 4}}) {
+        for (const bool silu : {false, true}) {
+            const uint32_t channels = shape[1];
+            const uint32_t positions = layers::elementCount(shape) / (shape[0] * channels);
+            const auto x = ramp(layers::elementCount(shape), 0.29f, -2.5f);
+            const auto scale = ramp(channels, 0.07f, 0.3f);
+            const std::vector<float> eps{1e-6f};
+            const auto actual =
+                run(layers::channelRmsNormalization(*vc, shape, silu),
+                    {{tensor(shape), x}, {tensor({1}), eps}, {tensor({1, channels, 1, 1, 1}), scale}}, tensor(shape));
+            std::vector<float> expected(x.size());
+            for (uint32_t n = 0; n < shape[0]; ++n) {
+                for (uint32_t p = 0; p < positions; ++p) {
+                    double sum = 0.0;
+                    for (uint32_t c = 0; c < channels; ++c) {
+                        const double v = x[(size_t(n) * channels + c) * positions + p];
+                        sum += v * v;
+                    }
+                    const double inverse = 1.0 / std::sqrt(sum / channels + eps[0]);
+                    for (uint32_t c = 0; c < channels; ++c) {
+                        const size_t index = (size_t(n) * channels + c) * positions + p;
+                        double y = x[index] * inverse * scale[c];
+                        if (silu)
+                            y = y / (1.0 + std::exp(-y));
+                        expected[index] = float(y);
+                    }
+                }
+            }
+            expectNear(actual, expected, 1e-5f);
+        }
     }
 }
 

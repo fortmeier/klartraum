@@ -228,9 +228,11 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
                 count *= dimension;
             return count;
         };
-        // RMS normalization over the last axis, as PyTorch exports it:
-        // Mul(x, x) -> ReduceMean(-1) -> Add(eps) -> Sqrt -> Div(x, .) -> Mul(scale).
-        auto rmsNormalization = [&](int index) -> std::optional<onnx::NodeProto> {
+        // RMS normalization as PyTorch exports it: Mul(x, x) -> ReduceMean -> Add(eps)
+        // -> Sqrt -> Div(x, .) -> Mul(scale), over the last axis (transformers) or the
+        // channel axis (the Wan VAE, often followed by SiLU: Sigmoid -> Mul).
+        // Returns the fused node and the number of nodes it replaces.
+        auto rmsNormalization = [&](int index) -> std::optional<std::pair<onnx::NodeProto, int>> {
             if (index + 5 >= graph->node_size())
                 return std::nullopt;
             const auto& square = graph->node(index);
@@ -251,41 +253,62 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
             if (shape == declaredShapes.end() || shape->second.empty())
                 return std::nullopt;
             const int64_t rank = int64_t(shape->second.size());
-            bool lastAxis = false, keepDims = true;
+            bool lastAxis = false, channelAxis = false, keepDims = true;
             for (const auto& attribute : mean.attribute()) {
-                if (attribute.name() == "axes") {
-                    lastAxis = attribute.ints_size() == 1 && (attribute.ints(0) == -1 || attribute.ints(0) == rank - 1);
+                if (attribute.name() == "axes" && attribute.ints_size() == 1) {
+                    lastAxis = attribute.ints(0) == -1 || attribute.ints(0) == rank - 1;
+                    channelAxis = !lastAxis && rank >= 3 && (attribute.ints(0) == 1 || attribute.ints(0) == 1 - rank);
                 }
                 if (attribute.name() == "keepdims")
                     keepDims = attribute.i() != 0;
             }
+            const int64_t normalized = lastAxis ? shape->second.back() : channelAxis ? shape->second[1] : -1;
             const bool meanFirst = add.input(0) == mean.output(0);
             const std::string eps = meanFirst ? add.input(1) : add.input(0);
             const bool divideFirst = scale.input(0) == divide.output(0);
             const std::string weight = divideFirst ? scale.input(1) : scale.input(0);
-            if (!lastAxis || !keepDims || (!meanFirst && add.input(1) != mean.output(0)) || elementsOf(eps) != 1 ||
+            if (normalized < 0 || !keepDims || (!meanFirst && add.input(1) != mean.output(0)) || elementsOf(eps) != 1 ||
                 divide.input(0) != x || divide.input(1) != root.output(0) ||
-                (!divideFirst && scale.input(1) != divide.output(0)) || elementsOf(weight) != shape->second.back() ||
+                (!divideFirst && scale.input(1) != divide.output(0)) || elementsOf(weight) != normalized ||
                 !intermediate(square.output(0), 1) || !intermediate(mean.output(0), 1) ||
                 !intermediate(add.output(0), 1) || !intermediate(root.output(0), 1) ||
                 !intermediate(divide.output(0), 1)) {
                 return std::nullopt;
             }
             onnx::NodeProto fused = scale;
-            fused.set_op_type("RmsNormalization");
+            fused.set_op_type(lastAxis ? "RmsNormalization" : "ChannelRmsNormalization");
             fused.set_name(scale.name() + "/KlartraumRmsNormalization");
             fused.clear_input();
             fused.add_input(x);
             fused.add_input(eps);
             fused.add_input(weight);
-            return fused;
+            fused.clear_attribute();
+            int replaced = 6;
+            if (channelAxis && index + 7 < graph->node_size()) {
+                const auto& sigmoid = graph->node(index + 6);
+                const auto& gate = graph->node(index + 7);
+                const std::string& y = scale.output(0);
+                if (sigmoid.op_type() == "Sigmoid" && sigmoid.input(0) == y && gate.op_type() == "Mul" &&
+                    gate.input_size() == 2 &&
+                    ((gate.input(0) == y && gate.input(1) == sigmoid.output(0)) ||
+                     (gate.input(1) == y && gate.input(0) == sigmoid.output(0))) &&
+                    intermediate(y, 2) && intermediate(sigmoid.output(0), 1)) {
+                    fused.set_output(0, gate.output(0));
+                    auto* silu = fused.add_attribute();
+                    silu->set_name("silu");
+                    silu->set_type(onnx::AttributeProto::INT);
+                    silu->set_i(1);
+                    replaced = 8;
+                }
+            }
+            return std::make_pair(std::move(fused), replaced);
         };
         std::vector<onnx::NodeProto> nodes;
         size_t reluSquares = 0, residuals = 0, rmsNormalizations = 0;
         for (int index = 0; index < graph->node_size();) {
             if (auto fused = rmsNormalization(index)) {
-                nodes.push_back(std::move(*fused));
-                index += 6;
+                nodes.push_back(std::move(fused->first));
+                index += fused->second;
                 ++rmsNormalizations;
                 continue;
             }
