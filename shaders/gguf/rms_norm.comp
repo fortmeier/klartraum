@@ -8,7 +8,8 @@
 
 // RMS normalization of `width`-wide rows: y = x / sqrt(mean(x^2) + eps) * scale.
 // Each token holds `rowsPerToken` rows; only the params[0] active tokens are
-// normalized. One 32-wide subgroup per row.
+// normalized. One workgroup per row: its invocations sum strided squares,
+// the subgroups and then shared memory add them up.
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 layout(push_constant) uniform PushConstants {
     uint width;
@@ -20,16 +21,22 @@ layout(set = 0, binding = 1) restrict readonly buffer ScaleBuffer { float scale[
 layout(set = 0, binding = 2) restrict readonly buffer ParamsBuffer { uint params[]; };
 layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float Y[]; };
 
+shared float partial[8];
+
 void main() {
-    const uint row = gl_WorkGroupID.x * (256u / 32u) + gl_SubgroupID;
-    if (row >= params[0] * pc.rowsPerToken) return;
-    const uint lane = gl_SubgroupInvocationID;
+    const uint row = gl_WorkGroupID.x;
+    if (row >= params[0] * pc.rowsPerToken) return;  // uniform per workgroup
     const uint offset = row * pc.width;
     float sum = 0.0;
-    for (uint i = lane; i < pc.width; i += 32u) {
+    for (uint i = gl_LocalInvocationID.x; i < pc.width; i += 256u) {
         const float value = X[offset + i];
         sum += value * value;
     }
-    const float inverse = inversesqrt(subgroupAdd(sum) / float(pc.width) + pc.epsilon);
-    for (uint i = lane; i < pc.width; i += 32u) Y[offset + i] = X[offset + i] * inverse * scale[i];
+    sum = subgroupAdd(sum);
+    if (subgroupElect()) partial[gl_SubgroupID] = sum;
+    barrier();
+    float total = 0.0;
+    for (uint s = 0u; s < gl_NumSubgroups; ++s) total += partial[s];
+    const float inverse = inversesqrt(total / float(pc.width) + pc.epsilon);
+    for (uint i = gl_LocalInvocationID.x; i < pc.width; i += 256u) Y[offset + i] = X[offset + i] * inverse * scale[i];
 }
