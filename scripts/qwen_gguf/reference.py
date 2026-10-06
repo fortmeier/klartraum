@@ -12,6 +12,11 @@ linear-attention recurrence runs token by token.
 Usage (from this directory):
     uv run python reference.py MODEL.gguf --tokens 1 17 255 [--check REFERENCE.gguf]
     uv run python reference.py MODEL.gguf --tokens ... --save logits.npy
+    uv run python reference.py MODEL.gguf --tokens ... --save-gguf ../../build/TestingOutput/qwen_reference.gguf
+
+--save-gguf writes `tokens` and `logits` like make_tiny_model.py does;
+tests/test_gguf_qwen35.cpp compares Klartraum on the downloaded model with
+build/TestingOutput/qwen_reference.gguf when it exists.
 
 With --check, the logits are compared to the `logits` tensor of a reference
 file written by make_tiny_model.py. For the 27B model expect several minutes
@@ -175,12 +180,26 @@ def main() -> int:
     parser.add_argument("--tokens", type=int, nargs="+", required=True)
     parser.add_argument("--check", help="reference GGUF with a `logits` tensor")
     parser.add_argument("--save", help="write the logits as .npy")
+    parser.add_argument("--save-gguf", help="write tokens and logits as a reference GGUF")
     args = parser.parse_args()
 
     logits = forward(Model(args.model), args.tokens)
     print("argmax per position:", logits.argmax(-1).tolist())
     if args.save:
         np.save(args.save, logits)
+    if args.save_gguf:
+        from pathlib import Path
+
+        from gguf import GGUFWriter
+
+        Path(args.save_gguf).parent.mkdir(parents=True, exist_ok=True)
+        writer = GGUFWriter(args.save_gguf, "reference")
+        writer.add_tensor("tokens", np.array(args.tokens, dtype=np.int32))
+        writer.add_tensor("logits", logits.astype(np.float32))
+        writer.write_header_to_file()
+        writer.write_kv_data_to_file()
+        writer.write_tensors_to_file()
+        writer.close()
     if args.check:
         reference = {t.name: t for t in GGUFReader(args.check).tensors}["logits"].data
         error = np.abs(logits - reference).max()
