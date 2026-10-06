@@ -32,11 +32,11 @@
 #include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
+#include "test_scene.hpp"
+
 using namespace klartraum;
 
 namespace {
-
-const std::string kSpzPath = "3rdparty/spz/samples/racoonfamily.spz";
 
 VkExtent2D framebufferSize(GLFWwindow* window) {
     int w = 0, h = 0;
@@ -92,13 +92,11 @@ struct GsplatResizeScene {
 
     GsplatResizeScene(KlartraumEngine& engine, GsplatBackend backend) {
         auto& vc = engine.getVulkanContext();
-        model = std::make_shared<GaussianDataStandard>(vc, kSpzPath);
+        const auto scene = test_scene::loadLantern();
+        model = std::make_shared<GaussianDataStandard>(vc, scene.gaussians);
 
         auto camera = std::make_shared<InterfaceCameraOrbit>(InterfaceCameraOrbit::UpDirection::Y);
-        camera->setAzimuth(0.9f);
-        camera->setElevation(-0.5f);
-        camera->setPosition({-0.5f, 0.0f, 0.5f});
-        camera->setDistance(1.0f);
+        test_scene::frameLantern(*camera, scene);
         engine.setInterfaceCamera(camera);
 
         auto modelRef = model;
@@ -115,8 +113,8 @@ struct GsplatResizeScene {
 };
 
 void expectBackendFollowsResize(GsplatBackend backend) {
-    if (!std::filesystem::exists(kSpzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
     GlfwFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -203,8 +201,8 @@ TEST(WindowResize, rasterBackendFollowsWindowResize) {
 }
 
 TEST(WindowResize, resizeRendersFromEventCallback) {
-    if (!std::filesystem::exists(kSpzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
     GlfwFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -227,8 +225,8 @@ TEST(WindowResize, resizeRendersFromEventCallback) {
 }
 
 TEST(WindowResize, consecutiveResizesEndAtFinalSize) {
-    if (!std::filesystem::exists(kSpzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << kSpzPath;
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
     GlfwFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();

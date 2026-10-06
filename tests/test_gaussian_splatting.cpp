@@ -4,8 +4,8 @@
  * - fullPipeline: Full 9-stage pipeline with a single gaussian, verifies binning count > 0 and sorted order
  * - singleRedGaussian: Full pipeline (manual stages) renders a red gaussian, checks pixel colors
  * - classWithSingleRedGaussian: VulkanGaussianSplatting class renders a single red gaussian, checks pixel colors
- * - classWithRaccoonScene: VulkanGaussianSplatting class renders raccoon SPZ scene and profiles GPU timing
- * - classWithRaccoonTwoFrames: VulkanGaussianSplatting class renders 4 frames, checks bit-exact determinism and bin coverage
+ * - classWithLanternScene: VulkanGaussianSplatting class renders the lantern SPZ scene and profiles GPU timing
+ * - classWithLanternTwoFrames: VulkanGaussianSplatting class renders 4 frames, checks bit-exact determinism and bin coverage
  * - covarianceJacobianMatchesNumericalDerivative: Validates computeCovarianceMatrix2D's world->pixel projection Jacobian against a finite-difference numerical derivative, using an arbitrary symmetric PD 3D covariance (independent of the cov3d/rotation convention)
  **/
 
@@ -32,6 +32,8 @@
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/backend_config.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
+
+#include "test_scene.hpp"
 
 using namespace klartraum;
 
@@ -898,16 +900,16 @@ TEST_F(GaussianSplattingTest, classWithSingleRedGaussian) {
 }
 
 // ----------------------------------------------------------------
-// Test: classWithRaccoonScene
-// Uses VulkanGaussianSplatting class with the raccoon SPZ file.
+// Test: classWithLanternScene
+// Uses VulkanGaussianSplatting class with the lantern SPZ file.
 // Renders several frames, reports per-stage GPU profiling.
 // Verifies the image is not all-black (pipeline actually drew something).
 // ----------------------------------------------------------------
-TEST_F(GaussianSplattingTest, classWithRaccoonScene) {
-    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
-    if (!std::filesystem::exists(spzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+TEST_F(GaussianSplattingTest, classWithLanternScene) {
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
+    const auto scene = test_scene::loadLantern();
 
     auto& engine = frontend->getKlartraumEngine();
     engine.enableProfiling();
@@ -920,11 +922,10 @@ TEST_F(GaussianSplattingTest, classWithRaccoonScene) {
     auto cameraUBO = std::make_shared<CameraUboType>();
     InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
     orbit.initialize(*vulkanContext);
-    orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
-    orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+    test_scene::frameLantern(orbit, scene);
     orbit.update(cameraUBO->ubo);
 
-    auto model = std::make_shared<GaussianDataStandard>(*vulkanContext, spzPath);
+    auto model = std::make_shared<GaussianDataStandard>(*vulkanContext, scene.gaussians);
     auto splatting = vulkanContext->create<VulkanGaussianSplatting>(
         imageViewSrc, cameraUBO, model->buffers());
     engine.add(splatting);
@@ -938,23 +939,18 @@ TEST_F(GaussianSplattingTest, classWithRaccoonScene) {
         vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
     }
 
-    // Expected appearance of the rendered frame (camera: azimuth 0.9, elevation -0.5,
-    // position (-0.5, 0, 0.5), distance 1.0 — see orbit setup above):
-    //   A tree trunk fills the centre-right of the frame, its bark showing rough,
-    //   ridged brown/grey texture. Near its base is a dark hollow containing the
-    //   raccoon family (grey/brown fur, faces and eyes visible). The foreground is
-    //   grass in muted green/yellow-green tones with visible blade texture. In the
-    //   upper-left background, partly out of focus, a light-coloured car is visible
-    //   against pavement. Overall the image should look like an outdoor daylight photo,
-    //   not a uniform colour wash or a field of disconnected blobs.
-    // If this changes noticeably, compare visually against test_gsplatting_ground_truth.ppm
-    // (a known-good reference render) before assuming a regression.
+    // Expected appearance of the rendered frame (camera: test_scene::frameLantern):
+    //   A grey stone lantern stands in the centre, seen from the side and slightly
+    //   above: its wide roof along the top edge (the tip cut off), the lattice
+    //   windows of the light chamber below it, then the stepped base. Green moss on
+    //   the left and dry brown grass on the right fill the lower half from edge to
+    //   edge; the background in the upper corners is black.
     VkExtent2D ext = vulkanContext->getSwapChainExtent();
     auto pixels = readImageToHost(*vulkanContext, imgs[0], ext.width, ext.height);
     writePPM("test_gaussian_splatting_render.ppm", pixels.data(), ext.width, ext.height);
 
     uint8_t maxVal = *std::max_element(pixels.begin(), pixels.end());
-    std::cout << "\n  classWithRaccoonScene: image max=" << (int)maxVal << "\n";
+    std::cout << "\n  classWithLanternScene: image max=" << (int)maxVal << "\n";
 
     std::cout << "--- GPU profiling (mean over " << FRAMES << " frames) ---\n";
     for (auto& [name, ms] : engine.getProfilingResults())
@@ -964,17 +960,17 @@ TEST_F(GaussianSplattingTest, classWithRaccoonScene) {
 }
 
 // ----------------------------------------------------------------
-// Test: classWithRaccoonTwoFrames
-// Uses VulkanGaussianSplatting class with the raccoon SPZ file.
+// Test: classWithLanternTwoFrames
+// Uses VulkanGaussianSplatting class with the lantern SPZ file.
 // Renders 4 frames (path 0, 1, 0, 1) and checks:
 //   1. Bit-exact determinism: path 0 run 1 == path 0 run 2 (and same for path 1)
 //   2. Content: at least 12 of 16 bins in the 4×4 grid have non-zero pixels
 // ----------------------------------------------------------------
-TEST_F(GaussianSplattingTest, classWithRaccoonTwoFrames) {
-    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
-    if (!std::filesystem::exists(spzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+TEST_F(GaussianSplattingTest, classWithLanternTwoFrames) {
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
+    const auto scene = test_scene::loadLantern();
 
     auto& engine = frontend->getKlartraumEngine();
 
@@ -986,11 +982,10 @@ TEST_F(GaussianSplattingTest, classWithRaccoonTwoFrames) {
     auto cameraUBO = std::make_shared<CameraUboType>();
     InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
     orbit.initialize(*vulkanContext);
-    orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
-    orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+    test_scene::frameLantern(orbit, scene);
     orbit.update(cameraUBO->ubo);
 
-    auto model = std::make_shared<GaussianDataStandard>(*vulkanContext, spzPath);
+    auto model = std::make_shared<GaussianDataStandard>(*vulkanContext, scene.gaussians);
     auto splatting = vulkanContext->create<VulkanGaussianSplatting>(
         imageViewSrc, cameraUBO, model->buffers());
     engine.add(splatting);
@@ -1012,12 +1007,10 @@ TEST_F(GaussianSplattingTest, classWithRaccoonTwoFrames) {
     engine.step(); vkQueueWaitIdle(vulkanContext->getGraphicsQueue());
     auto frame4 = readImageToHost(*vulkanContext, imgs[1], ext.width, ext.height);
 
-    // Same camera/scene as classWithRaccoonScene, so all four frames should show the
-    // same expected appearance described there: tree trunk with bark texture centre-right,
-    // dark hollow with raccoon family near its base, grassy foreground, blurred light
-    // car in the upper-left background. frame1 == frame3 and frame2 == frame4 pixel-for-
-    // pixel (checked below); compare against test_gsplatting_ground_truth.ppm if unsure
-    // whether a visual change is a regression or an intended effect of a code change.
+    // Same camera/scene as classWithLanternScene, so all four frames should show the
+    // same expected appearance described there: stone lantern in the centre, moss and
+    // dry grass across the lower half, black background in the upper corners. frame1 == frame3 and
+    // frame2 == frame4 pixel-for-pixel (checked below).
     writePPM("test_gsplatting_frame1.ppm", frame1.data(), ext.width, ext.height);
     writePPM("test_gsplatting_frame2.ppm", frame2.data(), ext.width, ext.height);
     writePPM("test_gsplatting_frame3.ppm", frame3.data(), ext.width, ext.height);
@@ -1029,7 +1022,7 @@ TEST_F(GaussianSplattingTest, classWithRaccoonTwoFrames) {
     EXPECT_EQ(frame2, frame4)
         << "Path 1: frame 2 and frame 4 differ — rendering is not deterministic";
 
-    // Content check: raccoon should fill most of the 4×4 bin grid
+    // Content check: the lantern and the ground should reach most of the 4×4 bin grid
     const uint32_t gridSize = 4;
     const uint32_t cellW = ext.width  / gridSize;
     const uint32_t cellH = ext.height / gridSize;

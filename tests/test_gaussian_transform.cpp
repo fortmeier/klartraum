@@ -17,6 +17,8 @@
 #include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/gaussian_transform.hpp"
 
+#include "test_scene.hpp"
+
 using namespace klartraum;
 
 namespace {
@@ -146,9 +148,9 @@ TEST(GaussianTransform, rotationTurnsViewDependentColour) {
 }
 
 TEST(GaussianTransform, loadGaussiansSpzFlipsY) {
-    const std::string path = "3rdparty/spz/samples/racoonfamily.spz";
+    const std::string& path = test_scene::kLanternPath;
     if (!std::filesystem::exists(path)) {
-        GTEST_SKIP() << "SPZ sample not found: " << path;
+        GTEST_SKIP() << "SPZ scene not found: " << path;
     }
     const auto plain = loadGaussiansSpz(path);
     const auto flipped = loadGaussiansSpz(path, true);
