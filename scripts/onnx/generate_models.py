@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import random
 from pathlib import Path
 
@@ -12,13 +11,17 @@ import onnxruntime as ort
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
-from datasets import load_dataset
+import torchvision.transforms.functional as F
 from onnx import helper, shape_inference
-from torch.utils.data import DataLoader
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 
 SEED = 20250925
+IMAGE_SIZE = 128
+TRAINING_STEPS = 540
+BATCH_SIZE = 16
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 DATA_DIR = REPO_ROOT / "data"
@@ -86,27 +89,42 @@ def configure_determinism() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def make_training_loader(transform) -> DataLoader:
-    sample_count = int(os.environ.get("KLARTRAUM_ONNX_TRAIN_SAMPLES", "0"))
-    dataset = load_dataset("bitmind/caltech-101", split="train")
-    if sample_count > 0:
-        dataset = dataset.select(range(min(sample_count, len(dataset))))
+class LanternCrops(Dataset):
+    """Square crops of data/lantern.jpg at random positions and sizes, half of
+    them mirrored. Sample i is drawn from its own seeded generator, so the
+    dataset is the same on every run and platform."""
 
-    def prepare_batch(examples):
-        return {"image": [transform(image.convert("RGB")) for image in examples["image"]]}
+    def __init__(self, length: int):
+        self.image = Image.open(DATA_DIR / "lantern.jpg").convert("RGB")
+        self.length = length
 
-    dataset.set_transform(prepare_batch)
-    generator = torch.Generator().manual_seed(SEED)
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, index: int) -> torch.Tensor:
+        generator = torch.Generator().manual_seed(SEED + index)
+        width, height = self.image.size
+        shorter = min(width, height)
+        area_fraction = 0.2 + 0.8 * torch.rand(1, generator=generator).item()
+        size = max(IMAGE_SIZE, round(shorter * area_fraction**0.5))
+        top = int(torch.randint(0, height - size + 1, (1,), generator=generator))
+        left = int(torch.randint(0, width - size + 1, (1,), generator=generator))
+        crop = F.resized_crop(self.image, top, left, size, size, [IMAGE_SIZE, IMAGE_SIZE], antialias=True)
+        if torch.rand(1, generator=generator).item() < 0.5:
+            crop = F.hflip(crop)
+        return F.to_tensor(crop)
+
+
+def make_training_loader() -> DataLoader:
     return DataLoader(
-        dataset,
-        batch_size=16,
-        shuffle=True,
-        generator=generator,
+        LanternCrops(TRAINING_STEPS * BATCH_SIZE),
+        batch_size=BATCH_SIZE,
+        shuffle=False,
         num_workers=0,
     )
 
 
-def train_autoencoder(transform, device: torch.device) -> tuple[Encoder, Decoder]:
+def train_autoencoder(device: torch.device) -> tuple[Encoder, Decoder]:
     print(f"Training device: {device}")
     if device.type == "cuda":
         print(f"CUDA device: {torch.cuda.get_device_name(device)}")
@@ -118,8 +136,8 @@ def train_autoencoder(transform, device: torch.device) -> tuple[Encoder, Decoder
 
     optimizer = torch.optim.Adam(autoencoder.parameters(), lr=1e-3)
     loss_function = nn.MSELoss()
-    for batch in tqdm(make_training_loader(transform), desc="Training fixture model"):
-        images = batch["image"].to(device)
+    for batch in tqdm(make_training_loader(), desc="Training fixture model"):
+        images = batch.to(device)
         optimizer.zero_grad()
         reconstruction = autoencoder(images)
         loss = loss_function(reconstruction, images)
@@ -253,16 +271,14 @@ def generate_models() -> tuple[Path, ...]:
     for stale_model in TMP_DIR.glob("*.onnx"):
         stale_model.unlink()
 
+    encoder, decoder = train_autoencoder(device)
+
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Resize((128, 128), antialias=True),
+            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE), antialias=True),
         ]
     )
-    encoder, decoder = train_autoencoder(transform, device)
-
-    from PIL import Image
-
     image = Image.open(DATA_DIR / "lantern.jpg").convert("RGB")
     image_tensor = transform(image).unsqueeze(0)
     with torch.no_grad():
