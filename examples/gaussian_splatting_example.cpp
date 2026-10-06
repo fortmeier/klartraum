@@ -25,14 +25,15 @@ int main(int argc, char** argv) {
 
     // Parse args:  --frames N   (close after N frames)
     //              --backend compute|raster   (select the rendering backend, default compute)
-    //              --file PATH   (load a specific .spz scene)
+    //              --file PATH   (load a specific .spz scene instead of the lantern)
     //              --camera-position X Y Z   (world-space eye position, looking at the origin)
-    //              --flip-y   (mirror the loaded scene across the Y axis)
+    //              --flip-y   (mirror the scene given with --file across the Y axis)
     int maxFrames = -1;
     klartraum::GsplatBackend backend = klartraum::GsplatBackend::Compute;
-    std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
+    std::string spzFile = "./data/lantern.spz";
     glm::vec3 cameraPosition(0.55f, 0.48f, 0.69f);
     bool flipY = false;
+    bool fileGiven = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--frames" && i + 1 < argc) {
@@ -49,6 +50,7 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--file" && i + 1 < argc) {
             spzFile = argv[++i];
+            fileGiven = true;
         } else if (arg == "--camera-position") {
             if (i + 3 >= argc) {
                 std::cerr << "--camera-position requires X Y Z" << std::endl;
@@ -65,6 +67,11 @@ int main(int argc, char** argv) {
         } else if (arg == "--flip-y") {
             flipY = true;
         }
+    }
+
+    // The lantern capture is stored with Y pointing down.
+    if (!fileGiven) {
+        flipY = true;
     }
 
     const double cameraDistance = std::sqrt(

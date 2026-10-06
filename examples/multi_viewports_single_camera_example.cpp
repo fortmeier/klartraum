@@ -49,10 +49,11 @@ int main(int /*argc*/, char** /*argv*/) {
     auto rightViewport = engine.getWindow().makeViewport(halfW, 0, extent.width - halfW,     extent.height);
 
     // ---- Two scenes, same camera, different backends, different targets ----
-    std::string spzFile = "./3rdparty/spz/samples/racoonfamily.spz";
+    // The lantern capture is stored with Y pointing down, hence flipY.
+    std::string spzFile = "./data/lantern.spz";
 
     // One model, loaded/uploaded once, shared by both backends.
-    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile);
+    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile, true);
 
     auto splatCompute = klartraum::createGaussianSplatting(
         vulkanContext, klartraum::GsplatBackend::Compute,
@@ -77,8 +78,8 @@ int main(int /*argc*/, char** /*argv*/) {
         viewportExtent.width / static_cast<float>(viewportExtent.height));
     cameraOrbit->setAzimuth(0.9f);
     cameraOrbit->setElevation(-0.5f);
-    cameraOrbit->setPosition({-0.5f, 0.0f, 0.5f});
-    cameraOrbit->setDistance(1.0f);
+    cameraOrbit->setPosition({0.0f, -0.08f, 0.0f});
+    cameraOrbit->setDistance(0.6f);
     engine.setInterfaceCamera(cameraOrbit);
     engine.setCameraUBO(cameraUBO);
 
