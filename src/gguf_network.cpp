@@ -4,6 +4,7 @@
 
 #include "klartraum/gguf/gguf_network.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -78,7 +79,8 @@ std::shared_ptr<GgufNetwork::WordTensor> GgufNetwork::encodedWeight(const std::s
             throw std::runtime_error("GgufNetwork: tensor " + name + " has unsupported type " +
                                      ggmlTypeName(info.type));
         }
-        const uint64_t words = (info.bytes + gl::kWeightPaddingBytes + 3) / 4;
+        const uint64_t bytes = gl::gpuRowBytes(info.type, uint32_t(info.rowLength())) * info.rowCount();
+        const uint64_t words = (bytes + gl::kWeightPaddingBytes + 3) / 4;
         if (words > UINT32_MAX)
             throw std::runtime_error("GgufNetwork: tensor " + name + " is too large");
         weight = vulkanContext->create<WordTensor>(
@@ -225,9 +227,20 @@ void GgufNetwork::buildQwen35() {
 
 void GgufNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
     BatchedUpload batch(vulkanContext, getSetupQueue());
+    std::vector<uint8_t> packed;
     for (const auto& [name, weight] : encodedWeights) {
+        // Repacked into the GPU block layout in slices of rows, so no copy of
+        // a whole large tensor is held.
         const auto& info = file->getTensor(name);
-        weight->getDataBuffer().memcopyFrom(batch, reinterpret_cast<const char*>(file->data(info)), size_t(info.bytes));
+        const uint32_t columns = uint32_t(info.rowLength()), rows = uint32_t(info.rowCount());
+        const uint64_t sourceRow = ggmlRowBytes(info.type, columns), gpuRow = gl::gpuRowBytes(info.type, columns);
+        const uint32_t sliceRows = uint32_t(std::max<uint64_t>(1, (uint64_t(64) << 20) / gpuRow));
+        for (uint32_t first = 0; first < rows; first += sliceRows) {
+            const uint32_t count = std::min(sliceRows, rows - first);
+            packed.resize(size_t(gpuRow * count));
+            gl::packWeights(info.type, file->data(info) + first * sourceRow, count, columns, packed.data());
+            batch.add(weight->getDataBuffer().getBuffer(), packed.data(), packed.size(), first * gpuRow);
+        }
     }
     std::vector<float> values;
     for (const auto& [name, weight] : floatWeights) {
