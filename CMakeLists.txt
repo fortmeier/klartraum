@@ -281,6 +281,8 @@ add_executable(
   tests/test_onnx_sd15_operations.cpp
   tests/test_onnx_cosmos3_operations.cpp
   tests/test_layers.cpp
+  tests/test_gguf_file.cpp
+  tests/test_gguf_quants.cpp
   tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
@@ -313,6 +315,8 @@ set(KLARTRAUM_LIB_SRC
   src/gaussian_splat_rasterizer.cpp
   src/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
+  src/gguf_file.cpp
+  src/gguf_quants.cpp
   src/layers.cpp
   src/clip_tokenizer.cpp
   src/unipc_flow_scheduler.cpp
