@@ -61,37 +61,35 @@ void packedScaleMin(uvec4 head, uint index, out float scale, out float minimum) 
     }
 }
 
-// Decodes the 16 weights of a row starting at element `element` (a multiple of 16).
-void decode16(uint rowStart, uint element, out float w[16]) {
+// The four bytes of a word as floats 0..255 (exact: unpackUnorm4x8 divides by 255).
+vec4 bytes4(uint word) { return unpackUnorm4x8(word) * 255.0; }
+
+// Decodes the 16 weights of a row starting at element `element` (a multiple
+// of 16), four per vector. The packed formats are decoded a word (four
+// values) at a time.
+void decode16(uint rowStart, uint element, out vec4 w[4]) {
 #if defined(WEIGHT_F32)
     const uint index = rowStart / 16u + element / 4u;
-    for (uint k = 0u; k < 4u; ++k) {
-        const vec4 v = uintBitsToFloat(W4[index + k]);
-        w[4u * k] = v.x; w[4u * k + 1u] = v.y; w[4u * k + 2u] = v.z; w[4u * k + 3u] = v.w;
-    }
+    for (uint k = 0u; k < 4u; ++k) w[k] = uintBitsToFloat(W4[index + k]);
 #elif defined(WEIGHT_F16) || defined(WEIGHT_BF16)
     const uint index = rowStart / 16u + element / 8u;
     for (uint k = 0u; k < 2u; ++k) {
         const uvec4 v = W4[index + k];
-        for (uint i = 0u; i < 4u; ++i) {
 #if defined(WEIGHT_F16)
-            const vec2 pair = unpackHalf2x16(v[i]);
+        w[2u * k] = vec4(unpackHalf2x16(v.x), unpackHalf2x16(v.y));
+        w[2u * k + 1u] = vec4(unpackHalf2x16(v.z), unpackHalf2x16(v.w));
 #else
-            const vec2 pair = vec2(uintBitsToFloat(v[i] << 16), uintBitsToFloat(v[i] & 0xffff0000u));
+        w[2u * k] = uintBitsToFloat(uvec4(v.x << 16, v.x & 0xffff0000u, v.y << 16, v.y & 0xffff0000u));
+        w[2u * k + 1u] = uintBitsToFloat(uvec4(v.z << 16, v.z & 0xffff0000u, v.w << 16, v.w & 0xffff0000u));
 #endif
-            w[8u * k + 2u * i] = pair.x;
-            w[8u * k + 2u * i + 1u] = pair.y;
-        }
     }
 #elif defined(WEIGHT_Q8_0)
     // 36-byte blocks of 32: half scale (padded to 4 bytes), 32 signed bytes.
     const uint block = rowStart + (element / 32u) * 36u;
     const float d = unpackHalf2x16(W[block >> 2]).x;
     const uint quants = (block + 4u + element % 32u) >> 2;
-    for (uint k = 0u; k < 4u; ++k) {
-        const uint word = W[quants + k];
-        for (uint i = 0u; i < 4u; ++i) w[4u * k + i] = d * float(int(word << (24u - 8u * i)) >> 24);
-    }
+    // Flipping the sign bits maps -128..127 to 0..255.
+    for (uint k = 0u; k < 4u; ++k) w[k] = d * (bytes4(W[quants + k] ^ 0x80808080u) - 128.0);
 #elif defined(WEIGHT_Q4_K) || defined(WEIGHT_Q5_K)
 #if defined(WEIGHT_Q4_K)
     const uint block = rowStart + (element / 256u) * 144u;
@@ -113,12 +111,12 @@ void decode16(uint rowStart, uint element, out float w[16]) {
 #if defined(WEIGHT_Q5_K)
     const uvec4 high = W4[(block + 16u + within % 32u) / 16u];
 #endif
-    for (uint i = 0u; i < 16u; ++i) {
-        uint value = (byteOf(q, i) >> shift) & 15u;
+    for (uint k = 0u; k < 4u; ++k) {
+        uint values = (q[k] >> shift) & 0x0f0f0f0fu;
 #if defined(WEIGHT_Q5_K)
-        value |= ((byteOf(high, i) >> subBlock) & 1u) << 4;
+        values |= ((high[k] >> subBlock) & 0x01010101u) << 4;
 #endif
-        w[i] = factor * float(value) - offset;
+        w[k] = factor * bytes4(values) - offset;
     }
 #elif defined(WEIGHT_Q6_K)
     // 224-byte blocks. Halves of 128 values: quarters take low/high nibbles
@@ -133,9 +131,9 @@ void decode16(uint rowStart, uint element, out float w[16]) {
     const float d = unpackHalf2x16(W4[(block + 208u) / 16u].x).x;
     const float factor = d * float(int(byteOf(scales, 8u * half_ + 2u * quarter + lane / 16u) << 24) >> 24);
     const uint lowShift = 4u * (quarter >> 1), highShift = 2u * quarter;
-    for (uint i = 0u; i < 16u; ++i) {
-        const uint value = ((byteOf(low, i) >> lowShift) & 15u) | (((byteOf(high, i) >> highShift) & 3u) << 4);
-        w[i] = factor * float(int(value) - 32);
+    for (uint k = 0u; k < 4u; ++k) {
+        const uint values = ((low[k] >> lowShift) & 0x0f0f0f0fu) | (((high[k] >> highShift) & 0x03030303u) << 4);
+        w[k] = factor * (bytes4(values) - 32.0);
     }
 #elif defined(WEIGHT_Q3_K)
     // 112-byte blocks. Halves of 128 values: four groups take successive bit
@@ -152,9 +150,10 @@ void decode16(uint rowStart, uint element, out float w[16]) {
     const uint scaleHigh = (byteOf(tail, 8u + subBlock % 4u) >> (2u * (subBlock / 4u))) & 3u;
     const float factor = unpackHalf2x16(tail.w).x * float(int(scaleLow | (scaleHigh << 4)) - 32);
     const uint shift = 2u * group, maskBit = 4u * half_ + group;
-    for (uint i = 0u; i < 16u; ++i) {
-        const int value = int((byteOf(q, i) >> shift) & 3u) - (((byteOf(mask, i) >> maskBit) & 1u) != 0u ? 0 : 4);
-        w[i] = factor * float(value);
+    for (uint k = 0u; k < 4u; ++k) {
+        // value = low bits + 4 * mask bit - 4
+        const uint values = ((q[k] >> shift) & 0x03030303u) | (((mask[k] >> maskBit) & 0x01010101u) << 2);
+        w[k] = factor * (bytes4(values) - 4.0);
     }
 #else
 #error "define one of the WEIGHT_* macros"
@@ -179,7 +178,7 @@ void main() {
             for (uint t = 0u; t < TOKEN_BLOCK; ++t) sums[r][t] = 0.0;
         }
         for (uint element = WIDTH * lane; element < pc.columns; element += 32u * WIDTH) {
-            float w[ROWS_PER_SUBGROUP][16];
+            vec4 w[ROWS_PER_SUBGROUP][4];
             for (uint r = 0u; r < ROWS_PER_SUBGROUP; ++r) {
                 const uint row = min(firstRow + r, pc.rows - 1u);
                 decode16(row * pc.rowBytes, element, w[r]);
@@ -189,10 +188,7 @@ void main() {
                     const uint base = ((firstToken + block + t) * pc.inputStride + element) / 4u;
                     for (uint k = 0u; k < 4u; ++k) {
                         const vec4 x = X[base + k];
-                        for (uint r = 0u; r < ROWS_PER_SUBGROUP; ++r) {
-                            sums[r][t] += dot(vec4(w[r][4u * k], w[r][4u * k + 1u], w[r][4u * k + 2u],
-                                                   w[r][4u * k + 3u]), x);
-                        }
+                        for (uint r = 0u; r < ROWS_PER_SUBGROUP; ++r) sums[r][t] += dot(w[r][k], x);
                     }
                 }
             }
