@@ -33,6 +33,8 @@
 #include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
+#include "test_scene.hpp"
+
 using namespace klartraum;
 
 namespace {
@@ -242,10 +244,10 @@ TEST(MultiViewportWindow, sharedCameraCanUseViewportAspectRatio) {
 }
 
 TEST(MultiViewportWindow, twoBackendsCompositeEndToEnd) {
-    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
-    if (!std::filesystem::exists(spzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
+    const auto scene = test_scene::loadLantern();
 
     HeadlessFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -263,11 +265,10 @@ TEST(MultiViewportWindow, twoBackendsCompositeEndToEnd) {
     auto cameraUBO = std::make_shared<CameraUboType>();
     InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
     orbit.initialize(vc);
-    orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
-    orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+    test_scene::frameLantern(orbit, scene);
     orbit.update(cameraUBO->ubo);
 
-    auto model = std::make_shared<GaussianDataStandard>(vc, spzPath);
+    auto model = std::make_shared<GaussianDataStandard>(vc, scene.gaussians);
     engine.add(createGaussianSplatting(vc, GsplatBackend::Compute, left,  cameraUBO, model));
     engine.add(createGaussianSplatting(vc, GsplatBackend::Raster,  right, cameraUBO, model));
 

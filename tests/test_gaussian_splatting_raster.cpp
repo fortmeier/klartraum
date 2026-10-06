@@ -1,8 +1,8 @@
 /**
  * TESTS:
- * - classWithRaccoonScene: VulkanGaussianSplattingRaster (the sort-once +
+ * - classWithLanternScene: VulkanGaussianSplattingRaster (the sort-once +
  *   hardware-rasterization backend, guide §7 step 5 "Composite") loads the
- *   raccoon SPZ scene, runs several frames through the full dist -> sort ->
+ *   lantern SPZ scene, runs several frames through the full dist -> sort ->
  *   barrier -> rasterizer pipeline with the placeholder point-cloud shaders,
  *   and confirms it submits cleanly across all swapchain paths (no
  *   validation-layer errors — the debug callback throws on VK_ERROR severity)
@@ -10,8 +10,8 @@
  *   chain actually produced and drew visible splats end to end). Enables GPU
  *   timestamp profiling and prints the per-stage mean split (dist -> sort ->
  *   render pass) so the raster backend's per-stage cost can be tracked across
- *   perf changes, mirroring GaussianSplattingTest.classWithRaccoonScene
- * - meshShaderPathMatchesVertexPath: renders the raccoon scene through the
+ *   perf changes, mirroring GaussianSplattingTest.classWithLanternScene
+ * - meshShaderPathMatchesVertexPath: renders the lantern scene through the
  *   optional VK_EXT_mesh_shader draw path (GsplatConfig::useMeshShader) and the
  *   default vertex path and diffs them. The mesh path emits the same quads from
  *   the same precomputed Splat2D records in the same sorted order, so the images
@@ -33,6 +33,8 @@
 #include "klartraum/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
+
+#include "test_scene.hpp"
 
 using namespace klartraum;
 
@@ -93,11 +95,11 @@ void writePPM(const std::string& filename, const uint8_t* bgra, uint32_t W, uint
 
 } // namespace
 
-TEST(GaussianSplattingRaster, classWithRaccoonScene) {
-    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
-    if (!std::filesystem::exists(spzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+TEST(GaussianSplattingRaster, classWithLanternScene) {
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
+    const auto scene = test_scene::loadLantern();
 
     HeadlessFrontend frontend;
     auto& engine = frontend.getKlartraumEngine();
@@ -120,11 +122,10 @@ TEST(GaussianSplattingRaster, classWithRaccoonScene) {
     auto cameraUBO = std::make_shared<CameraUboType>();
     InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
     orbit.initialize(vc);
-    orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
-    orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+    test_scene::frameLantern(orbit, scene);
     orbit.update(cameraUBO->ubo);
 
-    auto model = std::make_shared<GaussianDataStandard>(vc, spzPath);
+    auto model = std::make_shared<GaussianDataStandard>(vc, scene.gaussians);
     auto splatting = vc.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, model->buffers());
     engine.add(splatting);
 
@@ -141,7 +142,7 @@ TEST(GaussianSplattingRaster, classWithRaccoonScene) {
     writePPM("test_gaussian_splatting_raster_render.ppm", pixels.data(), ext.width, ext.height);
 
     uint8_t maxVal = *std::max_element(pixels.begin(), pixels.end());
-    std::cout << "\n  classWithRaccoonScene (raster backend): image max=" << (int)maxVal << "\n";
+    std::cout << "\n  classWithLanternScene (raster backend): image max=" << (int)maxVal << "\n";
 
     std::cout << "--- GPU profiling (mean over " << FRAMES << " frames) ---\n";
     for (auto& [name, ms] : engine.getProfilingResults())
@@ -151,12 +152,12 @@ TEST(GaussianSplattingRaster, classWithRaccoonScene) {
 }
 
 TEST(GaussianSplattingRaster, meshShaderPathMatchesVertexPath) {
-    const std::string spzPath = "3rdparty/spz/samples/racoonfamily.spz";
-    if (!std::filesystem::exists(spzPath)) {
-        GTEST_SKIP() << "SPZ sample not found: " << spzPath;
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
     }
+    const auto scene = test_scene::loadLantern();
 
-    // Renders the raccoon scene with the given config and returns image 0.
+    // Renders the lantern scene with the given config and returns image 0.
     // Sets meshActuallyUsed to whether the mesh path was actually selected
     // (requested AND device-supported).
     auto render = [&](bool useMeshShader, bool& meshActuallyUsed) -> std::vector<uint8_t> {
@@ -181,13 +182,12 @@ TEST(GaussianSplattingRaster, meshShaderPathMatchesVertexPath) {
         auto cameraUBO = std::make_shared<CameraUboType>();
         InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
         orbit.initialize(vc);
-        orbit.setAzimuth(0.9f); orbit.setElevation(-0.5f);
-        orbit.setPosition({-0.5f, 0.0f, 0.5f}); orbit.setDistance(1.0f);
+        test_scene::frameLantern(orbit, scene);
         orbit.update(cameraUBO->ubo);
 
         GsplatConfig config;
         config.useMeshShader = useMeshShader;
-        auto model = std::make_shared<GaussianDataStandard>(vc, spzPath);
+        auto model = std::make_shared<GaussianDataStandard>(vc, scene.gaussians);
         auto splatting = vc.create<VulkanGaussianSplattingRaster>(imageViewSrc, cameraUBO, model->buffers(), config);
         engine.add(splatting);
 
