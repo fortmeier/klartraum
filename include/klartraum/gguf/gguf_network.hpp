@@ -136,7 +136,8 @@ private:
     ComputeGraphElementPtr matVec(const std::string& weight, uint32_t inputWidth,
                                   const std::shared_ptr<FloatTensor>& input, const std::shared_ptr<FloatTensor>& output,
                                   bool accumulate = false, bool lastTokenOnly = false);
-    void append(const ComputeGraphElementPtr& operation, const std::vector<ComputeGraphElementPtr>& slots);
+    void append(const std::string& name, const ComputeGraphElementPtr& operation,
+                const std::vector<ComputeGraphElementPtr>& slots);
     void buildQwen35();
 };
 
