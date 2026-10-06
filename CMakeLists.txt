@@ -114,15 +114,18 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
   set(GLSLC_OPTIONS)
   if(FILE_NAME STREQUAL "onnx/fused_attention.comp" OR FILE_NAME STREQUAL "onnx/fused_attention_bias_d128.comp"
-     OR FILE_NAME STREQUAL "onnx/rms_norm.comp")
+     OR FILE_NAME STREQUAL "onnx/rms_norm.comp" OR FILE_NAME MATCHES "^gguf/")
     # Subgroup operations are core in Vulkan 1.1 / SPIR-V 1.3.
     list(APPEND GLSLC_OPTIONS --target-env=vulkan1.1)
   endif()
+  # Shaders #include the .glsl files next to them; recompile when those change.
+  get_filename_component(GLSL_DIRECTORY ${GLSL} DIRECTORY)
+  file(GLOB GLSL_INCLUDES "${GLSL_DIRECTORY}/*.glsl")
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
     COMMAND ${GLSLC} ${GLSLC_OPTIONS} -o ${SPIRV} ${GLSL}
-    DEPENDS ${GLSL}
+    DEPENDS ${GLSL} ${GLSL_INCLUDES}
     COMMENT "Compiling ${GLSL} to ${SPIRV}"
   )
   list(APPEND SPIRV_BINARY_FILES ${SPIRV})
@@ -283,6 +286,7 @@ add_executable(
   tests/test_layers.cpp
   tests/test_gguf_file.cpp
   tests/test_gguf_quants.cpp
+  tests/test_gguf_layers.cpp
   tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
@@ -317,6 +321,7 @@ set(KLARTRAUM_LIB_SRC
   src/onnx_network.cpp
   src/gguf_file.cpp
   src/gguf_quants.cpp
+  src/gguf_layers.cpp
   src/layers.cpp
   src/clip_tokenizer.cpp
   src/unipc_flow_scheduler.cpp
