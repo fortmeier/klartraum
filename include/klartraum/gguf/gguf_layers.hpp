@@ -28,19 +28,33 @@ namespace klartraum::gguf_layers {
 /** @brief Most tokens one matVec() dispatch handles (MAX_TOKENS in matvec.glsl). */
 constexpr uint32_t kMaxTokens = 16;
 
-/** @brief Bytes of zero padding after GGUF weights in a weight buffer (read by unaligned 8-byte loads). */
+/** @brief Bytes of zero padding after the weights in a weight buffer. */
 constexpr uint32_t kWeightPaddingBytes = 16;
+
+/**
+ * @brief Bytes of one row of @p columns values of @p type in the GPU block
+ * layout: GGUF blocks with Q3_K padded to 112 bytes, Q6_K to 224 bytes and
+ * the Q8_0 scale to 4 bytes (36-byte blocks), so the kernels read aligned
+ * fields; the other types keep their GGUF size.
+ */
+uint64_t gpuRowBytes(GgmlType type, uint32_t columns);
+
+/**
+ * @brief Copies @p rows GGUF-encoded rows of @p columns values into the GPU
+ * block layout (see gpuRowBytes()) at @p destination.
+ */
+void packWeights(GgmlType type, const uint8_t* source, uint32_t rows, uint32_t columns, uint8_t* destination);
 
 /**
  * @brief y[t] = W x[t] for a `rows` x `columns` weight matrix of @p type.
  *
- * Slots: 0 weights (uint32 tensor holding the GGUF bytes plus
- * kWeightPaddingBytes), 1 input, 2 params, 3 output. Inputs of consecutive
+ * Slots: 0 weights (uint32 tensor holding the rows in the GPU block layout
+ * of packWeights(), plus kWeightPaddingBytes), 1 input, 2 params, 3 output. Inputs of consecutive
  * tokens are @p inputStride floats apart, outputs @p outputStride.
  * With @p accumulate the products are added to the output in place; with
  * @p lastTokenOnly only the last active token is computed, into output row 0.
  * @throws std::runtime_error For unsupported types, columns not a multiple of
- *         8 (or of the type's block size), or strides not a multiple of 4.
+ *         16 (or of the type's block size), or strides not a multiple of 4.
  */
 ComputeGraphElementPtr matVec(VulkanContext& vulkanContext, GgmlType type, uint32_t rows, uint32_t columns,
                               uint32_t inputStride, uint32_t outputStride, bool accumulate = false,

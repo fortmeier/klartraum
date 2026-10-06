@@ -13,9 +13,14 @@
  *   gated causal GQA attention with per-head RMS norms and NEOX RoPE.
  * - linearConv carries its state across submissions: 2 + 3 tokens equal 5 tokens at once.
  * - gatedDeltaNet over two submissions matches a CPU gated delta rule with the gated RMS norm.
+ * - matVecThroughput (only with KLARTRAUM_BENCHMARK set): prints the weight bandwidth of each type
+ *   at the Qwen3.6-27B FFN shape, for 1 and 16 tokens.
  **/
 
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <cstring>
 #include <memory>
 #include <random>
@@ -131,10 +136,14 @@ protected:
         return bytes;
     }
 
-    std::shared_ptr<UintTensor> weightTensor(const std::vector<uint8_t>& bytes) {
+    // A weight tensor holding `bytes` (GGUF rows) in the GPU block layout, uploaded by uploadWeights().
+    std::shared_ptr<UintTensor> weightTensor(GgmlType type, const std::vector<uint8_t>& bytes, uint32_t rows,
+                                             uint32_t columns) {
+        std::vector<uint8_t> packed(gl::gpuRowBytes(type, columns) * rows);
+        gl::packWeights(type, bytes.data(), rows, columns, packed.data());
         auto weights =
-            vc->create<UintTensor>(std::vector<uint32_t>{uint32_t((bytes.size() + gl::kWeightPaddingBytes + 3) / 4)});
-        pendingWeights.push_back({weights, bytes});
+            vc->create<UintTensor>(std::vector<uint32_t>{uint32_t((packed.size() + gl::kWeightPaddingBytes + 3) / 4)});
+        pendingWeights.push_back({weights, packed});
         return weights;
     }
 
@@ -190,7 +199,7 @@ TEST_F(GgufLayersTest, MatVecAllWeightTypes) {
                           GgmlType::Q5_K, GgmlType::Q6_K}) {
         SCOPED_TRACE(ggmlTypeName(type));
         const auto bytes = randomWeights(type, rows, columns);
-        auto weights = weightTensor(bytes);
+        auto weights = weightTensor(type, bytes, rows, columns);
         auto input = tensor(gl::kMaxTokens * columns);
         auto output = tensor(gl::kMaxTokens * rows);
         auto graph = compile(gl::matVec(*vc, type, rows, columns, columns, rows), {weights, input, params, output});
@@ -208,7 +217,7 @@ TEST_F(GgufLayersTest, MatVecAllWeightTypes) {
 TEST_F(GgufLayersTest, MatVecAccumulateAndLastToken) {
     constexpr uint32_t rows = 8, columns = 256, tokens = 4;
     const auto bytes = randomWeights(GgmlType::Q4_K, rows, columns);
-    auto weights = weightTensor(bytes);
+    auto weights = weightTensor(GgmlType::Q4_K, bytes, rows, columns);
     auto input = tensor(gl::kMaxTokens * columns);
     auto residual = tensor(gl::kMaxTokens * rows);
     auto last = tensor(rows);
@@ -480,5 +489,68 @@ TEST_F(GgufLayersTest, GatedDeltaNetAcrossSubmissions) {
         SCOPED_TRACE(tokens);
         expectClose(read(output), expected, 1e-4f, tokens * Hv * Dv);
         expectClose(read(state), cpuState, 1e-4f);
+    }
+}
+
+TEST_F(GgufLayersTest, MatVecThroughput) {
+    if (!std::getenv("KLARTRAUM_BENCHMARK"))
+        GTEST_SKIP() << "Set KLARTRAUM_BENCHMARK=1 to run";
+    constexpr uint32_t repetitions = 20;
+    {
+        // Submission overhead: a matVec with almost no work.
+        const auto bytes = randomWeights(GgmlType::F32, 8, 256);
+        auto weights = weightTensor(GgmlType::F32, bytes, 8, 256);
+        auto input = tensor(gl::kMaxTokens * 256);
+        auto output = tensor(gl::kMaxTokens * 8);
+        auto graph = compile(gl::matVec(*vc, GgmlType::F32, 8, 256, 256, 8), {weights, input, params, output});
+        uploadWeights();
+        run(*graph, 1, 0);
+        const auto start = std::chrono::steady_clock::now();
+        for (uint32_t i = 0; i < repetitions; ++i)
+            run(*graph, 1, 0);
+        std::cout << "submission overhead: "
+                  << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() / repetitions * 1e3
+                  << " ms" << std::endl;
+    }
+    // Back-to-back dispatches as in a forward pass: 8 matrices, each used 4 times, per submission.
+    constexpr uint32_t rows = 17408, columns = 5120, matrices = 8, uses = 4;
+    for (GgmlType type :
+         {GgmlType::Q3_K, GgmlType::Q4_K, GgmlType::Q5_K, GgmlType::Q6_K, GgmlType::Q8_0, GgmlType::F16}) {
+        const auto gguf = randomWeights(type, rows, columns);
+        std::vector<uint8_t> bytes(gl::gpuRowBytes(type, columns) * rows);
+        gl::packWeights(type, gguf.data(), rows, columns, bytes.data());
+        auto input = tensor(gl::kMaxTokens * columns);
+        auto output = tensor(gl::kMaxTokens * rows);
+        std::vector<std::shared_ptr<UintTensor>> weights;
+        for (uint32_t m = 0; m < matrices; ++m) {
+            weights.push_back(vc->create<UintTensor>(
+                std::vector<uint32_t>{uint32_t((bytes.size() + gl::kWeightPaddingBytes + 3) / 4)},
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
+        }
+        ComputeGraphElementPtr previous;
+        for (uint32_t i = 0; i < matrices * uses; ++i) {
+            auto operation = gl::matVec(*vc, type, rows, columns, columns, rows);
+            connect(operation, {weights[i % matrices], input, params, output});
+            if (previous)
+                operation->addDependency(previous);
+            previous = operation;
+        }
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(previous);
+        for (auto& weight : weights) {
+            weight->getDataBuffer(0).memcopyFrom(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        }
+        for (uint32_t tokens : {1u, 16u}) {
+            run(graph, tokens, 0);
+            const auto start = std::chrono::steady_clock::now();
+            for (uint32_t i = 0; i < repetitions / 4; ++i)
+                run(graph, tokens, 0);
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() /
+                                   (repetitions / 4) / (matrices * uses);
+            std::cout << ggmlTypeName(type) << " " << tokens << " token(s): " << seconds * 1e3 << " ms, "
+                      << bytes.size() / seconds / 1e9 << " GB/s of weights" << std::endl;
+        }
     }
 }
