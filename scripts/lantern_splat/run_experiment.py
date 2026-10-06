@@ -21,7 +21,7 @@ EXPORT_OUTPUT = RUN_ROOT / "export"
 CONFIG_PATH = TRAINING_OUTPUT / "lantern-scene" / "splatfacto" / "run" / "config.yml"
 SPLAT_PATH = EXPORT_OUTPUT / "splat.ply"
 MODEL_DIR = CONFIG_PATH.parent / "nerfstudio_models"
-LOCAL_COLMAP = Path(r"C:\Users\dfort\Desktop\tools\colmap-x64-windows-cuda\COLMAP.bat")
+COLMAP_ENVIRONMENT_VARIABLE = "KLARTRAUM_COLMAP"
 LOCAL_VCVARS = Path(
     r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 )
@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--colmap",
         type=Path,
-        help="Path to COLMAP.bat or colmap.exe; defaults to PATH, then the local portable COLMAP installation.",
+        help=f"Path to COLMAP.bat or colmap.exe; defaults to ${COLMAP_ENVIRONMENT_VARIABLE}, then colmap on PATH.",
     )
     parser.add_argument(
         "--stage",
@@ -96,15 +96,23 @@ def setup_environment(*, dry_run: bool) -> None:
     run(uv_command("sync", "--locked"), dry_run=dry_run)
 
 
-def find_colmap(explicit_path: Path | None) -> Path:
+def find_colmap(explicit_path: Path | None) -> Path | None:
     if explicit_path is not None:
-        colmap_path = explicit_path.expanduser().resolve()
-    elif path_entry := shutil.which("colmap"):
-        colmap_path = Path(path_entry)
-    else:
-        colmap_path = LOCAL_COLMAP
-    if not colmap_path.is_file():
-        raise SystemExit("COLMAP was not found. Pass its executable or batch launcher with --colmap.")
+        return explicit_path.expanduser().resolve()
+    if environment_path := os.environ.get(COLMAP_ENVIRONMENT_VARIABLE):
+        return Path(environment_path).expanduser().resolve()
+    if path_entry := shutil.which("colmap"):
+        return Path(path_entry)
+    return None
+
+
+def require_colmap(explicit_path: Path | None) -> Path:
+    colmap_path = find_colmap(explicit_path)
+    if colmap_path is None or not colmap_path.is_file():
+        raise SystemExit(
+            "COLMAP was not found. Pass its executable or batch launcher with --colmap, "
+            f"set {COLMAP_ENVIRONMENT_VARIABLE}, or put colmap on PATH."
+        )
     return colmap_path
 
 
@@ -144,10 +152,10 @@ def process_images(*, colmap: Path | None, force: bool, dry_run: bool) -> None:
         print(f"Reusing processed dataset: {transforms_path}")
         return
 
-    colmap_path = find_colmap(colmap) if not dry_run else (colmap or LOCAL_COLMAP)
+    colmap_path = require_colmap(colmap) if not dry_run else (find_colmap(colmap) or Path("colmap"))
     process_environment = os.environ.copy()
     process_environment["PATH"] = str(EXPERIMENT_DIR) + os.pathsep + process_environment.get("PATH", "")
-    process_environment["KLARTRAUM_COLMAP"] = str(colmap_path)
+    process_environment[COLMAP_ENVIRONMENT_VARIABLE] = str(colmap_path)
 
     images = tuple(SOURCE_IMAGES.glob("*.jpg"))
     if not images:

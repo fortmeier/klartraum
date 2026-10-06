@@ -9,8 +9,10 @@ camera poses and a sparse point cloud with COLMAP, trains Nerfstudio's
 - `uv`
 - An NVIDIA GPU and driver
 - A CUDA 12.x Toolkit (including `nvcc`); PyTorch uses its CUDA 12.8 build
-- COLMAP (the runner automatically finds the local portable installation at
-  `C:\Users\dfort\Desktop\tools\colmap-x64-windows-cuda\COLMAP.bat`)
+- COLMAP. The runner uses, in this order, the path given with `--colmap`, the
+  `KLARTRAUM_COLMAP` environment variable, or `colmap` on `PATH`. For a portable
+  installation, point it at its launcher, e.g.
+  `$env:KLARTRAUM_COLMAP = "C:\tools\colmap-x64-windows-cuda\COLMAP.bat"`.
 
 The runner automatically activates the installed Visual Studio 2022 Community
 x64 compiler environment. Nerfstudio's CUDA extensions compile on first use.
