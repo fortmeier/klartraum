@@ -66,5 +66,6 @@ requirements/index
 :hidden:
 :caption: Contributing
 
+contributing/development
 contributing/documentation
 ```

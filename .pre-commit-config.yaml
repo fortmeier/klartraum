@@ -1,0 +1,18 @@
+# Checks that run on every commit. Enable them once per clone with
+#   uv tool install pre-commit
+#   pre-commit install
+# and run them on the whole repository with
+#   pre-commit run --all-files
+# See docs/contributing/development.md.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Files tracked by Git LFS are skipped; anything else above 1 MiB
+      # (e.g. model weights) has to go through LFS or stay out of the repo.
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
