@@ -2,8 +2,9 @@
 
 The ONNX fixtures are generated from a uv-managed Python 3.12 environment. The
 dependency versions are recorded in `pyproject.toml` and `uv.lock`; Conda is not
-required. On Windows and Linux, PyTorch comes from its CUDA 12.8 package index.
-Training uses an NVIDIA GPU when one is available and falls back to the CPU.
+required. On Windows and Linux, PyTorch comes from its CUDA 12.8 package index;
+on macOS from PyPI. Training uses an NVIDIA GPU when one is available and falls
+back to the CPU.
 
 ## Set up the environment
 
@@ -33,9 +34,11 @@ uv run jupyter nbconvert `
     --ExecutePreprocessor.timeout=-1
 ```
 
-The generator uses a fixed seed and trains on the complete Caltech-101 training
-split by default. Set `KLARTRAUM_ONNX_TRAIN_SAMPLES` to a positive number to
-train on only that many leading images for a quicker smoke run.
+The generator uses a fixed seed and trains only on `data/lantern.jpg`, the
+project's own photo: on 540 batches of 16 square crops at seeded random
+positions and sizes, half of them mirrored. The models are test fixtures, so
+fitting this one image is enough. The frozen intermediates are captured from
+the whole image scaled to 128x128.
 
 Published fixtures are written to `data/onnx/`:
 
