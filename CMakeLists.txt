@@ -117,7 +117,7 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
   set(GLSLC_OPTIONS)
   if(FILE_NAME STREQUAL "onnx/fused_attention.comp" OR FILE_NAME STREQUAL "onnx/fused_attention_bias_d128.comp"
-     OR FILE_NAME STREQUAL "onnx/rms_norm.comp")
+     OR FILE_NAME STREQUAL "onnx/rms_norm.comp" OR FILE_NAME MATCHES "^gguf/")
     # Subgroup operations are core in Vulkan 1.1 / SPIR-V 1.3.
     list(APPEND GLSLC_OPTIONS --target-env=vulkan1.1)
   endif()
@@ -287,6 +287,7 @@ add_executable(
   tests/test_layers.cpp
   tests/test_gguf_file.cpp
   tests/test_gguf_quants.cpp
+  tests/test_gguf_layers.cpp
   tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
@@ -324,6 +325,7 @@ set(KLARTRAUM_LIB_SRC
   src/onnx_network.cpp
   src/gguf_file.cpp
   src/gguf_quants.cpp
+  src/gguf_layers.cpp
   src/layers.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp

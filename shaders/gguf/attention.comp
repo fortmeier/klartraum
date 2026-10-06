@@ -1,0 +1,98 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+// Causal grouped-query attention of the params[0] active tokens against the
+// key/value caches, gated by the sigmoid of the query projection's gate half:
+//   out = softmax(q K^T * scale) V * sigmoid(gate)
+// Token t (position params[1] + t) attends cache positions 0 .. params[1] + t.
+// Workgroup (t, head); its four subgroups take every fourth key with a
+// running softmax each, then merge. Each lane owns headDim / 32 dimensions.
+#define SUBGROUPS 4
+#define MAX_DIMS_PER_LANE 8
+
+layout(local_size_x = 32 * SUBGROUPS, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint headDim;
+    uint queryHeads;
+    uint kvHeads;
+    uint contextLength;
+    float scale;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer QueryBuffer { float Q[]; };         // [T][queryHeads][headDim]
+layout(set = 0, binding = 1) restrict readonly buffer KeyCache { float keyCache[]; };     // [kvHeads][context][headDim]
+layout(set = 0, binding = 2) restrict readonly buffer ValueCache { float valueCache[]; };
+layout(set = 0, binding = 3) restrict readonly buffer QueryGateBuffer { float QG[]; };    // [T][queryHeads][2][headDim]
+layout(set = 0, binding = 4) restrict readonly buffer ParamsBuffer { uint params[]; };
+layout(set = 0, binding = 5) restrict writeonly buffer OutputBuffer { float O[]; };       // [T][queryHeads][headDim]
+
+shared float maxima[SUBGROUPS];
+shared float sums[SUBGROUPS];
+shared float accumulated[SUBGROUPS][256];
+
+void main() {
+    const uint token = gl_WorkGroupID.x;
+    if (token >= params[0]) return;
+    const uint head = gl_WorkGroupID.y;
+    const uint kvHead = head / (pc.queryHeads / pc.kvHeads);
+    const uint lastKey = params[1] + token;
+    const uint lane = gl_SubgroupInvocationID, subgroup = gl_SubgroupID;
+    const uint dims = pc.headDim / 32u;
+    const uint firstDim = lane * dims;
+
+    float q[MAX_DIMS_PER_LANE];
+    float acc[MAX_DIMS_PER_LANE];
+    const uint queryBase = (token * pc.queryHeads + head) * pc.headDim + firstDim;
+    for (uint i = 0u; i < MAX_DIMS_PER_LANE; ++i) {
+        q[i] = i < dims ? Q[queryBase + i] : 0.0;
+        acc[i] = 0.0;
+    }
+
+    float runningMax = -1.0 / 0.0;
+    float runningSum = 0.0;
+    const uint cacheBase = kvHead * pc.contextLength * pc.headDim + firstDim;
+    for (uint key = subgroup; key <= lastKey; key += SUBGROUPS) {
+        const uint base = cacheBase + key * pc.headDim;
+        float dot = 0.0;
+        for (uint i = 0u; i < MAX_DIMS_PER_LANE; ++i) {
+            if (i < dims) dot += q[i] * keyCache[base + i];
+        }
+        const float score = subgroupAdd(dot) * pc.scale;
+        const float newMax = max(runningMax, score);
+        const float correction = exp(runningMax - newMax);
+        const float weight = exp(score - newMax);
+        runningSum = runningSum * correction + weight;
+        for (uint i = 0u; i < MAX_DIMS_PER_LANE; ++i) {
+            if (i < dims) acc[i] = acc[i] * correction + weight * valueCache[base + i];
+        }
+        runningMax = newMax;
+    }
+
+    if (lane == 0u) {
+        maxima[subgroup] = runningMax;
+        sums[subgroup] = runningSum;
+    }
+    for (uint i = 0u; i < dims; ++i) accumulated[subgroup][firstDim + i] = acc[i];
+    barrier();
+
+    float globalMax = -1.0 / 0.0;
+    for (uint s = 0u; s < SUBGROUPS; ++s) globalMax = max(globalMax, maxima[s]);
+    float total = 0.0;
+    float factors[SUBGROUPS];
+    for (uint s = 0u; s < SUBGROUPS; ++s) {
+        // Subgroups without keys have sum 0 and maximum -inf: factor 0.
+        factors[s] = sums[s] > 0.0 ? exp(maxima[s] - globalMax) : 0.0;
+        total += sums[s] * factors[s];
+    }
+    const uint gateBase = ((token * pc.queryHeads + head) * 2u + 1u) * pc.headDim;
+    for (uint d = gl_LocalInvocationID.x; d < pc.headDim; d += 32u * SUBGROUPS) {
+        float value = 0.0;
+        for (uint s = 0u; s < SUBGROUPS; ++s) value += accumulated[s][d] * factors[s];
+        const float gate = QG[gateBase + d];
+        O[(token * pc.queryHeads + head) * pc.headDim + d] = value / total / (1.0 + exp(-gate));
+    }
+}
