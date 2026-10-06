@@ -46,6 +46,23 @@ From the repository root:
 
 See `examples/README.md` for the options and commands.
 
+## Results on a Mac mini M4 (24 GB)
+
+Qwen3.6-27B Q3_K_M through MoltenVK, 4096-token context:
+
+| | |
+|---|---|
+| GPU memory | 12.6 GB weights (token embeddings stay on the CPU) + 0.66 GB caches and states |
+| Load time | ~21 s (first run after download: longer, the file is read from disk) |
+| Prompt | ~12 tokens/s (chunks of 16 tokens) |
+| Reply | ~5 tokens/s (short contexts) |
+| Accuracy | logits within 4e-6 of the logit scale of `reference.py` (NumPy, same GGUF) |
+
+Decoding reads all 12.6 GB of weights per token; the matrix-vector kernels
+reach 70-80 GB/s on Q3_K/Q4_K weights and ~100 GB/s on Q8_0/F16
+(`KLARTRAUM_BENCHMARK=1 ./build/klartraum_tests --gtest_filter=GgufLayersTest.MatVecThroughput`),
+against roughly 120 GB/s of memory bandwidth.
+
 ## Reference tooling
 
 | Script | Purpose |
