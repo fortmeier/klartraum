@@ -4,17 +4,23 @@ build
 shaders/**/*.spv
 .DS_Store
 
-# Regenerable ONNX pipeline intermediates
-data/onnx/tmp/
-scripts/onnx/.venv/
-scripts/lantern_splat/.venv/
+# Downloaded or exported models and ONNX pipeline intermediates. Only the small
+# test models directly in data/onnx/ are tracked; every subdirectory is local.
+data/onnx/*/
+data/gguf/
 
-# Python bytecode
+# Python environments and bytecode
+scripts/*/.venv/
 __pycache__/
 *.py[cod]
 
-# Claude work-planning files
+# Claude: personal settings and work-planning files
+.claude/settings.local.json
 .claude/plans/
+
+# Editor and tool state
+.vscode/
+.playwright-mcp/
 
 # Documentation build
 docs/.venv/
