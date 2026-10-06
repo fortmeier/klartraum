@@ -287,6 +287,7 @@ add_executable(
   tests/test_gguf_file.cpp
   tests/test_gguf_quants.cpp
   tests/test_gguf_layers.cpp
+  tests/test_gguf_qwen35.cpp
   tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
@@ -322,6 +323,7 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_file.cpp
   src/gguf_quants.cpp
   src/gguf_layers.cpp
+  src/gguf_network.cpp
   src/layers.cpp
   src/clip_tokenizer.cpp
   src/unipc_flow_scheduler.cpp
