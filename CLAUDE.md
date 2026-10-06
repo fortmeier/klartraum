@@ -114,7 +114,7 @@ cmake --build build
 .\build\Debug\klartraum_tests.exe        # Windows / VS2022 (multi-config)
 
 # Run a single test by name
-./build/klartraum_tests --gtest_filter=GaussianSplattingTest.classWithRaccoonScene
+./build/klartraum_tests --gtest_filter=GaussianSplattingTest.classWithLanternScene
 
 # List all available tests
 ./build/klartraum_tests --gtest_list_tests

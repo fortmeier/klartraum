@@ -17,9 +17,10 @@ int main() {
     auto& engine = frontend.getKlartraumEngine();
     auto& vulkanContext = engine.getVulkanContext();
 
-    // Load the scene once; the graph builder below reuses it.
+    // Load the scene once; the graph builder below reuses it. The lantern
+    // capture is stored with Y pointing down, so it is loaded with flipY.
     auto model = std::make_shared<klartraum::GaussianDataStandard>(
-        vulkanContext, "./3rdparty/spz/samples/racoonfamily.spz");
+        vulkanContext, "./data/lantern.spz", true);
 
     // The graph builder creates everything tied to the swapchain. The engine
     // runs it now and again after every window resize.
@@ -49,7 +50,8 @@ int main() {
     auto camera = std::make_shared<klartraum::InterfaceCameraOrbit>(
         klartraum::InterfaceCameraOrbit::UpDirection::Y);
     camera->initialize(vulkanContext);
-    camera->setDistance(1.0);
+    camera->setPosition({0.0f, -0.08f, 0.0f});
+    camera->setDistance(0.6);
     engine.setInterfaceCamera(camera);
 
     frontend.loop();

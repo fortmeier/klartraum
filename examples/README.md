@@ -28,8 +28,10 @@ A basic example that demonstrates:
 # Or from project root
 ./build/gaussian_splatting_example
 
-# Load a scene and set the world-space camera position; it looks at the origin
-./build/gaussian_splatting_example --file data/lantern.spz --camera-position 0.55 0.48 0.69 --flip-y
+# The default scene is data/lantern.spz. Load another scene (--flip-y mirrors
+# it across the Y axis) and set the world-space camera position; it looks at
+# the origin
+./build/gaussian_splatting_example --file path/to/scene.spz --camera-position 0.55 0.48 0.69 --flip-y
 ```
 
 ### Turntable Example

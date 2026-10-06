@@ -42,7 +42,10 @@ int main(int argc, char** argv) {
 #endif
 
     int maxFrames = -1;
-    std::string spzPath = "./3rdparty/spz/samples/racoonfamily.spz";
+    std::string spzPath = "./data/lantern.spz";
+    // The lantern capture is stored with Y pointing down; scenes given with
+    // --spz are loaded as they are.
+    bool flipY = true;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
         if (argument == "--frames" && i + 1 < argc) {
@@ -54,6 +57,7 @@ int main(int argc, char** argv) {
             }
         } else if (argument == "--spz" && i + 1 < argc) {
             spzPath = argv[++i];
+            flipY = false;
         }
     }
 
@@ -86,7 +90,7 @@ int main(int argc, char** argv) {
 
     auto cameraUbo = std::make_shared<klartraum::CameraUboType>();
     cameraUbo->setName("CameraUBO");
-    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzPath);
+    auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzPath, flipY);
     auto splatting = klartraum::createGaussianSplatting(
         vulkanContext, klartraum::GsplatBackend::Compute,
         splatTarget, cameraUbo, model);
@@ -143,8 +147,8 @@ int main(int argc, char** argv) {
     camera->setProjectionAspectRatio(1.0f);
     camera->setAzimuth(0.9f);
     camera->setElevation(-0.5f);
-    camera->setPosition({-0.5f, 0.0f, 0.5f});
-    camera->setDistance(1.0f);
+    camera->setPosition({0.0f, -0.08f, 0.0f});
+    camera->setDistance(0.6f);
     engine.setInterfaceCamera(camera);
     engine.setCameraUBO(cameraUbo);
 

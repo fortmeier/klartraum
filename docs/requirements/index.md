@@ -71,11 +71,12 @@ The compute and the raster Gaussian splatting backends shall take the same
 inputs, so that switching the backend does not change the surrounding graph.
 ```
 
-```{test} Both backends agree on the raccoon scene
+```{test} Both backends agree on the lantern scene
 :id: TEST_GSPLAT_BACKENDS_AGREE
 :status: verified
 :verifies: REQ_GSPLAT_BACKENDS
-:gtest: GaussianSplattingFactory.bothBackendsAgreeOnRaccoonScene
+:gtest: GaussianSplattingFactory.bothBackendsAgreeOnLanternScene
 
-Renders the raccoon scene with both backends and compares the images.
+Renders the lantern scene with both backends and compares the colour channels
+of the images.
 ```

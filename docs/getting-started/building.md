@@ -86,7 +86,7 @@ directory, so they must be run from the **repository root**:
 ./build/klartraum_tests
 
 # a single test
-./build/klartraum_tests --gtest_filter=GaussianSplattingTest.classWithRaccoonScene
+./build/klartraum_tests --gtest_filter=GaussianSplattingTest.classWithLanternScene
 ```
 
 Alternatively, run `ctest` from the build directory; it runs the tests from
