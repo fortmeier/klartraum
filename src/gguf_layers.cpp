@@ -5,6 +5,7 @@
 #include "klartraum/gguf/gguf_layers.hpp"
 
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -100,20 +101,60 @@ const char* matVecShader(GgmlType type) {
     }
 }
 
+// Bytes of one block in the GPU layout.
+uint32_t gpuBlockBytes(GgmlType type) {
+    switch (type) {
+    case GgmlType::Q3_K:
+        return 112;
+    case GgmlType::Q6_K:
+        return 224;
+    case GgmlType::Q8_0:
+        return 36;
+    default:
+        return ggmlBlockBytes(type);
+    }
+}
+
 } // namespace
+
+uint64_t gpuRowBytes(GgmlType type, uint32_t columns) {
+    ggmlRowBytes(type, columns); // checks for whole blocks
+    return uint64_t(columns / ggmlBlockSize(type)) * gpuBlockBytes(type);
+}
+
+void packWeights(GgmlType type, const uint8_t* source, uint32_t rows, uint32_t columns, uint8_t* destination) {
+    const uint64_t sourceRow = ggmlRowBytes(type, columns), destinationRow = gpuRowBytes(type, columns);
+    if (sourceRow == destinationRow) {
+        std::memcpy(destination, source, size_t(sourceRow * rows));
+        return;
+    }
+    const uint32_t from = ggmlBlockBytes(type), to = gpuBlockBytes(type);
+    const uint64_t blocks = uint64_t(rows) * (columns / ggmlBlockSize(type));
+    for (uint64_t block = 0; block < blocks; ++block) {
+        const uint8_t* in = source + block * from;
+        uint8_t* out = destination + block * to;
+        std::memset(out, 0, to);
+        if (type == GgmlType::Q8_0) {
+            std::memcpy(out, in, 2);          // half scale
+            std::memcpy(out + 4, in + 2, 32); // quants, word aligned
+        } else {
+            std::memcpy(out, in, from); // trailing padding
+        }
+    }
+}
 
 ComputeGraphElementPtr matVec(VulkanContext& vulkanContext, GgmlType type, uint32_t rows, uint32_t columns,
                               uint32_t inputStride, uint32_t outputStride, bool accumulate, bool lastTokenOnly) {
-    if (columns % 8 != 0 || columns % ggmlBlockSize(type) != 0) {
-        throw std::runtime_error("GGUF matVec columns must be a multiple of 8 and of the block size");
+    if (columns % 16 != 0 || columns % ggmlBlockSize(type) != 0) {
+        throw std::runtime_error("GGUF matVec columns must be a multiple of 16 and of the block size");
     }
     if (inputStride % 4 != 0)
         throw std::runtime_error("GGUF matVec input stride must be a multiple of 4");
     MatVecPushConstants constants{
-        rows,        columns,     uint32_t(ggmlRowBytes(type, columns)), accumulate ? 1u : 0u, lastTokenOnly ? 1u : 0u,
+        rows,        columns,     uint32_t(gpuRowBytes(type, columns)), accumulate ? 1u : 0u, lastTokenOnly ? 1u : 0u,
         inputStride, outputStride};
     auto operation = computation(vulkanContext, matVecShader(type), constants);
-    constexpr uint32_t rowsPerGroup = 4; // SUBGROUPS * ROWS_PER_SUBGROUP in matvec.glsl
+    constexpr uint32_t rowsPerGroup = 8; // SUBGROUPS * ROWS_PER_SUBGROUP in matvec.glsl
     setGroups(*operation, (rows + rowsPerGroup - 1) / rowsPerGroup);
     return operation;
 }

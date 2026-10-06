@@ -48,9 +48,10 @@ public:
     BatchedUpload(const BatchedUpload&) = delete;
     BatchedUpload& operator=(const BatchedUpload&) = delete;
 
-    // Copies `bytes` of `data` to the start of `destination`, a buffer with
-    // TRANSFER_DST usage, with a later submission.
-    void add(VkBuffer destination, const void* data, VkDeviceSize bytes) {
+    // Copies `bytes` of `data` to `destination` at `destinationOffset`
+    // (default: its start), a buffer with TRANSFER_DST usage, with a later
+    // submission.
+    void add(VkBuffer destination, const void* data, VkDeviceSize bytes, VkDeviceSize destinationOffset = 0) {
         if (bytes == 0) {
             return;
         }
@@ -59,7 +60,7 @@ public:
             reserve(std::max(chunkBytes, bytes));
         }
         std::memcpy(static_cast<char*>(mapped) + used, data, static_cast<size_t>(bytes));
-        copies.push_back(Copy{destination, used, bytes});
+        copies.push_back(Copy{destination, used, bytes, destinationOffset});
         used += bytes;
     }
 
@@ -73,6 +74,7 @@ public:
                 for (const Copy& copy : copies) {
                     VkBufferCopy region{};
                     region.srcOffset = copy.offset;
+                    region.dstOffset = copy.destinationOffset;
                     region.size = copy.bytes;
                     vkCmdCopyBuffer(commandBuffer, staging, copy.destination, 1, &region);
                 }
@@ -95,6 +97,7 @@ private:
         VkBuffer destination;
         VkDeviceSize offset; // in the staging buffer
         VkDeviceSize bytes;
+        VkDeviceSize destinationOffset;
     };
 
     void reserve(VkDeviceSize bytes) {
