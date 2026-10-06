@@ -105,27 +105,41 @@ Build & Test Commands
 # First-time setup
 git submodule update --init --recursive
 
-# Configure and build (Windows / VS2022)
-mkdir build && cd build
-cmake ..
-cmake --build .
+# Configure and build
+cmake -S . -B build
+cmake --build build
 
 # Run all tests (must be run from the repo root, see note below)
-.\build\Debug\klartraum_tests.exe
+./build/klartraum_tests                  # macOS / Linux (single-config, e.g. Ninja)
+.\build\Debug\klartraum_tests.exe        # Windows / VS2022 (multi-config)
 
 # Run a single test by name
-.\build\Debug\klartraum_tests.exe --gtest_filter=GaussianSplattingTest.classWithRaccoonScene
+./build/klartraum_tests --gtest_filter=GaussianSplattingTest.classWithRaccoonScene
 
 # List all available tests
-.\build\Debug\klartraum_tests.exe --gtest_list_tests
+./build/klartraum_tests --gtest_list_tests
 
 # Run an example
-.\build\examples\Debug\gaussian_splatting_example.exe
+./build/examples/gaussian_splatting_example                 # macOS / Linux
+.\build\examples\Debug\gaussian_splatting_example.exe      # Windows
 ```
+
+**Which binary:** single-config generators (Ninja, Makefiles; the default on
+macOS) put the test binary directly in `build/`, and the build type comes from
+`CMAKE_BUILD_TYPE`. Only multi-config generators (Visual Studio, Ninja
+Multi-Config) use `build/<Config>/`. Check `CMAKE_GENERATOR` in
+`build/CMakeCache.txt` when unsure, and make sure the binary you run was
+just rebuilt — a stale `build/Debug/` from an earlier configuration may still
+exist and silently lacks new tests.
+
+**Vulkan driver on macOS:** both MoltenVK and KosmicKrisp may be installed;
+the loader picks MoltenVK by default. Select one explicitly with
+`VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/MoltenVK_icd.json` or
+`VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json`.
 
 Shaders are compiled from GLSL to SPIR-V via `glslc` as a custom CMake build target. The compiled `.spv` files in `shaders/` must be kept in sync when shader source changes.
 
-**Working directory matters:** `klartraum_tests.exe` loads shader `.spv` files via paths relative to the current working directory (e.g. `shaders/operator_double.comp.spv`), which only resolve from the **repo root**. Running the exe from `build\` or `build\Debug\` fails with `failed to open file!`. Either `cd` to the repo root before invoking it directly, or use `ctest` from `build\` (which sets up the working directory correctly).
+**Working directory matters:** `klartraum_tests` loads shader `.spv` files via paths relative to the current working directory (e.g. `shaders/operator_double.comp.spv`), which only resolve from the **repo root**. Running it from inside `build/` fails with `failed to open file!`. Either `cd` to the repo root before invoking it directly, or use `ctest` from `build/` (which sets up the working directory correctly).
 
 
 Architecture Overview
