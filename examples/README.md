@@ -53,6 +53,35 @@ the landing page.
     --out-dir build/TestingOutput/turntable
 ```
 
+### Qwen Chat Example
+**File**: `qwen_chat_example.cpp`
+
+An interactive chat in the terminal with Qwen3.6-27B, run by `GgufNetwork`
+from a GGUF file (download it with `scripts/qwen_gguf/download.py`; see
+`scripts/qwen_gguf/README.md`). Each turn is formatted with the Qwen chat
+template and only the new tokens are run; the conversation stays in the
+network's key/value caches and linear-attention states. Replies are streamed
+as they are generated, thinking (when enabled) in dim text.
+
+Commands: `/reset` starts a new conversation, `/think on` / `/think off`
+switches thinking for the next turns, `/stats` prints the context use and the
+last turn's speed, `/quit` exits.
+
+Options: `--model FILE`, `--system TEXT`, `--prompt TEXT` (answer one prompt
+and exit), `--think`, `--context N` (default 4096 tokens), `--chunk N` (prompt
+tokens per submission, up to 16), `--max-reply N`, `--temperature T`,
+`--top-p P`, `--top-k K` (defaults follow Qwen's recommendations: 0.7 / 0.8 /
+20 without thinking, 1.0 / 0.95 / 20 with it), `--greedy`, `--seed N`,
+`--quiet`.
+
+#### Usage:
+```bash
+# From project root
+./build/examples/qwen_chat_example
+./build/examples/qwen_chat_example --think --system "You are a concise assistant."
+./build/examples/qwen_chat_example --greedy --prompt "What is a Vulkan compute shader?"
+```
+
 ## Building Examples
 
 Examples are built automatically when you build the main project.
