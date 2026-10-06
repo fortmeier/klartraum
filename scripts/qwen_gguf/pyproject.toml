@@ -1,0 +1,21 @@
+[project]
+name = "klartraum-qwen-gguf"
+version = "0.1.0"
+description = "Qwen3.6-27B GGUF download and reference tooling for Klartraum"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "gguf==0.19.0",
+    "huggingface-hub==1.33.0",
+    "numpy==2.5.3",
+]
+
+[dependency-groups]
+# Only needed to regenerate the tiny reference model used by the unit tests.
+reference = [
+    "torch==2.14.1",
+    "transformers==5.18.0",
+    "sentencepiece",
+]
+
+[tool.uv]
+package = false
