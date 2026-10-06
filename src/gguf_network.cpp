@@ -110,7 +110,9 @@ uint64_t GgufNetwork::getStateBytes() const {
     return bytes;
 }
 
-void GgufNetwork::append(const ComputeGraphElementPtr& operation, const std::vector<ComputeGraphElementPtr>& slots) {
+void GgufNetwork::append(const std::string& name, const ComputeGraphElementPtr& operation,
+                         const std::vector<ComputeGraphElementPtr>& slots) {
+    operation->setName(name);
     for (size_t i = 0; i < slots.size(); ++i)
         operation->setInput(slots[i], int(i));
     // The layers run in the order they are appended; scratch tensors are
@@ -132,8 +134,7 @@ ComputeGraphElementPtr GgufNetwork::matVec(const std::string& weight, uint32_t i
     const uint32_t rows = uint32_t(info.rowCount());
     auto operation =
         gl::matVec(*vulkanContext, info.type, rows, inputWidth, inputWidth, rows, accumulate, lastTokenOnly);
-    operation->setName(weight.c_str());
-    append(operation, {encodedWeight(weight), input, params, output});
+    append(weight, operation, {encodedWeight(weight), input, params, output});
     return operation;
 }
 
@@ -158,7 +159,7 @@ void GgufNetwork::buildQwen35() {
     std::shared_ptr<FloatTensor> queryGate, keys, values, queries, attended;
     for (uint32_t layer = 0; layer < c.layers; ++layer) {
         const std::string block = "blk." + std::to_string(layer) + ".";
-        append(gl::rmsNorm(*vulkanContext, c.hidden, 1, c.epsilon, T),
+        append("rms_norm", gl::rmsNorm(*vulkanContext, c.hidden, 1, c.epsilon, T),
                {hidden, floatWeight(block + "attn_norm.weight"), params, normed});
         if (c.recurrent[layer]) {
             if (!mixed) {
@@ -177,9 +178,9 @@ void GgufNetwork::buildQwen35() {
             matVec(block + "attn_gate.weight", c.hidden, normed, gate);
             matVec(block + "ssm_alpha.weight", c.hidden, normed, alpha);
             matVec(block + "ssm_beta.weight", c.hidden, normed, beta);
-            append(gl::linearConv(*vulkanContext, c.convChannels()),
+            append("linear_conv", gl::linearConv(*vulkanContext, c.convChannels()),
                    {mixed, floatWeight(block + "ssm_conv1d.weight"), params, convState, conv});
-            append(gl::gatedDeltaNet(*vulkanContext, delta),
+            append("gated_delta", gl::gatedDeltaNet(*vulkanContext, delta),
                    {conv, gate, alpha, beta, floatWeight(block + "ssm_a"), floatWeight(block + "ssm_dt.bias"),
                     floatWeight(block + "ssm_norm.weight"), params, deltaState, deltaOut});
             matVec(block + "ssm_out.weight", valueWidth, deltaOut, hidden, true);
@@ -198,21 +199,21 @@ void GgufNetwork::buildQwen35() {
             matVec(block + "attn_q.weight", c.hidden, normed, queryGate);
             matVec(block + "attn_k.weight", c.hidden, normed, keys);
             matVec(block + "attn_v.weight", c.hidden, normed, values);
-            append(gl::attentionPrep(*vulkanContext, attention, T),
+            append("attention_prep", gl::attentionPrep(*vulkanContext, attention, T),
                    {queryGate, keys, values, floatWeight(block + "attn_q_norm.weight"),
                     floatWeight(block + "attn_k_norm.weight"), params, queries, keyCache, valueCache});
-            append(gl::attention(*vulkanContext, attention, T),
+            append("attention", gl::attention(*vulkanContext, attention, T),
                    {queries, keyCache, valueCache, queryGate, params, attended});
             matVec(block + "attn_output.weight", c.heads * c.headDim, attended, hidden, true);
         }
-        append(gl::rmsNorm(*vulkanContext, c.hidden, 1, c.epsilon, T),
+        append("rms_norm", gl::rmsNorm(*vulkanContext, c.hidden, 1, c.epsilon, T),
                {hidden, floatWeight(block + "post_attention_norm.weight"), params, normed});
         matVec(block + "ffn_gate.weight", c.hidden, normed, ffnGate);
         matVec(block + "ffn_up.weight", c.hidden, normed, ffnUp);
-        append(gl::swiGlu(*vulkanContext, c.feedForward, T), {ffnGate, ffnUp, params, ffnHidden});
+        append("swiglu", gl::swiGlu(*vulkanContext, c.feedForward, T), {ffnGate, ffnUp, params, ffnHidden});
         matVec(block + "ffn_down.weight", c.feedForward, ffnHidden, hidden, true);
     }
-    append(gl::rmsNorm(*vulkanContext, c.hidden, 1, c.epsilon, T),
+    append("rms_norm", gl::rmsNorm(*vulkanContext, c.hidden, 1, c.epsilon, T),
            {hidden, floatWeight("output_norm.weight"), params, normed});
     const std::string head = file->hasTensor("output.weight") ? "output.weight" : "token_embd.weight";
     matVec(head, c.hidden, normed, logits, false, !options.logitsForAllTokens);
