@@ -1,0 +1,22 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// y = silu(gate) * up for the params[0] active tokens of `width` values each.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint width;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer GateBuffer { float G[]; };
+layout(set = 0, binding = 1) restrict readonly buffer UpBuffer { float U[]; };
+layout(set = 0, binding = 2) restrict readonly buffer ParamsBuffer { uint params[]; };
+layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float Y[]; };
+
+void main() {
+    const uint index = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 256u;
+    if (index >= params[0] * pc.width) return;
+    const float g = G[index];
+    Y[index] = g / (1.0 + exp(-g)) * U[index];
+}

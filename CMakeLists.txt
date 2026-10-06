@@ -297,6 +297,7 @@ add_executable(
   tests/test_layers.cpp
   tests/test_gguf_file.cpp
   tests/test_gguf_quants.cpp
+  tests/test_gguf_layers.cpp
   tests/test_render_over_targets.cpp
 
   tests/test_headless_frontend.cpp
@@ -336,6 +337,7 @@ set(KLARTRAUM_LIB_SRC
   src/onnx_network.cpp
   src/gguf_file.cpp
   src/gguf_quants.cpp
+  src/gguf_layers.cpp
   src/layers.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
