@@ -31,6 +31,7 @@ relative to the working directory.
 | `turntable_example` | Headless rendering: one image per frame from a camera circling the scene | no |
 | `title_font_example` | The promo title set in several fonts and turned into Gaussians, rendered front-on for comparison (needs `KLARTRAUM_WITH_FREETYPE`) | no |
 | `title_morph_example` | The promo opening shot: the title, made of the scene's Gaussians, morphs into the turning lantern (needs `KLARTRAUM_WITH_FREETYPE`) | no |
+| `qwen_chat_example` | A chat in the terminal with the Qwen3.6-27B language model, run from a GGUF file | no |
 
 ### Camera controls
 
@@ -223,4 +224,40 @@ done
 ffmpeg -i straight/straight.mp4 -i swirl/swirl.mp4 -i scatter/scatter.mp4 -i wave/wave.mp4 -filter_complex \
     "[0]scale=960:540[a];[1]scale=960:540[b];[2]scale=960:540[c];[3]scale=960:540[d];[a][b]hstack[t];[c][d]hstack[u];[t][u]vstack" \
     -c:v libx264 -crf 18 -pix_fmt yuv420p variants_2x2.mp4
+```
+
+### `qwen_chat_example`
+
+An interactive chat in the terminal with Qwen3.6-27B, run by `GgufNetwork` from
+a GGUF file. Download the model with `scripts/qwen_gguf/download.py`; see
+[`scripts/qwen_gguf/`](https://github.com/fortmeier/klartraum/tree/main/scripts/qwen_gguf).
+Qwen3.6 is third-party software under its own license and not part of
+Klartraum. Each turn is formatted with the Qwen chat template and only the new
+tokens are run; the conversation stays in the network's key/value caches and
+linear-attention states. Replies are streamed as they are generated, thinking
+(when enabled) in dim text.
+
+Commands during the chat: `/reset` starts a new conversation, `/think on` and
+`/think off` switch thinking for the next turns, `/stats` prints the context
+use and the speed of the last turn, `/quit` exits.
+
+| Option | Meaning |
+|---|---|
+| `--model FILE` | GGUF model (default: the `.gguf` file in `data/gguf/qwen3.6-27b/`) |
+| `--system TEXT` | System prompt |
+| `--prompt TEXT` | Answer one prompt and exit |
+| `--think` | Start with thinking enabled |
+| `--context N` | Context length in tokens (default 4096) |
+| `--chunk N` | Prompt tokens per submission, 1 to 16 (default 16) |
+| `--max-reply N` | Most tokens per reply (default 2048) |
+| `--temperature T`, `--top-p P`, `--top-k K` | Sampling (defaults follow Qwen's recommendations: 0.7 / 0.8 / 20 without thinking, 1.0 / 0.95 / 20 with it) |
+| `--greedy` | Always take the most likely token |
+| `--seed N` | Random seed (default: the time) |
+| `--quiet` | No loading and speed messages |
+| `--profile` | Print the mean GPU time per layer kind after each reply |
+
+```bash
+./build/examples/qwen_chat_example
+./build/examples/qwen_chat_example --think --system "You are a concise assistant."
+./build/examples/qwen_chat_example --greedy --prompt "What is a Vulkan compute shader?"
 ```
