@@ -163,7 +163,7 @@ ComputeGraphElementPtr rmsNorm(VulkanContext& vulkanContext, uint32_t width, uin
                                uint32_t maxTokens) {
     auto operation = computation(vulkanContext, "shaders/gguf/rms_norm.comp.spv",
                                  RmsNormPushConstants{width, rowsPerToken, epsilon});
-    setGroups(*operation, (maxTokens * rowsPerToken + 7) / 8);
+    operation->setGroupCount(maxTokens * rowsPerToken, 1, 1);
     return operation;
 }
 
