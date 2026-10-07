@@ -6,18 +6,37 @@ Klartraum (German for *lucid dream*) is a real-time neural rendering and inferen
 
 ![A stone lantern rendered with Gaussian splatting by Klartraum, turning once around its axis](site/images/engine-lantern.gif)
 
-## What it does
+## Goals
 
-- **Combines neural and classical rendering:** Gaussian splatting, neural networks, rasterization and ray tracing in one pipeline.
-- **Runs neural networks on any Vulkan device,** from single-board computers to virtual-reality headsets and data center GPUs.
-- **Keeps the CPU out of the way:** all GPU work is recorded into Vulkan command buffers once; each frame only submits them.
-- **Works with or without a window,** as an interactive application or as a headless inference engine.
+- **Combine neural and classical rendering:** Gaussian splatting, neural networks, rasterization and ray tracing in one pipeline.
+- **Run neural networks on any Vulkan device,** from single-board computers to virtual-reality headsets and data center GPUs.
+- **Keep the CPU out of the way:** all GPU work is recorded into Vulkan command buffers once; each frame only submits them.
+- **Work with or without a window,** as an interactive application or as a headless inference engine.
 
 See [Vision and roadmap](https://klartraum.ai/docs/vision.html) for where it is heading.
 
 ## Status
 
-Early development: the compute graph works, Gaussian splatting runs on the GPU with a compute and a raster backend, and a first set of ONNX operators is supported.
+Early development. What works today:
+
+- the compute graph: GPU work described as a graph of elements, recorded into
+  command buffers once and submitted per frame, with GPU timings per element;
+- Gaussian splatting with a compute and a raster backend (`.spz` scenes);
+- ONNX models with the operators `Conv`, `ConvTranspose`, `Relu`, `Reshape`,
+  `Transpose` and `Constant`;
+- windowed (GLFW) and headless frontends, several viewports in one window,
+  resizable windows and a debug text overlay.
+
+Ray tracing is not implemented yet.
+
+## Requirements
+
+- CMake 3.24 or newer and a C++17 compiler
+- the [Vulkan SDK](https://vulkan.lunarg.com/) (loader, headers and `glslc`)
+- tested on Windows (Visual Studio 2022) and macOS on Apple Silicon (MoltenVK
+  or KosmicKrisp); Linux is not tested yet
+
+All other dependencies are git submodules or are downloaded by CMake.
 
 ## Quick start
 
@@ -30,9 +49,19 @@ cmake --build build
 
 # from the repository root
 ./build/examples/gaussian_splatting_example        # Windows: .\build\examples\Debug\gaussian_splatting_example.exe
+./build/klartraum_tests                            # Windows: .\build\Debug\klartraum_tests.exe
 ```
 
-Requirements, platform notes, tests and a walk-through of a first application are in the [documentation](https://klartraum.ai/docs/getting-started/building.html).
+[examples/README.md](examples/README.md) describes all example programs and
+their options. Platform notes, build options and a walk-through of a first
+application are in the [documentation](https://klartraum.ai/docs/getting-started/building.html).
+
+## Contributing
+
+The code style, the checks that run before each commit and how to build the
+documentation are described under
+[Contributing](https://klartraum.ai/docs/contributing/development.html) in the
+documentation.
 
 ## License
 
