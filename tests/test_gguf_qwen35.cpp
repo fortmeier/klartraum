@@ -4,15 +4,23 @@
 
 /**
  * TESTS:
- * - The qwen35 configuration is read from GGUF metadata; other architectures are rejected.
- * - Nine tokens in one submission reproduce the transformers logits at every position (F32 weights).
- * - Prompt chunks of 4 + 4 + 1 tokens carry caches and states across submissions and match as well.
- * - Token-by-token decoding with last-token logits matches every position.
- * - resetState() starts a new sequence: running the prompt again gives the same logits.
- * - With Q8_0 projection weights the logits stay close to the reference and agree on the top token.
- * - Downloaded Qwen3.6-27B (skipped without it): the logits of a prompt match the NumPy reference
- *   (scripts/qwen_gguf/reference.py --save-gguf, skipped without build/TestingOutput/qwen_reference.gguf),
- *   and the greedy continuation of "The capital of France is" names Paris.
+ * - ReadsConfiguration: The qwen35 configuration is read from GGUF metadata; other
+ *   architectures are rejected
+ * - SingleSubmissionMatchesTransformers: Nine tokens in one submission reproduce the
+ *   transformers logits at every position (F32 weights)
+ * - ChunkedPromptMatchesTransformers: Prompt chunks of 4 + 4 + 1 tokens carry caches and
+ *   states across submissions and match as well
+ * - TokenByTokenMatchesTransformers: Token-by-token decoding with last-token logits
+ *   matches every position
+ * - ResetStateRestartsTheSequence: resetState() starts a new sequence: running the
+ *   prompt again gives the same logits
+ * - Q8WeightsStayClose: With Q8_0 projection weights the logits stay close to the
+ *   reference and agree on the top token
+ * - MatchesNumpyReference: With the downloaded Qwen3.6-27B (skipped without it), the
+ *   logits of a prompt match the NumPy reference (scripts/qwen_gguf/reference.py
+ *   --save-gguf; skipped without build/TestingOutput/qwen_reference.gguf)
+ * - GreedyContinuationNamesParis: With the downloaded Qwen3.6-27B (skipped without it),
+ *   the greedy continuation of "The capital of France is" names Paris
  **/
 
 #include <algorithm>
