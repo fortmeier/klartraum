@@ -4,13 +4,20 @@
 
 /**
  * TESTS:
- * - TensorElement constructs from individual dimensions.
- * - TensorElement constructs from a dimension vector.
- * - TensorElementSinglePath constructs from individual dimensions.
- * - TensorElementSinglePath constructs from a dimension vector.
- * - TensorElementSinglePath preserves its logical dimensions.
- * - Compatible tensors can share physical storage while retaining logical sizes.
- * - A tensor cannot share storage that is smaller than its logical allocation.
+ * - ConstructorWithIndividualDimensions: a TensorElement can be created from width,
+ *   height, depth and batch
+ * - ConstructorWithDimensionsVector: a TensorElement can be created from a vector of
+ *   dimensions
+ * - TensorElementSinglePathConstruction: a TensorElementSinglePath can be created from
+ *   width, height, depth and batch
+ * - TensorElementSinglePathConstructionWithVector: a TensorElementSinglePath can be
+ *   created from a vector of dimensions
+ * - TensorElementSinglePathGetDimensions: a TensorElementSinglePath returns the
+ *   dimensions it was created with
+ * - SharesPhysicalStorageAndRetainsLogicalSize: compatible tensors can share physical
+ *   storage while keeping their logical sizes
+ * - RejectsUndersizedSharedStorage: a tensor cannot share storage that is smaller than
+ *   its logical allocation
  **/
 
 #include <gtest/gtest.h>
