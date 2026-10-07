@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - nearestUpscale: 2x2 -> 4x4 with nearest filtering repeats every pixel twice per axis

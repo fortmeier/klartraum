@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 // Renders a Gaussian splatting scene headlessly from a camera that orbits the
 // scene's up axis exactly once, and writes one PPM image per frame, e.g. to
 // assemble a looping animation (scripts/site/make_lantern_animation.sh).

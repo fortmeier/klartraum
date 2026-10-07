@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - create: builds a multi-element compute graph (RenderPass→BlurOp→NoiseOp→AddOp→CopyOp) and submits one frame

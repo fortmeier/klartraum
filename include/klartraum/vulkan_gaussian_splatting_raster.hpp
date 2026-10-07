@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
 #define VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
 

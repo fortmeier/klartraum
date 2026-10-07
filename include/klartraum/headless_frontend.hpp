@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef HEADLESS_FRONTEND_HPP
 #define HEADLESS_FRONTEND_HPP
 

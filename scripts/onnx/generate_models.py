@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 """Generate the deterministic ONNX fixtures used by Klartraum's tests."""
 
 from __future__ import annotations

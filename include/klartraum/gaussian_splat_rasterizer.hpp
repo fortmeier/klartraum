@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_GAUSSIAN_SPLAT_RASTERIZER_HPP
 #define KLARTRAUM_GAUSSIAN_SPLAT_RASTERIZER_HPP
 

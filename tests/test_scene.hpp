@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_TESTS_TEST_SCENE_HPP
 #define KLARTRAUM_TESTS_TEST_SCENE_HPP
 

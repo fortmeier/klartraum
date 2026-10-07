@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_GAUSSIAN_DATA_STANDARD_HPP
 #define KLARTRAUM_GAUSSIAN_DATA_STANDARD_HPP
 

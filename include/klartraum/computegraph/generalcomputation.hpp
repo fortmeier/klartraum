@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_GENERALCOMPUTATION_HPP
 #define KLARTRAUM_GENERALCOMPUTATION_HPP
 

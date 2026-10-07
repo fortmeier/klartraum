@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - rendersIndirectInstancedQuadsWithoutValidationErrors: wires GaussianSplatRasterizer

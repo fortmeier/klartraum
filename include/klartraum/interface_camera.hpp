@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_INTERFACE_CAMERA_HPP
 #define KLARTRAUM_INTERFACE_CAMERA_HPP
 

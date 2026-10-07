@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef DRAW_COMPONENT_HPP
 #define DRAW_COMPONENT_HPP
 

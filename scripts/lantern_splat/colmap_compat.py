@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 """Forward Nerfstudio's COLMAP 3.x arguments to the local COLMAP 4.x build."""
 
 from __future__ import annotations

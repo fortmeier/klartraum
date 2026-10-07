@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #include "klartraum/gaussian_transform.hpp"
 
 #include <cmath>

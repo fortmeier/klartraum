@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #version 450
 
 // Resamples one image into another of any size. Pixel centres are mapped

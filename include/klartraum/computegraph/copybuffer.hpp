@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_COPYBUFFER_HPP
 #define KLARTRAUM_COPYBUFFER_HPP
 

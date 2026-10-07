@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #include <iostream>
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>

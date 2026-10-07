@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 cmake_minimum_required(VERSION 3.24)
 
 # The default minimum macOS version; set CMAKE_OSX_DEPLOYMENT_TARGET on the

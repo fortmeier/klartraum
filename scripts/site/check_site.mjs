@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 // Automated checks for the landing page in _site/ (build it first with
 // build_site.sh). Serves _site/ on a local port, drives Chromium with
 // Playwright and exits non-zero if any check fails. Screenshots are written
