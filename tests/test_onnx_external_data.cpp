@@ -4,8 +4,10 @@
 
 /**
  * TESTS:
- * - ONNX initializers stored in a bounded external-data range are loaded and executed.
- * - External tensor paths cannot escape the ONNX model directory.
+ * - LoadsBoundedInitializerRange: ONNX initializers stored in a bounded external-data
+ *   range are loaded and executed
+ * - RejectsPathOutsideModelDirectory: external tensor paths cannot escape the ONNX model
+ *   directory
  **/
 
 #include <cstring>
