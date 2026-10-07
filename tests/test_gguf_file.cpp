@@ -4,13 +4,15 @@
 
 /**
  * TESTS:
- * - Block geometry and row sizes of the supported GGML types.
- * - A file without the GGUF magic is rejected.
- * - Scalar metadata of every value type is read back with its value.
- * - String and numeric arrays are read back element by element.
- * - Tensor directory: names, dimensions, types, and offsets after the aligned header, with a custom alignment.
- * - Tensor data is read from the mapped file at the directory offset.
- * - A tensor extending past the end of the file is rejected.
+ * - TypeGeometry: Block geometry and row sizes of the supported GGML types
+ * - RejectsNonGgufFile: A file without the GGUF magic is rejected
+ * - ScalarMetadata: Scalar metadata of every value type is read back with its value
+ * - ArrayMetadata: String and numeric arrays are read back element by element
+ * - TensorDirectoryWithCustomAlignment: Tensor directory: names, dimensions, types, and
+ *   offsets after the aligned header, with a custom alignment
+ * - TensorDataAtDirectoryOffset: Tensor data is read from the mapped file at the
+ *   directory offset
+ * - RejectsTensorOutsideFile: A tensor extending past the end of the file is rejected
  **/
 
 #include <cstdint>

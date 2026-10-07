@@ -4,14 +4,20 @@
 
 /**
  * TESTS:
- * - The pre-tokenizer splits words with their leading space, punctuation, and contractions.
- * - Numbers are split into single digits.
- * - Whitespace runs keep their last space for the following word, and end after their last line break.
- * - Non-ASCII letters, combining marks and CJK text stay in word pieces; emoji are symbol pieces.
- * - Invalid UTF-8 bytes are kept, so every piece list concatenates back to its input.
- * - With the Qwen3.6 vocabulary (downloaded GGUF), encoding matches the Hugging Face tokenizer ids
- *   for the cases in tests/data/gguf/qwen35_tokenizer_cases.gguf, and decoding restores the text.
- * - Special tokens are parsed only on request, and the chat markers map to their control tokens.
+ * - WordsPunctuationAndContractions: The pre-tokenizer splits words with their leading
+ *   space, punctuation, and contractions
+ * - DigitsAreSingleTokens: Numbers are split into single digits
+ * - WhitespaceRuns: Whitespace runs keep their last space for the following word, and
+ *   end after their last line break
+ * - UnicodeClasses: Non-ASCII letters, combining marks and CJK text stay in word pieces;
+ *   emoji are symbol pieces
+ * - InvalidUtf8IsKept: Invalid UTF-8 bytes are kept, so every piece list concatenates
+ *   back to its input
+ * - MatchesHuggingFaceIds: With the Qwen3.6 vocabulary (downloaded GGUF), encoding
+ *   matches the Hugging Face tokenizer ids for the cases in
+ *   tests/data/gguf/qwen35_tokenizer_cases.gguf, and decoding restores the text
+ * - SpecialTokens: Special tokens are parsed only on request, and the chat markers map
+ *   to their control tokens
  **/
 
 #include <cstdlib>
