@@ -1,51 +1,27 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.24)
 
-cmake_policy(SET CMP0135 NEW)
+# The default minimum macOS version; set CMAKE_OSX_DEPLOYMENT_TARGET on the
+# command line to change it. It has to be known before project().
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
+endif()
 
-project(klartraum)
+project(klartraum LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+include(FetchContent)
+
 # Tests and examples are only built by default when klartraum is the top-level
 # project, not when it is consumed via add_subdirectory()/FetchContent.
-if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
-    set(KLARTRAUM_IS_TOP_LEVEL ON)
-else()
-    set(KLARTRAUM_IS_TOP_LEVEL OFF)
-endif()
-option(KLARTRAUM_BUILD_TESTS "Build the klartraum unit tests" ${KLARTRAUM_IS_TOP_LEVEL})
-option(KLARTRAUM_BUILD_EXAMPLES "Build the klartraum examples" ${KLARTRAUM_IS_TOP_LEVEL})
-
-# macOS and Apple Silicon (M4) support
-if(APPLE)
-    message(STATUS "Building for macOS")
-    
-    # Detect Apple Silicon (ARM64)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        message(STATUS "Detected Apple Silicon (ARM64) architecture")
-        set(CMAKE_OSX_ARCHITECTURES "arm64")
-    endif()
-
-    # Set minimum macOS deployment target
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
-    
-    # Enable modern Objective-C runtime
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fobjc-arc")
-    
-    # Optimization flags for Apple Silicon
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mcpu=apple-m1")
-    endif()
-endif()
-
-include_directories(${PROJECT_SOURCE_DIR}/include)
+option(KLARTRAUM_BUILD_TESTS "Build the klartraum unit tests" ${PROJECT_IS_TOP_LEVEL})
+option(KLARTRAUM_BUILD_EXAMPLES "Build the klartraum examples" ${PROJECT_IS_TOP_LEVEL})
 
 add_subdirectory(3rdparty/glfw)
 
 # Link only the Vulkan loader. The loader selects the driver (ICD) at runtime,
 # e.g. KosmicKrisp or MoltenVK on macOS; set VULKAN_SDK to choose the SDK.
 find_package(Vulkan REQUIRED)
-include_directories(${Vulkan_INCLUDE_DIRS})
 
 if(APPLE)
     # macOS system frameworks required for graphics applications
@@ -70,7 +46,6 @@ add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/zlib)
 find_package(zstd QUIET)
 if(NOT zstd_FOUND)
   message(STATUS "zstd not found, using FetchContent to download it.")
-  include(FetchContent)
   FetchContent_Declare(
     zstd
     URL https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz
@@ -89,7 +64,6 @@ elseif(NOT TARGET zstd::zstd)
 endif()
 
 
-include_directories(${PROJECT_SOURCE_DIR}/3rdparty/spz/src/cc/)
 set(SPZ_SRC
   3rdparty/spz/src/cc/load-spz.cc
   3rdparty/spz/src/cc/splat-c-types.cc
@@ -150,9 +124,6 @@ add_custom_target(
   DEPENDS ${SPIRV_BINARY_FILES} ${GLSL_SOURCE_FILES}
 )
 
-# Add dependencies using FetchContent
-include(FetchContent)
-
 # Add GLM (OpenGL Mathematics) - header-only library
 FetchContent_Declare(
   glm
@@ -171,13 +142,8 @@ FetchContent_Declare(
   protobuf
   GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
   GIT_TAG v25.1
-  SOURCE_SUBDIR cmake
 )
 FetchContent_MakeAvailable(protobuf)
-
-# Build protobuf after making it available
-
-add_subdirectory(${protobuf_SOURCE_DIR} ${protobuf_BINARY_DIR})
 
 # Abseil (bundled with protobuf) passes its Randen HWAES flags on Apple as
 # "-Xarch_x86_64 -maes -Xarch_x86_64 -msse4.1 ...". CMake de-duplicates the
@@ -319,8 +285,8 @@ set(KLARTRAUM_LIB_SRC
 # Create Klartraum library
 add_library(klartraum_lib STATIC ${KLARTRAUM_LIB_SRC})
 
-set(LIBRARIES 
-    ${Vulkan_LIBRARIES}
+set(LIBRARIES
+    Vulkan::Vulkan
     glfw
     zlibstatic
     zstd::zstd
@@ -333,13 +299,13 @@ if(APPLE)
   list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
 endif()
 
-target_link_libraries(klartraum_lib ${LIBRARIES})
+target_link_libraries(klartraum_lib PUBLIC ${LIBRARIES})
+target_compile_features(klartraum_lib PUBLIC cxx_std_17)
 
 # Consumers only need to link klartraum_lib to get its headers.
 target_include_directories(klartraum_lib PUBLIC
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/3rdparty/spz/src/cc
-    ${Vulkan_INCLUDE_DIRS}
 )
 
 add_dependencies(klartraum_lib Shaders onnx_proto)
