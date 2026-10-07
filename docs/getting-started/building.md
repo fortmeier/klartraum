@@ -3,7 +3,9 @@
 Klartraum is built with CMake 3.24 or newer and needs a C++17 compiler and the
 [Vulkan SDK](https://vulkan.lunarg.com/) (for the loader, the headers and the
 `glslc` shader compiler). All other dependencies are git submodules or are
-downloaded by CMake.
+downloaded by CMake. Their licenses are listed in
+[THIRD_PARTY_NOTICES.md](https://github.com/fortmeier/klartraum/blob/main/THIRD_PARTY_NOTICES.md);
+pass that file on with any build you distribute.
 
 ## Getting the sources
 
