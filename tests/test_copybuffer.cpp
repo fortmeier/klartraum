@@ -2,6 +2,11 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - BasicCopyBufferTest: a CopyBuffer element copies 10 floats from its source buffer
+ *   (input 0) to its destination buffer (input 1) in a single-path graph
+ **/
 #include <memory>
 #include <vector>
 

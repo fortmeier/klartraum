@@ -2,6 +2,11 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - Transpose2D: the transpose shader turns a 2x3 tensor into its 3x2 transpose
+ * - Transpose4D: the transpose shader permutes a [1,2,4,4] tensor into [1,4,4,2]
+ **/
 #include <vector>
 
 #include <gtest/gtest.h>

@@ -7,6 +7,9 @@
  * - makeViewportProducesIndependentTargets: two makeViewport() calls return
  *   distinct ImageViewSrc targets whose images differ and whose extents equal
  *   the requested width/height.
+ * - scaledViewportUsesIndependentRenderResolution: a viewport covering the whole
+ *   window but rendering at 32x24 gets offscreen images of that size, and the
+ *   composite scales it up to fill the window (the bottom-right corner is red).
  * - compositePlacesViewportsInCorrectRegions: a left (red) and right (blue)
  *   viewport, each filled by clearing its offscreen image, composite into the
  *   swapchain; readback confirms red in the left half and blue in the right.

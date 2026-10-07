@@ -2,6 +2,18 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - CreateConvTransposeTensors: input, weight, bias and output tensors for a
+ *   ConvTranspose have the requested dimensions
+ * - SetConvTransposeData: data can be copied into ConvTranspose tensors and their
+ *   element counts match their dimensions
+ * - ConvTransposePushConstants: the ConvTranspose push constants hold the kernel shape,
+ *   strides and tensor dimensions that were set
+ * - ConvTransposeGeneralComputationFullTest: a GeneralComputation with the conv
+ *   transpose shader upsamples a [1,2,2,2] input with stride 2; checks element counts
+ *   and push constants and prints the output, but does not check the output values
+ **/
 #include <vector>
 
 #include <gtest/gtest.h>

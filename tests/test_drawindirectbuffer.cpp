@@ -4,12 +4,15 @@
 
 /**
  * TESTS:
- * - DrawIndirectCommandBufferElement can be compiled and submitted as a graph leaf
- *   holding a VkDrawIndirectCommand
- * - setRecordToZeroRange resets only the targeted byte range (instanceCount) on each
- *   submission while leaving the rest of the struct (vertexCount) untouched
- * - setRecordToFill overwrites the whole buffer with a repeating 32-bit sentinel
- *   pattern (0xFFFFFFFF) on each submission, replacing previously seeded data
+ * - compilesAndSubmitsAsGraphLeaf: a DrawIndirectCommandBufferElement holding one
+ *   VkDrawIndirectCommand compiles as the only element of a graph, and submitting
+ *   it leaves the command it holds unchanged
+ * - partialResetPreservesVertexCount: setRecordToZeroRange resets only the targeted
+ *   byte range (instanceCount) on each submission while leaving the rest of the
+ *   struct (vertexCount) untouched
+ * - fillOverwritesBufferWithSentinelPatternEachFrame: setRecordToFill overwrites the
+ *   whole buffer with a repeating 32-bit sentinel pattern (0xFFFFFFFF) on each
+ *   submission, replacing previously seeded data
  **/
 #include <gtest/gtest.h>
 
@@ -22,6 +25,32 @@
 #include "klartraum/vulkan_buffer.hpp"
 
 using namespace klartraum;
+
+TEST(DrawIndirectCommandBufferElement, compilesAndSubmitsAsGraphLeaf) {
+    klartraum::HeadlessFrontend frontend;
+
+    auto& core = frontend.getKlartraumEngine();
+    auto& vulkanContext = core.getVulkanContext();
+
+    auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
+        vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+    auto computegraph = ComputeGraph(vulkanContext, 1);
+    computegraph.compileFrom(drawArgs);
+
+    VkDrawIndirectCommand command{6, 3, 2, 1};
+    drawArgs->getBuffer(0).memcopyFrom(&command, 1);
+
+    computegraph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
+
+    std::vector<VkDrawIndirectCommand> result(1);
+    drawArgs->getBuffer(0).memcopyTo(result);
+
+    EXPECT_EQ(result[0].vertexCount, 6u);
+    EXPECT_EQ(result[0].instanceCount, 3u);
+    EXPECT_EQ(result[0].firstVertex, 2u);
+    EXPECT_EQ(result[0].firstInstance, 1u);
+}
 
 TEST(DrawIndirectCommandBufferElement, partialResetPreservesVertexCount) {
     klartraum::HeadlessFrontend frontend;

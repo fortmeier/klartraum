@@ -2,6 +2,18 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - CreateConvTensors: input, weight, bias and output tensors for a Conv have the
+ *   requested dimensions
+ * - SetConvData: data can be copied into Conv tensors and their element counts match
+ *   their dimensions
+ * - ConvPushConstants: the Conv push constants hold the kernel shape, strides and tensor
+ *   dimensions that were set
+ * - ConvGeneralComputationFullTest: a GeneralComputation with the conv shader runs on a
+ *   [1,2,4,4] input with a 3x3 kernel; checks element counts and push constants and
+ *   prints the output, but does not check the output values
+ **/
 #include <vector>
 
 #include <gtest/gtest.h>
