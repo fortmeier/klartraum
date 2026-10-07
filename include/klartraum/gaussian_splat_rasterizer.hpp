@@ -26,18 +26,20 @@ struct GaussianSplatRasterPushConstants {
     uint32_t numSplats;
 };
 
-// DrawComponent for the sort-once + hardware-rasterization Gaussian-splatting
-// backend (klartraum_rasterized_gs_backend_guide.md §3.4 / Stage C). Unlike
-// DrawBasics (one descriptor set, no push constants, a vertex buffer, direct
-// draw), this component binds:
-//   - set 0: the camera UBO (as DrawBasics does)
-//   - set 1: the per-splat SoA storage buffers plus the sorted-index buffer,
-//     in the order supplied to the constructor (binding == vector index)
-// generates its quad corners from gl_VertexIndex (no vertex buffer), and
-// issues a single vkCmdDrawIndirect reading instanceCount from drawArgsBuffer
-// (filled by the compute culling/sort stage and ordered ahead of this render
-// pass via BufferToGraphicsBarrier). The color attachment is blended with
-// premultiplied "over" so splats composite correctly back-to-front.
+/**
+ * @brief Draw component of the raster Gaussian splatting backend (vertex and fragment shader path).
+ *
+ * It binds
+ * - set 0: the camera uniform buffer;
+ * - set 1: the per-splat storage buffers and the sorted index buffer, in the
+ *   order passed to the constructor (binding = vector index);
+ *
+ * generates the quad corners from `gl_VertexIndex` (no vertex buffer), and issues
+ * one `vkCmdDrawIndirect` that reads the instance count from the draw-arguments
+ * buffer. That buffer is filled by the compute culling and sorting, which
+ * BufferToGraphicsBarrier orders before this render pass. Splats are blended with
+ * premultiplied "over", so they composite correctly back to front.
+ */
 class GaussianSplatRasterizer : public DrawComponent {
 public:
     // splatBuffers: per-splat SoA storage buffers (e.g. positions, colorsAlpha)

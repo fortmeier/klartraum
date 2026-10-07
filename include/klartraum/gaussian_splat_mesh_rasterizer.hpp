@@ -15,15 +15,18 @@
 
 namespace klartraum {
 
-// Mesh-shader draw component for the raster backend (perf plan R5), an additive,
-// device-gated alternative to GaussianSplatRasterizer's vertex+fragment path.
-// One mesh workgroup emits a batch of quads, reading the precomputed Splat2D
-// records (R1) dereferenced through the sorted-index permutation plus the
-// visible count (so the last partial workgroup emits the right number). It is
-// selected only when VK_EXT_mesh_shader is supported; otherwise the raster
-// backend uses the vertex path. Outputs match the vertex shader's interface, so
-// gsplat_raster.frag is reused. Draws via vkCmdDrawMeshTasksIndirectEXT with
-// groupCount filled by gsplat_mesh_args.comp from the visible count.
+/**
+ * @brief Mesh-shader draw component of the raster Gaussian splatting backend, an alternative to
+ * GaussianSplatRasterizer's vertex shader path.
+ *
+ * One mesh workgroup emits a batch of quads from the precomputed 2D splat
+ * records, read through the sorted-index permutation, and from the visible count
+ * (so the last, partial workgroup emits the right number). The backend uses it
+ * only when VK_EXT_mesh_shader is supported, otherwise the vertex path. Its outputs
+ * match the vertex shader's, so the same fragment shader (`gsplat_raster.frag`)
+ * is used. It draws with `vkCmdDrawMeshTasksIndirectEXT`; `gsplat_mesh_args.comp`
+ * computes the group count from the visible count.
+ */
 class GaussianSplatMeshRasterizer : public DrawComponent {
 public:
     // splatBuffers (set 1): Splat2D (binding 0), sorted indices (binding 1),

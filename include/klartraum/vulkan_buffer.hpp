@@ -13,6 +13,13 @@
 
 namespace klartraum {
 
+/**
+ * @brief Vulkan buffer of @p size elements of type @p T in host-visible, host-coherent memory.
+ *
+ * The usage flags default to storage buffer and transfer destination.
+ * memcopyFrom() and memcopyTo() copy between host memory and the buffer; zero()
+ * sets it to zero.
+ */
 template <typename T>
 class VulkanBuffer {
 public:

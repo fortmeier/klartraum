@@ -17,11 +17,14 @@ namespace klartraum {
 
 class VulkanContext;
 
-// Owns the swapchain's viewport composition. makeViewport() hands out offscreen
-// render targets (sub-regions of the window); a single pre-recorded composite
-// per swapchain image blits every viewport into its destination rectangle and
-// transitions the swapchain image for presentation. The engine submits the
-// composite once per frame after the viewport scenes have rendered.
+/**
+ * @brief Composites viewports into the swapchain image of the window.
+ *
+ * makeViewport() hands out offscreen render targets for sub-regions of the window.
+ * One composite per swapchain image, recorded once, blits every viewport into its
+ * rectangle and transitions the swapchain image for presentation. The engine
+ * submits the composite once per frame after the viewport scenes have rendered.
+ */
 class Window {
 public:
     explicit Window(VulkanContext& vulkanContext);

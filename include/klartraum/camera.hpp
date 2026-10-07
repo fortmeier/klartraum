@@ -9,6 +9,10 @@
 
 namespace klartraum {
 
+/**
+ * @brief Contents of the camera uniform buffer (CameraUboType): model, view and projection matrices and the camera
+ * position, in std140 layout.
+ */
 struct CameraMVP {
     glm::mat4 model;
     glm::mat4 view;

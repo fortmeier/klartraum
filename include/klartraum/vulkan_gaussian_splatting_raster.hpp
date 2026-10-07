@@ -23,17 +23,21 @@
 
 namespace klartraum {
 
-// Sort-once + hardware-rasterization Gaussian-splatting backend
-// (klartraum_rasterized_gs_backend_guide.md §5/§7 step 5 "Composite"), the
-// counterpart to VulkanGaussianSplatting's compute-tile rasterizer. Loads the
-// same SPZ/Gaussian3D model into SoA buffers, then wires:
-//   GaussianDist (cull + depth-key + compaction, dist.comp)
-//     -> sentinel-filled keys/indices ping-pong -> RadixSort (reused, unmodified)
-//     -> BufferToGraphicsBarrier (compute-write -> indirect-draw/vertex-read ordering)
-//     -> RenderPass{ GaussianSplatRasterizer } (instanced indirect quad draw,
-//        premultiplied "over" blending)
-// outputElements[0] is the internal RenderPass — the single image-producing
-// element the ComputeGraph traversal needs to reach everything else.
+/**
+ * @brief Gaussian splatting backend that sorts the Gaussians once and draws them with hardware rasterization.
+ *
+ * The counterpart to VulkanGaussianSplatting, which rasterizes in compute shaders.
+ * It reads the same Gaussian data and connects:
+ * - GaussianDist: culling, depth keys and compaction (`gsplat_dist.comp`);
+ * - a radix sort of the depth keys;
+ * - BufferToGraphicsBarrier, which orders the indirect draw after the compute work;
+ * - a RenderPass with a GaussianSplatRasterizer (or, where mesh shaders are
+ *   supported, a GaussianSplatMeshRasterizer) that draws instanced quads with
+ *   premultiplied "over" blending.
+ *
+ * The internal RenderPass is the group's output element: the single
+ * image-producing element through which the compute graph reaches all others.
+ */
 class VulkanGaussianSplattingRaster : public RenderGraphElement, public ComputeGraphGroup {
 public:
     VulkanGaussianSplattingRaster(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,

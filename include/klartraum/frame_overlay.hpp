@@ -9,16 +9,19 @@
 
 namespace klartraum {
 
-// Per-frame work that draws on top of the finished swapchain image, e.g. an
-// immediate-mode GUI. Unlike the compute graphs, whose command buffers are
-// recorded once and resubmitted unchanged, an overlay records its commands
-// anew every frame, so its content may change freely.
-//
-// KlartraumEngine::step() submits the overlay after all graphs (or after the
-// viewport composite) and before presenting. At that point the swapchain
-// image is in PRESENT_SRC_KHR (GENERAL when headless) and must be left in the
-// same layout. This requires at least one graph (or the viewport composite)
-// to have rendered the image.
+/**
+ * @brief Per-frame work drawn on top of the finished swapchain image, e.g. an immediate-mode GUI.
+ *
+ * Unlike the compute graphs, whose command buffers are recorded once and
+ * resubmitted unchanged, an overlay records its commands anew every frame, so its
+ * content may change freely.
+ *
+ * KlartraumEngine::step() submits the overlay after all graphs (or after the
+ * viewport composite) and before presenting. At that point the swapchain image is
+ * in PRESENT_SRC_KHR (GENERAL when headless) and must be left in the same layout.
+ * This requires at least one graph (or the viewport composite) to have rendered
+ * the image.
+ */
 class FrameOverlay {
 public:
     virtual ~FrameOverlay() = default;

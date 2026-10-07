@@ -13,16 +13,17 @@
 
 namespace klartraum {
 
-// Renders a single line of debug text (e.g. an FPS counter) as textured
-// quads sampled from a procedurally generated glyph atlas.
-//
-// The engine pre-records command buffers once at setup time and resubmits
-// them unchanged every frame, so the draw call itself (vertex/index counts)
-// must stay constant. To allow the text to change at runtime, this component
-// reserves vertex-buffer space for a fixed `maxCharacters` and pre-builds an
-// index buffer for that many glyph quads; `setText()` rewrites the mapped
-// vertex buffers in place, padding unused glyph slots with zero-alpha,
-// zero-area quads so they contribute nothing to the image.
+/**
+ * @brief Draws one line of debug text (e.g. an FPS counter) as textured quads from a generated glyph atlas.
+ *
+ * The engine records command buffers once at setup time and resubmits them
+ * unchanged every frame, so the draw call itself (vertex and index counts) must
+ * stay constant. To let the text change at runtime, this component reserves
+ * vertex-buffer space for a fixed `maxCharacters` and builds an index buffer for
+ * that many glyph quads once; setText() rewrites the mapped vertex buffers in
+ * place and pads unused glyph slots with zero-alpha, zero-area quads, so they
+ * contribute nothing to the image.
+ */
 class TextDrawComponent : public DrawComponent {
 public:
     explicit TextDrawComponent(uint32_t maxCharacters = 256);

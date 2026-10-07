@@ -9,6 +9,13 @@
 
 namespace klartraum {
 
+/**
+ * @brief Base class for elements built from several graph elements, such as OnnxNetwork or the Gaussian splatting
+ * backends.
+ *
+ * getInputs() returns the group's output elements, so compiling a graph traverses
+ * from the group through its output elements back to all elements of the group.
+ */
 class ComputeGraphGroup : public virtual ComputeGraphElement {
 public:
     virtual const char* getType() const { return "ComputeGraphGroup"; }

@@ -18,6 +18,13 @@ namespace klartraum {
 
 typedef UniformBufferObject<CameraMVP> CameraUboType;
 
+/**
+ * @brief Something a RenderPass draws with its own graphics pipeline.
+ *
+ * Add it with RenderPass::addDrawComponent(). When the graph is compiled, the
+ * render pass calls setNumberPaths() and initialize() with its Vulkan render pass
+ * and camera uniform buffer, and then recordCommandBuffer() once per path.
+ */
 class DrawComponent {
 public:
     virtual void initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass,

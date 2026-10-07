@@ -11,18 +11,46 @@ command buffers; the graph connects them with semaphores.
 ```{doxygenclass} klartraum::ComputeGraphElement
 ```
 
+## Groups
+
+Elements that are built from several graph elements.
+
+```{doxygenclass} klartraum::ComputeGraphGroup
+```
+
+```{doxygenclass} klartraum::RenderGraphElement
+```
+
 ## Buffers and tensors
 
 ```{doxygenclass} klartraum::BufferElementInterface
 ```
 
+```{doxygenclass} klartraum::TemplatedBufferElementInterface
+```
+
 ```{doxygenclass} klartraum::BufferElement
+```
+
+```{doxygenclass} klartraum::BufferElementSinglePath
+```
+
+```{doxygentypedef} klartraum::DispatchIndirectCommandBufferElement
+```
+
+```{doxygentypedef} klartraum::DrawIndirectCommandBufferElement
+```
+
+```{doxygenclass} klartraum::HostValues
 ```
 
 ```{doxygenclass} klartraum::TensorElementInterface
 ```
 
 ```{doxygenclass} klartraum::TensorElement
+```
+
+```{doxygenclass} klartraum::TensorElementSinglePath
 ```
 
 ```{doxygenclass} klartraum::UniformBufferObject
@@ -42,10 +70,24 @@ command buffers; the graph connects them with semaphores.
 ```{doxygenclass} klartraum::ImageResample
 ```
 
+```{doxygenenum} klartraum::ResampleFilter
+```
+
 ## Rendering
 
 ```{doxygenclass} klartraum::RenderPass
 ```
 
 ```{doxygenclass} klartraum::ImageViewSrc
+```
+
+## Synchronization and placeholders
+
+```{doxygenclass} klartraum::ImageViewSrcTransition
+```
+
+```{doxygenclass} klartraum::BufferToGraphicsBarrier
+```
+
+```{doxygenclass} klartraum::NoOp
 ```

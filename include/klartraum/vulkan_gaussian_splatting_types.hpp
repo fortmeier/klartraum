@@ -59,7 +59,9 @@ struct GsplatConfig {
     bool useMeshShader = false;
 };
 
-// this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
+/**
+ * @brief One Gaussian of a scene, with the same fields as `spz::UnpackedGaussian`.
+ */
 struct Gaussian3D {
     std::array<float, 3> position; // x, y, z
     std::array<float, 4> rotation; // x, y, z, w
@@ -73,9 +75,13 @@ struct Gaussian3D {
 
 typedef VulkanBuffer<Gaussian3D> Gaussian3DBuffer;
 
-// A buffer as a consumer connects to it: `element` itself (slot -1), or the
-// buffer at input `slot` of `element`, e.g. one a compute element writes. In
-// the second case the consumer depends on that element, so it runs first.
+/**
+ * @brief A buffer as a consumer connects to it.
+ *
+ * Either @c element itself (slot -1) or the buffer at input @c slot of
+ * @c element, e.g. one that a compute element writes. In the second case the
+ * consumer depends on that element, so it runs first.
+ */
 struct BufferRef {
     ComputeGraphElementPtr element;
     int slot = -1;
@@ -87,13 +93,17 @@ struct BufferRef {
     void connectTo(ComputeGraphElement& consumer, int index) const { consumer.setInput(element, index, slot); }
 };
 
-// SoA GPU storage for a 3D Gaussian model: the seven buffers both splatting
-// backends read (position vec3, rotation vec4 as x, y, z, w, linear scale
-// vec3, colour+alpha vec4, and the three SH streams of 15 floats per Gaussian,
-// coefficient-major: sh[b * count + i]) plus the splat count. A plain handle
-// bundle with no loading logic: the buffers may be static uploads (e.g.
-// GaussianDataStandard) or written every frame by compute elements (e.g.
-// GaussianTransform), so a backend can be wired to buffers from any source.
+/**
+ * @brief GPU storage of a 3D Gaussian model as a structure of arrays, as both splatting backends read it.
+ *
+ * Seven buffers (position vec3, rotation vec4 as x, y, z, w, linear scale vec3,
+ * colour and alpha vec4, and the three spherical-harmonics streams of 15 floats
+ * per Gaussian, coefficient-major: `sh[b * count + i]`) plus the number of
+ * Gaussians. It only bundles handles and loads nothing: the buffers may be static
+ * uploads (e.g. GaussianDataStandard) or written every frame by compute elements
+ * (e.g. GaussianTransform), so a backend can be connected to buffers from any
+ * source.
+ */
 struct GaussianSoABuffers {
     uint32_t count = 0;
     BufferRef pos;

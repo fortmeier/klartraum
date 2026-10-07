@@ -32,11 +32,17 @@ public:
     const char* getType() const override { return "GaussianMerge"; }
 };
 
+/**
+ * @brief Result of createGaussianMerge(): the element and the merged Gaussians it outputs.
+ */
 struct GaussianMergeResult {
     std::shared_ptr<GaussianMerge> element;
     GaussianSoABuffers output; // inputs 14 .. 20 of the element
 };
 
+/**
+ * @brief Creates a GaussianMerge that concatenates the Gaussians of @p a and @p b; those of @p a come first.
+ */
 inline GaussianMergeResult createGaussianMerge(VulkanContext& vulkanContext, const GaussianSoABuffers& a,
                                                const GaussianSoABuffers& b) {
     auto element = std::make_shared<GaussianMerge>(vulkanContext);

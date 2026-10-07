@@ -11,5 +11,31 @@ frontend for tests and compute-only workloads.
 
 ## Cameras
 
+The camera uniform buffer has the type `CameraUboType`, a
+`UniformBufferObject<CameraMVP>`.
+
+```{doxygenclass} klartraum::InterfaceCamera
+```
+
 ```{doxygenclass} klartraum::InterfaceCameraOrbit
+```
+
+```{doxygenstruct} klartraum::CameraMVP
+```
+
+## Input events
+
+```{doxygenclass} klartraum::Event
+```
+
+```{doxygenclass} klartraum::EventMouseMove
+```
+
+```{doxygenclass} klartraum::EventMouseButton
+```
+
+```{doxygenclass} klartraum::EventMouseScroll
+```
+
+```{doxygenclass} klartraum::EventKey
 ```

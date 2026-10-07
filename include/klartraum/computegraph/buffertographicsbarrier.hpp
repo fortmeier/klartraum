@@ -13,14 +13,17 @@
 
 namespace klartraum {
 
-// Klartraum's graph only knows how to order compute work after compute work
-// (GeneralComputation emits compute->compute VkMemoryBarriers between its own
-// dispatches). An indirect draw that consumes compute-written buffers (sorted
-// indices, indirect draw args) needs an explicit buffer barrier whose
-// destination is the graphics pipeline's indirect-draw and vertex-shader
-// stages — this element supplies exactly that, as a graph node placed between
-// the producing compute (sub)graph and the consuming RenderPass so Kahn
-// ordering and the per-edge semaphores schedule it in between.
+/**
+ * @brief Orders an indirect draw after the compute work that wrote its buffers.
+ *
+ * The graph only orders compute work after compute work (GeneralComputation emits
+ * compute-to-compute memory barriers between its own dispatches). An indirect draw
+ * that reads buffers written by compute shaders (sorted indices, indirect draw
+ * arguments) needs a buffer barrier whose destination is the indirect-draw and
+ * vertex-shader stages of the graphics pipeline. This element supplies it: placed
+ * between the compute elements that write the buffers and the RenderPass that
+ * draws, the graph schedules it in between.
+ */
 class BufferToGraphicsBarrier : public ComputeGraphElement {
 public:
     BufferToGraphicsBarrier() {}

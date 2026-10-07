@@ -11,6 +11,14 @@
 
 namespace klartraum {
 
+/**
+ * @brief Interface for cameras that the engine updates every frame.
+ *
+ * KlartraumEngine::setInterfaceCamera() calls initialize() once. Every frame,
+ * KlartraumEngine::step() passes the queued input events to onEvent() and then
+ * calls update(), which writes the camera matrices into the data of the camera
+ * uniform buffer.
+ */
 class InterfaceCamera {
 public:
     virtual void initialize(VulkanContext& vulkanContext) = 0;

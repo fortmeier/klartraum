@@ -12,10 +12,15 @@
 
 namespace klartraum {
 
-// Loads and unpacks an SPZ file into Gaussians: linear scales, opacities in
-// [0, 1], rotations as x, y, z, w quaternions. With `flipY` the scene is
-// mirrored across the Y axis (e.g. for Nerfstudio exports). Throws if the file
-// cannot be read.
+/**
+ * @brief Loads and unpacks an SPZ file into Gaussians: linear scales, opacities in [0, 1], rotations as x, y, z, w
+ * quaternions.
+ *
+ * With @p flipY the scene is mirrored across the Y axis (e.g. for Nerfstudio
+ * exports).
+ *
+ * @throws std::runtime_error if the file cannot be read.
+ */
 std::vector<Gaussian3D> loadGaussiansSpz(const std::string& path, bool flipY = false);
 
 // Owns a 3D Gaussian model's GPU-side SoA storage. It takes the Gaussian3D array

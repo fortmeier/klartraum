@@ -7,12 +7,21 @@
 
 namespace klartraum {
 
+/**
+ * @brief Base class of the input events that a frontend queues in KlartraumEngine::getEventQueue().
+ *
+ * KlartraumEngine::step() passes them to the InterfaceCamera.
+ */
 class Event {
 public:
     Event() = default;
     virtual ~Event() = default;
 };
 
+/**
+ * @brief The mouse cursor moved: position (@c x, @c y) and movement (@c dx, @c dy) since the last event, in screen
+ * coordinates.
+ */
 class EventMouseMove : public Event {
 public:
     int x;
@@ -27,6 +36,9 @@ public:
           dy(dy) {}
 };
 
+/**
+ * @brief A mouse button was pressed or released.
+ */
 class EventMouseButton : public Event {
 public:
     enum class Button {
@@ -47,6 +59,9 @@ public:
           action(action) {}
 };
 
+/**
+ * @brief The mouse wheel or touchpad scrolled; (@c x, @c y) is the offset since the last frame.
+ */
 class EventMouseScroll : public Event {
 public:
     double x;
@@ -56,6 +71,9 @@ public:
           y(y) {}
 };
 
+/**
+ * @brief A key was pressed or released.
+ */
 class EventKey : public Event {
 public:
     enum class Key {

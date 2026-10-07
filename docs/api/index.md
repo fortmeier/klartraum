@@ -11,6 +11,7 @@ vulkan-context
 compute-graph
 engine
 frontends
+drawing
 gaussian-splatting
 onnx
 ```

@@ -13,6 +13,9 @@
 
 namespace klartraum {
 
+/**
+ * @brief Filter that ImageResample uses to sample the source image.
+ */
 enum class ResampleFilter : uint32_t { Nearest = 0, Bilinear = 1 };
 
 // Matches shaders/image/resample.comp.

@@ -34,11 +34,17 @@ public:
     const char* getType() const override { return "GaussianTransform"; }
 };
 
+/**
+ * @brief Result of createGaussianTransform(): the element and the Gaussians it outputs.
+ */
 struct GaussianTransformResult {
     std::shared_ptr<GaussianTransform> element;
     GaussianSoABuffers output; // inputs 8 .. 14 of the element
 };
 
+/**
+ * @brief Creates a GaussianTransform that applies @p transform to the Gaussians in @p source.
+ */
 inline GaussianTransformResult createGaussianTransform(VulkanContext& vulkanContext, const GaussianSoABuffers& source,
                                                        const BufferRef& transform) {
     auto element = std::make_shared<GaussianTransform>(vulkanContext);

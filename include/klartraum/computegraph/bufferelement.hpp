@@ -25,6 +25,9 @@ public:
 private:
 };
 
+/**
+ * @brief Buffer element whose buffers have the type @p BufferType; getBuffer() returns the buffer of one path.
+ */
 template <typename BufferType>
 class TemplatedBufferElementInterface : public BufferElementInterface {
 public:
@@ -114,6 +117,12 @@ private:
     VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM;
 };
 
+/**
+ * @brief Buffer element with one buffer for all paths.
+ *
+ * The constructor arguments are passed on to the buffer; getBuffer() returns the
+ * same buffer for every path.
+ */
 template <typename BufferType>
 class BufferElementSinglePath : public TemplatedBufferElementInterface<BufferType> {
 public:
@@ -137,10 +146,10 @@ private:
     BufferType buffer;
 };
 
-/// Buffer element holding the arguments of an indirect compute dispatch (vkCmdDispatchIndirect).
+/** @brief Buffer element holding the arguments of an indirect compute dispatch (vkCmdDispatchIndirect). */
 using DispatchIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
 
-/// Buffer element holding the arguments of an indirect draw (vkCmdDrawIndirect).
+/** @brief Buffer element holding the arguments of an indirect draw (vkCmdDrawIndirect). */
 using DrawIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDrawIndirectCommand>>;
 
 } // namespace klartraum

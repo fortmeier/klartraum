@@ -12,6 +12,10 @@ namespace klartraum {
 
 typedef UniformBufferObject<CameraMVP> CameraUboType;
 
+/**
+ * @brief Base class for graph elements that render with a camera; getCameraUBO() returns their camera uniform buffer
+ * input.
+ */
 class RenderGraphElement : public virtual ComputeGraphElement {
 public:
     std::shared_ptr<CameraUboType> getCameraUBO() {

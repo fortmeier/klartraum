@@ -20,14 +20,17 @@ struct TextVertex {
     float r, g, b, a;
 };
 
-// Builds (and rebuilds, on demand) the quad-per-glyph mesh for a text
-// string. The caller manages line breaks and alignment; this class only
-// lays out a single line, advancing one fixed glyph cell per character.
-//
-// Each glyph becomes a quad of 4 vertices (top-left, top-right,
-// bottom-right, bottom-left) and 6 indices (two triangles), sized to the
-// glyph's pixel rectangle (GLYPH_PIXEL_WIDTH x GLYPH_PIXEL_HEIGHT) scaled by
-// `scale`, with consecutive glyphs advanced by GLYPH_CELL_WIDTH x `scale`.
+/**
+ * @brief Builds the mesh of one line of text, one quad per glyph.
+ *
+ * The caller handles line breaks and alignment; this class lays out a single line,
+ * advancing one fixed glyph cell per character.
+ *
+ * Each glyph becomes a quad of 4 vertices (top-left, top-right, bottom-right,
+ * bottom-left) and 6 indices (two triangles), sized to the glyph's pixel rectangle
+ * (GLYPH_PIXEL_WIDTH x GLYPH_PIXEL_HEIGHT) scaled by `scale`; consecutive glyphs
+ * are GLYPH_CELL_WIDTH x `scale` apart.
+ */
 class SimpleTextRenderer {
 public:
     // Regenerates the mesh for `text`, anchored with its top-left corner at

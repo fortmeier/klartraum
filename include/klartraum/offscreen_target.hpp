@@ -14,16 +14,19 @@
 
 namespace klartraum {
 
-// An ImageViewSrc that owns its images instead of wrapping the swapchain's.
-// Used as a viewport render target: a scene renders into it at full (0,0)..(w,h)
-// extent exactly as it would the swapchain, and the Window composite later blits
-// it into a sub-region of the real swapchain image.
-//
-// It allocates `numImages` images (one per swapchain image / compute-graph path),
-// matching the swapchain format with usage STORAGE | COLOR_ATTACHMENT |
-// TRANSFER_SRC so both the compute and raster backends can write it and the
-// composite can blit from it. getFinalLayoutOverride() reports TRANSFER_SRC_OPTIMAL
-// so the backends leave it ready for that blit (PRESENT_SRC is illegal here).
+/**
+ * @brief An ImageViewSrc that owns its images instead of wrapping the swapchain's.
+ *
+ * Used as a render target for viewports and for rendering without a window: a
+ * scene renders into it at its full extent exactly as it would into the swapchain,
+ * and the Window composite can blit it into a sub-region of the swapchain image.
+ *
+ * It allocates @p numImages images (one per swapchain image or compute-graph path)
+ * in the swapchain format, with usage STORAGE | COLOR_ATTACHMENT | TRANSFER_SRC,
+ * so both the compute and the raster backend can write them and the composite can
+ * blit from them. getFinalLayoutOverride() reports TRANSFER_SRC_OPTIMAL, so the
+ * backends leave the images ready for that blit (PRESENT_SRC would not be valid).
+ */
 class OffscreenTarget : public ImageViewSrc {
 public:
     OffscreenTarget(VulkanContext& vulkanContext, VkExtent2D extent, uint32_t numImages)

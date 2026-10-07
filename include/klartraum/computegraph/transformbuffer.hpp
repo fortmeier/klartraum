@@ -36,12 +36,17 @@ public:
     const char* getType() const override { return "TransformBuffer"; }
 };
 
+/**
+ * @brief Result of createTransformBuffer(): the element and the transform buffer it writes.
+ */
 struct TransformBufferResult {
     std::shared_ptr<TransformBuffer> element;
     BufferRef transform; // input 7 of the element
 };
 
-// Parameters in the order x, y, z, pitch, yaw, roll, scale.
+/**
+ * @brief Creates a TransformBuffer from seven parameters in the order x, y, z, pitch, yaw, roll, scale.
+ */
 inline TransformBufferResult createTransformBuffer(VulkanContext& vulkanContext,
                                                    const std::array<BufferRef, 7>& parameters) {
     auto element = std::make_shared<TransformBuffer>(vulkanContext);

@@ -14,8 +14,14 @@
 
 namespace klartraum {
 
+/**
+ * @brief Shapes that DrawBasics can draw.
+ */
 enum class DrawBasicsType { Triangle, Cube, Axes };
 
+/**
+ * @brief Draws a built-in shape (a triangle, a cube or the coordinate axes) with the camera of its render pass.
+ */
 class DrawBasics : public DrawComponent {
 public:
     DrawBasics(DrawBasicsType type);
