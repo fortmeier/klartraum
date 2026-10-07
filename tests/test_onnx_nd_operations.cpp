@@ -4,19 +4,30 @@
 
 /**
  * TESTS:
- * - ReduceMean averages the last axis with keepdims, as in an RMSNorm variance.
- * - ReduceMean averages a leading channel axis, as in the Wan VAE channel RMSNorm.
- * - ReduceMean averages several contiguous axes and drops them without keepdims.
- * - Mul broadcasts a per-channel rank-five scale over a video tensor.
- * - Add combines two equally shaped rank-six tensors.
- * - Div broadcasts a rank-five per-pixel denominator over the channel axis.
- * - Slice cuts frames out of a rank-five video tensor on its time axis.
- * - Add broadcasts a rank-zero scalar initializer, as the exporters write epsilon constants.
- * - Conv3d with a causal 3x3x3 kernel (two leading time pads) matches a CPU reference across tile boundaries.
- * - Conv3d downsamples spatially with stride two and trailing-only pads.
- * - Conv3d applies a causal 3x1x1 temporal kernel.
- * - Conv3d applies a pointwise 1x1x1 kernel with bias.
- * - Single-head rank-three attention with a 1024-wide head runs unfused and matches a CPU reference.
+ * - ReduceMeanLastAxisKeepDims: ReduceMean averages the last axis with keepdims, as in
+ *   an RMSNorm variance
+ * - ReduceMeanChannelAxis: ReduceMean averages a leading channel axis, as in the Wan VAE
+ *   channel RMSNorm
+ * - ReduceMeanContiguousAxesWithoutKeepDims: ReduceMean averages several contiguous axes
+ *   and drops them without keepdims
+ * - MulBroadcastsChannelScaleOverRankFiveVideo: Mul broadcasts a per-channel rank-five
+ *   scale over a video tensor
+ * - AddCombinesEquallyShapedRankSixTensors: Add combines two equally shaped rank-six
+ *   tensors
+ * - DivBroadcastsPerPixelDenominatorOverChannels: Div broadcasts a rank-five per-pixel
+ *   denominator over the channel axis
+ * - SliceCutsFramesFromRankFiveVideo: Slice cuts frames out of a rank-five video tensor
+ *   on its time axis
+ * - AddBroadcastsRankZeroScalarInitializer: Add broadcasts a rank-zero scalar
+ *   initializer, as the exporters write epsilon constants
+ * - Conv3dCausalKernelAcrossTiles: Conv3d with a causal 3x3x3 kernel (two leading time
+ *   pads) matches a CPU reference across tile boundaries
+ * - Conv3dStridedSpatialDownsampling: Conv3d downsamples spatially with stride two and
+ *   trailing-only pads
+ * - Conv3dCausalTemporalKernel: Conv3d applies a causal 3x1x1 temporal kernel
+ * - Conv3dPointwiseWithBias: Conv3d applies a pointwise 1x1x1 kernel with bias
+ * - WideRankThreeAttentionRunsUnfused: Single-head rank-three attention with a 1024-wide
+ *   head runs unfused and matches a CPU reference
  **/
 
 #include <algorithm>
