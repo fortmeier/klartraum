@@ -31,11 +31,6 @@ public:
 
     // ComputeGraphElement interface
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
-        // if (index != 0 && index != 1) {
-        //     throw std::runtime_error("CopyBuffer only accepts input at index 0 (source buffer) and index 1
-        //     (destination buffer)");
-        // }
-
         auto bufferInput = std::dynamic_pointer_cast<BufferElementInterface>(input);
         if (!bufferInput) {
             throw std::runtime_error("CopyBuffer input must be a BufferElementInterface");

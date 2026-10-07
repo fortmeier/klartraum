@@ -175,7 +175,7 @@ void OnnxNetwork::printModelInfo() const {
 }
 
 std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
-    // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
+    // Every tensor can be read back (TRANSFER_SRC). TODO: request it only for tensors that are read back.
     VkBufferUsageFlags usage =
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
@@ -193,7 +193,7 @@ std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContex
 
 std::shared_ptr<TensorElementInterface> createConstantTensor(VulkanContext* vulkanContext,
                                                              const TensorInfo& tensorInfo) {
-    // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
+    // Every tensor can be read back (TRANSFER_SRC). TODO: request it only for tensors that are read back.
     VkBufferUsageFlags usage =
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
@@ -297,9 +297,6 @@ void OnnxNetwork::createInitializerTensor(const onnx::TensorProto* initializer, 
     auto tensor = createConstantTensor(vulkanContext, tensorInfo);
     tensor->setName(initializer->name());
     graphDataElements[initializer->name()] = tensor;
-
-    // std::cout << " - size: " << (initShape.empty() ? 0 : std::accumulate(initShape.begin(), initShape.end(), 1,
-    // std::multiplies<uint32_t>())) << " elements" << std::endl;
 }
 
 void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input, TensorInfoMap& name2TensorInfo,
@@ -320,8 +317,7 @@ void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input, TensorInfo
                     std::cout << dim.dim_value();
                     inputShape.push_back(dim.dim_value());
                 } else if (dim.has_dim_param()) {
-                    // set dim = 1 for dynamic dimensions
-                    // TODO this is a placeholder, should handle dynamic dimensions properly
+                    // Dynamic dimensions are set to 1. TODO: support dynamic dimensions.
                     inputShape.push_back(1);
                     std::cout << dim.dim_param();
                 } else {
@@ -383,24 +379,17 @@ void OnnxNetwork::createComputeGraph() {
     std::cout << "OnnxNetwork: Analyzing " << graph.node_size() << " operations for compute graph creation"
               << std::endl;
 
-    // TODO: Implement actual compute graph creation
-    // This would involve:
-    // 1. Parse ONNX operations and convert to Vulkan compute operations
-    // 2. Create buffer allocations for tensors
-    // 3. Set up compute pipeline stages
-    // 4. Handle data dependencies between operations
-
     std::vector<const onnx::ValueInfoProto*> infos;
     for (int i = 0; i < graph.input_size(); ++i) {
         infos.push_back(&graph.input(i));
     }
 
-    // WTF why do we have the output elements here?, they will be generated together with the operations
+    // TODO: check whether the graph outputs need tensors here; the operations create their own.
     for (int i = 0; i < graph.output_size(); ++i) {
         infos.push_back(&graph.output(i));
     }
 
-    // WTF are actually the value infos, is that need?
+    // value_info holds the inferred types and shapes of the intermediate tensors.
     for (int i = 0; i < graph.value_info_size(); ++i) {
         infos.push_back(&graph.value_info(i));
     }
@@ -480,8 +469,9 @@ void OnnxNetwork::createGraphElementsFromOutputTensors() {
         std::map<std::string, ComputeGraphElementPtr> outputs =
             createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
         std::cout << " - Created operation outputs for node: " << node.name() << std::endl;
-        // TODO WARNING BUG? ARE MAPS ALWAYS INSERTION ORDERD???
-        // slots start just one after the slots of the inputs
+        // Output slots follow the node's input slots. TODO: `outputs` is a std::map, which iterates in
+        // name order, not in the node's output order, so a node with several outputs can get its
+        // slots in the wrong order.
         int slot = node.input_size();
         for (const auto& [name, output] : outputs) {
             std::cout << "   - Output " << name << ": " << output << std::endl;
@@ -660,7 +650,7 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
                 TensorElementSinglePath<float>* tensor = elementPtr.get();
                 tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
                 break;
-                // TODO support other data types
+                // TODO: support raw_data initializers of other data types.
             }
         } else if (init.float_data_size() > 0) {
             std::cout << " - Data type: FLOAT (float_data field)" << std::endl;

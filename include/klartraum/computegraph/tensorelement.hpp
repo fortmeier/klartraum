@@ -260,11 +260,6 @@ private:
     bool recordDimensionsToZero = false;
 
     void validateDimensions(const std::vector<uint32_t>& dims) {
-        // if (dims.size() != 4) {
-        //     throw std::runtime_error("TensorElement: Dimensions must contain exactly 4 values [width, height, depth,
-        //     batch]");
-        // }
-
         for (size_t i = 0; i < dims.size(); ++i) {
             if (dims[i] == 0) {
                 throw std::runtime_error("TensorElement: Dimension " + std::to_string(i) + " cannot be zero");

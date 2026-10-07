@@ -160,11 +160,11 @@ public:
                 auto& element = ordered_elements[i];
                 VkCommandBuffer& commandBuffer = commandBuffers[i * numberPaths + pathId];
                 recordCommandBuffer(commandBuffer, element, pathId, (uint32_t)i);
-                // for now, all command buffers will be submitted to the same queue without any synchronization
-                // this is okay since we sorted the elements in the graph before and the queue is
-                // processing them one after another (assumption!!!)
+                // Each element gets its own submit info, which waits on the semaphores its inputs
+                // signal and signals the ones its outputs wait on (getSubmitInfoForElement).
                 SubmitInfoWrapperList& submitInfoWrappers = all_path_submit_info_wrappers[pathId];
-                // TODO: this is the time to grok move semantics
+                // The submit info points into the wrapper's vectors. When the list grows, the
+                // wrappers are moved, which keeps the vectors' storage, so the pointers stay valid.
                 SubmitInfoWrapper submitInfoWrapper;
                 submitInfoWrappers.push_back(submitInfoWrapper);
                 SubmitInfoWrapper& submitInfoWrapper2 = submitInfoWrappers.back();
@@ -184,14 +184,8 @@ public:
         updateElements(pathId);
         auto& submit_infos = all_path_submit_infos[pathId];
 
-        // the following seems not to work if there are multiple paths in the graph
-        // if (vkQueueSubmit(graphicsQueue, submit_infos.size(), submit_infos.data(), nullptr) != VK_SUCCESS) {
-        //     throw std::runtime_error("failed to submit the graph elements!");
-        // }
-        // instead we have to submit them one by one
-        // this is not optimal but it works for now
-        // in the future, we will merge command buffers of consecutive elements
-        // and submit them together
+        // All elements of the path go to the queue in one submission; the semaphores in their
+        // submit infos order them.
 
         if (vkQueueSubmit(graphicsQueue, (uint32_t)submit_infos.size(), submit_infos.data(), fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");

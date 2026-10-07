@@ -15,7 +15,7 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 
-#include "klartraum/draw_component.hpp" // for CameraUboType, TODO: remove this dependency
+#include "klartraum/draw_component.hpp" // CameraUboType; TODO: move it out of draw_component.hpp
 
 namespace klartraum {
 

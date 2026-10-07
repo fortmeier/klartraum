@@ -41,7 +41,7 @@ protected:
 TEST_F(GeneralComputationTest, ComputeGraphCreation) {
     VulkanContext& vulkanContext = *vulkanContextPtr;
     /*
-    STEP 1: cerate the computegraph elements
+    STEP 1: create the computegraph elements
     */
 
     typedef VulkanBuffer<float> typeA;

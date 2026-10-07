@@ -135,9 +135,9 @@ public:
     void setName(const std::string& name) { this->name = name; }
 
 protected:
-    std::map<int, ComputeGraphElementPtr> inputs;    // TODO: really should be private
-    std::map<int, VkSemaphore> renderWaitSemaphores; // TODO: really should be private
-    std::map<int, int> srcOutputSlots;               // TODO: really should be private
+    std::map<int, ComputeGraphElementPtr> inputs;    // TODO: should be private
+    std::map<int, VkSemaphore> renderWaitSemaphores; // TODO: should be private
+    std::map<int, int> srcOutputSlots;               // TODO: should be private
 
     bool initialized = false;
 

@@ -191,7 +191,7 @@ public:
     }
 
     A& getInput(uint32_t pathId = 0) {
-        // TODO why inputs[0], and not inputs[pathId]?
+        // The transformation has one input, in slot 0; pathId selects its buffer.
         auto bufferPtr = dynamic_cast<TemplatedBufferElementInterface<A>*>(this->getInputElement(0).get());
         if (bufferPtr == nullptr) {
             throw std::runtime_error("input is not a fitting BufferElement!");
@@ -264,33 +264,30 @@ private:
         auto& device = vulkanContext->getDevice();
         auto& config = vulkanContext->getConfig();
 
+        // TODO: the pool is sized for at most 3 paths; size it by numberPaths.
         std::vector<VkDescriptorPoolSize> poolSizes(3 + otherInputs.size());
         // A
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        // TODO use numberPaths instead of hardcoded 3 ...
-        poolSizes[0].descriptorCount = 3; // static_cast<uint32_t>(swapChainSize);
+        poolSizes[0].descriptorCount = 3;
 
         // B
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        // TODO use numberPaths instead of hardcoded 3 ...
-        poolSizes[1].descriptorCount = 3; // static_cast<uint32_t>(swapChainSize);
+        poolSizes[1].descriptorCount = 3;
 
         // Result
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        // TODO use numberPaths instead of hardcoded 3 ...
-        poolSizes[2].descriptorCount = 3; // static_cast<uint32_t>(swapChainSize);
+        poolSizes[2].descriptorCount = 3;
 
         // Other inputs
         for (size_t i = 0; i < otherInputs.size(); i++) {
             poolSizes[3 + i].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            poolSizes[3 + i].descriptorCount = 3; // static_cast<uint32_t>(swapChainSize);
+            poolSizes[3 + i].descriptorCount = 3;
         }
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.poolSizeCount = (uint32_t)poolSizes.size();
         poolInfo.pPoolSizes = poolSizes.data();
-        // TODO use numberPaths instead of hardcoded 3 ... or whatever is needed
         poolInfo.maxSets = 3;
 
         if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {

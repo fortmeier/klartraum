@@ -34,7 +34,7 @@ protected:
 
 TEST_F(CopyBufferTest, BasicCopyBufferTest) {
     const uint32_t numberElements = 10;
-    const uint32_t numberPaths = 1; // simple test for single path, TODO add test for multiple paths
+    const uint32_t numberPaths = 1; // TODO: also test a graph with several paths
 
     // Create source buffer with test data
     VkBufferUsageFlags srcFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;

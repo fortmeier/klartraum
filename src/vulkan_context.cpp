@@ -410,8 +410,7 @@ void VulkanContext::createSwapImagesHeadless() {
 
         vkBindImageMemory(device, swapChainImages[i], imageMemory, 0);
 
-        // Store the memory for cleanup - you'll need to add this member to the class
-        // TODO cleanup
+        // Freed in shutdown().
         swapChainImageMemories[i] = imageMemory;
     }
 }

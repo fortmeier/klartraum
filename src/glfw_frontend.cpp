@@ -62,7 +62,7 @@ void GlfwFrontend::initialize() {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-    // TODO window size should be configurable somewhere else
+    // TODO: make the window size a setting of the frontend instead of the VulkanContext config.
     auto config = klartraumEngine->getVulkanContext().getConfig();
     window = glfwCreateWindow(config.WIDTH, config.HEIGHT, config.ENGINE_VERSION, nullptr, nullptr);
 

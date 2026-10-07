@@ -116,8 +116,8 @@ public:
             VkImageView imageView = this->getImageView(i);
             VkImageView attachments[] = {imageView};
 
-            // TODO create framebuffer with render pass computegraph element
-            // and create imageviewsrc instead of framebuffer src
+            // TODO: create the framebuffers in a compute graph element of their own that takes
+            // an ImageViewSrc.
 
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
