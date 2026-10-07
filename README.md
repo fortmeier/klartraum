@@ -36,6 +36,10 @@ Requirements, platform notes, tests and a walk-through of a first application ar
 
 ## License
 
-Klartraum is licensed under the [MIT License](LICENSE). Builds include
-third-party software under its own licenses, listed with their notices in
+Klartraum is licensed under the [MIT License](LICENSE). The images, videos and
+the captured lantern scene (`data/lantern.jpg`, `data/lantern.spz`,
+`site/images/`, including the animation above) are licensed under
+[CC BY 4.0](LICENSES/CC-BY-4.0.txt), © Dirk Fortmeier; [REUSE.toml](REUSE.toml)
+lists the license of every file. Builds include third-party software under its
+own licenses, listed with their notices in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
