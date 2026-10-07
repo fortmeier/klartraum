@@ -66,4 +66,3 @@ From the repository root:
 ```powershell
 .\build\Debug\klartraum_tests.exe --gtest_filter=OnnxNetworkTest.*
 ```
-

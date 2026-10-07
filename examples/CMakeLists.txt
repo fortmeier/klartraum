@@ -51,7 +51,7 @@ add_executable(onnx_example
     onnx_example.cpp
 )
 
-target_link_libraries(onnx_example 
+target_link_libraries(onnx_example
     klartraum_lib
 )
 

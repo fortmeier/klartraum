@@ -34,7 +34,7 @@ if(APPLE)
     find_library(COREVIDEO_LIBRARY CoreVideo REQUIRED)
     find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
     find_library(METAL_LIBRARY Metal REQUIRED)
-    
+
     set(MACOS_FRAMEWORKS
         ${COCOA_LIBRARY}
         ${IOKIT_LIBRARY}
@@ -207,14 +207,14 @@ foreach(proto_file ${ONNX_PROTO_FILES})
     get_filename_component(proto_name ${proto_file} NAME_WE)
     set(generated_cpp "${ONNX_GENERATED_DIR}/${proto_name}.pb.cc")
     set(generated_h "${ONNX_GENERATED_DIR}/${proto_name}.pb.h")
-    
+
     add_custom_command(
         OUTPUT ${generated_cpp} ${generated_h}
         COMMAND ${protobuf_PROTOC_EXE} --cpp_out=${ONNX_GENERATED_DIR} --proto_path=${ONNX_PROTO_DIR} ${proto_file}
         DEPENDS ${proto_file} protobuf::protoc
         COMMENT "Generating C++ code from ${proto_file}"
     )
-    
+
     list(APPEND ONNX_GENERATED_SOURCES ${generated_cpp} ${generated_h})
 endforeach()
 
@@ -280,7 +280,7 @@ add_dependencies(klartraum_tests Shaders)
 endif()
 
 
-set(KLARTRAUM_LIB_SRC 
+set(KLARTRAUM_LIB_SRC
   src/glfw_frontend.cpp
   src/headless_frontend.cpp
   src/vulkan_gaussian_splatting.cpp
