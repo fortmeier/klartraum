@@ -86,6 +86,18 @@ endif()
 message(STATUS "Using glslc: ${GLSLC}")
 
 set(SHADER_BASE_DIR "${PROJECT_SOURCE_DIR}/shaders")
+# The compiled shaders go to the build directory; the library finds them there
+# through its default asset root (see readFile() in vulkan_helpers.hpp).
+set(SHADER_OUTPUT_DIR "${PROJECT_BINARY_DIR}/shaders")
+
+# Shaders compiled into the source tree by older builds would be found first
+# when running from the repository root.
+file(GLOB_RECURSE STALE_SPIRV_FILES "${SHADER_BASE_DIR}/*.spv")
+if(STALE_SPIRV_FILES)
+  message(WARNING "shaders/ contains compiled .spv files from an older build. They take "
+                  "precedence over the shaders in ${SHADER_OUTPUT_DIR} when running from the "
+                  "repository root; delete them with: find shaders -name '*.spv' -delete")
+endif()
 
 file(GLOB_RECURSE GLSL_SOURCE_FILES "${SHADER_BASE_DIR}/*.vert" "${SHADER_BASE_DIR}/*.frag" "${SHADER_BASE_DIR}/*.comp")
 # Exclude draft/scratch shaders prefixed with underscore
@@ -94,9 +106,11 @@ list(FILTER GLSL_SOURCE_FILES EXCLUDE REGEX "/_[^/]+\\.comp$")
 foreach(GLSL ${GLSL_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
 
-  set(SPIRV "${SHADER_BASE_DIR}/${FILE_NAME}.spv")
+  set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
+  get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
   add_custom_command(
     OUTPUT ${SPIRV}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
     COMMAND ${GLSLC} -o ${SPIRV} ${GLSL}
     DEPENDS ${GLSL}
     COMMENT "Compiling ${GLSL} to ${SPIRV}"
@@ -109,9 +123,11 @@ endforeach()
 file(GLOB_RECURSE MESH_SOURCE_FILES "${SHADER_BASE_DIR}/*.mesh")
 foreach(GLSL ${MESH_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
-  set(SPIRV "${SHADER_BASE_DIR}/${FILE_NAME}.spv")
+  set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
+  get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
   add_custom_command(
     OUTPUT ${SPIRV}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
     COMMAND ${GLSLC} --target-env=vulkan1.3 -o ${SPIRV} ${GLSL}
     DEPENDS ${GLSL}
     COMMENT "Compiling mesh ${GLSL} to ${SPIRV}"
@@ -308,6 +324,8 @@ target_include_directories(klartraum_lib PUBLIC
     ${PROJECT_SOURCE_DIR}/3rdparty/spz/src/cc
 )
 
+target_compile_definitions(klartraum_lib PRIVATE KLARTRAUM_DEFAULT_ASSET_DIR="${PROJECT_BINARY_DIR}")
+
 add_dependencies(klartraum_lib Shaders onnx_proto)
 
 if(KLARTRAUM_BUILD_TESTS)
@@ -318,5 +336,7 @@ target_link_libraries(
   )
 
 include(GoogleTest)
-gtest_discover_tests(klartraum_tests)
+# The tests read data/ and write build/TestingOutput/ relative to the
+# repository root.
+gtest_discover_tests(klartraum_tests WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endif()

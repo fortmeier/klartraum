@@ -59,13 +59,24 @@ library and its headers.
 ## Shaders
 
 Compute and graphics shaders are written in GLSL and compiled to SPIR-V by
-`glslc` as part of the build. The compiled `.spv` files are loaded at runtime
-by relative path (for example `shaders/gsplat/gsplat_projection.comp.spv`).
+`glslc` as part of the build. The compiled `.spv` files are written to
+`shaders/` in the build directory and loaded at runtime by relative path (for
+example `shaders/gsplat/gsplat_projection.comp.spv`). Such a path is looked up
+in the working directory first and then in the asset root:
+
+1. the directory set with `klartraum::setAssetRoot()`,
+2. otherwise the `KLARTRAUM_ASSET_DIR` environment variable,
+3. otherwise the build directory of Klartraum.
+
+Applications therefore find the shaders from any working directory. To run a
+binary on another machine or after moving the build, copy the `shaders/`
+directory from the build directory and point `KLARTRAUM_ASSET_DIR` (or
+`setAssetRoot()`) to the directory that contains it.
 
 ## Running the tests
 
-The tests load shaders relative to the working directory, so they must be run
-from the **repository root**:
+The tests read their scenes and models from `data/` relative to the working
+directory, so they must be run from the **repository root**:
 
 ```bash
 # Windows
@@ -78,8 +89,8 @@ from the **repository root**:
 ./build/klartraum_tests --gtest_filter=GaussianSplattingTest.classWithRaccoonScene
 ```
 
-Alternatively, run `ctest` from the build directory, which sets the working
-directory correctly.
+Alternatively, run `ctest` from the build directory; it runs the tests from
+the repository root.
 
 ## Running an example
 

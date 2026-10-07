@@ -109,7 +109,7 @@ git submodule update --init --recursive
 cmake -S . -B build
 cmake --build build
 
-# Run all tests (must be run from the repo root, see note below)
+# Run all tests (from the repo root, see note below; or `ctest` from build/)
 ./build/klartraum_tests                  # macOS / Linux (single-config, e.g. Ninja)
 .\build\Debug\klartraum_tests.exe        # Windows / VS2022 (multi-config)
 
@@ -137,9 +137,11 @@ the loader picks MoltenVK by default. Select one explicitly with
 `VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/MoltenVK_icd.json` or
 `VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json`.
 
-Shaders are compiled from GLSL to SPIR-V via `glslc` as a custom CMake build target. The compiled `.spv` files in `shaders/` must be kept in sync when shader source changes.
+Shaders are compiled from GLSL to SPIR-V via `glslc` by the CMake target `Shaders`, which every test and example depends on. The `.spv` files are written to `build/shaders/` (mirroring `shaders/`); rebuild after changing a shader.
 
-**Working directory matters:** `klartraum_tests` loads shader `.spv` files via paths relative to the current working directory (e.g. `shaders/operator_double.comp.spv`), which only resolve from the **repo root**. Running it from inside `build/` fails with `failed to open file!`. Either `cd` to the repo root before invoking it directly, or use `ctest` from `build/` (which sets up the working directory correctly).
+**Shader lookup:** `readFile()` resolves a relative path such as `shaders/operator_double.comp.spv` against the working directory first, then against the asset root: `setAssetRoot()`, else the `KLARTRAUM_ASSET_DIR` environment variable, else the build directory compiled into the library. Shaders therefore load from any working directory. Stale `.spv` files left in `shaders/` by older builds would win over the fresh ones; CMake warns about them.
+
+**Working directory matters for data:** the tests read `data/` and write `build/TestingOutput/` relative to the working directory, so run `klartraum_tests` from the **repo root**, or use `ctest` from `build/` (which runs the tests from the repo root).
 
 
 Architecture Overview
