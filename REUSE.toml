@@ -1,0 +1,41 @@
+# Copyright and license of the files that carry no SPDX header of their own:
+# documentation, configuration, generated lock files, the website and data.
+# Source files carry the header themselves (see scripts/dev/reuse_annotate.sh).
+# Checked with `reuse lint`, see docs/contributing/development.md.
+version = 1
+
+[[annotations]]
+path = [
+    "*.md",
+    "**/*.md",
+    "docs/Doxyfile",
+    "docs/requirements.txt",
+    ".clang-format",
+    ".gitattributes",
+    ".gitignore",
+    "**/.gitignore",
+    ".gitmodules",
+    ".pre-commit-config.yaml",
+    ".github/**",
+    "**/.python-version",
+    "**/pyproject.toml",
+    "**/uv.lock",
+    "**/*.cmd",
+    "**/*.ipynb",
+    "scripts/site/package.json",
+    "scripts/site/package-lock.json",
+    "site/*.html",
+    "data/onnx/*.onnx",
+]
+SPDX-FileCopyrightText = "Dirk Fortmeier"
+SPDX-License-Identifier = "MIT"
+
+# Photos, videos and the captured lantern scene.
+[[annotations]]
+path = [
+    "data/lantern.jpg",
+    "data/lantern.spz",
+    "site/images/**",
+]
+SPDX-FileCopyrightText = "Dirk Fortmeier"
+SPDX-License-Identifier = "CC-BY-4.0"

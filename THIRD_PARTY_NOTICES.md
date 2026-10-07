@@ -23,7 +23,8 @@ Not included in builds, but used by them or by the tests:
 - GoogleTest (BSD-3-Clause) is linked into the test program only.
 
 The scenes, images and models in `data/` are the project's own material and
-contain no third-party content.
+contain no third-party content; their licenses are given in
+[REUSE.toml](REUSE.toml).
 
 ## GLFW
 
