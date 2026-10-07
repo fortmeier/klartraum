@@ -25,7 +25,7 @@ void main() {
         sharedHistogram[binIdx] = 0;
     }
 
-    barrier(); 
+    barrier();
 
     uint numElements = activeNumElements();
     uint itemsPerWorkGroup0 = numElements / gl_NumWorkGroups.x;
