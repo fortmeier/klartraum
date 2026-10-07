@@ -1,6 +1,6 @@
 # Building
 
-Klartraum is built with CMake and needs a C++17 compiler and the
+Klartraum is built with CMake 3.24 or newer and needs a C++17 compiler and the
 [Vulkan SDK](https://vulkan.lunarg.com/) (for the loader, the headers and the
 `glslc` shader compiler). All other dependencies are git submodules or are
 downloaded by CMake.
