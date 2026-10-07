@@ -4,10 +4,12 @@
 
 /**
  * TESTS:
- * - Half-precision conversion round-trips normal, subnormal, and special values.
- * - bfloat16 values decode to the upper half of the float bits.
- * - Unsupported types and partial blocks are rejected.
- * - F16, BF16, Q8_0, Q3_K, Q4_K, Q5_K, and Q6_K rows decode to gguf-py's reference values.
+ * - HalfConversion: Half-precision conversion round-trips normal, subnormal, and special
+ *   values
+ * - BFloat16: bfloat16 values decode to the upper half of the float bits
+ * - RejectsUnsupportedInput: Unsupported types and partial blocks are rejected
+ * - MatchesReferenceDequantization: F16, BF16, Q8_0, Q3_K, Q4_K, Q5_K, and Q6_K rows
+ *   decode to gguf-py's reference values
  **/
 
 #include <cmath>
