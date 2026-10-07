@@ -5,7 +5,8 @@
  * - readFileFallsBackToAssetRoot: a relative path missing from the working directory is read from the asset root
  * - readFileWorkingDirectoryTakesPrecedence: a file present in both locations is read from the working directory
  * - readFileAssetRootFromEnvironment: without an explicit asset root, KLARTRAUM_ASSET_DIR is used
- * - readFileShaderFromOtherWorkingDirectory: a built-in shader path resolves from another working directory via the asset root
+ * - assetRootDefaultsToBuildDirectory: without an explicit root or KLARTRAUM_ASSET_DIR, the asset root is the build directory that holds the compiled shaders
+ * - readFileShaderFromOtherWorkingDirectory: a built-in shader path resolves from another working directory without any setup
  **/
 
 #include <gtest/gtest.h>
@@ -74,8 +75,9 @@ protected:
 };
 
 TEST_F(VulkanHelpersTest, readFileFromWorkingDirectory) {
-    auto code = readFile("shaders/operator_double.comp.spv");
-    EXPECT_GT(code.size(), 0u);
+    const std::string relative = "build/TestingOutput/vulkan_helpers/in_working_directory.txt";
+    writeText(relative, "from working directory");
+    EXPECT_EQ(asString(readFile(relative)), "from working directory");
 }
 
 TEST_F(VulkanHelpersTest, readFileMissingThrows) {
@@ -112,17 +114,22 @@ TEST_F(VulkanHelpersTest, readFileAssetRootFromEnvironment) {
     EXPECT_EQ(asString(readFile("only_in_env.txt")), "from explicit root");
 }
 
+TEST_F(VulkanHelpersTest, assetRootDefaultsToBuildDirectory) {
+    const fs::path defaultRoot = getAssetRoot();
+    ASSERT_FALSE(defaultRoot.empty());
+    EXPECT_TRUE(fs::exists(defaultRoot / "shaders/operator_double.comp.spv"));
+}
+
 TEST_F(VulkanHelpersTest, readFileShaderFromOtherWorkingDirectory) {
-    const fs::path repoRoot = fs::current_path();
+    const fs::path workingDirectory = fs::current_path();
     const fs::path shaderPath = "shaders/gsplat/gsplat_projection.comp.spv";
-    const auto expected = readFile(shaderPath.string());
+    const auto expected = readFile((fs::path(getAssetRoot()) / shaderPath).string());
 
     fs::current_path(root);
-    EXPECT_THROW(readFile(shaderPath.string()), std::runtime_error);
-    setAssetRoot(repoRoot.string());
     std::vector<char> actual;
     EXPECT_NO_THROW(actual = readFile(shaderPath.string()));
-    fs::current_path(repoRoot);
+    fs::current_path(workingDirectory);
 
+    EXPECT_GT(actual.size(), 0u);
     EXPECT_EQ(actual, expected);
 }

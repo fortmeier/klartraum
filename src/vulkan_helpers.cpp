@@ -28,14 +28,22 @@ std::string getAssetRoot() {
         return assetRoot;
     }
     const char* env = std::getenv("KLARTRAUM_ASSET_DIR");
-    return env ? std::string(env) : std::string();
+    if (env && env[0] != '\0') {
+        return std::string(env);
+    }
+#ifdef KLARTRAUM_DEFAULT_ASSET_DIR
+    // The build directory, which holds the shaders compiled by the build.
+    return std::string(KLARTRAUM_DEFAULT_ASSET_DIR);
+#else
+    return std::string();
+#endif
 }
 
 std::vector<char> readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
-    // The working directory takes precedence, so existing callers that run
-    // from the repository root behave as before.
+    // The working directory takes precedence over the asset root, so a file
+    // next to the caller overrides the one shipped with the build.
     const std::filesystem::path path(filename);
     if (!file.is_open() && path.is_relative()) {
         const std::string root = getAssetRoot();
