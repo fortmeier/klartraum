@@ -39,7 +39,7 @@ private:
     void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                     std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
 
-    GsplatConfig config_;
+    GsplatConfig config;
 
     VulkanContext* vulkanContext = nullptr;
     uint32_t numberOfPaths = 0;

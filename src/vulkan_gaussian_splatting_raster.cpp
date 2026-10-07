@@ -72,7 +72,7 @@ void VulkanGaussianSplattingRaster::checkInput(ComputeGraphElementPtr input, int
 void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                                                std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config) {
     this->vulkanContext = &vulkanContext;
-    this->config_ = config;
+    this->config = config;
     this->setInput(imageViewSrc, 0);
     this->setInput(cameraUBO, 1);
 

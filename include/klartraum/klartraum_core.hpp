@@ -69,7 +69,7 @@ public:
     // Release the window and its viewport offscreen images. Frontends must call
     // this before VulkanContext::shutdown() so the images are freed while the
     // device is still valid.
-    void clearWindow() { window_.reset(); }
+    void clearWindow() { window.reset(); }
 
     void clearInterfaceCamera() { interfaceCamera = nullptr; }
 
@@ -77,24 +77,24 @@ public:
     // GUI); see FrameOverlay. Pass nullptr to remove it. Frontends must remove
     // the overlay before VulkanContext::shutdown() so its GPU resources are
     // freed while the device is still valid.
-    void setOverlay(std::shared_ptr<FrameOverlay> overlay) { overlay_ = std::move(overlay); }
+    void setOverlay(std::shared_ptr<FrameOverlay> overlay) { this->overlay = std::move(overlay); }
 
     // Call before add() to enable GPU timestamp profiling on all subsequent
     // compute graphs.  Results accumulate across frames and are averaged.
-    void enableProfiling() { profilingEnabled_ = true; }
+    void enableProfiling() { profilingEnabled = true; }
 
     // Stops the per-frame timestamp readback, which makes each step()
     // synchronous, right away. Compute graphs added afterwards no longer
     // record timestamps.
-    void disableProfiling() { profilingEnabled_ = false; }
+    void disableProfiling() { profilingEnabled = false; }
 
-    bool isProfilingEnabled() const { return profilingEnabled_; }
+    bool isProfilingEnabled() const { return profilingEnabled; }
 
     // Call before add() to enable VK_KHR_performance_query counter profiling.
     // nameFilter: sub-strings matched against counter name/description; empty = all counters.
     void enablePerformanceProfiling(std::vector<std::string> nameFilter = {}) {
-        perfProfilingEnabled_ = true;
-        perfProfilingNameFilter_ = std::move(nameFilter);
+        perfProfilingEnabled = true;
+        perfProfilingNameFilter = std::move(nameFilter);
     }
 
     // Waits for the GPU to be idle, reads the last frame's timestamps, and
@@ -103,15 +103,15 @@ public:
     std::vector<std::pair<std::string, float>> getProfilingResults();
 
 private:
-    // Recreates the swapchain and rebuilds all graphs via graphBuilder_.
+    // Recreates the swapchain and rebuilds all graphs via graphBuilder.
     // Returns false when the surface currently has zero size (minimized).
     bool rebuildForSwapChain();
 
-    GraphBuilder graphBuilder_;
+    GraphBuilder graphBuilder;
 
-    bool profilingEnabled_ = false;
-    bool perfProfilingEnabled_ = false;
-    std::vector<std::string> perfProfilingNameFilter_;
+    bool profilingEnabled = false;
+    bool perfProfilingEnabled = false;
+    std::vector<std::string> perfProfilingNameFilter;
 
     VulkanContext vulkanContext;
 
@@ -122,9 +122,9 @@ private:
 
     std::vector<std::unique_ptr<ComputeGraph>> computeGraphs;
 
-    std::unique_ptr<Window> window_;
+    std::unique_ptr<Window> window;
 
-    std::shared_ptr<FrameOverlay> overlay_;
+    std::shared_ptr<FrameOverlay> overlay;
 };
 
 } // namespace klartraum

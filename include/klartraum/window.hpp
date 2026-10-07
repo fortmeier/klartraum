@@ -40,7 +40,7 @@ public:
     std::shared_ptr<ImageViewSrc> makeViewport(int x, int y, uint32_t displayWidth, uint32_t displayHeight,
                                                uint32_t renderWidth, uint32_t renderHeight);
 
-    bool hasViewports() const { return !viewports_.empty(); }
+    bool hasViewports() const { return !viewports.empty(); }
 
     // Submit the composite for swapchain image `imageIndex`, waiting on every
     // semaphore in `waitSemaphores` (the engine passes the viewport scenes'
@@ -58,12 +58,12 @@ private:
         VkRect2D rect;
     };
 
-    VulkanContext& vulkanContext_;
-    std::vector<Viewport> viewports_;
+    VulkanContext& vulkanContext;
+    std::vector<Viewport> viewports;
 
-    bool finalized_ = false;
-    std::vector<VkCommandBuffer> composite_;     // one per swapchain image
-    std::vector<VkSemaphore> compositeFinished_; // one per swapchain image
+    bool finalized = false;
+    std::vector<VkCommandBuffer> composite;     // one per swapchain image
+    std::vector<VkSemaphore> compositeFinished; // one per swapchain image
 };
 
 } // namespace klartraum

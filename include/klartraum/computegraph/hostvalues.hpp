@@ -29,8 +29,8 @@ class HostValues : public BufferElement<VulkanBuffer<T>> {
 public:
     HostValues(VulkanContext& vulkanContext, std::vector<T> initial)
         : BufferElement<VulkanBuffer<T>>(vulkanContext, static_cast<uint32_t>(initial.size())),
-          values_(std::move(initial)) {
-        if (values_.empty()) {
+          hostValues(std::move(initial)) {
+        if (hostValues.empty()) {
             throw std::invalid_argument("HostValues: needs at least one value");
         }
     }
@@ -38,25 +38,25 @@ public:
     HostValues(VulkanContext& vulkanContext, uint32_t count = 1)
         : HostValues(vulkanContext, std::vector<T>(count, T{})) {}
 
-    void set(uint32_t index, const T& value) { values_.at(index) = value; }
+    void set(uint32_t index, const T& value) { hostValues.at(index) = value; }
 
     void set(const std::vector<T>& values) {
-        if (values.size() != values_.size()) {
+        if (values.size() != hostValues.size()) {
             throw std::invalid_argument("HostValues: wrong number of values");
         }
-        values_ = values;
+        hostValues = values;
     }
 
-    const std::vector<T>& values() const { return values_; }
+    const std::vector<T>& values() const { return hostValues; }
 
-    void _update(uint32_t pathId) override { this->getBuffer(pathId).memcopyFrom(values_); }
+    void _update(uint32_t pathId) override { this->getBuffer(pathId).memcopyFrom(hostValues); }
 
     bool isUpdatable() const override { return true; }
 
     const char* getType() const override { return "HostValues"; }
 
 private:
-    std::vector<T> values_;
+    std::vector<T> hostValues;
 };
 
 // Values are copied tightly packed; shaders read vec3 arrays with the scalar

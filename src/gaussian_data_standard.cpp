@@ -26,7 +26,7 @@ GaussianDataStandard::GaussianDataStandard(VulkanContext& vulkanContext, std::ve
 
 void GaussianDataStandard::uploadSoA(VulkanContext& vulkanContext, const std::vector<Gaussian3D>& gaussians) {
     const uint32_t N = static_cast<uint32_t>(gaussians.size());
-    buffers_.count = N;
+    soaBuffers.count = N;
 
     // Convert AoS -> SoA and upload to GPU (single-path, static).
     std::vector<glm::vec3> pos3d(N), scale3d(N);
@@ -53,13 +53,13 @@ void GaussianDataStandard::uploadSoA(VulkanContext& vulkanContext, const std::ve
         element->getBuffer().memcopyFrom(data);
         return BufferRef{element};
     };
-    buffers_.pos = upload(pos3d, N, "Pos3D");
-    buffers_.rot = upload(rot3d, N, "Rot3D");
-    buffers_.scale = upload(scale3d, N, "Scale3D");
-    buffers_.colAlpha = upload(colAlpha3d, N, "ColAlpha3D");
-    buffers_.shR = upload(shR, 15 * N, "ShR");
-    buffers_.shG = upload(shG, 15 * N, "ShG");
-    buffers_.shB = upload(shB, 15 * N, "ShB");
+    soaBuffers.pos = upload(pos3d, N, "Pos3D");
+    soaBuffers.rot = upload(rot3d, N, "Rot3D");
+    soaBuffers.scale = upload(scale3d, N, "Scale3D");
+    soaBuffers.colAlpha = upload(colAlpha3d, N, "ColAlpha3D");
+    soaBuffers.shR = upload(shR, 15 * N, "ShR");
+    soaBuffers.shG = upload(shG, 15 * N, "ShG");
+    soaBuffers.shB = upload(shB, 15 * N, "ShB");
 }
 
 std::vector<Gaussian3D> loadGaussiansSpz(const std::string& path, bool flipY) {

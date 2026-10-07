@@ -254,19 +254,19 @@ public:
     // the optional mesh-shader draw path on this and fall back to the vertex path
     // when false. vkCmdDrawMeshTasksIndirectEXT is loaded via vkGetDeviceProcAddr
     // since it is an extension entry point.
-    bool isMeshShaderSupported() const { return meshShaderSupported_; }
-    PFN_vkCmdDrawMeshTasksIndirectEXT getCmdDrawMeshTasksIndirectEXT() const { return vkCmdDrawMeshTasksIndirectEXT_; }
+    bool isMeshShaderSupported() const { return meshShaderSupported; }
+    PFN_vkCmdDrawMeshTasksIndirectEXT getCmdDrawMeshTasksIndirectEXT() const { return pfnCmdDrawMeshTasksIndirectEXT; }
 
     // The pipelineStatisticsQuery feature is enabled when the physical device
     // supports it. Apple GPUs (MoltenVK, KosmicKrisp) do not.
-    bool isPipelineStatisticsQuerySupported() const { return pipelineStatisticsQuerySupported_; }
+    bool isPipelineStatisticsQuerySupported() const { return pipelineStatisticsQuerySupported; }
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 
-    bool meshShaderSupported_ = false;
-    bool pipelineStatisticsQuerySupported_ = false;
-    PFN_vkCmdDrawMeshTasksIndirectEXT vkCmdDrawMeshTasksIndirectEXT_ = nullptr;
+    bool meshShaderSupported = false;
+    bool pipelineStatisticsQuerySupported = false;
+    PFN_vkCmdDrawMeshTasksIndirectEXT pfnCmdDrawMeshTasksIndirectEXT = nullptr;
 };
 
 } // namespace klartraum

@@ -31,15 +31,15 @@ public:
     // Take an already-built AoS vector (moved in), then upload the SoA buffers.
     GaussianDataStandard(VulkanContext& vulkanContext, std::vector<Gaussian3D> gaussians);
 
-    uint32_t count() const { return buffers_.count; }
+    uint32_t count() const { return soaBuffers.count; }
 
     // The uploaded SoA buffers, ready to be handed to a backend constructor.
-    const GaussianSoABuffers& buffers() const { return buffers_; }
+    const GaussianSoABuffers& buffers() const { return soaBuffers; }
 
 private:
     void uploadSoA(VulkanContext& vulkanContext, const std::vector<Gaussian3D>& gaussians);
 
-    GaussianSoABuffers buffers_;
+    GaussianSoABuffers soaBuffers;
 };
 
 } // namespace klartraum
