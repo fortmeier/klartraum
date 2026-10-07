@@ -144,7 +144,7 @@ add_custom_target(
 FetchContent_Declare(
   glm
   GIT_REPOSITORY https://github.com/g-truc/glm.git
-  GIT_TAG 1.0.1
+  GIT_TAG 0af55ccecd98d4e5a8d1fad7de25ba429d60e863 # 1.0.1
 )
 FetchContent_MakeAvailable(glm)
 
@@ -157,7 +157,7 @@ set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
   protobuf
   GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
-  GIT_TAG v25.1
+  GIT_TAG 7f94235e552599141950d7a4a3eaf93bc87d1b22 # v25.1
 )
 FetchContent_MakeAvailable(protobuf)
 
@@ -228,6 +228,7 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
   googletest
   URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz
+  URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c
 )
 FetchContent_MakeAvailable(googletest)
 
