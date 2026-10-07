@@ -16,3 +16,11 @@ repos:
       - id: check-merge-conflict
       - id: mixed-line-ending
         args: [--fix=lf]
+
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: v6.2.0
+    hooks:
+      # Every committed file needs copyright and license information: an SPDX
+      # header for source files (scripts/dev/reuse_annotate.sh adds it), an
+      # entry in REUSE.toml for everything else.
+      - id: reuse-lint-file

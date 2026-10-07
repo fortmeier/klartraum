@@ -26,3 +26,30 @@ commit again. To run all checks on the whole repository:
 ```bash
 pre-commit run --all-files
 ```
+
+## Copyright and license information
+
+The repository follows the [REUSE](https://reuse.software/) specification:
+every file states its copyright holder and license. Source files carry an SPDX
+header at the top:
+
+```cpp
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+```
+
+Documentation, configuration, lock files, the website and data are covered by
+`REUSE.toml` in the repository root instead. The license texts are in
+`LICENSES/`. The pre-commit check rejects committed files without this
+information. To add the header to new source files, run:
+
+```bash
+scripts/dev/reuse_annotate.sh
+```
+
+To check the whole repository:
+
+```bash
+uvx --from 'reuse[charset-normalizer]' reuse lint
+```
