@@ -2,6 +2,11 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - RenderDrawBasics10Frames: a GlfwFrontend renders a render pass with the DrawBasics
+ *   axes for 10 frames without errors
+ **/
 #include <gtest/gtest.h>
 
 #include "klartraum/glfw_frontend.hpp"

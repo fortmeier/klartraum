@@ -2,6 +2,12 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - Smoketest: a HeadlessFrontend runs one frame of an empty render pass
+ * - RenderDrawBasics10Frames: a HeadlessFrontend renders a render pass with the
+ *   DrawBasics axes for 10 frames without errors
+ **/
 #include <gtest/gtest.h>
 
 #include "klartraum/headless_frontend.hpp"

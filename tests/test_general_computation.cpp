@@ -2,6 +2,12 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - ComputeGraphCreation: a GeneralComputation with three buffer inputs multiplies two
+ *   buffers element-wise into the third, and graph profiling reports one entry per
+ *   element with a positive GPU time for the shader
+ **/
 #include <gtest/gtest.h>
 #include <iostream>
 

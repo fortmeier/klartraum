@@ -2,6 +2,15 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - ReluGeneralComputationFullTest: a GeneralComputation with the relu shader zeroes the
+ *   negative values of a [1,2,3,4] tensor and keeps the others
+ * - NetworkDispatchesEveryTensorElement: an OnnxNetwork with a single Relu on 65
+ *   elements processes all of them, including the one past a full workgroup
+ * - NetworkInputCanConsumeAnotherNetworkOutput: an OnnxNetwork can take another
+ *   network's output tensor as its input within one compute graph
+ **/
 #include <filesystem>
 #include <fstream>
 #include <vector>

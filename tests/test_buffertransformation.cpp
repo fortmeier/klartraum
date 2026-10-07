@@ -2,6 +2,15 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - create: a BufferTransformation with the operator_double shader doubles every element
+ *   of a 7-float input buffer
+ * - create_with_ubo: a BufferTransformation with a float uniform buffer multiplies the
+ *   input by the uniform value (3)
+ * - create_with_ubo_multiple_paths: in a graph with 3 paths, each path multiplies by its
+ *   own uniform value (0, 1, 2) and writes its own output buffer
+ **/
 #include <gtest/gtest.h>
 
 #include <map>

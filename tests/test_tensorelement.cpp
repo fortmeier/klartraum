@@ -2,6 +2,19 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - ConstructorWithIndividualDimensions: a TensorElement can be created from width,
+ *   height, depth and batch
+ * - ConstructorWithDimensionsVector: a TensorElement can be created from a vector of
+ *   dimensions
+ * - TensorElementSinglePathConstruction: a TensorElementSinglePath can be created from
+ *   width, height, depth and batch
+ * - TensorElementSinglePathConstructionWithVector: a TensorElementSinglePath can be
+ *   created from a vector of dimensions
+ * - TensorElementSinglePathGetDimensions: a TensorElementSinglePath returns the
+ *   dimensions it was created with
+ **/
 #include <gtest/gtest.h>
 
 #include "klartraum/computegraph/tensorelement.hpp"

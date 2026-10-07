@@ -2,6 +2,10 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - memcopy: data copied into a VulkanBuffer and back to the host is unchanged
+ **/
 #include <gtest/gtest.h>
 
 #include "klartraum/headless_frontend.hpp"

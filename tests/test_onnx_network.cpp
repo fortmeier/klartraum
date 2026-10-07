@@ -2,6 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
+/**
+ * TESTS:
+ * - ExecuteWithValidEncoderModel: the simple encoder model loads and runs, and every
+ *   layer output matches the ONNX Runtime reference stored in the model
+ * - ExecuteWithValidDecoderModel: the simple decoder model loads and runs, and every
+ *   layer output matches the ONNX Runtime reference stored in the model
+ **/
 #include <filesystem>
 #include <fstream>
 
