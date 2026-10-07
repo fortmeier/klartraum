@@ -6,8 +6,11 @@
  * TESTS:
  * - deviceSelection: VulkanContext selects a non-CPU (hardware) Vulkan device
  * - deviceFeatures: VulkanContext reports the features available on the selected device
- * - minimalComputePipeline: a minimal SPIR-V compute pipeline can be created and destroyed without error
+ * - minimalComputePipeline: a minimal SPIR-V compute pipeline can be created and
+ *   destroyed without error
  * - minimalComputeDispatch: dispatching the minimal pipeline produces correct output
+ * - deviceLocalBufferStagingRoundtrip: data copied into a device-local buffer through
+ *   staging and back is unchanged
  **/
 
 #include <gtest/gtest.h>
