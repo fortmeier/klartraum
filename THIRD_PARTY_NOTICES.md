@@ -14,7 +14,7 @@ distributes a build has to pass these notices on with it.
 | utf8_range (part of Protocol Buffers) | as bundled with Protocol Buffers 25.1 | MIT |
 | GLM | 1.0.1 | MIT |
 | Zstandard | 1.5.6 | BSD-3-Clause |
-| ONNX (`onnx.proto`) | submodule `3rdparty/onnx` | Apache-2.0 |
+| ONNX (`onnx.proto`) | 1.20.1 | Apache-2.0 |
 
 Not included in builds, but used by them or by the tests:
 
@@ -280,7 +280,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## ONNX
 
-Version: `onnx.proto` from the submodule `3rdparty/onnx`, compiled to C++. License: Apache-2.0.
+Version: 1.20.1 (`onnx.proto` from the submodule `3rdparty/onnx`, compiled to C++). License: Apache-2.0.
 
 Abseil (bundled with Protocol Buffers 25.1) is licensed under the same
 Apache License, Version 2.0. Neither project ships a NOTICE file.
