@@ -79,7 +79,7 @@ TEST(BufferTransformation, create_with_ubo) {
     auto& device = vulkanContext.getDevice();
 
     /*
-    STEP 1: cerate the computegraph elements
+    STEP 1: create the computegraph elements
     */
 
     typedef VulkanBuffer<float> typeA;

@@ -48,9 +48,8 @@ public:
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         this->numberPaths = numberPaths;
         this->vulkanContext = &vulkanContext;
-        // TODO CHECK, suggetest by copilot and in BT, but I think it is not necessary
-        // ADDEDUM: we setup them, since other is missleading, it should be named scratchBuffers
-        // these are not part of the compute graph
+        // The other inputs are scratch buffers that are not part of the compute graph, so
+        // they are set up here. TODO: rename otherInputs to scratchBuffers.
         for (auto& other : otherInputs) {
             other->_setup(vulkanContext, numberPaths);
         }
