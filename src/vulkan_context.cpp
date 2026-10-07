@@ -531,7 +531,7 @@ void VulkanContext::createLogicalDevice() {
 
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
-    pipelineStatisticsQuerySupported_ = supportedFeatures.pipelineStatisticsQuery == VK_TRUE;
+    pipelineStatisticsQuerySupported = supportedFeatures.pipelineStatisticsQuery == VK_TRUE;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -632,7 +632,7 @@ void VulkanContext::createLogicalDevice() {
                 maintenance4Features.pNext = scalarBlockLayoutFeatures.pNext;
                 meshShaderFeatures.pNext = &maintenance4Features;
                 scalarBlockLayoutFeatures.pNext = &meshShaderFeatures;
-                meshShaderSupported_ = true;
+                meshShaderSupported = true;
             }
         }
     }
@@ -642,11 +642,11 @@ void VulkanContext::createLogicalDevice() {
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
         throw std::runtime_error("failed to create logical device!");
 
-    if (meshShaderSupported_) {
-        vkCmdDrawMeshTasksIndirectEXT_ = reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectEXT>(
+    if (meshShaderSupported) {
+        pfnCmdDrawMeshTasksIndirectEXT = reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectEXT>(
             vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksIndirectEXT"));
-        if (vkCmdDrawMeshTasksIndirectEXT_ == nullptr)
-            meshShaderSupported_ = false; // entry point missing — fall back to vertex path
+        if (pfnCmdDrawMeshTasksIndirectEXT == nullptr)
+            meshShaderSupported = false; // entry point missing — fall back to vertex path
     }
 
     // --- Device creation diagnostics ---
@@ -665,7 +665,7 @@ void VulkanContext::createLogicalDevice() {
               << " pipelineStatisticsQuery=" << deviceFeatures.pipelineStatisticsQuery << " scalarBlockLayout=1\n";
     if (perfQueryPresent)
         std::cout << "[VulkanContext] VK_KHR_performance_query enabled\n";
-    if (meshShaderSupported_)
+    if (meshShaderSupported)
         std::cout << "[VulkanContext] VK_EXT_mesh_shader enabled\n";
 
     vkGetDeviceQueue(device, indices.graphicsAndComputeFamily.value(), 0, &graphicsQueue);

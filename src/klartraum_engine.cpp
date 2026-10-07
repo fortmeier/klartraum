@@ -54,7 +54,7 @@ void KlartraumEngine::step() {
 
     auto& graphicsQueue = vulkanContext.getGraphicsQueue();
 
-    if (window_ && window_->hasViewports()) {
+    if (window && window->hasViewports()) {
         // Viewport mode: each graph renders into its own offscreen target (no
         // swapchain wait); the window composite blits them into the one
         // swapchain image and is the single submission that touches it.
@@ -70,9 +70,9 @@ void KlartraumEngine::step() {
         // With an overlay, the overlay is the frame's last submission and
         // signals the fence instead.
         VkSemaphore compositeFinished =
-            window_->submitComposite(graphicsQueue, imageIndex, graphFinished, overlay_ ? VK_NULL_HANDLE : fence);
-        if (overlay_) {
-            compositeFinished = overlay_->submit(graphicsQueue, imageIndex, frameIndex, compositeFinished, fence);
+            window->submitComposite(graphicsQueue, imageIndex, graphFinished, overlay ? VK_NULL_HANDLE : fence);
+        if (overlay) {
+            compositeFinished = overlay->submit(graphicsQueue, imageIndex, frameIndex, compositeFinished, fence);
         }
         vulkanContext.endRender(imageIndex, compositeFinished);
     } else {
@@ -82,16 +82,16 @@ void KlartraumEngine::step() {
         for (auto it = computeGraphs.begin(); it != computeGraphs.end(); ++it) {
             // only the last submission of the frame signals the fence: the
             // last computegraph, or the overlay if there is one
-            if (it == computeGraphs.end() - 1 && !overlay_) {
+            if (it == computeGraphs.end() - 1 && !overlay) {
                 renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex, fence);
             } else {
                 renderFinishedSemaphore = (*it)->submitTo(graphicsQueue, imageIndex);
             }
         }
 
-        if (overlay_) {
+        if (overlay) {
             renderFinishedSemaphore =
-                overlay_->submit(graphicsQueue, imageIndex, frameIndex, renderFinishedSemaphore, fence);
+                overlay->submit(graphicsQueue, imageIndex, frameIndex, renderFinishedSemaphore, fence);
         }
 
         // finish frame rendering
@@ -101,10 +101,10 @@ void KlartraumEngine::step() {
     // When profiling is enabled, wait for the GPU to finish this frame so we
     // can read back the timestamp queries.  This makes each step() synchronous
     // but that is acceptable in a profiling / development build.
-    if (profilingEnabled_) {
+    if (profilingEnabled) {
         vkQueueWaitIdle(graphicsQueue);
         for (auto& cg : computeGraphs) {
-            cg->readAndAccumulateTimestamps_();
+            cg->readAndAccumulateTimestamps();
         }
     }
 }
@@ -119,32 +119,32 @@ void KlartraumEngine::setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera
 VulkanContext& KlartraumEngine::getVulkanContext() { return vulkanContext; }
 
 Window& KlartraumEngine::getWindow() {
-    if (!window_) {
-        window_ = std::make_unique<Window>(vulkanContext);
+    if (!window) {
+        window = std::make_unique<Window>(vulkanContext);
     }
-    return *window_;
+    return *window;
 }
 
 void KlartraumEngine::add(ComputeGraphElementPtr element) {
     uint32_t numberPaths = vulkanContext.getNumberOfSwapChainImages();
     computeGraphs.emplace_back(std::make_unique<ComputeGraph>(vulkanContext, numberPaths));
     auto& computeGraph = computeGraphs.back();
-    if (profilingEnabled_)
+    if (profilingEnabled)
         computeGraph->enableProfiling();
-    if (perfProfilingEnabled_)
-        computeGraph->enablePerformanceProfiling(perfProfilingNameFilter_);
+    if (perfProfilingEnabled)
+        computeGraph->enablePerformanceProfiling(perfProfilingNameFilter);
     computeGraph->compileFrom(element);
 }
 
 void KlartraumEngine::setGraphBuilder(GraphBuilder builder) {
-    graphBuilder_ = std::move(builder);
+    graphBuilder = std::move(builder);
     computeGraphs.clear();
-    if (graphBuilder_) {
-        graphBuilder_(*this);
+    if (graphBuilder) {
+        graphBuilder(*this);
     }
 }
 
-bool KlartraumEngine::isResizable() const { return graphBuilder_ && !(window_ && window_->hasViewports()); }
+bool KlartraumEngine::isResizable() const { return graphBuilder && !(window && window->hasViewports()); }
 
 bool KlartraumEngine::rebuildForSwapChain() {
     // Waits for the device to be idle before anything is destroyed.
@@ -153,9 +153,9 @@ bool KlartraumEngine::rebuildForSwapChain() {
     }
     // The graphs recorded the old swapchain's image views and semaphores.
     computeGraphs.clear();
-    graphBuilder_(*this);
-    if (overlay_) {
-        overlay_->onSwapChainRecreated();
+    graphBuilder(*this);
+    if (overlay) {
+        overlay->onSwapChainRecreated();
     }
     return true;
 }
@@ -163,8 +163,8 @@ bool KlartraumEngine::rebuildForSwapChain() {
 std::vector<std::pair<std::string, float>> KlartraumEngine::getProfilingResults() {
     vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
     for (auto& cg : computeGraphs) {
-        cg->readAndAccumulateTimestamps_();
-        cg->readAndAccumulatePerformanceCounters_();
+        cg->readAndAccumulateTimestamps();
+        cg->readAndAccumulatePerformanceCounters();
     }
     std::vector<std::pair<std::string, float>> results;
     for (auto& cg : computeGraphs) {

@@ -10,16 +10,16 @@
 namespace klartraum {
 
 Window::Window(VulkanContext& vulkanContext)
-    : vulkanContext_(vulkanContext) {}
+    : vulkanContext(vulkanContext) {}
 
 Window::~Window() {
-    auto& device = vulkanContext_.getDevice();
-    for (auto sem : compositeFinished_) {
+    auto& device = vulkanContext.getDevice();
+    for (auto sem : compositeFinished) {
         if (sem != VK_NULL_HANDLE)
             vkDestroySemaphore(device, sem, nullptr);
     }
-    if (!composite_.empty()) {
-        vkFreeCommandBuffers(device, vulkanContext_.getCommandPool(), (uint32_t)composite_.size(), composite_.data());
+    if (!composite.empty()) {
+        vkFreeCommandBuffers(device, vulkanContext.getCommandPool(), (uint32_t)composite.size(), composite.data());
     }
 }
 
@@ -29,41 +29,41 @@ std::shared_ptr<ImageViewSrc> Window::makeViewport(int x, int y, uint32_t width,
 
 std::shared_ptr<ImageViewSrc> Window::makeViewport(int x, int y, uint32_t displayWidth, uint32_t displayHeight,
                                                    uint32_t renderWidth, uint32_t renderHeight) {
-    if (finalized_) {
+    if (finalized) {
         throw std::runtime_error("Window::makeViewport called after the composite was built!");
     }
-    uint32_t numImages = vulkanContext_.getNumberOfSwapChainImages();
-    auto target = std::make_shared<OffscreenTarget>(vulkanContext_, VkExtent2D{renderWidth, renderHeight}, numImages);
+    uint32_t numImages = vulkanContext.getNumberOfSwapChainImages();
+    auto target = std::make_shared<OffscreenTarget>(vulkanContext, VkExtent2D{renderWidth, renderHeight}, numImages);
 
     VkRect2D rect{};
     rect.offset = {x, y};
     rect.extent = {displayWidth, displayHeight};
-    viewports_.push_back({target, rect});
+    viewports.push_back({target, rect});
     return target;
 }
 
 void Window::finalize() {
-    if (finalized_)
+    if (finalized)
         return;
-    finalized_ = true;
+    finalized = true;
 
-    auto& device = vulkanContext_.getDevice();
-    uint32_t numImages = vulkanContext_.getNumberOfSwapChainImages();
+    auto& device = vulkanContext.getDevice();
+    uint32_t numImages = vulkanContext.getNumberOfSwapChainImages();
 
     // Headless has no surface to present to; mirror the existing convention that
     // leaves the final swapchain image in GENERAL so readback works.
     const VkImageLayout finalSwapLayout =
-        vulkanContext_.hasSurface() ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL;
+        vulkanContext.hasSurface() ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL;
 
-    composite_.resize(numImages);
-    compositeFinished_.resize(numImages);
+    composite.resize(numImages);
+    compositeFinished.resize(numImages);
 
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = vulkanContext_.getCommandPool();
+    allocInfo.commandPool = vulkanContext.getCommandPool();
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocInfo.commandBufferCount = numImages;
-    if (vkAllocateCommandBuffers(device, &allocInfo, composite_.data()) != VK_SUCCESS) {
+    if (vkAllocateCommandBuffers(device, &allocInfo, composite.data()) != VK_SUCCESS) {
         throw std::runtime_error("Window: failed to allocate composite command buffers!");
     }
 
@@ -76,16 +76,16 @@ void Window::finalize() {
     fullRange.layerCount = 1;
 
     for (uint32_t p = 0; p < numImages; ++p) {
-        if (vkCreateSemaphore(device, &semInfo, nullptr, &compositeFinished_[p]) != VK_SUCCESS) {
+        if (vkCreateSemaphore(device, &semInfo, nullptr, &compositeFinished[p]) != VK_SUCCESS) {
             throw std::runtime_error("Window: failed to create composite semaphore!");
         }
 
-        VkCommandBuffer cmd = composite_[p];
+        VkCommandBuffer cmd = composite[p];
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         vkBeginCommandBuffer(cmd, &beginInfo);
 
-        VkImage swapImage = vulkanContext_.getSwapChainImage(p);
+        VkImage swapImage = vulkanContext.getSwapChainImage(p);
 
         // Swapchain image -> TRANSFER_DST so we can clear and blit into it.
         VkImageMemoryBarrier toDst{};
@@ -126,7 +126,7 @@ void Window::finalize() {
         // The viewport scene left each offscreen image in TRANSFER_SRC_OPTIMAL
         // (OffscreenTarget::getFinalLayoutOverride); the graphs' finished
         // semaphores (awaited at submit) make those writes visible here.
-        for (auto& vp : viewports_) {
+        for (auto& vp : viewports) {
             VkImageBlit blit{};
             blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             blit.srcSubresource.layerCount = 1;
@@ -163,7 +163,7 @@ void Window::finalize() {
 VkSemaphore Window::submitComposite(VkQueue queue, uint32_t imageIndex, const std::vector<VkSemaphore>& waitSemaphores,
                                     VkFence fence) {
     finalize();
-    if (imageIndex >= composite_.size()) {
+    if (imageIndex >= composite.size()) {
         throw std::runtime_error("Window::submitComposite: imageIndex out of range!");
     }
 
@@ -172,17 +172,17 @@ VkSemaphore Window::submitComposite(VkQueue queue, uint32_t imageIndex, const st
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
-    si.pCommandBuffers = &composite_[imageIndex];
+    si.pCommandBuffers = &composite[imageIndex];
     si.waitSemaphoreCount = (uint32_t)waitSemaphores.size();
     si.pWaitSemaphores = waitSemaphores.data();
     si.pWaitDstStageMask = waitStages.data();
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &compositeFinished_[imageIndex];
+    si.pSignalSemaphores = &compositeFinished[imageIndex];
 
     if (vkQueueSubmit(queue, 1, &si, fence) != VK_SUCCESS) {
         throw std::runtime_error("Window::submitComposite: failed to submit!");
     }
-    return compositeFinished_[imageIndex];
+    return compositeFinished[imageIndex];
 }
 
 } // namespace klartraum

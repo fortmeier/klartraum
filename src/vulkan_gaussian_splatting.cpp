@@ -24,7 +24,7 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(VulkanContext& vulkanContext,
 void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> _imageViewSrc,
                                          std::shared_ptr<CameraUboType> _cameraUBO, GsplatConfig config) {
     this->vulkanContext = &vulkanContext;
-    this->config_ = config;
+    this->config = config;
     this->setInput(_imageViewSrc, 0);
     this->setInput(_cameraUBO, 1);
 

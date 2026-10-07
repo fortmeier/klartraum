@@ -27,14 +27,14 @@ namespace klartraum {
 class OffscreenTarget : public ImageViewSrc {
 public:
     OffscreenTarget(VulkanContext& vulkanContext, VkExtent2D extent, uint32_t numImages)
-        : vulkanContext_(vulkanContext),
-          extent_(extent) {
+        : vulkanContext(vulkanContext),
+          imageExtent(extent) {
         auto& device = vulkanContext.getDevice();
         VkFormat format = vulkanContext.getSwapChainImageFormat();
 
-        images_.resize(numImages);
-        memories_.resize(numImages);
-        views_.resize(numImages);
+        images.resize(numImages);
+        memories.resize(numImages);
+        views.resize(numImages);
 
         for (uint32_t i = 0; i < numImages; ++i) {
             VkImageCreateInfo imageInfo{};
@@ -52,45 +52,45 @@ public:
             imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
                               VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
             imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            if (vkCreateImage(device, &imageInfo, nullptr, &images_[i]) != VK_SUCCESS) {
+            if (vkCreateImage(device, &imageInfo, nullptr, &images[i]) != VK_SUCCESS) {
                 throw std::runtime_error("OffscreenTarget: failed to create image!");
             }
 
             VkMemoryRequirements memReq;
-            vkGetImageMemoryRequirements(device, images_[i], &memReq);
+            vkGetImageMemoryRequirements(device, images[i], &memReq);
             VkMemoryAllocateInfo allocInfo{};
             allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             allocInfo.allocationSize = memReq.size;
             allocInfo.memoryTypeIndex =
                 vulkanContext.findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            if (vkAllocateMemory(device, &allocInfo, nullptr, &memories_[i]) != VK_SUCCESS) {
+            if (vkAllocateMemory(device, &allocInfo, nullptr, &memories[i]) != VK_SUCCESS) {
                 throw std::runtime_error("OffscreenTarget: failed to allocate image memory!");
             }
-            vkBindImageMemory(device, images_[i], memories_[i], 0);
+            vkBindImageMemory(device, images[i], memories[i], 0);
 
             VkImageViewCreateInfo viewInfo{};
             viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            viewInfo.image = images_[i];
+            viewInfo.image = images[i];
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             viewInfo.format = format;
             viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             viewInfo.subresourceRange.levelCount = 1;
             viewInfo.subresourceRange.layerCount = 1;
-            if (vkCreateImageView(device, &viewInfo, nullptr, &views_[i]) != VK_SUCCESS) {
+            if (vkCreateImageView(device, &viewInfo, nullptr, &views[i]) != VK_SUCCESS) {
                 throw std::runtime_error("OffscreenTarget: failed to create image view!");
             }
         }
 
-        setResources(views_, images_, std::vector<VkExtent2D>(numImages, extent));
+        setResources(views, images, std::vector<VkExtent2D>(numImages, extent));
     }
 
     ~OffscreenTarget() {
-        auto& device = vulkanContext_.getDevice();
-        for (auto view : views_)
+        auto& device = vulkanContext.getDevice();
+        for (auto view : views)
             vkDestroyImageView(device, view, nullptr);
-        for (auto image : images_)
+        for (auto image : images)
             vkDestroyImage(device, image, nullptr);
-        for (auto mem : memories_)
+        for (auto mem : memories)
             vkFreeMemory(device, mem, nullptr);
     }
 
@@ -103,14 +103,14 @@ public:
         return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     }
 
-    VkExtent2D extent() const { return extent_; }
+    VkExtent2D extent() const { return imageExtent; }
 
 private:
-    VulkanContext& vulkanContext_;
-    VkExtent2D extent_;
-    std::vector<VkImage> images_;
-    std::vector<VkDeviceMemory> memories_;
-    std::vector<VkImageView> views_;
+    VulkanContext& vulkanContext;
+    VkExtent2D imageExtent;
+    std::vector<VkImage> images;
+    std::vector<VkDeviceMemory> memories;
+    std::vector<VkImageView> views;
 };
 
 } // namespace klartraum
