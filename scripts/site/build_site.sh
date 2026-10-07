@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 # Assembles the GitHub Pages site in _site/: the landing page from site/ at the
 # root and the Sphinx documentation under docs/. Run from the repository root.
 # SPHINX_BUILD selects the sphinx-build executable (default: docs/.venv, then PATH).

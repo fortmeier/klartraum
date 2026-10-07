@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 struct Gaussian {
     vec3 position;
     vec4 rotation;

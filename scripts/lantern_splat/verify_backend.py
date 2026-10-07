@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 """Smoke-test the pinned CUDA stack and gsplat extension."""
 
 from __future__ import annotations

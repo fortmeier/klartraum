@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 """Forward FFmpeg arguments to imageio-ffmpeg's uv-managed binary."""
 
 from __future__ import annotations

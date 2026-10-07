@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #include "klartraum/text_draw_component.hpp"
 
 #include <array>

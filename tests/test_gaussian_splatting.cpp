@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - projection: Projection shader with 3 gaussians, verifies screen-space positions/depths

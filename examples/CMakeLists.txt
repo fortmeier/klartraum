@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 # DrawBasics Example
 add_executable(draw_basics_example
     draw_basics_example.cpp

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - inRangeIndexMapping: ASCII codes [32, 126] map to sequential cell indices [0, 94]

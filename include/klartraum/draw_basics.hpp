@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_DRAW_BASICS_HPP
 #define KLARTRAUM_DRAW_BASICS_HPP
 

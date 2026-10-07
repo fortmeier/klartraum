@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef BACKEND_CONFIG_HPP
 #define BACKEND_CONFIG_HPP
 

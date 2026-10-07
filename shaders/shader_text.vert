@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #version 450
 
 // Screen size in pixels, used to map pixel-space positions to NDC.

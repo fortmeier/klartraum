@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef VULKAN_CONTEXT_HPP
 #define VULKAN_CONTEXT_HPP
 

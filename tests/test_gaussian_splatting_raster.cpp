@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - classWithLanternScene: VulkanGaussianSplattingRaster (the sort-once +

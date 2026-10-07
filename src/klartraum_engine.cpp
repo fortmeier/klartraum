@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 

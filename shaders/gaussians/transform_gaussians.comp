@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #version 450
 
 // Writes transformed copies of Gaussians: p' = s R p + t, orientations turned

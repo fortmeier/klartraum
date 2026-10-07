@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 // Shared by the Gaussian compute elements.
 
 // Quaternions are stored x, y, z, w.

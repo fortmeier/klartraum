@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - readFileFromWorkingDirectory: a relative path is read relative to the working directory

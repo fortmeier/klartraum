@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
 #include "klartraum/computegraph/computegraph.hpp"

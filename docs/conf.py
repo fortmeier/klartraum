@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 # Sphinx configuration for the Klartraum Engine documentation.
 
 import os

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #include <stdexcept>
 
 #include "klartraum/gaussian_splatting_factory.hpp"

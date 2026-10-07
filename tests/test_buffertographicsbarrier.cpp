@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 /**
  * TESTS:
  * - ordersComputeBufferBeforeRenderPass: wires a compute-written buffer through

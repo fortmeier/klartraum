@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 # Renders the lantern scene with the turntable example (one full turn around
 # the up axis) and assembles the frames into seamlessly looping animations:
 #   site/images/engine-lantern.mp4         480 px video for the landing page

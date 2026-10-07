@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_ONNX_NETWORK_HPP
 #define KLARTRAUM_ONNX_NETWORK_HPP
 

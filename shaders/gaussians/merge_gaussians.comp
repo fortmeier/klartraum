@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #version 450
 
 // Concatenates two sets of Gaussians: A's first, then B's. The SH buffers are

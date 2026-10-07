@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #ifndef KLARTRAUM_VULKAN_TENSOR_HPP
 #define KLARTRAUM_VULKAN_TENSOR_HPP
 

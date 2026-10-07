@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #include "klartraum/simple_text_renderer.hpp"
 
 #include "klartraum/glyph_atlas.hpp"

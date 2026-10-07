@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
 #include <vulkan/vulkan.h>
 
 #include "klartraum/vulkan_context.hpp"

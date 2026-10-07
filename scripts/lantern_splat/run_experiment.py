@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 """Process, train, and export the lantern-scene Gaussian splat."""
 
 from __future__ import annotations
