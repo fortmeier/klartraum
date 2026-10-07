@@ -14,7 +14,7 @@ subprocess.run(["doxygen", "Doxyfile"], cwd=DOCS_DIR, check=True)
 
 project = "Klartraum Engine"
 author = "Dirk Fortmeier"
-copyright = "2025, Dirk Fortmeier"
+copyright = "2025-2026, Dirk Fortmeier"
 
 # The version is defined once, in project() in the top-level CMakeLists.txt.
 with open(os.path.join(DOCS_DIR, "..", "CMakeLists.txt"), encoding="utf-8") as cmake_file:
