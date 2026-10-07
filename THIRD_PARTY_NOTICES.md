@@ -6,7 +6,7 @@ distributes a build has to pass these notices on with it.
 
 | Component | Version | License |
 |---|---|---|
-| GLFW | 3.4 | Zlib |
+| GLFW | 3.5.1 | Zlib |
 | zlib | 1.3.1 | Zlib |
 | spz | 3.0.0 | MIT |
 | Protocol Buffers | 25.1 | BSD-3-Clause |
@@ -28,7 +28,7 @@ contain no third-party content; their licenses are given in
 
 ## GLFW
 
-Version: 3.4 (submodule `3rdparty/glfw`). License: Zlib.
+Version: 3.5.1 (submodule `3rdparty/glfw`). License: Zlib.
 
 ```text
 Copyright (c) 2002-2006 Marcus Geelnard
