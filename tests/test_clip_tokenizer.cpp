@@ -4,9 +4,12 @@
 
 /**
  * TESTS:
- * - The native tokenizer reproduces Hugging Face CLIP token IDs for common and Unicode prompts.
- * - Classifier-free guidance batches the negative prompt before the positive prompt.
- * - Attention masks include the first end token and exclude padding end tokens.
+ * - MatchesHuggingFaceTokens: the native tokenizer reproduces Hugging Face CLIP token
+ *   IDs for common and Unicode prompts
+ * - EncodesNegativePromptFirst: classifier-free guidance batches the negative prompt
+ *   before the positive prompt
+ * - CreatesAttentionMaskThroughFirstEndToken: attention masks include the first end
+ *   token and exclude padding end tokens
  **/
 
 #include <filesystem>
