@@ -54,11 +54,10 @@ class CopyOp : public ComputeGraphElement {
 //   the graph waits for beginRender() to signal the image before rendering.
 //   Required when using submitTo + beginRender/endRender.
 // withSemaphoreWait=false: no image semaphore wait; suitable for submitAndWait.
-static std::pair<std::shared_ptr<RenderPass>, uint32_t>
-makeRenderGraph(VulkanContext& vc, bool withSemaphoreWait) {
+static std::pair<std::shared_ptr<RenderPass>, uint32_t> makeRenderGraph(VulkanContext& vc, bool withSemaphoreWait) {
     uint32_t numImages = vc.getNumberOfSwapChainImages();
     std::vector<VkImageView> views;
-    std::vector<VkImage>     imgs;
+    std::vector<VkImage> imgs;
     for (uint32_t i = 0; i < numImages; i++) {
         views.push_back(vc.getImageView(i));
         imgs.push_back(vc.getSwapChainImage(i));
@@ -69,7 +68,7 @@ makeRenderGraph(VulkanContext& vc, bool withSemaphoreWait) {
             ivs->setWaitFor(i, vc.imageAvailableSemaphoresPerImage[i]);
     }
     auto cam = std::make_shared<CameraUboType>();
-    auto rp  = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), vc.getSwapChainExtent());
+    auto rp = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), vc.getSwapChainExtent());
     rp->setInput(ivs, 0);
     rp->setInput(cam, 1);
     rp->addDrawComponent(std::make_shared<DrawBasics>(DrawBasicsType::Axes));
@@ -86,22 +85,26 @@ TEST(ComputeGraph, create) {
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
 
     std::vector<VkImageView> imageViews;
-    std::vector<VkImage>     images;
+    std::vector<VkImage> images;
     for (int i = 0; i < 2; i++) {
         imageViews.push_back(vc.getImageView(i));
         images.push_back(vc.getSwapChainImage(i));
     }
     auto imageViewSrc = std::make_shared<ImageViewSrc>(imageViews, images);
-    auto camera       = std::make_shared<CameraUboType>();
-    auto renderpass   = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), vc.getSwapChainExtent());
+    auto camera = std::make_shared<CameraUboType>();
+    auto renderpass = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), vc.getSwapChainExtent());
     renderpass->setInput(imageViewSrc, 0);
     renderpass->setInput(camera, 1);
 
-    auto blur  = std::make_shared<BlurOp>();  blur->setInput(renderpass);
-    auto noise = std::make_shared<NoiseOp>(); noise->setInput(blur);
-    auto add   = std::make_shared<AddOp>();
-    add->setInput(blur, 0); add->setInput(noise, 1);
-    auto copy  = std::make_shared<CopyOp>(); copy->setInput(add);
+    auto blur = std::make_shared<BlurOp>();
+    blur->setInput(renderpass);
+    auto noise = std::make_shared<NoiseOp>();
+    noise->setInput(blur);
+    auto add = std::make_shared<AddOp>();
+    add->setInput(blur, 0);
+    add->setInput(noise, 1);
+    auto copy = std::make_shared<CopyOp>();
+    copy->setInput(add);
 
     auto cg = ComputeGraph(vc, 1);
     cg.compileFrom(copy);
@@ -143,7 +146,7 @@ TEST(ComputeGraph, headlessSubmitTo) {
 
     for (int i = 0; i < 6; i++) {
         auto [imageIndex, fence] = vc.beginRender();
-        VkSemaphore finishSem    = cg.submitTo(vc.getGraphicsQueue(), imageIndex, fence);
+        VkSemaphore finishSem = cg.submitTo(vc.getGraphicsQueue(), imageIndex, fence);
         vc.endRender(imageIndex, finishSem);
     }
     vkQueueWaitIdle(vc.getGraphicsQueue());
@@ -181,7 +184,7 @@ TEST(ComputeGraph, glfwSubmitTo) {
 
     for (int i = 0; i < 6; i++) {
         auto [imageIndex, fence] = vc.beginRender();
-        VkSemaphore finishSem    = cg.submitTo(vc.getGraphicsQueue(), imageIndex, fence);
+        VkSemaphore finishSem = cg.submitTo(vc.getGraphicsQueue(), imageIndex, fence);
         vc.endRender(imageIndex, finishSem);
     }
     vkQueueWaitIdle(vc.getGraphicsQueue());

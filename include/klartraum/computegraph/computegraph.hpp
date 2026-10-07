@@ -24,12 +24,15 @@ public:
     std::vector<VkSemaphore> waitSemaphores;
     std::vector<VkSemaphore> signalSemaphores;
     VkSubmitInfo submitInfo{};
-    std::vector<VkPipelineStageFlags> waitStages; //{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+    std::vector<VkPipelineStageFlags>
+        waitStages; //{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT }; // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
 };
 
 class ComputeGraph {
 public:
-    ComputeGraph(VulkanContext& vulkanContext, uint32_t numberPaths) : vulkanContext(vulkanContext), numberPaths(numberPaths) {
+    ComputeGraph(VulkanContext& vulkanContext, uint32_t numberPaths)
+        : vulkanContext(vulkanContext),
+          numberPaths(numberPaths) {
         auto& device = vulkanContext.getDevice();
 
         all_path_submit_infos.resize(numberPaths);
@@ -116,38 +119,38 @@ public:
             profilingAccum_.assign(ordered_elements.size(), {0.0, 0ULL});
 
             VkQueryPoolCreateInfo qi{};
-            qi.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-            qi.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+            qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+            qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
             qi.queryCount = 2u * (uint32_t)ordered_elements.size();
             vkCreateQueryPool(device, &qi, nullptr, &profilingQueryPool_);
         }
 
         // Performance counter query pool.
         if (perfProfilingEnabled_ && !perfCounterInfos_.empty()) {
-            uint32_t n  = (uint32_t)ordered_elements.size();
+            uint32_t n = (uint32_t)ordered_elements.size();
             perfAccum_.assign(n * (uint32_t)perfCounterInfos_.size(), {0.0, 0ULL});
 
             if (perfUsingHwCounters_) {
                 // VK_KHR_performance_query path
                 uint32_t qf = vulkanContext.getQueueFamilyIndices().graphicsAndComputeFamily.value();
                 VkQueryPoolPerformanceCreateInfoKHR perfCI{};
-                perfCI.sType             = VK_STRUCTURE_TYPE_QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR;
-                perfCI.queueFamilyIndex  = qf;
+                perfCI.sType = VK_STRUCTURE_TYPE_QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR;
+                perfCI.queueFamilyIndex = qf;
                 perfCI.counterIndexCount = (uint32_t)perfCounterIndices_.size();
-                perfCI.pCounterIndices   = perfCounterIndices_.data();
+                perfCI.pCounterIndices = perfCounterIndices_.data();
                 VkQueryPoolCreateInfo qi{};
-                qi.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-                qi.pNext      = &perfCI;
-                qi.queryType  = VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR;
+                qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+                qi.pNext = &perfCI;
+                qi.queryType = VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR;
                 qi.queryCount = n;
                 vkCreateQueryPool(device, &qi, nullptr, &perfQueryPool_);
             } else {
                 // Pipeline statistics fallback path: count CS invocations per element.
                 VkQueryPoolCreateInfo qi{};
-                qi.sType              = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-                qi.queryType          = VK_QUERY_TYPE_PIPELINE_STATISTICS;
+                qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+                qi.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
                 qi.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
-                qi.queryCount         = n;
+                qi.queryCount = n;
                 vkCreateQueryPool(device, &qi, nullptr, &perfQueryPool_);
             }
         }
@@ -211,7 +214,7 @@ public:
             // then chain VkPerformanceQuerySubmitInfoKHR onto every VkSubmitInfo so the
             // driver knows this is pass 0 of the perf-query.
             VkAcquireProfilingLockInfoKHR lockInfo{};
-            lockInfo.sType   = VK_STRUCTURE_TYPE_ACQUIRE_PROFILING_LOCK_INFO_KHR;
+            lockInfo.sType = VK_STRUCTURE_TYPE_ACQUIRE_PROFILING_LOCK_INFO_KHR;
             lockInfo.timeout = UINT64_MAX;
             pfn_AcquireLock_(device, &lockInfo);
 
@@ -220,8 +223,7 @@ public:
             std::vector<VkPerformanceQuerySubmitInfoKHR> perfSubmits(origInfos.size());
             std::vector<VkSubmitInfo> infos = origInfos;
             for (size_t i = 0; i < infos.size(); ++i) {
-                perfSubmits[i] = {VK_STRUCTURE_TYPE_PERFORMANCE_QUERY_SUBMIT_INFO_KHR,
-                                  nullptr, /*counterPassIndex=*/0};
+                perfSubmits[i] = {VK_STRUCTURE_TYPE_PERFORMANCE_QUERY_SUBMIT_INFO_KHR, nullptr, /*counterPassIndex=*/0};
                 infos[i].pNext = &perfSubmits[i];
             }
             if (vkQueueSubmit(graphicsQueue, (uint32_t)infos.size(), infos.data(), fence) != VK_SUCCESS)
@@ -240,10 +242,10 @@ public:
         // Drain graphFinishedSemaphores[pathId].
         VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
         VkSubmitInfo drainInfo{};
-        drainInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        drainInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         drainInfo.waitSemaphoreCount = 1;
-        drainInfo.pWaitSemaphores    = &graphFinishedSemaphores[pathId];
-        drainInfo.pWaitDstStageMask  = &waitStage;
+        drainInfo.pWaitSemaphores = &graphFinishedSemaphores[pathId];
+        drainInfo.pWaitDstStageMask = &waitStage;
         vkQueueSubmit(graphicsQueue, 1, &drainInfo, VK_NULL_HANDLE);
         vkQueueWaitIdle(graphicsQueue);
 
@@ -283,25 +285,25 @@ private:
     std::vector<VkSemaphore> graphFinishedSemaphores;
 
     // ---- Timestamp profiling ---------------------------------------------
-    bool         profilingEnabled_           = false;
-    VkQueryPool  profilingQueryPool_         = VK_NULL_HANDLE;
-    float        profilingTimestampPeriodNs_ = 1.0f;
+    bool profilingEnabled_ = false;
+    VkQueryPool profilingQueryPool_ = VK_NULL_HANDLE;
+    float profilingTimestampPeriodNs_ = 1.0f;
     // Per ordered_element: {accumulated nanoseconds, sample count}
     std::vector<std::pair<double, uint64_t>> profilingAccum_;
 
     // ---- Performance counter profiling -----------------------------------
     // Tries VK_KHR_performance_query first; falls back to pipeline statistics
     // (VK_QUERY_TYPE_PIPELINE_STATISTICS) which is always available.
-    bool        perfProfilingEnabled_  = false;
-    bool        perfUsingHwCounters_   = false;  // true = VK_KHR_performance_query path
-    VkQueryPool perfQueryPool_         = VK_NULL_HANDLE;
-    uint32_t    perfPassCount_         = 0;
+    bool perfProfilingEnabled_ = false;
+    bool perfUsingHwCounters_ = false; // true = VK_KHR_performance_query path
+    VkQueryPool perfQueryPool_ = VK_NULL_HANDLE;
+    uint32_t perfPassCount_ = 0;
 
     struct PerfCounterInfo {
-        std::string                    name;
+        std::string name;
         VkPerformanceCounterStorageKHR storage;
     };
-    std::vector<uint32_t>        perfCounterIndices_;
+    std::vector<uint32_t> perfCounterIndices_;
     std::vector<PerfCounterInfo> perfCounterInfos_;
     // [elementIdx * numCounters + counterIdx] = {accumulated value, sample count}
     std::vector<std::pair<double, uint64_t>> perfAccum_;
@@ -318,18 +320,14 @@ public:
     // If a selected counter set requires more than 1 pass the set is trimmed to fit 1 pass.
     void enablePerformanceProfiling(std::vector<std::string> nameFilter = {}) {
         auto& instance = vulkanContext.getInstance();
-        auto& device   = vulkanContext.getDevice();
+        auto& device = vulkanContext.getDevice();
 
-        auto pfnEnum = (PFN_vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR)
-            vkGetInstanceProcAddr(instance,
-                "vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR");
-        auto pfnPasses = (PFN_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR)
-            vkGetInstanceProcAddr(instance,
-                "vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR");
-        pfn_AcquireLock_ = (PFN_vkAcquireProfilingLockKHR)
-            vkGetDeviceProcAddr(device, "vkAcquireProfilingLockKHR");
-        pfn_ReleaseLock_ = (PFN_vkReleaseProfilingLockKHR)
-            vkGetDeviceProcAddr(device, "vkReleaseProfilingLockKHR");
+        auto pfnEnum = (PFN_vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR)vkGetInstanceProcAddr(
+            instance, "vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR");
+        auto pfnPasses = (PFN_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR)vkGetInstanceProcAddr(
+            instance, "vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR");
+        pfn_AcquireLock_ = (PFN_vkAcquireProfilingLockKHR)vkGetDeviceProcAddr(device, "vkAcquireProfilingLockKHR");
+        pfn_ReleaseLock_ = (PFN_vkReleaseProfilingLockKHR)vkGetDeviceProcAddr(device, "vkReleaseProfilingLockKHR");
 
         if (!pfnEnum || !pfnPasses || !pfn_AcquireLock_ || !pfn_ReleaseLock_) {
             // VK_KHR_performance_query not available — fall back to pipeline statistics.
@@ -349,12 +347,14 @@ public:
 
         uint32_t cnt = 0;
         pfnEnum(vulkanContext.physicalDevice, qf, &cnt, nullptr, nullptr);
-        if (cnt == 0) { std::cerr << "[ComputeGraph] No performance counters found\n"; return; }
+        if (cnt == 0) {
+            std::cerr << "[ComputeGraph] No performance counters found\n";
+            return;
+        }
 
-        std::vector<VkPerformanceCounterKHR>            counters(cnt,
-            {VK_STRUCTURE_TYPE_PERFORMANCE_COUNTER_KHR});
+        std::vector<VkPerformanceCounterKHR> counters(cnt, {VK_STRUCTURE_TYPE_PERFORMANCE_COUNTER_KHR});
         std::vector<VkPerformanceCounterDescriptionKHR> descs(cnt,
-            {VK_STRUCTURE_TYPE_PERFORMANCE_COUNTER_DESCRIPTION_KHR});
+                                                              {VK_STRUCTURE_TYPE_PERFORMANCE_COUNTER_DESCRIPTION_KHR});
         pfnEnum(vulkanContext.physicalDevice, qf, &cnt, counters.data(), descs.data());
 
         for (uint32_t i = 0; i < cnt; ++i) {
@@ -363,8 +363,10 @@ public:
             bool match = nameFilter.empty();
             if (!match) {
                 for (auto& f : nameFilter) {
-                    if (name.find(f) != std::string::npos ||
-                        desc.find(f) != std::string::npos) { match = true; break; }
+                    if (name.find(f) != std::string::npos || desc.find(f) != std::string::npos) {
+                        match = true;
+                        break;
+                    }
                 }
             }
             if (match) {
@@ -374,16 +376,17 @@ public:
         }
 
         if (perfCounterIndices_.empty()) {
-            std::cerr << "[ComputeGraph] No counters match filter\n"; return;
+            std::cerr << "[ComputeGraph] No counters match filter\n";
+            return;
         }
 
         // Trim counter set until it fits in a single pass.
         auto queryPassCount = [&]() {
             VkQueryPoolPerformanceCreateInfoKHR ci{};
             ci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR;
-            ci.queueFamilyIndex  = qf;
+            ci.queueFamilyIndex = qf;
             ci.counterIndexCount = (uint32_t)perfCounterIndices_.size();
-            ci.pCounterIndices   = perfCounterIndices_.data();
+            ci.pCounterIndices = perfCounterIndices_.data();
             uint32_t passes = 0;
             pfnPasses(vulkanContext.physicalDevice, &ci, &passes);
             return passes;
@@ -397,17 +400,18 @@ public:
         }
         if (perfPassCount_ > 1) {
             std::cerr << "[ComputeGraph] Cannot fit any counter in 1 pass; disabling perf profiling\n";
-            perfCounterIndices_.clear(); perfCounterInfos_.clear(); return;
+            perfCounterIndices_.clear();
+            perfCounterInfos_.clear();
+            return;
         }
 
-        std::cout << "[ComputeGraph] Hardware performance counters enabled ("
-                  << perfCounterIndices_.size() << " counter(s), "
-                  << perfPassCount_ << " pass):\n";
+        std::cout << "[ComputeGraph] Hardware performance counters enabled (" << perfCounterIndices_.size()
+                  << " counter(s), " << perfPassCount_ << " pass):\n";
         for (auto& ci : perfCounterInfos_)
             std::cout << "  " << ci.name << "\n";
 
         perfProfilingEnabled_ = true;
-        perfUsingHwCounters_  = true;
+        perfUsingHwCounters_ = true;
     }
 
     // Returns {elementName, meanTimeMs} for timestamp entries, followed by
@@ -427,7 +431,7 @@ public:
         }
 
         if (perfProfilingEnabled_ && !perfCounterInfos_.empty()) {
-            uint32_t nc     = (uint32_t)perfCounterInfos_.size();
+            uint32_t nc = (uint32_t)perfCounterInfos_.size();
             // Distinguish unit: HW counters keep their own unit label;
             // pipeline-statistics path reports raw invocation counts (not ms).
             std::string unit = perfUsingHwCounters_ ? "" : "";
@@ -443,53 +447,55 @@ public:
     }
 
     void readAndAccumulateTimestamps_() {
-        if (!profilingEnabled_ || profilingQueryPool_ == VK_NULL_HANDLE) return;
+        if (!profilingEnabled_ || profilingQueryPool_ == VK_NULL_HANDLE)
+            return;
         uint32_t n = (uint32_t)ordered_elements.size();
         std::vector<uint64_t> ts(2u * n, 0ULL);
-        VkResult r = vkGetQueryPoolResults(
-            vulkanContext.getDevice(), profilingQueryPool_,
-            0, 2u * n,
-            sizeof(uint64_t) * 2u * n, ts.data(), sizeof(uint64_t),
-            VK_QUERY_RESULT_64_BIT);
-        if (r != VK_SUCCESS && r != VK_NOT_READY) return;
+        VkResult r =
+            vkGetQueryPoolResults(vulkanContext.getDevice(), profilingQueryPool_, 0, 2u * n, sizeof(uint64_t) * 2u * n,
+                                  ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+        if (r != VK_SUCCESS && r != VK_NOT_READY)
+            return;
         for (uint32_t i = 0; i < n; ++i) {
-            if (ts[2*i+1] >= ts[2*i]) {
-                profilingAccum_[i].first  += double(ts[2*i+1] - ts[2*i]) * profilingTimestampPeriodNs_;
+            if (ts[2 * i + 1] >= ts[2 * i]) {
+                profilingAccum_[i].first += double(ts[2 * i + 1] - ts[2 * i]) * profilingTimestampPeriodNs_;
                 profilingAccum_[i].second += 1;
             }
         }
     }
 
     void readAndAccumulatePerformanceCounters_() {
-        if (!perfProfilingEnabled_ || perfQueryPool_ == VK_NULL_HANDLE) return;
-        uint32_t n  = (uint32_t)ordered_elements.size();
+        if (!perfProfilingEnabled_ || perfQueryPool_ == VK_NULL_HANDLE)
+            return;
+        uint32_t n = (uint32_t)ordered_elements.size();
 
         if (perfUsingHwCounters_) {
             uint32_t nc = (uint32_t)perfCounterIndices_.size();
             size_t stride = sizeof(VkPerformanceCounterResultKHR) * nc;
             std::vector<VkPerformanceCounterResultKHR> raw(n * nc);
-            VkResult r = vkGetQueryPoolResults(
-                vulkanContext.getDevice(), perfQueryPool_,
-                0, n, stride * n, raw.data(), stride,
-                VK_QUERY_RESULT_WAIT_BIT);
-            if (r != VK_SUCCESS) return;
+            VkResult r = vkGetQueryPoolResults(vulkanContext.getDevice(), perfQueryPool_, 0, n, stride * n, raw.data(),
+                                               stride, VK_QUERY_RESULT_WAIT_BIT);
+            if (r != VK_SUCCESS)
+                return;
             for (uint32_t i = 0; i < n; ++i)
                 for (uint32_t c = 0; c < nc; ++c) {
-                    double val = extractCounterValue_(raw[i*nc+c], perfCounterInfos_[c].storage);
-                    auto& acc = perfAccum_[i*nc+c];
-                    acc.first += val; acc.second += 1;
+                    double val = extractCounterValue_(raw[i * nc + c], perfCounterInfos_[c].storage);
+                    auto& acc = perfAccum_[i * nc + c];
+                    acc.first += val;
+                    acc.second += 1;
                 }
         } else {
             // Pipeline statistics: one uint64 per element (CS invocations).
             std::vector<uint64_t> raw(n, 0);
-            VkResult r = vkGetQueryPoolResults(
-                vulkanContext.getDevice(), perfQueryPool_,
-                0, n, sizeof(uint64_t) * n, raw.data(), sizeof(uint64_t),
-                VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-            if (r != VK_SUCCESS) return;
+            VkResult r =
+                vkGetQueryPoolResults(vulkanContext.getDevice(), perfQueryPool_, 0, n, sizeof(uint64_t) * n, raw.data(),
+                                      sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+            if (r != VK_SUCCESS)
+                return;
             for (uint32_t i = 0; i < n; ++i) {
                 auto& acc = perfAccum_[i];
-                acc.first += (double)raw[i]; acc.second += 1;
+                acc.first += (double)raw[i];
+                acc.second += 1;
             }
         }
     }
@@ -498,31 +504,34 @@ public:
     // queries (CS invocation counts) which are always available in core Vulkan.
     void enablePipelineStatisticsProfiling_() {
         // One synthetic "counter": compute shader invocations.
-        perfCounterInfos_.push_back({"CS invocations",
-                                      VK_PERFORMANCE_COUNTER_STORAGE_UINT64_KHR});
+        perfCounterInfos_.push_back({"CS invocations", VK_PERFORMANCE_COUNTER_STORAGE_UINT64_KHR});
         perfProfilingEnabled_ = true;
-        perfUsingHwCounters_  = false;
-        perfPassCount_        = 1;
+        perfUsingHwCounters_ = false;
+        perfPassCount_ = 1;
         // perfQueryPool_ is created in compileFrom() once element count is known.
     }
 
-    static double extractCounterValue_(const VkPerformanceCounterResultKHR& r,
-                                       VkPerformanceCounterStorageKHR storage) {
+    static double extractCounterValue_(const VkPerformanceCounterResultKHR& r, VkPerformanceCounterStorageKHR storage) {
         switch (storage) {
-            case VK_PERFORMANCE_COUNTER_STORAGE_INT32_KHR:   return r.int32;
-            case VK_PERFORMANCE_COUNTER_STORAGE_INT64_KHR:   return (double)r.int64;
-            case VK_PERFORMANCE_COUNTER_STORAGE_UINT32_KHR:  return r.uint32;
-            case VK_PERFORMANCE_COUNTER_STORAGE_UINT64_KHR:  return (double)r.uint64;
-            case VK_PERFORMANCE_COUNTER_STORAGE_FLOAT32_KHR: return r.float32;
-            case VK_PERFORMANCE_COUNTER_STORAGE_FLOAT64_KHR: return r.float64;
-            default: return 0.0;
+        case VK_PERFORMANCE_COUNTER_STORAGE_INT32_KHR:
+            return r.int32;
+        case VK_PERFORMANCE_COUNTER_STORAGE_INT64_KHR:
+            return (double)r.int64;
+        case VK_PERFORMANCE_COUNTER_STORAGE_UINT32_KHR:
+            return r.uint32;
+        case VK_PERFORMANCE_COUNTER_STORAGE_UINT64_KHR:
+            return (double)r.uint64;
+        case VK_PERFORMANCE_COUNTER_STORAGE_FLOAT32_KHR:
+            return r.float32;
+        case VK_PERFORMANCE_COUNTER_STORAGE_FLOAT64_KHR:
+            return r.float64;
+        default:
+            return 0.0;
         }
     }
 
 private:
-    void recordCommandBuffer(VkCommandBuffer commandBuffer,
-                             ComputeGraphElementPtr element,
-                             uint32_t pathId,
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, ComputeGraphElementPtr element, uint32_t pathId,
                              uint32_t elementIdx = 0) {
         vkResetCommandBuffer(commandBuffer, 0);
 
@@ -537,9 +546,7 @@ private:
 
         if (profilingEnabled_ && profilingQueryPool_ != VK_NULL_HANDLE) {
             vkCmdResetQueryPool(commandBuffer, profilingQueryPool_, 2 * elementIdx, 2);
-            vkCmdWriteTimestamp(commandBuffer,
-                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                profilingQueryPool_, 2 * elementIdx);
+            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profilingQueryPool_, 2 * elementIdx);
         }
 
         if (perfProfilingEnabled_ && perfQueryPool_ != VK_NULL_HANDLE) {
@@ -553,9 +560,8 @@ private:
             vkCmdEndQuery(commandBuffer, perfQueryPool_, elementIdx);
 
         if (profilingEnabled_ && profilingQueryPool_ != VK_NULL_HANDLE) {
-            vkCmdWriteTimestamp(commandBuffer,
-                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                profilingQueryPool_, 2 * elementIdx + 1);
+            vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profilingQueryPool_,
+                                2 * elementIdx + 1);
         }
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
@@ -563,7 +569,8 @@ private:
         }
     }
 
-    void getSubmitInfoForElement(SubmitInfoWrapper& submitInfoWrapper, uint32_t pathId, ComputeGraphElementPtr element, VkCommandBuffer* pCommandBuffer) {
+    void getSubmitInfoForElement(SubmitInfoWrapper& submitInfoWrapper, uint32_t pathId, ComputeGraphElementPtr element,
+                                 VkCommandBuffer* pCommandBuffer) {
 
         auto& submitInfo = submitInfoWrapper.submitInfo;
         auto& waitSemaphores = submitInfoWrapper.waitSemaphores;
@@ -591,7 +598,8 @@ private:
                 auto element_iter = renderFinishedSemaphores[inputElement].find(element);
                 if (element_iter != renderFinishedSemaphores[inputElement].end()) {
                     // Only push back if the semaphore is not already in waitSemaphores
-                    if (std::find(waitSemaphores.begin(), waitSemaphores.end(), element_iter->second) == waitSemaphores.end()) {
+                    if (std::find(waitSemaphores.begin(), waitSemaphores.end(), element_iter->second) ==
+                        waitSemaphores.end()) {
                         waitSemaphores.push_back(element_iter->second);
                         waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
                     }
@@ -607,7 +615,8 @@ private:
                 auto element_iter = renderFinishedSemaphores[element].find(outputElement);
                 if (element_iter != renderFinishedSemaphores[element].end()) {
                     // Only push back if the semaphore is not already in signalSemaphores
-                    if (std::find(signalSemaphores.begin(), signalSemaphores.end(), element_iter->second) == signalSemaphores.end()) {
+                    if (std::find(signalSemaphores.begin(), signalSemaphores.end(), element_iter->second) ==
+                        signalSemaphores.end()) {
                         signalSemaphores.push_back(element_iter->second);
                     }
                 } else {
@@ -687,7 +696,8 @@ private:
             for (auto& input : element->getInputs()) {
                 auto& inputElement = input.second;
                 // Only add if element is not already in outputs
-                if (std::find(inputElement->outputs.begin(), inputElement->outputs.end(), element) == inputElement->outputs.end()) {
+                if (std::find(inputElement->outputs.begin(), inputElement->outputs.end(), element) ==
+                    inputElement->outputs.end()) {
                     inputElement->outputs.push_back(element);
                 }
             }
@@ -710,7 +720,8 @@ private:
                 // if not, add it
                 edges[element].push_back(input.second);
                 incoming[input.second].push_back(element);
-                std::cout << "edge: " << element->getType() << "(" << element->getName() << ") -> " << input.second->getType() << "(" << input.second->getName() << ")" << std::endl;
+                std::cout << "edge: " << element->getType() << "(" << element->getName() << ") -> "
+                          << input.second->getType() << "(" << input.second->getName() << ")" << std::endl;
                 fill_edges(edges, incoming, input.second);
             }
         }

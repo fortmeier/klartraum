@@ -27,7 +27,8 @@ namespace klartraum {
 class OffscreenTarget : public ImageViewSrc {
 public:
     OffscreenTarget(VulkanContext& vulkanContext, VkExtent2D extent, uint32_t numImages)
-        : vulkanContext_(vulkanContext), extent_(extent) {
+        : vulkanContext_(vulkanContext),
+          extent_(extent) {
         auto& device = vulkanContext.getDevice();
         VkFormat format = vulkanContext.getSwapChainImageFormat();
 
@@ -37,21 +38,19 @@ public:
 
         for (uint32_t i = 0; i < numImages; ++i) {
             VkImageCreateInfo imageInfo{};
-            imageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-            imageInfo.imageType     = VK_IMAGE_TYPE_2D;
-            imageInfo.format        = format;
-            imageInfo.extent        = { extent.width, extent.height, 1 };
-            imageInfo.mipLevels     = 1;
-            imageInfo.arrayLayers   = 1;
-            imageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
-            imageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.format = format;
+            imageInfo.extent = {extent.width, extent.height, 1};
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
             // COLOR_ATTACHMENT/STORAGE: the raster/compute backends write it;
             // TRANSFER_SRC: the composite blits from it; TRANSFER_DST: a viewport
             // may be cleared or uploaded to.
-            imageInfo.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                                    | VK_IMAGE_USAGE_STORAGE_BIT
-                                    | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                                    | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+                              VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
             imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             if (vkCreateImage(device, &imageInfo, nullptr, &images_[i]) != VK_SUCCESS) {
                 throw std::runtime_error("OffscreenTarget: failed to create image!");
@@ -60,20 +59,20 @@ public:
             VkMemoryRequirements memReq;
             vkGetImageMemoryRequirements(device, images_[i], &memReq);
             VkMemoryAllocateInfo allocInfo{};
-            allocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            allocInfo.allocationSize  = memReq.size;
-            allocInfo.memoryTypeIndex = vulkanContext.findMemoryType(
-                memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocInfo.allocationSize = memReq.size;
+            allocInfo.memoryTypeIndex =
+                vulkanContext.findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             if (vkAllocateMemory(device, &allocInfo, nullptr, &memories_[i]) != VK_SUCCESS) {
                 throw std::runtime_error("OffscreenTarget: failed to allocate image memory!");
             }
             vkBindImageMemory(device, images_[i], memories_[i], 0);
 
             VkImageViewCreateInfo viewInfo{};
-            viewInfo.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            viewInfo.image    = images_[i];
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = images_[i];
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format   = format;
+            viewInfo.format = format;
             viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             viewInfo.subresourceRange.levelCount = 1;
             viewInfo.subresourceRange.layerCount = 1;
@@ -87,9 +86,12 @@ public:
 
     ~OffscreenTarget() {
         auto& device = vulkanContext_.getDevice();
-        for (auto view : views_)     vkDestroyImageView(device, view, nullptr);
-        for (auto image : images_)   vkDestroyImage(device, image, nullptr);
-        for (auto mem : memories_)   vkFreeMemory(device, mem, nullptr);
+        for (auto view : views_)
+            vkDestroyImageView(device, view, nullptr);
+        for (auto image : images_)
+            vkDestroyImage(device, image, nullptr);
+        for (auto mem : memories_)
+            vkFreeMemory(device, mem, nullptr);
     }
 
     OffscreenTarget(const OffscreenTarget&) = delete;
@@ -106,9 +108,9 @@ public:
 private:
     VulkanContext& vulkanContext_;
     VkExtent2D extent_;
-    std::vector<VkImage>        images_;
+    std::vector<VkImage> images_;
     std::vector<VkDeviceMemory> memories_;
-    std::vector<VkImageView>    views_;
+    std::vector<VkImageView> views_;
 };
 
 } // namespace klartraum

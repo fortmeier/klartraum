@@ -88,8 +88,8 @@ TEST(GlyphAtlasTest, atlasBitmapEncodesGlyphPixels) {
     //  XXXXX
     //  X...X
     //  X...X
-    static const char* const kExpectedA[GLYPH_PIXEL_HEIGHT] = {
-        "..X..", ".X.X.", "X...X", "X...X", "XXXXX", "X...X", "X...X"};
+    static const char* const kExpectedA[GLYPH_PIXEL_HEIGHT] = {"..X..", ".X.X.", "X...X", "X...X",
+                                                               "XXXXX", "X...X", "X...X"};
 
     const std::vector<uint8_t> bitmap = generateGlyphAtlasBitmap();
 

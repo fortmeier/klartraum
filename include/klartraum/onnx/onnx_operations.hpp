@@ -4,7 +4,6 @@
 
 #include "klartraum/computegraph/generalcomputation.hpp"
 
-
 namespace klartraum {
 
 template <typename T, size_t N>
@@ -125,7 +124,8 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
     // Extract dimensions directly from ONNX graph
     auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
     auto weightDim = getTensorDimensions(weightsName, name2ValueInfoProto, graph);
-    auto biasDim = biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
+    auto biasDim =
+        biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
 
     // Copy dimensions to push constants
     for (size_t i = 0; i < 4; ++i) {
@@ -139,12 +139,14 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
     // One invocation per output element: x covers the output width, y the
     // output height, z the output channels (see shaders/onnx/conv.comp, local
     // size 8x8x1). The output size follows the same formula as the shader.
-    const uint32_t outputHeight =
-        (pushConstants.dimInput[2] + 2 * pushConstants.pads[0] - pushConstants.dilations[0] * (pushConstants.kernel_shape[0] - 1) - 1) /
-            pushConstants.strides[0] + 1;
-    const uint32_t outputWidth =
-        (pushConstants.dimInput[3] + 2 * pushConstants.pads[1] - pushConstants.dilations[1] * (pushConstants.kernel_shape[1] - 1) - 1) /
-            pushConstants.strides[1] + 1;
+    const uint32_t outputHeight = (pushConstants.dimInput[2] + 2 * pushConstants.pads[0] -
+                                   pushConstants.dilations[0] * (pushConstants.kernel_shape[0] - 1) - 1) /
+                                      pushConstants.strides[0] +
+                                  1;
+    const uint32_t outputWidth = (pushConstants.dimInput[3] + 2 * pushConstants.pads[1] -
+                                  pushConstants.dilations[1] * (pushConstants.kernel_shape[1] - 1) - 1) /
+                                     pushConstants.strides[1] +
+                                 1;
 
     auto operation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(shaderFilename);
     operation->setPushConstants({pushConstants});
@@ -155,9 +157,10 @@ ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::Node
     return operation;
 }
 
-ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                           const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
-                                           const onnx::GraphProto& graph) {
+ComputeGraphElementPtr
+createConvTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                    const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
+                    const onnx::GraphProto& graph) {
     ConvTransposePushConstants pushConstants;
 
     // parse attributes
@@ -166,7 +169,7 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
     parseAttributes<uint32_t>(node, "kernel_shape", pushConstants.kernel_shape);
     parseAttributes<uint32_t>(node, "pads", pushConstants.pads);
     parseAttributes<uint32_t>(node, "strides", pushConstants.strides);
-    //parseAttributes<uint32_t>(node, "output_padding", pushConstants.output_padding);
+    // parseAttributes<uint32_t>(node, "output_padding", pushConstants.output_padding);
 
     // set dimension constants
     auto inputName = node.input(0);
@@ -176,7 +179,8 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
     // Extract dimensions directly from ONNX graph
     auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
     auto weightDim = getTensorDimensions(weightsName, name2ValueInfoProto, graph);
-    auto biasDim = biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
+    auto biasDim =
+        biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
 
     // Copy dimensions to push constants
     for (size_t i = 0; i < 4; ++i) {
@@ -187,10 +191,12 @@ ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const o
 
     // Calculate output dimensions for ConvTranspose
     // output_size = (input_size - 1) * stride - 2 * padding + kernel_size + output_padding
-    uint32_t output_height = (inputDim[2] - 1) * pushConstants.strides[0] - 2 * pushConstants.pads[0] + pushConstants.kernel_shape[0]; // + pushConstants.output_padding[0];
-    uint32_t output_width = (inputDim[3] - 1) * pushConstants.strides[1] - 2 * pushConstants.pads[1] + pushConstants.kernel_shape[1]; // + pushConstants.output_padding[1];
-    
-    pushConstants.dimOutput[0] = inputDim[0]; // batch size
+    uint32_t output_height = (inputDim[2] - 1) * pushConstants.strides[0] - 2 * pushConstants.pads[0] +
+                             pushConstants.kernel_shape[0]; // + pushConstants.output_padding[0];
+    uint32_t output_width = (inputDim[3] - 1) * pushConstants.strides[1] - 2 * pushConstants.pads[1] +
+                            pushConstants.kernel_shape[1]; // + pushConstants.output_padding[1];
+
+    pushConstants.dimOutput[0] = inputDim[0];  // batch size
     pushConstants.dimOutput[1] = weightDim[1]; // output channels from weights
     pushConstants.dimOutput[2] = output_height;
     pushConstants.dimOutput[3] = output_width;
@@ -298,9 +304,10 @@ ComputeGraphElementPtr createTranspose(VulkanContext* vulkanContext, const onnx:
     return operation;
 }
 
-ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                             const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
-                                             const onnx::GraphProto& graph) {
+ComputeGraphElementPtr
+createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                      const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
+                      const onnx::GraphProto& graph) {
     auto output = node.output();
     auto x = output.size();
     // Create a compute operation for each node
@@ -327,7 +334,5 @@ ComputeGraphElementPtr createTensorOperation(VulkanContext* vulkanContext, const
 
     return operation;
 }
-
-
 
 } // namespace klartraum

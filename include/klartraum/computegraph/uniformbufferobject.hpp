@@ -22,19 +22,17 @@ public:
     virtual VkBuffer& getVkBuffer(uint32_t pathId) = 0;
 };
 
-template<typename UniformBufferObjectType>
+template <typename UniformBufferObjectType>
 class UniformBufferObject : public UniformBufferObjectInterface {
 public:
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override
-    {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
         // A UBO element may be shared across several compute graphs — e.g. one
         // camera feeding multiple viewport scenes. The buffers and descriptors
         // are built once; later graphs reuse the same buffers so a single
         // update(pathId) is visible to every graph that reads this UBO.
         if (initialized) {
             if (numberOfPaths != numberPaths) {
-                throw std::runtime_error(
-                    "UniformBufferObject shared across graphs with differing path counts");
+                throw std::runtime_error("UniformBufferObject shared across graphs with differing path counts");
             }
             return;
         }
@@ -49,92 +47,73 @@ public:
         initialized = true;
     }
 
-    virtual ~UniformBufferObject()
-    {
-        if(initialized)
-        {
+    virtual ~UniformBufferObject() {
+        if (initialized) {
             auto config = vulkanContext->getConfig();
             auto device = vulkanContext->getDevice();
-        
+
             for (size_t i = 0; i < numberOfPaths; i++) {
                 vkDestroyBuffer(device, uniformBuffers[i], nullptr);
                 vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
             }
-        
+
             vkDestroyDescriptorPool(device, descriptorPool, nullptr);
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
         }
     }
 
-    virtual const char* getType() const {
-        return "UniformBufferObject";
-    }    
+    virtual const char* getType() const { return "UniformBufferObject"; }
 
-    VkDescriptorSetLayout& getDescriptorSetLayout()
-    {
-        return descriptorSetLayout;
-    }
+    VkDescriptorSetLayout& getDescriptorSetLayout() { return descriptorSetLayout; }
 
-    std::vector<VkDescriptorSet>& getDescriptorSets()
-    {
-        return descriptorSets;
-    }
+    std::vector<VkDescriptorSet>& getDescriptorSets() { return descriptorSets; }
 
-    void update(uint32_t pathId)
-    {
-        memcpy(uniformBuffersMapped[pathId], &ubo, sizeof(ubo));
-    }
+    void update(uint32_t pathId) { memcpy(uniformBuffersMapped[pathId], &ubo, sizeof(ubo)); }
 
     UniformBufferObjectType ubo;
 
-    virtual size_t getBufferMemSize() const override
-    {
-        return sizeof(UniformBufferObjectType);
-    }
+    virtual size_t getBufferMemSize() const override { return sizeof(UniformBufferObjectType); }
 
-    virtual VkBuffer& getVkBuffer(uint32_t pathId) override
-    {
-        return uniformBuffers[pathId];
-    }
+    virtual VkBuffer& getVkBuffer(uint32_t pathId) override { return uniformBuffers[pathId]; }
 
 private:
     VulkanContext* vulkanContext = nullptr;
 
-    void createDescriptorSetLayout()
-    {
+    void createDescriptorSetLayout() {
         auto device = vulkanContext->getDevice();
 
         VkDescriptorSetLayoutBinding uboLayoutBinding{};
         uboLayoutBinding.binding = 0;
         uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         uboLayoutBinding.descriptorCount = 1;
-    
+
         uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    
+
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = 1;
         layoutInfo.pBindings = &uboLayoutBinding;
-    
+
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor set layout!");
         }
     }
 
-    void createUniformBuffers()
-    {
+    void createUniformBuffers() {
         auto config = vulkanContext->getConfig();
         auto device = vulkanContext->getDevice();
-    
+
         VkDeviceSize bufferSize = sizeof(UniformBufferObjectType);
-    
+
         uniformBuffers.resize(numberOfPaths);
         uniformBuffersMemory.resize(numberOfPaths);
         uniformBuffersMapped.resize(numberOfPaths);
-    
+
         for (size_t i = 0; i < numberOfPaths; i++) {
-            vulkanContext->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
-    
+            vulkanContext->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                        uniformBuffers[i], uniformBuffersMemory[i]);
+
             VkResult result = vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
             if (result != VK_SUCCESS) {
                 throw std::runtime_error("failed to map uniform buffer memory!");
@@ -142,26 +121,24 @@ private:
         }
     }
 
-    void createDescriptorPool()
-    {
+    void createDescriptorPool() {
         auto device = vulkanContext->getDevice();
         auto config = vulkanContext->getConfig();
-    
+
         VkDescriptorPoolSize poolSize{};
         poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount = static_cast<uint32_t>(numberOfPaths);    
-    
+        poolSize.descriptorCount = static_cast<uint32_t>(numberOfPaths);
+
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = &poolSize;
-    
+
         poolInfo.maxSets = static_cast<uint32_t>(numberOfPaths);
-    
+
         if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor pool!");
         }
-    
     }
 
     void createDescriptorSets()
@@ -169,38 +146,38 @@ private:
     {
         auto device = vulkanContext->getDevice();
         auto config = vulkanContext->getConfig();
-    
+
         std::vector<VkDescriptorSetLayout> layouts(numberOfPaths, descriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool = descriptorPool;
         allocInfo.descriptorSetCount = static_cast<uint32_t>(numberOfPaths);
         allocInfo.pSetLayouts = layouts.data();
-    
+
         descriptorSets.resize(numberOfPaths);
         if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate descriptor sets!");
         }
-    
+
         for (size_t i = 0; i < numberOfPaths; i++) {
             VkDescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = uniformBuffers[i];
             bufferInfo.offset = 0;
             bufferInfo.range = sizeof(UniformBufferObjectType);
-    
+
             VkWriteDescriptorSet descriptorWrite{};
             descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrite.dstSet = descriptorSets[i];
             descriptorWrite.dstBinding = 0;
-            descriptorWrite.dstArrayElement = 0;        
-    
+            descriptorWrite.dstArrayElement = 0;
+
             descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             descriptorWrite.descriptorCount = 1;
-    
+
             descriptorWrite.pBufferInfo = &bufferInfo;
-            descriptorWrite.pImageInfo = nullptr; // Optional
+            descriptorWrite.pImageInfo = nullptr;       // Optional
             descriptorWrite.pTexelBufferView = nullptr; // Optional
-    
+
             vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
         }
     }
@@ -214,7 +191,6 @@ private:
     std::vector<void*> uniformBuffersMapped;
 
     uint32_t numberOfPaths = 0;
-
 };
 
 } // namespace klartraum

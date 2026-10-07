@@ -17,9 +17,7 @@ namespace klartraum {
 
 class ImageViewSrcInterface : public virtual ComputeGraphElement {
 public:
-    virtual const char* getType() const {
-        return "ImageViewSrcInterface";
-    }
+    virtual const char* getType() const { return "ImageViewSrcInterface"; }
 
     virtual VkImageView& getImageView(uint32_t pathId) = 0;
     virtual VkImage& getImage(uint32_t pathId) = 0;
@@ -31,37 +29,30 @@ public:
     // swapchain image, GENERAL otherwise). Offscreen viewport targets return
     // TRANSFER_SRC_OPTIMAL so the Window composite can blit straight from them
     // (PRESENT_SRC is illegal on a non-swapchain image).
-    virtual std::optional<VkImageLayout> getFinalLayoutOverride() const {
-        return std::nullopt;
-    }
+    virtual std::optional<VkImageLayout> getFinalLayoutOverride() const { return std::nullopt; }
 };
 
 class ImageViewSrc : public virtual ImageViewSrcInterface {
 public:
     ImageViewSrc() {};
 
-    ImageViewSrc(VkImageView imageView) {
-        imageViews.push_back(imageView);
-    };
+    ImageViewSrc(VkImageView imageView) { imageViews.push_back(imageView); };
 
-    ImageViewSrc(std::vector<VkImageView> imageViews) {
-        this->imageViews = imageViews;
-    };
+    ImageViewSrc(std::vector<VkImageView> imageViews) { this->imageViews = imageViews; };
 
     ImageViewSrc(std::vector<VkImageView> imageViews, std::vector<VkImage> images) {
         this->images = images;
         this->imageViews = imageViews;
     };
 
-    ImageViewSrc(std::vector<VkImageView> imageViews, std::vector<VkImage> images, std::vector<VkExtent2D> imageExtents) {
+    ImageViewSrc(std::vector<VkImageView> imageViews, std::vector<VkImage> images,
+                 std::vector<VkExtent2D> imageExtents) {
         this->images = images;
         this->imageViews = imageViews;
         this->imageExtents = imageExtents;
     };
 
-    virtual const char* getType() const {
-        return "ImageViewSrc";
-    }
+    virtual const char* getType() const { return "ImageViewSrc"; }
 
     virtual void _record(VkCommandBuffer commandBuffer) {
 
@@ -91,11 +82,9 @@ public:
 protected:
     // For subclasses (e.g. OffscreenTarget) that allocate their own images and
     // populate the handle vectors after construction.
-    void setResources(std::vector<VkImageView> views,
-                      std::vector<VkImage> imgs,
-                      std::vector<VkExtent2D> exts) {
-        imageViews   = std::move(views);
-        images       = std::move(imgs);
+    void setResources(std::vector<VkImageView> views, std::vector<VkImage> imgs, std::vector<VkExtent2D> exts) {
+        imageViews = std::move(views);
+        images = std::move(imgs);
         imageExtents = std::move(exts);
     }
 
@@ -107,56 +96,50 @@ private:
 
 class ImageSrc : public ComputeGraphElement {
 public:
-    ImageSrc(VkImage image) {
-        images.push_back(image);
-    };
+    ImageSrc(VkImage image) { images.push_back(image); };
 
-    ImageSrc(std::vector<VkImage> images) {
-        this->images = images;
-    };
+    ImageSrc(std::vector<VkImage> images) { this->images = images; };
 
-    virtual const char* getType() const {
-        return "ImageSrc";
-    }
+    virtual const char* getType() const { return "ImageSrc"; }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
 
     };
 
     std::vector<VkImage> images;
-    
 };
 
 /**
  * @brief A compute graph element that performs image layout transitions for Vulkan images.
- * 
+ *
  * This class handles the transition of image layouts using VkImageMemoryBarrier.
  * It's designed to work with ImageViewSrc elements in a compute graph and
  * records the necessary commands to transition an image from one layout to another.
- * 
+ *
  * Default transition is from VK_IMAGE_LAYOUT_GENERAL to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR.
  */
 class ImageViewSrcTransition : public ComputeGraphElement {
-    
-public:
 
-    ImageViewSrcTransition(VkImageLayout oldLayout, VkImageLayout newLayout) 
-        : oldLayout(oldLayout), newLayout(newLayout) {}
+public:
+    ImageViewSrcTransition(VkImageLayout oldLayout, VkImageLayout newLayout)
+        : oldLayout(oldLayout),
+          newLayout(newLayout) {}
 
     // With explicit synchronization scopes, e.g. for an image a raster pass
     // wrote as a color attachment.
-    ImageViewSrcTransition(VkImageLayout oldLayout, VkImageLayout newLayout,
-                           VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
-                           VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask)
-        : oldLayout(oldLayout), newLayout(newLayout), srcStageMask(srcStageMask), dstStageMask(dstStageMask),
-          srcAccessMask(srcAccessMask), dstAccessMask(dstAccessMask) {}
+    ImageViewSrcTransition(VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags srcStageMask,
+                           VkPipelineStageFlags dstStageMask, VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask)
+        : oldLayout(oldLayout),
+          newLayout(newLayout),
+          srcStageMask(srcStageMask),
+          dstStageMask(dstStageMask),
+          srcAccessMask(srcAccessMask),
+          dstAccessMask(dstAccessMask) {}
 
     // create also default constructor
     ImageViewSrcTransition() = default;
 
-    virtual const char* getType() const {
-        return "ImageViewSrcTransition";
-    }
+    virtual const char* getType() const { return "ImageViewSrcTransition"; }
 
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
         ImageViewSrcInterface* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrcInterface>(input).get();
@@ -188,14 +171,7 @@ public:
         barrierBack.srcAccessMask = srcAccessMask;
         barrierBack.dstAccessMask = dstAccessMask;
 
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            srcStageMask,
-            dstStageMask,
-            0,
-            0, nullptr,
-            0, nullptr,
-            1, &barrierBack);
+        vkCmdPipelineBarrier(commandBuffer, srcStageMask, dstStageMask, 0, 0, nullptr, 0, nullptr, 1, &barrierBack);
     };
 
 private:
@@ -205,7 +181,6 @@ private:
     VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
     VkAccessFlags srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     VkAccessFlags dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-
 };
 
 }

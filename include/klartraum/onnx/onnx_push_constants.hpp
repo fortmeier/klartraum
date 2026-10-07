@@ -41,10 +41,10 @@ struct TransposePushConstants {
 };
 
 struct ConvTransposePushConstants {
-    uint32_t dimInput[4];    // [batch, input_channels, input_height, input_width]
-    uint32_t dimWeights[4];  // [input_channels, output_channels, kernel_height, kernel_width]
-    uint32_t dimOutput[4];   // [batch, output_channels, output_height, output_width]
-    uint32_t dimBias[4];     // [output_channels] (only first element used)
+    uint32_t dimInput[4];   // [batch, input_channels, input_height, input_width]
+    uint32_t dimWeights[4]; // [input_channels, output_channels, kernel_height, kernel_width]
+    uint32_t dimOutput[4];  // [batch, output_channels, output_height, output_width]
+    uint32_t dimBias[4];    // [output_channels] (only first element used)
     uint32_t kernel_shape[8];
     uint32_t strides[8];
     uint32_t pads[8];

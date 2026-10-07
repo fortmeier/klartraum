@@ -34,15 +34,11 @@ namespace klartraum {
 //        premultiplied "over" blending)
 // outputElements[0] is the internal RenderPass — the single image-producing
 // element the ComputeGraph traversal needs to reach everything else.
-class VulkanGaussianSplattingRaster : public RenderGraphElement,
-                                      public ComputeGraphGroup {
+class VulkanGaussianSplattingRaster : public RenderGraphElement, public ComputeGraphGroup {
 public:
-    VulkanGaussianSplattingRaster(
-        VulkanContext& vulkanContext,
-        std::shared_ptr<ImageViewSrc> imageViewSrc,
-        std::shared_ptr<CameraUboType> cameraUBO,
-        GaussianSoABuffers buffers,
-        GsplatConfig config = GsplatConfig{});
+    VulkanGaussianSplattingRaster(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
+                                  std::shared_ptr<CameraUboType> cameraUBO, GaussianSoABuffers buffers,
+                                  GsplatConfig config = GsplatConfig{});
 
     ~VulkanGaussianSplattingRaster();
 
@@ -56,10 +52,8 @@ public:
     }
 
 private:
-    void initialize(VulkanContext& vulkanContext,
-                    std::shared_ptr<ImageViewSrc> imageViewSrc,
-                    std::shared_ptr<CameraUboType> cameraUBO,
-                    GsplatConfig config);
+    void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
+                    std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
 
     GsplatConfig config_;
 

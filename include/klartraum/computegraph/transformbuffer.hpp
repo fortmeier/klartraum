@@ -38,7 +38,7 @@ public:
 
 struct TransformBufferResult {
     std::shared_ptr<TransformBuffer> element;
-    BufferRef transform;  // input 7 of the element
+    BufferRef transform; // input 7 of the element
 };
 
 // Parameters in the order x, y, z, pitch, yaw, roll, scale.

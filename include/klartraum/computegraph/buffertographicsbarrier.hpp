@@ -28,26 +28,19 @@ public:
     // Buffers written by compute that the render pass will read via indirect
     // draw (VkDrawIndirectCommand) and/or vertex-shader SSBO reads (sorted
     // indices, per-splat attributes).
-    void addBuffer(std::shared_ptr<BufferElementInterface> buffer) {
-        buffers.push_back(buffer);
-    }
+    void addBuffer(std::shared_ptr<BufferElementInterface> buffer) { buffers.push_back(buffer); }
 
     // Include the mesh-shader stage in the destination scope, for backends whose
     // render pass consumes these buffers from a mesh shader (VK_EXT_mesh_shader)
     // rather than the vertex shader. Only call when the extension is enabled.
-    void setIncludeMeshShaderStage(bool include) {
-        includeMeshShaderStage = include;
-    }
+    void setIncludeMeshShaderStage(bool include) { includeMeshShaderStage = include; }
 
     // This node is a pure ordering/sync edge — it accepts any producer as its
     // input purely so the graph schedules that producer before this barrier
     // (and thus before the RenderPass that depends on this barrier).
-    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
-    }
+    virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {}
 
-    virtual const char* getType() const override {
-        return "BufferToGraphicsBarrier";
-    }
+    virtual const char* getType() const override { return "BufferToGraphicsBarrier"; }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
         ComputeGraphElement::_record(commandBuffer, pathId);
@@ -71,21 +64,13 @@ public:
             return;
         }
 
-        VkPipelineStageFlags dstStage =
-            VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+        VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
         if (includeMeshShaderStage) {
             dstStage |= VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT;
         }
 
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            dstStage,
-            0,
-            0, nullptr,
-            (uint32_t)barriers.size(), barriers.data(),
-            0, nullptr
-        );
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dstStage, 0, 0, nullptr,
+                             (uint32_t)barriers.size(), barriers.data(), 0, nullptr);
     }
 
 private:

@@ -49,16 +49,13 @@ TEST_F(VulkanContextTest, deviceSelection) {
 
     std::cout << "  deviceName:  " << props.deviceName << "\n";
     std::cout << "  deviceType:  " << props.deviceType << "\n";
-    std::cout << "  apiVersion:  "
-              << VK_VERSION_MAJOR(props.apiVersion) << "."
-              << VK_VERSION_MINOR(props.apiVersion) << "."
-              << VK_VERSION_PATCH(props.apiVersion) << "\n";
+    std::cout << "  apiVersion:  " << VK_VERSION_MAJOR(props.apiVersion) << "." << VK_VERSION_MINOR(props.apiVersion)
+              << "." << VK_VERSION_PATCH(props.apiVersion) << "\n";
     std::cout << "  driverVersion: " << props.driverVersion << "\n";
     std::cout << "  vendorID:    0x" << std::hex << props.vendorID << std::dec << "\n";
 
     EXPECT_NE(props.deviceType, VK_PHYSICAL_DEVICE_TYPE_CPU)
-        << "Selected a CPU/software renderer (" << props.deviceName
-        << "). Release mode may be using LavaPipe.";
+        << "Selected a CPU/software renderer (" << props.deviceName << "). Release mode may be using LavaPipe.";
 }
 
 // ----------------------------------------------------------------
@@ -81,7 +78,8 @@ TEST_F(VulkanContextTest, deviceFeatures) {
     std::cout << "  fragmentStoresAndAtomics:              " << supported.fragmentStoresAndAtomics << "\n";
     std::cout << "  vertexPipelineStoresAndAtomics:        " << supported.vertexPipelineStoresAndAtomics << "\n";
     std::cout << "  pipelineStatisticsQuery:               " << supported.pipelineStatisticsQuery << "\n";
-    std::cout << "  shaderStorageBufferArrayDynamicIndexing: " << supported.shaderStorageBufferArrayDynamicIndexing << "\n";
+    std::cout << "  shaderStorageBufferArrayDynamicIndexing: " << supported.shaderStorageBufferArrayDynamicIndexing
+              << "\n";
 
     // Check VK_KHR_shader_non_semantic_info (needed if shaders use GL_EXT_debug_printf)
     uint32_t cnt = 0;
@@ -91,8 +89,10 @@ TEST_F(VulkanContextTest, deviceFeatures) {
     bool hasNonSemantic = false;
     bool hasScalarLayout = false;
     for (auto& e : exts) {
-        if (strcmp(e.extensionName, "VK_KHR_shader_non_semantic_info") == 0) hasNonSemantic = true;
-        if (strcmp(e.extensionName, "VK_EXT_scalar_block_layout")       == 0) hasScalarLayout = true;
+        if (strcmp(e.extensionName, "VK_KHR_shader_non_semantic_info") == 0)
+            hasNonSemantic = true;
+        if (strcmp(e.extensionName, "VK_EXT_scalar_block_layout") == 0)
+            hasScalarLayout = true;
     }
     std::cout << "  VK_KHR_shader_non_semantic_info:       " << hasNonSemantic << "\n";
     std::cout << "  VK_EXT_scalar_block_layout:            " << hasScalarLayout << "\n";
@@ -113,19 +113,19 @@ TEST_F(VulkanContextTest, minimalComputePipeline) {
 
     // Descriptor set layout: binding 0 (input), binding 2 (output)
     VkDescriptorSetLayoutBinding bindings[2] = {};
-    bindings[0].binding         = 0;
-    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[1].binding         = 2;
-    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 2;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutCI{};
-    layoutCI.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutCI.bindingCount = 2;
-    layoutCI.pBindings    = bindings;
+    layoutCI.pBindings = bindings;
 
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     ASSERT_EQ(vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &setLayout), VK_SUCCESS);
@@ -133,9 +133,9 @@ TEST_F(VulkanContextTest, minimalComputePipeline) {
 
     // Pipeline layout
     VkPipelineLayoutCreateInfo pipelineLayoutCI{};
-    pipelineLayoutCI.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCI.setLayoutCount = 1;
-    pipelineLayoutCI.pSetLayouts    = &setLayout;
+    pipelineLayoutCI.pSetLayouts = &setLayout;
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     ASSERT_EQ(vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr, &pipelineLayout), VK_SUCCESS);
@@ -149,17 +149,17 @@ TEST_F(VulkanContextTest, minimalComputePipeline) {
 
     // Compute pipeline
     VkPipelineShaderStageCreateInfo stageCI{};
-    stageCI.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageCI.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     stageCI.module = shaderModule;
-    stageCI.pName  = "main";
+    stageCI.pName = "main";
 
     VkComputePipelineCreateInfo pipelineCI{};
-    pipelineCI.sType              = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineCI.stage              = stageCI;
-    pipelineCI.layout             = pipelineLayout;
+    pipelineCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineCI.stage = stageCI;
+    pipelineCI.layout = pipelineLayout;
     pipelineCI.basePipelineHandle = VK_NULL_HANDLE;
-    pipelineCI.basePipelineIndex  = -1;
+    pipelineCI.basePipelineIndex = -1;
 
     std::cout << "  Calling vkCreateComputePipelines...\n";
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -184,29 +184,35 @@ TEST_F(VulkanContextTest, minimalComputeDispatch) {
     VkDevice device = vc->getDevice();
 
     const uint32_t N = 7;
-    std::vector<float> inputData  = {1, 2, 3, 4, 5, 6, 7};
+    std::vector<float> inputData = {1, 2, 3, 4, 5, 6, 7};
     std::vector<float> outputData(N, 0.0f);
 
-    VulkanBuffer<float> inputBuf (*vc, N);
+    VulkanBuffer<float> inputBuf(*vc, N);
     VulkanBuffer<float> outputBuf(*vc, N);
     inputBuf.memcopyFrom(inputData);
 
     // Descriptor set layout: binding 0 = input, binding 2 = output
     VkDescriptorSetLayoutBinding bindings[2] = {};
-    bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[0].descriptorCount = 1; bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[1].binding = 2; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[1].descriptorCount = 1; bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 2;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutCI{};
     layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCI.bindingCount = 2; layoutCI.pBindings = bindings;
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings = bindings;
     VkDescriptorSetLayout setLayout{};
     ASSERT_EQ(vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &setLayout), VK_SUCCESS);
 
     VkPipelineLayoutCreateInfo plCI{};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plCI.setLayoutCount = 1; plCI.pSetLayouts = &setLayout;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &setLayout;
     VkPipelineLayout pipelineLayout{};
     ASSERT_EQ(vkCreatePipelineLayout(device, &plCI, nullptr, &pipelineLayout), VK_SUCCESS);
 
@@ -216,12 +222,15 @@ TEST_F(VulkanContextTest, minimalComputeDispatch) {
     VkPipelineShaderStageCreateInfo stageCI{};
     stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stageCI.module = shaderModule; stageCI.pName = "main";
+    stageCI.module = shaderModule;
+    stageCI.pName = "main";
 
     VkComputePipelineCreateInfo pipelineCI{};
     pipelineCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineCI.stage = stageCI; pipelineCI.layout = pipelineLayout;
-    pipelineCI.basePipelineHandle = VK_NULL_HANDLE; pipelineCI.basePipelineIndex = -1;
+    pipelineCI.stage = stageCI;
+    pipelineCI.layout = pipelineLayout;
+    pipelineCI.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineCI.basePipelineIndex = -1;
 
     VkPipeline pipeline{};
     ASSERT_EQ(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline), VK_SUCCESS);
@@ -231,32 +240,43 @@ TEST_F(VulkanContextTest, minimalComputeDispatch) {
     VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2};
     VkDescriptorPoolCreateInfo poolCI{};
     poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.maxSets = 1; poolCI.poolSizeCount = 1; poolCI.pPoolSizes = &poolSize;
+    poolCI.maxSets = 1;
+    poolCI.poolSizeCount = 1;
+    poolCI.pPoolSizes = &poolSize;
     VkDescriptorPool pool{};
     ASSERT_EQ(vkCreateDescriptorPool(device, &poolCI, nullptr, &pool), VK_SUCCESS);
 
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = pool; allocInfo.descriptorSetCount = 1; allocInfo.pSetLayouts = &setLayout;
+    allocInfo.descriptorPool = pool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &setLayout;
     VkDescriptorSet descSet{};
     ASSERT_EQ(vkAllocateDescriptorSets(device, &allocInfo, &descSet), VK_SUCCESS);
 
     VkDescriptorBufferInfo inInfo{inputBuf.getBuffer(), 0, VK_WHOLE_SIZE};
     VkDescriptorBufferInfo outInfo{outputBuf.getBuffer(), 0, VK_WHOLE_SIZE};
     VkWriteDescriptorSet writes[2] = {};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[0].dstSet = descSet;
-    writes[0].dstBinding = 0; writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[0].pBufferInfo = &inInfo;
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[1].dstSet = descSet;
-    writes[1].dstBinding = 2; writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[1].pBufferInfo = &outInfo;
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descSet;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[0].pBufferInfo = &inInfo;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = descSet;
+    writes[1].dstBinding = 2;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].pBufferInfo = &outInfo;
     vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
 
     // Record and submit
     VkCommandBufferAllocateInfo cmdAI{};
     cmdAI.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cmdAI.commandPool = vc->getCommandPool();
-    cmdAI.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; cmdAI.commandBufferCount = 1;
+    cmdAI.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAI.commandBufferCount = 1;
     VkCommandBuffer cmd{};
     ASSERT_EQ(vkAllocateCommandBuffers(device, &cmdAI, &cmd), VK_SUCCESS);
 
@@ -269,7 +289,8 @@ TEST_F(VulkanContextTest, minimalComputeDispatch) {
     vkEndCommandBuffer(cmd);
 
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
     vkQueueSubmit(vc->getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(vc->getGraphicsQueue());
     vkFreeCommandBuffers(device, vc->getCommandPool(), 1, &cmd);

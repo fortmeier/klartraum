@@ -9,8 +9,10 @@
  * - readFileFallsBackToAssetRoot: a relative path missing from the working directory is read from the asset root
  * - readFileWorkingDirectoryTakesPrecedence: a file present in both locations is read from the working directory
  * - readFileAssetRootFromEnvironment: without an explicit asset root, KLARTRAUM_ASSET_DIR is used
- * - assetRootDefaultsToBuildDirectory: without an explicit root or KLARTRAUM_ASSET_DIR, the asset root is the build directory that holds the compiled shaders
- * - readFileShaderFromOtherWorkingDirectory: a built-in shader path resolves from another working directory without any setup
+ * - assetRootDefaultsToBuildDirectory: without an explicit root or KLARTRAUM_ASSET_DIR, the asset root is the build
+ * directory that holds the compiled shaders
+ * - readFileShaderFromOtherWorkingDirectory: a built-in shader path resolves from another working directory without any
+ * setup
  **/
 
 #include <gtest/gtest.h>
@@ -37,9 +39,7 @@ void writeText(const fs::path& path, const std::string& text) {
     out << text;
 }
 
-std::string asString(const std::vector<char>& data) {
-    return std::string(data.begin(), data.end());
-}
+std::string asString(const std::vector<char>& data) { return std::string(data.begin(), data.end()); }
 
 void setEnv(const char* name, const std::string& value) {
 #ifdef _WIN32
@@ -84,9 +84,7 @@ TEST_F(VulkanHelpersTest, readFileFromWorkingDirectory) {
     EXPECT_EQ(asString(readFile(relative)), "from working directory");
 }
 
-TEST_F(VulkanHelpersTest, readFileMissingThrows) {
-    EXPECT_THROW(readFile("does/not/exist.bin"), std::runtime_error);
-}
+TEST_F(VulkanHelpersTest, readFileMissingThrows) { EXPECT_THROW(readFile("does/not/exist.bin"), std::runtime_error); }
 
 TEST_F(VulkanHelpersTest, readFileFallsBackToAssetRoot) {
     writeText(root / "assets/only_in_root.txt", "from asset root");

@@ -71,13 +71,14 @@ namespace {
 std::vector<uint8_t> readSwapchainImageToHost(VulkanContext& vc) {
     VkExtent2D ext = vc.getSwapChainExtent();
     const VkDeviceSize bytes = ext.width * ext.height * 4;
-    VkBuffer buf; VkDeviceMemory mem;
+    VkBuffer buf;
+    VkDeviceMemory mem;
     vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    buf, mem);
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buf, mem);
     VkCommandBufferAllocateInfo ai{};
     ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = vc.getCommandPool(); ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandPool = vc.getCommandPool();
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
     VkCommandBuffer cmd;
     vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
@@ -91,16 +92,17 @@ std::vector<uint8_t> readSwapchainImageToHost(VulkanContext& vc) {
     region.imageExtent = {ext.width, ext.height, 1};
     vkCmdCopyImageToBuffer(cmd, vc.getSwapChainImage(0), VK_IMAGE_LAYOUT_GENERAL, buf, 1, &region);
     vkEndCommandBuffer(cmd);
-    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
     vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(vc.getGraphicsQueue());
     vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
 
     void* data;
     vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
-    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + bytes);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + bytes);
     vkUnmapMemory(vc.getDevice(), mem);
     vkFreeMemory(vc.getDevice(), mem, nullptr);
     vkDestroyBuffer(vc.getDevice(), buf, nullptr);
@@ -120,11 +122,11 @@ std::vector<uint8_t> renderLanternSceneWithBackend(GsplatBackend backend) {
     uint32_t numImages = vc.getNumberOfSwapChainImages();
     VkExtent2D ext = vc.getSwapChainExtent();
     std::vector<VkImageView> views(numImages);
-    std::vector<VkImage>     imgs(numImages);
-    std::vector<VkExtent2D>  exts(numImages, ext);
+    std::vector<VkImage> imgs(numImages);
+    std::vector<VkExtent2D> exts(numImages, ext);
     for (uint32_t i = 0; i < numImages; ++i) {
         views[i] = vc.getImageView(i);
-        imgs[i]  = vc.getSwapChainImage(i);
+        imgs[i] = vc.getSwapChainImage(i);
     }
     auto imageViewSrc = std::make_shared<ImageViewSrc>(views, imgs, exts);
     for (uint32_t i = 0; i < numImages; ++i)
@@ -156,13 +158,14 @@ std::vector<uint8_t> renderLanternSceneWithBackend(GsplatBackend backend) {
 // (TRANSFER_SRC_OPTIMAL).
 std::vector<uint8_t> readOffscreenImageToHost(VulkanContext& vc, VkImage image, VkExtent2D extent) {
     const VkDeviceSize bytes = VkDeviceSize(extent.width) * extent.height * 4;
-    VkBuffer buf; VkDeviceMemory mem;
+    VkBuffer buf;
+    VkDeviceMemory mem;
     vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    buf, mem);
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buf, mem);
     VkCommandBufferAllocateInfo ai{};
     ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = vc.getCommandPool(); ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandPool = vc.getCommandPool();
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
     VkCommandBuffer cmd;
     vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
@@ -174,19 +177,19 @@ std::vector<uint8_t> readOffscreenImageToHost(VulkanContext& vc, VkImage image, 
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent = {extent.width, extent.height, 1};
-    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           buf, 1, &region);
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &region);
     vkEndCommandBuffer(cmd);
-    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
     vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(vc.getGraphicsQueue());
     vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
 
     void* data;
     vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
-    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + bytes);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + bytes);
     vkUnmapMemory(vc.getDevice(), mem);
     vkFreeMemory(vc.getDevice(), mem, nullptr);
     vkDestroyBuffer(vc.getDevice(), buf, nullptr);
@@ -262,11 +265,11 @@ TEST(GaussianSplattingFactory, createGaussianSplattingSelectsRequestedBackend) {
         uint32_t numImages = vc.getNumberOfSwapChainImages();
         VkExtent2D ext = vc.getSwapChainExtent();
         std::vector<VkImageView> views(numImages);
-        std::vector<VkImage>     imgs(numImages);
-        std::vector<VkExtent2D>  exts(numImages, ext);
+        std::vector<VkImage> imgs(numImages);
+        std::vector<VkExtent2D> exts(numImages, ext);
         for (uint32_t i = 0; i < numImages; ++i) {
             views[i] = vc.getImageView(i);
-            imgs[i]  = vc.getSwapChainImage(i);
+            imgs[i] = vc.getSwapChainImage(i);
         }
         auto imageViewSrc = std::make_shared<ImageViewSrc>(views, imgs, exts);
         for (uint32_t i = 0; i < numImages; ++i)
@@ -302,7 +305,7 @@ TEST(GaussianSplattingFactory, bothBackendsAgreeOnLanternScene) {
     }
 
     auto computePixels = renderLanternSceneWithBackend(GsplatBackend::Compute);
-    auto rasterPixels  = renderLanternSceneWithBackend(GsplatBackend::Raster);
+    auto rasterPixels = renderLanternSceneWithBackend(GsplatBackend::Raster);
     ASSERT_EQ(computePixels.size(), rasterPixels.size());
 
     // Colour channels only: the backends leave different alpha values where no
@@ -312,8 +315,8 @@ TEST(GaussianSplattingFactory, bothBackendsAgreeOnLanternScene) {
     uint32_t maxAbsDiff = 0;
     for (size_t base = 0; base < computePixels.size(); base += 4) {
         for (size_t c = 0; c < 3; ++c) {
-            uint32_t diff = static_cast<uint32_t>(std::abs(
-                static_cast<int>(computePixels[base + c]) - static_cast<int>(rasterPixels[base + c])));
+            uint32_t diff = static_cast<uint32_t>(
+                std::abs(static_cast<int>(computePixels[base + c]) - static_cast<int>(rasterPixels[base + c])));
             sumAbsDiff += diff;
             maxAbsDiff = std::max(maxAbsDiff, diff);
             ++count;
@@ -321,8 +324,8 @@ TEST(GaussianSplattingFactory, bothBackendsAgreeOnLanternScene) {
     }
     double meanAbsDiff = sumAbsDiff / static_cast<double>(count);
 
-    std::cout << "\n  bothBackendsAgreeOnLanternScene: meanAbsDiff=" << meanAbsDiff
-              << " maxAbsDiff=" << maxAbsDiff << " (per colour byte, 0-255)\n";
+    std::cout << "\n  bothBackendsAgreeOnLanternScene: meanAbsDiff=" << meanAbsDiff << " maxAbsDiff=" << maxAbsDiff
+              << " (per colour byte, 0-255)\n";
 
     // The two backends differ in projection/sort/blend implementation details
     // (compute-tile binned accumulation vs. hardware vkCmdDrawIndirect blending,
@@ -345,7 +348,7 @@ TEST(GaussianSplattingFactory, backendsAgreeAtBinBordersForUnalignedSize) {
     // Neither dimension is a multiple of 32 (4x4 bins of 8x8 tiles).
     const VkExtent2D extent{509, 381};
     auto computePixels = renderLanternSceneIntoTarget(GsplatBackend::Compute, extent);
-    auto rasterPixels  = renderLanternSceneIntoTarget(GsplatBackend::Raster, extent);
+    auto rasterPixels = renderLanternSceneIntoTarget(GsplatBackend::Raster, extent);
     ASSERT_EQ(computePixels.size(), rasterPixels.size());
 
     // A pixel is "at a border" when it lies within 3 px of one of the
@@ -354,7 +357,8 @@ TEST(GaussianSplattingFactory, backendsAgreeAtBinBordersForUnalignedSize) {
     auto nearBorder = [](uint32_t p, uint32_t size) {
         for (uint32_t k = 1; k < 4; ++k) {
             float border = k * size / 4.0f;
-            if (std::abs(float(p) - border) <= 3.0f) return true;
+            if (std::abs(float(p) - border) <= 3.0f)
+                return true;
         }
         return p + 8 >= size;
     };
@@ -365,15 +369,20 @@ TEST(GaussianSplattingFactory, backendsAgreeAtBinBordersForUnalignedSize) {
         for (uint32_t x = 0; x < extent.width; ++x) {
             bool border = nearBorder(x, extent.width) || nearBorder(y, extent.height);
             size_t base = (size_t(y) * extent.width + x) * 4;
-            for (int c = 0; c < 3; ++c) {  // colour channels only
+            for (int c = 0; c < 3; ++c) { // colour channels only
                 double diff = std::abs(int(computePixels[base + c]) - int(rasterPixels[base + c]));
-                if (border) { borderSum += diff; ++borderCount; }
-                else        { otherSum  += diff; ++otherCount;  }
+                if (border) {
+                    borderSum += diff;
+                    ++borderCount;
+                } else {
+                    otherSum += diff;
+                    ++otherCount;
+                }
             }
         }
     }
     double borderMean = borderSum / double(borderCount);
-    double otherMean  = otherSum / double(otherCount);
+    double otherMean = otherSum / double(otherCount);
 
     std::cout << "\n  backendsAgreeAtBinBordersForUnalignedSize: borderMeanAbsDiff=" << borderMean
               << " otherMeanAbsDiff=" << otherMean << " (per colour byte, 0-255)\n";

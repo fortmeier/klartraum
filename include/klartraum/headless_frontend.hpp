@@ -10,28 +10,25 @@
 namespace klartraum {
 
 class HeadlessFrontend {
-/**
- * @brief User facing class
- * 
- */
+    /**
+     * @brief User facing class
+     *
+     */
 public:
     HeadlessFrontend();
     ~HeadlessFrontend();
 
-
-    //void loop();
-
-
+    // void loop();
 
     KlartraumEngine& getKlartraumEngine();
+
 private:
     void initialize();
     void shutdown();
 
     std::unique_ptr<KlartraumEngine> klartraumEngine;
 
-    //VkSurfaceKHR surface;
-
+    // VkSurfaceKHR surface;
 };
 
 } // namespace klartraum

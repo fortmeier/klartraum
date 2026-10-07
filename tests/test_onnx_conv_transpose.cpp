@@ -30,20 +30,16 @@ TEST_F(OnnxConvTransposeTest, CreateConvTransposeTensors) {
     // Test creating tensors for ConvTranspose operation
 
     // Input tensor [1, 3, 2, 2] - batch=1, channels=3, height=2, width=2
-    auto inputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 3, 2, 2});
+    auto inputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 3, 2, 2});
 
     // Weight tensor [3, 16, 3, 3] - in_channels=3, out_channels=16, kernel_h=3, kernel_w=3
-    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{3, 16, 3, 3});
+    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{3, 16, 3, 3});
 
     // Bias tensor [16] - one bias per output channel
-    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{16});
+    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{16});
 
     // Output tensor [1, 16, 4, 4] - upsampled output
-    auto outputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 16, 4, 4});
+    auto outputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 16, 4, 4});
 
     EXPECT_EQ(inputTensor->getDimensions()[0], 1);
     EXPECT_EQ(inputTensor->getDimensions()[1], 3);
@@ -66,29 +62,21 @@ TEST_F(OnnxConvTransposeTest, CreateConvTransposeTensors) {
 TEST_F(OnnxConvTransposeTest, SetConvTransposeData) {
     // Test setting data in ConvTranspose tensors
 
-    auto inputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 1, 2, 2} // Simple 2x2 single channel
-    );
+    auto inputTensor =
+        vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 1, 2, 2} // Simple 2x2 single channel
+        );
 
-    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{1, 1, 3, 3} // Simple 3x3 kernel
-    );
+    auto weightTensor =
+        vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{1, 1, 3, 3} // Simple 3x3 kernel
+        );
 
-    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{1} // Single bias
+    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{1} // Single bias
     );
 
     // Initialize test data
-    std::vector<float> inputData = {
-        1.0f, 2.0f,
-        3.0f, 4.0f
-    };
+    std::vector<float> inputData = {1.0f, 2.0f, 3.0f, 4.0f};
 
-    std::vector<float> weightData = {
-        1.0f, 0.5f, 0.0f,
-        0.5f, 1.0f, 0.5f,
-        0.0f, 0.5f, 1.0f
-    };
+    std::vector<float> weightData = {1.0f, 0.5f, 0.0f, 0.5f, 1.0f, 0.5f, 0.0f, 0.5f, 1.0f};
 
     std::vector<float> biasData = {0.1f};
 
@@ -163,25 +151,21 @@ TEST_F(OnnxConvTransposeTest, ConvTransposeGeneralComputationFullTest) {
 
     // Create tensors for ConvTranspose operation
     // Input tensor [1, 2, 2, 2] - smaller for testing
-    auto inputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 2, 2, 2});
+    auto inputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 2, 2, 2});
 
     // Weight tensor [2, 3, 3, 3] - 2 input channels, 3 output channels, 3x3 kernel
-    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{2, 3, 3, 3});
+    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{2, 3, 3, 3});
 
     // Bias tensor [3] - one bias per output channel
-    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{3});
+    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{3});
 
     // Output tensor [1, 3, 4, 4] - upsampled with stride=2
-    auto outputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 3, 4, 4});
+    auto outputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 3, 4, 4});
 
     // Create GeneralComputation with conv transpose shader
     std::string convTransposeShaderPath = "shaders/onnx/conv_transpose.comp.spv";
-    auto convTransposeComputation = vulkanContext->create<GeneralComputation<ConvTransposePushConstants>>(
-        convTransposeShaderPath);
+    auto convTransposeComputation =
+        vulkanContext->create<GeneralComputation<ConvTransposePushConstants>>(convTransposeShaderPath);
 
     // Set up push constants
     ConvTransposePushConstants pushConstants = {};
@@ -281,15 +265,18 @@ TEST_F(OnnxConvTransposeTest, ConvTransposeGeneralComputationFullTest) {
     EXPECT_EQ(pushConstants.kernel_shape[1], 3);
     EXPECT_EQ(pushConstants.strides[0], 2);
     EXPECT_EQ(pushConstants.strides[1], 2);
-    EXPECT_EQ(pushConstants.dimInput[1], 2);    // input channels
-    EXPECT_EQ(pushConstants.dimWeights[1], 3);  // output channels
+    EXPECT_EQ(pushConstants.dimInput[1], 2);   // input channels
+    EXPECT_EQ(pushConstants.dimWeights[1], 3); // output channels
     EXPECT_EQ(pushConstants.dimBias[0], 3);
 
-    std::cout << "ConvTransposeGeneralComputationFullTest: Created complete ConvTranspose computation with:" << std::endl;
+    std::cout << "ConvTransposeGeneralComputationFullTest: Created complete ConvTranspose computation with:"
+              << std::endl;
     std::cout << "  - Input tensor: [1, 2, 2, 2] = " << inputTensor->getDataElementCount() << " elements" << std::endl;
-    std::cout << "  - Weight tensor: [2, 3, 3, 3] = " << weightTensor->getDataElementCount() << " elements" << std::endl;
+    std::cout << "  - Weight tensor: [2, 3, 3, 3] = " << weightTensor->getDataElementCount() << " elements"
+              << std::endl;
     std::cout << "  - Bias tensor: [3] = " << biasTensor->getDataElementCount() << " elements" << std::endl;
-    std::cout << "  - Output tensor: [1, 3, 4, 4] = " << outputTensor->getDataElementCount() << " elements" << std::endl;
+    std::cout << "  - Output tensor: [1, 3, 4, 4] = " << outputTensor->getDataElementCount() << " elements"
+              << std::endl;
     std::cout << "  - Compute groups: [" << groupsX << ", " << groupsY << ", " << groupsZ << "]" << std::endl;
 
     computegraph.submitAndWait(vulkanContext->getGraphicsQueue(), 0);

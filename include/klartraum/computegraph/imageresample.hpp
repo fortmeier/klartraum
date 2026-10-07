@@ -39,11 +39,10 @@ struct ImageResamplePushConstants {
 class ImageResample : public GeneralComputation<ImageResamplePushConstants> {
 public:
     ImageResample(VulkanContext& vulkanContext, VkExtent2D srcExtent, VkExtent2D dstExtent,
-                  ResampleFilter filter = ResampleFilter::Bilinear,
-                  VkImageLayout srcLayout = VK_IMAGE_LAYOUT_GENERAL)
+                  ResampleFilter filter = ResampleFilter::Bilinear, VkImageLayout srcLayout = VK_IMAGE_LAYOUT_GENERAL)
         : GeneralComputation<ImageResamplePushConstants>(vulkanContext, "shaders/image/resample.comp.spv") {
-        setPushConstants({{srcExtent.width, srcExtent.height, dstExtent.width, dstExtent.height,
-                           static_cast<uint32_t>(filter)}});
+        setPushConstants(
+            {{srcExtent.width, srcExtent.height, dstExtent.width, dstExtent.height, static_cast<uint32_t>(filter)}});
         setGroupCount((dstExtent.width + 7) / 8, (dstExtent.height + 7) / 8, 1);
         setImageLayoutTransition(0, srcLayout, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
@@ -53,9 +52,7 @@ public:
                                  VK_ACCESS_SHADER_WRITE_BIT);
     }
 
-    const char* getType() const override {
-        return "ImageResample";
-    }
+    const char* getType() const override { return "ImageResample"; }
 };
 
 } // namespace klartraum

@@ -32,7 +32,8 @@ public:
     // ComputeGraphElement interface
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override {
         // if (index != 0 && index != 1) {
-        //     throw std::runtime_error("CopyBuffer only accepts input at index 0 (source buffer) and index 1 (destination buffer)");
+        //     throw std::runtime_error("CopyBuffer only accepts input at index 0 (source buffer) and index 1
+        //     (destination buffer)");
         // }
 
         auto bufferInput = std::dynamic_pointer_cast<BufferElementInterface>(input);
@@ -76,35 +77,19 @@ public:
         memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0,
-            1, &memoryBarrier,
-            0, nullptr,
-            0, nullptr);
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &memoryBarrier, 0, nullptr, 0, nullptr);
     }
 
-    virtual const char* getType() const override {
-        return "CopyBuffer";
-    }
+    virtual const char* getType() const override { return "CopyBuffer"; }
 
-    uint32_t getSrcIndex() const {
-        return srcIndex;
-    }
+    uint32_t getSrcIndex() const { return srcIndex; }
 
-    uint32_t getDstIndex() const {
-        return dstIndex;
-    }
+    uint32_t getDstIndex() const { return dstIndex; }
 
-    void setSrcIndex(uint32_t index) {
-        srcIndex = index;
-    }
+    void setSrcIndex(uint32_t index) { srcIndex = index; }
 
-    void setDstIndex(uint32_t index) {
-        dstIndex = index;
-    }
+    void setDstIndex(uint32_t index) { dstIndex = index; }
 
 private:
     VulkanContext& vulkanContext;

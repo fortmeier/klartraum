@@ -11,9 +11,9 @@
 namespace klartraum {
 
 GaussianSplatRasterizer::GaussianSplatRasterizer(std::vector<std::shared_ptr<BufferElementInterface>> splatBuffers,
-                                                  std::shared_ptr<BufferElementInterface> drawArgsBuffer)
-    : splatBuffers(std::move(splatBuffers)), drawArgsBuffer(std::move(drawArgsBuffer)) {
-}
+                                                 std::shared_ptr<BufferElementInterface> drawArgsBuffer)
+    : splatBuffers(std::move(splatBuffers)),
+      drawArgsBuffer(std::move(drawArgsBuffer)) {}
 
 GaussianSplatRasterizer::~GaussianSplatRasterizer() {
     // Nothing was created if initialize() never ran.
@@ -27,7 +27,8 @@ GaussianSplatRasterizer::~GaussianSplatRasterizer() {
     vkDestroyDescriptorSetLayout(device, splatDescriptorSetLayout, nullptr);
 }
 
-void GaussianSplatRasterizer::initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO) {
+void GaussianSplatRasterizer::initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass,
+                                         std::shared_ptr<CameraUboType> cameraUBO) {
     DrawComponent::initialize(vulkanContext, renderPass, cameraUBO);
 
     createSplatDescriptorSetLayout();
@@ -136,12 +137,9 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     fragShaderStageInfo.module = fragShaderModule;
     fragShaderStageInfo.pName = "main";
 
-    VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-    std::vector<VkDynamicState> dynamicStates = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR
-    };
+    std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
 
     VkPipelineDynamicStateCreateInfo dynamicState{};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -169,7 +167,7 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     viewport.maxDepth = 1.0f;
 
     VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
+    scissor.offset = {0, 0};
     scissor.extent = swapChainExtent;
 
     VkPipelineViewportStateCreateInfo viewportState{};
@@ -202,7 +200,8 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     // by alpha, so splats composite back-to-front via the hardware blender
     // (klartraum_rasterized_gs_backend_guide.md §3.4 / §5C).
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     colorBlendAttachment.blendEnable = VK_TRUE;
     colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -227,7 +226,7 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(GaussianSplatRasterPushConstants);
 
-    VkDescriptorSetLayout setLayouts[] = { cameraUBO->getDescriptorSetLayout(), splatDescriptorSetLayout };
+    VkDescriptorSetLayout setLayouts[] = {cameraUBO->getDescriptorSetLayout(), splatDescriptorSetLayout};
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -266,15 +265,14 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     vkDestroyShaderModule(device, vertShaderModule, nullptr);
 }
 
-void GaussianSplatRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) {
+void GaussianSplatRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer,
+                                                  uint32_t pathId) {
     // The viewport/scissor must match the render target this pass draws into,
     // which is the (possibly sub-window) render-target extent — carried in
     // pushConstants.resolution — not the full swapchain. They coincide for a
     // full-window target but differ for a viewport offscreen image.
-    VkExtent2D targetExtent = {
-        static_cast<uint32_t>(pushConstants.resolution.x),
-        static_cast<uint32_t>(pushConstants.resolution.y)
-    };
+    VkExtent2D targetExtent = {static_cast<uint32_t>(pushConstants.resolution.x),
+                               static_cast<uint32_t>(pushConstants.resolution.y)};
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
@@ -288,15 +286,16 @@ void GaussianSplatRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer,
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
+    scissor.offset = {0, 0};
     scissor.extent = targetExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     auto& cameraDescriptorSets = cameraUBO->getDescriptorSets();
-    VkDescriptorSet sets[] = { cameraDescriptorSets[pathId], splatDescriptorSets[pathId] };
+    VkDescriptorSet sets[] = {cameraDescriptorSets[pathId], splatDescriptorSets[pathId]};
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
 
-    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GaussianSplatRasterPushConstants), &pushConstants);
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(GaussianSplatRasterPushConstants), &pushConstants);
 
     vkCmdDrawIndirect(commandBuffer, drawArgsBuffer->getVkBuffer(pathId), 0, 1, sizeof(VkDrawIndirectCommand));
 }

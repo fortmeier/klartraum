@@ -45,7 +45,7 @@ namespace {
 VkExtent2D framebufferSize(GLFWwindow* window) {
     int w = 0, h = 0;
     glfwGetFramebufferSize(window, &w, &h);
-    return { static_cast<uint32_t>(w), static_cast<uint32_t>(h) };
+    return {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
 }
 
 // Renders `frames` frames the way GlfwFrontend::loop() does, but without
@@ -108,8 +108,7 @@ struct GsplatResizeScene {
             auto& ctx = e.getVulkanContext();
             builtExtents.push_back(ctx.getSwapChainExtent());
             auto cameraUBO = std::make_shared<CameraUboType>();
-            auto splatting = createGaussianSplatting(
-                ctx, backend, makeSwapChainImageViewSrc(ctx), cameraUBO, modelRef);
+            auto splatting = createGaussianSplatting(ctx, backend, makeSwapChainImageViewSrc(ctx), cameraUBO, modelRef);
             e.add(splatting);
             e.setCameraUBO(cameraUBO);
         });
@@ -175,7 +174,7 @@ TEST(WindowResize, framebufferExtentChangeMarksSwapChainOutOfDate) {
     vc.setFramebufferExtent(current);
     EXPECT_FALSE(vc.isSwapChainOutOfDate());
 
-    vc.setFramebufferExtent({ current.width + 10, current.height });
+    vc.setFramebufferExtent({current.width + 10, current.height});
     EXPECT_TRUE(vc.isSwapChainOutOfDate());
 }
 
@@ -196,13 +195,9 @@ TEST(WindowResize, graphBuilderRunsOnceWhenSet) {
     EXPECT_EQ(calls, 1);
 }
 
-TEST(WindowResize, computeBackendFollowsWindowResize) {
-    expectBackendFollowsResize(GsplatBackend::Compute);
-}
+TEST(WindowResize, computeBackendFollowsWindowResize) { expectBackendFollowsResize(GsplatBackend::Compute); }
 
-TEST(WindowResize, rasterBackendFollowsWindowResize) {
-    expectBackendFollowsResize(GsplatBackend::Raster);
-}
+TEST(WindowResize, rasterBackendFollowsWindowResize) { expectBackendFollowsResize(GsplatBackend::Raster); }
 
 TEST(WindowResize, resizeRendersFromEventCallback) {
     if (!std::filesystem::exists(test_scene::kLanternPath)) {

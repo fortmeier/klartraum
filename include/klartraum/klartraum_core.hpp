@@ -13,7 +13,6 @@
 #include <optional>
 #include <memory>
 
-
 #include "klartraum/vulkan_context.hpp"
 #include "klartraum/backend_config.hpp"
 #include "klartraum/draw_component.hpp"
@@ -26,7 +25,6 @@
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/window.hpp"
 
-
 namespace klartraum {
 
 class KlartraumEngine {
@@ -36,12 +34,10 @@ public:
 
     void step();
 
-    std::queue<std::unique_ptr<Event> >& getEventQueue();
+    std::queue<std::unique_ptr<Event>>& getEventQueue();
 
     void setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera);
-    void setCameraUBO(std::shared_ptr<CameraUboType> cameraUBO) {
-        this->cameraUBO = cameraUBO;
-    }
+    void setCameraUBO(std::shared_ptr<CameraUboType> cameraUBO) { this->cameraUBO = cameraUBO; }
 
     VulkanContext& getVulkanContext();
 
@@ -68,28 +64,20 @@ public:
 
     RenderPassPtr createRenderPass();
 
-    void clearComputeGraphs() {
-        computeGraphs.clear();
-    }
+    void clearComputeGraphs() { computeGraphs.clear(); }
 
     // Release the window and its viewport offscreen images. Frontends must call
     // this before VulkanContext::shutdown() so the images are freed while the
     // device is still valid.
-    void clearWindow() {
-        window_.reset();
-    }
+    void clearWindow() { window_.reset(); }
 
-    void clearInterfaceCamera() {
-        interfaceCamera = nullptr;
-    }
+    void clearInterfaceCamera() { interfaceCamera = nullptr; }
 
     // Registers per-frame work drawn on top of each finished frame (e.g. a
     // GUI); see FrameOverlay. Pass nullptr to remove it. Frontends must remove
     // the overlay before VulkanContext::shutdown() so its GPU resources are
     // freed while the device is still valid.
-    void setOverlay(std::shared_ptr<FrameOverlay> overlay) {
-        overlay_ = std::move(overlay);
-    }
+    void setOverlay(std::shared_ptr<FrameOverlay> overlay) { overlay_ = std::move(overlay); }
 
     // Call before add() to enable GPU timestamp profiling on all subsequent
     // compute graphs.  Results accumulate across frames and are averaged.
@@ -105,7 +93,7 @@ public:
     // Call before add() to enable VK_KHR_performance_query counter profiling.
     // nameFilter: sub-strings matched against counter name/description; empty = all counters.
     void enablePerformanceProfiling(std::vector<std::string> nameFilter = {}) {
-        perfProfilingEnabled_   = true;
+        perfProfilingEnabled_ = true;
         perfProfilingNameFilter_ = std::move(nameFilter);
     }
 
@@ -121,8 +109,8 @@ private:
 
     GraphBuilder graphBuilder_;
 
-    bool profilingEnabled_            = false;
-    bool perfProfilingEnabled_        = false;
+    bool profilingEnabled_ = false;
+    bool perfProfilingEnabled_ = false;
     std::vector<std::string> perfProfilingNameFilter_;
 
     VulkanContext vulkanContext;
@@ -130,14 +118,13 @@ private:
     std::shared_ptr<InterfaceCamera> interfaceCamera;
     std::shared_ptr<CameraUboType> cameraUBO;
 
-    std::queue<std::unique_ptr<Event> > eventQueue;
+    std::queue<std::unique_ptr<Event>> eventQueue;
 
     std::vector<std::unique_ptr<ComputeGraph>> computeGraphs;
 
     std::unique_ptr<Window> window_;
 
     std::shared_ptr<FrameOverlay> overlay_;
-
 };
 
 } // namespace klartraum

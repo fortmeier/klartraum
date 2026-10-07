@@ -24,7 +24,8 @@ namespace klartraum {
  * value set between frames is seen by the next frame and paths still in
  * flight keep theirs. Shaders read it as an array of T.
  */
-template <typename T> class HostValues : public BufferElement<VulkanBuffer<T>> {
+template <typename T>
+class HostValues : public BufferElement<VulkanBuffer<T>> {
 public:
     HostValues(VulkanContext& vulkanContext, std::vector<T> initial)
         : BufferElement<VulkanBuffer<T>>(vulkanContext, static_cast<uint32_t>(initial.size())),

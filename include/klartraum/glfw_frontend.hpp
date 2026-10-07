@@ -16,20 +16,17 @@
 namespace klartraum {
 
 class GlfwFrontend {
-/**
- * @brief User facing class
- * 
- */
+    /**
+     * @brief User facing class
+     *
+     */
 public:
     GlfwFrontend();
     virtual ~GlfwFrontend();
 
-
     // Run the render loop.  If maxFrames > 0 the window closes automatically
     // after that many frames; pass -1 (default) to run until user closes it.
     void loop(int maxFrames = -1);
-
-
 
     KlartraumEngine& getKlartraumEngine();
 
@@ -89,7 +86,6 @@ private:
 
     // Exceptions must not unwind through GLFW's C (and Objective-C) frames.
     std::exception_ptr callbackError;
-
 };
 
 } // namespace klartraum

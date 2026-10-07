@@ -61,11 +61,11 @@ struct GsplatConfig {
 
 // this is a copy of the UnpackedGaussian struct from spz::UnpackedGaussian
 struct Gaussian3D {
-    std::array<float, 3> position;  // x, y, z
-    std::array<float, 4> rotation;  // x, y, z, w
-    std::array<float, 3> scale;     // std::log(scale)
-    std::array<float, 3> color;     // rgb sh0 encoding
-    float alpha;                    // inverse logistic
+    std::array<float, 3> position; // x, y, z
+    std::array<float, 4> rotation; // x, y, z, w
+    std::array<float, 3> scale;    // std::log(scale)
+    std::array<float, 3> color;    // rgb sh0 encoding
+    float alpha;                   // inverse logistic
     std::array<float, 15> shR;
     std::array<float, 15> shG;
     std::array<float, 15> shB;
@@ -130,8 +130,7 @@ inline GaussianSoABuffers addGaussianOutputs(VulkanContext& vulkanContext, const
     output.pos = add(std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vulkanContext, count), "Pos3D");
     output.rot = add(std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, count), "Rot3D");
     output.scale = add(std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vulkanContext, count), "Scale3D");
-    output.colAlpha =
-        add(std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, count), "ColAlpha3D");
+    output.colAlpha = add(std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, count), "ColAlpha3D");
     output.shR = add(std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, 15 * count), "ShR");
     output.shG = add(std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, 15 * count), "ShG");
     output.shB = add(std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, 15 * count), "ShB");
@@ -139,10 +138,10 @@ inline GaussianSoABuffers addGaussianOutputs(VulkanContext& vulkanContext, const
 }
 
 struct ProjectionPushConstants {
-  uint32_t numElements;
-  uint32_t gridSize;
-  float screenWidth;
-  float screenHeight;
+    uint32_t numElements;
+    uint32_t gridSize;
+    float screenWidth;
+    float screenHeight;
 };
 
 typedef GeneralComputation<ProjectionPushConstants> GaussianProjection;
@@ -150,35 +149,35 @@ typedef GeneralComputation<ProjectionPushConstants> GaussianProjection;
 struct BinningCountPushConstants {
     uint32_t numElements;
     uint32_t gridSize;
-    float    screenWidth;
-    float    screenHeight;
-    float    spreadMultiplier;  // Gaussian footprint radius multiplier
+    float screenWidth;
+    float screenHeight;
+    float spreadMultiplier; // Gaussian footprint radius multiplier
 };
 typedef GeneralComputation<BinningCountPushConstants> GaussianBinningCount;
 
 struct BinningScatterPushConstants {
     uint32_t numElements;
     uint32_t gridSize;
-    float    screenWidth;
-    float    screenHeight;
+    float screenWidth;
+    float screenHeight;
     uint32_t maxOutput;
-    float    spreadMultiplier;  // Gaussian footprint radius multiplier
+    float spreadMultiplier; // Gaussian footprint radius multiplier
 };
 typedef GeneralComputation<BinningScatterPushConstants> GaussianBinningScatter;
 
 struct SplatPushConstants {
-  uint32_t numElements;
-  uint32_t gridSize;
-  uint32_t gridX;
-  uint32_t gridY;
-  float screenWidth;
-  float screenHeight;
+    uint32_t numElements;
+    uint32_t gridSize;
+    uint32_t gridX;
+    uint32_t gridY;
+    float screenWidth;
+    float screenHeight;
 };
 
 struct DistPushConstants {
     uint32_t numSplats;
-    float    frustumDilation;  // dilates the cull frustum so near-edge splat footprints survive
-    float    alphaThreshold = 0.0f;  // drop splats with post-activation alpha below this (0 = off)
+    float frustumDilation;       // dilates the cull frustum so near-edge splat footprints survive
+    float alphaThreshold = 0.0f; // drop splats with post-activation alpha below this (0 = off)
 };
 typedef GeneralComputation<DistPushConstants> GaussianDist;
 
@@ -186,21 +185,21 @@ typedef GeneralComputation<DistPushConstants> GaussianDist;
 // All-scalar (4-byte) members so std430 packing matches the GLSL push block.
 struct RasterProjectPushConstants {
     uint32_t numSplats;
-    float    screenWidth;
-    float    screenHeight;
-    float    splatScale;
-    int32_t  shDegree;
+    float screenWidth;
+    float screenHeight;
+    float splatScale;
+    int32_t shDegree;
 };
 typedef GeneralComputation<RasterProjectPushConstants> GaussianRasterProject;
 
 struct SortPushConstants {
-  uint32_t pass;
-  uint32_t numElements;
-  uint32_t numBins;
-  // 1 = read the active element count from the sort's count buffer (binding 6)
-  // instead of numElements, so a fixed-dispatch sort processes only a
-  // GPU-determined visible count. Default 0 keeps the static-count behaviour.
-  uint32_t useCountBuffer = 0;
+    uint32_t pass;
+    uint32_t numElements;
+    uint32_t numBins;
+    // 1 = read the active element count from the sort's count buffer (binding 6)
+    // instead of numElements, so a fixed-dispatch sort processes only a
+    // GPU-determined visible count. Default 0 keeps the static-count behaviour.
+    uint32_t useCountBuffer = 0;
 };
 typedef GeneralComputation<SortPushConstants> RadixSort;
 

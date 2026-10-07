@@ -88,33 +88,27 @@ int main(int argc, char** argv) {
     auto splatTarget = std::make_shared<klartraum::OffscreenTarget>(
         vulkanContext, VkExtent2D{kNetworkWidth, kNetworkHeight}, pathCount);
     const auto windowExtent = vulkanContext.getSwapChainExtent();
-    auto displayTarget = engine.getWindow().makeViewport(
-        0, 0, windowExtent.width, windowExtent.height,
-        kNetworkWidth, kNetworkHeight);
+    auto displayTarget =
+        engine.getWindow().makeViewport(0, 0, windowExtent.width, windowExtent.height, kNetworkWidth, kNetworkHeight);
 
     auto cameraUbo = std::make_shared<klartraum::CameraUboType>();
     cameraUbo->setName("CameraUBO");
     auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzPath, flipY);
-    auto splatting = klartraum::createGaussianSplatting(
-        vulkanContext, klartraum::GsplatBackend::Compute,
-        splatTarget, cameraUbo, model);
+    auto splatting = klartraum::createGaussianSplatting(vulkanContext, klartraum::GsplatBackend::Compute, splatTarget,
+                                                        cameraUbo, model);
 
     auto imageTensor = vulkanContext.create<klartraum::TensorElement<float>>(
         std::vector<uint32_t>{1, 3, kNetworkHeight, kNetworkWidth});
-    auto imageToTensor = vulkanContext.create<
-        klartraum::GeneralComputation<ImageTensorPushConstants>>(
-            "shaders/onnx/image_to_tensor.comp.spv");
+    auto imageToTensor = vulkanContext.create<klartraum::GeneralComputation<ImageTensorPushConstants>>(
+        "shaders/onnx/image_to_tensor.comp.spv");
     imageToTensor->setName("SplatImageToTensor");
     imageToTensor->setPushConstants({{kNetworkWidth, kNetworkHeight}});
-    imageToTensor->setGroupCount(
-        (kNetworkWidth + 7) / 8, (kNetworkHeight + 7) / 8, 1);
+    imageToTensor->setGroupCount((kNetworkWidth + 7) / 8, (kNetworkHeight + 7) / 8, 1);
     imageToTensor->setInput(splatting, 0, 0);
     imageToTensor->setInput(imageTensor, 1);
-    imageToTensor->setImageLayoutTransition(
-        0,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
+    imageToTensor->setImageLayoutTransition(0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                                            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                            VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
 
     auto encoder = vulkanContext.create<klartraum::OnnxNetwork>(encoderPath);
     encoder->setName("Encoder");
@@ -124,29 +118,24 @@ int main(int argc, char** argv) {
     decoder->setName("Decoder");
     decoder->setInputTensor("input", encoder, 0);
 
-    auto tensorToImage = vulkanContext.create<
-        klartraum::GeneralComputation<ImageTensorPushConstants>>(
-            "shaders/onnx/tensor_to_image.comp.spv");
+    auto tensorToImage = vulkanContext.create<klartraum::GeneralComputation<ImageTensorPushConstants>>(
+        "shaders/onnx/tensor_to_image.comp.spv");
     tensorToImage->setName("DecodedTensorToImage");
     tensorToImage->setPushConstants({{kNetworkWidth, kNetworkHeight}});
-    tensorToImage->setGroupCount(
-        (kNetworkWidth + 7) / 8, (kNetworkHeight + 7) / 8, 1);
+    tensorToImage->setGroupCount((kNetworkWidth + 7) / 8, (kNetworkHeight + 7) / 8, 1);
     tensorToImage->setInput(decoder, 0, 0);
     tensorToImage->setInput(displayTarget, 1);
-    tensorToImage->setImageLayoutTransition(
-        1,
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, VK_ACCESS_SHADER_WRITE_BIT);
+    tensorToImage->setImageLayoutTransition(1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                            VK_ACCESS_SHADER_WRITE_BIT);
 
-    auto readyForDisplay = std::make_shared<klartraum::ImageViewSrcTransition>(
-        VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    auto readyForDisplay = std::make_shared<klartraum::ImageViewSrcTransition>(VK_IMAGE_LAYOUT_GENERAL,
+                                                                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     readyForDisplay->setName("DecodedImageReadyForDisplay");
     readyForDisplay->setInput(tensorToImage, 0, 1);
     engine.add(readyForDisplay);
 
-    auto camera = std::make_shared<klartraum::InterfaceCameraOrbit>(
-        klartraum::InterfaceCameraOrbit::UpDirection::Y);
+    auto camera = std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
     camera->initialize(vulkanContext);
     camera->setProjectionAspectRatio(1.0f);
     camera->setAzimuth(0.9f);
@@ -159,13 +148,11 @@ int main(int argc, char** argv) {
     frontend.loop(maxFrames);
 
     if (maxFrames > 0) {
-        auto decoded = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(
-            decoder->getOutputElement("output"));
+        auto decoded = std::dynamic_pointer_cast<klartraum::TensorElement<float>>(decoder->getOutputElement("output"));
         std::vector<float> values(decoded->getDataElementCount());
         decoded->getDataBuffer(0).memcopyTo(values);
         const auto range = std::minmax_element(values.begin(), values.end());
-        std::cout << "Decoded output range: [" << *range.first
-                  << ", " << *range.second << "]" << std::endl;
+        std::cout << "Decoded output range: [" << *range.first << ", " << *range.second << "]" << std::endl;
     }
     return 0;
 }

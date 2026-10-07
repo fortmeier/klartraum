@@ -13,8 +13,8 @@ namespace klartraum {
 GaussianSplatMeshRasterizer::GaussianSplatMeshRasterizer(
     std::vector<std::shared_ptr<BufferElementInterface>> splatBuffers,
     std::shared_ptr<BufferElementInterface> meshArgsBuffer)
-    : splatBuffers(std::move(splatBuffers)), meshArgsBuffer(std::move(meshArgsBuffer)) {
-}
+    : splatBuffers(std::move(splatBuffers)),
+      meshArgsBuffer(std::move(meshArgsBuffer)) {}
 
 GaussianSplatMeshRasterizer::~GaussianSplatMeshRasterizer() {
     // Nothing was created if initialize() never ran.
@@ -28,7 +28,8 @@ GaussianSplatMeshRasterizer::~GaussianSplatMeshRasterizer() {
     vkDestroyDescriptorSetLayout(device, splatDescriptorSetLayout, nullptr);
 }
 
-void GaussianSplatMeshRasterizer::initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO) {
+void GaussianSplatMeshRasterizer::initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass,
+                                             std::shared_ptr<CameraUboType> cameraUBO) {
     DrawComponent::initialize(vulkanContext, renderPass, cameraUBO);
 
     createSplatDescriptorSetLayout();
@@ -137,12 +138,9 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     fragShaderStageInfo.module = fragShaderModule;
     fragShaderStageInfo.pName = "main";
 
-    VkPipelineShaderStageCreateInfo shaderStages[] = { meshShaderStageInfo, fragShaderStageInfo };
+    VkPipelineShaderStageCreateInfo shaderStages[] = {meshShaderStageInfo, fragShaderStageInfo};
 
-    std::vector<VkDynamicState> dynamicStates = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR
-    };
+    std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamicState{};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
@@ -153,13 +151,15 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     // are ignored and left null).
 
     VkViewport viewport{};
-    viewport.x = 0.0f; viewport.y = 0.0f;
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
     viewport.width = (float)swapChainExtent.width;
     viewport.height = (float)swapChainExtent.height;
-    viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
 
     VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
+    scissor.offset = {0, 0};
     scissor.extent = swapChainExtent;
 
     VkPipelineViewportStateCreateInfo viewportState{};
@@ -187,7 +187,8 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
 
     // Premultiplied "over" (matches the vertex path / gsplat_raster.frag output).
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     colorBlendAttachment.blendEnable = VK_TRUE;
     colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -202,7 +203,7 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
-    VkDescriptorSetLayout setLayouts[] = { cameraUBO->getDescriptorSetLayout(), splatDescriptorSetLayout };
+    VkDescriptorSetLayout setLayouts[] = {cameraUBO->getDescriptorSetLayout(), splatDescriptorSetLayout};
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -240,33 +241,34 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     vkDestroyShaderModule(device, meshShaderModule, nullptr);
 }
 
-void GaussianSplatMeshRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) {
+void GaussianSplatMeshRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer,
+                                                      uint32_t pathId) {
     // Viewport/scissor must match the render target (viewport offscreen extent),
     // not the full swapchain; fall back to the swapchain when no target was set.
-    VkExtent2D extent = (targetExtent.width != 0)
-        ? targetExtent : vulkanContext->getSwapChainExtent();
+    VkExtent2D extent = (targetExtent.width != 0) ? targetExtent : vulkanContext->getSwapChainExtent();
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkViewport viewport{};
-    viewport.x = 0.0f; viewport.y = 0.0f;
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
     viewport.width = static_cast<float>(extent.width);
     viewport.height = static_cast<float>(extent.height);
-    viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
+    scissor.offset = {0, 0};
     scissor.extent = extent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     auto& cameraDescriptorSets = cameraUBO->getDescriptorSets();
-    VkDescriptorSet sets[] = { cameraDescriptorSets[pathId], splatDescriptorSets[pathId] };
+    VkDescriptorSet sets[] = {cameraDescriptorSets[pathId], splatDescriptorSets[pathId]};
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
 
     auto drawMeshTasks = vulkanContext->getCmdDrawMeshTasksIndirectEXT();
-    drawMeshTasks(commandBuffer, meshArgsBuffer->getVkBuffer(pathId), 0, 1,
-                  sizeof(VkDrawMeshTasksIndirectCommandEXT));
+    drawMeshTasks(commandBuffer, meshArgsBuffer->getVkBuffer(pathId), 0, 1, sizeof(VkDrawMeshTasksIndirectCommandEXT));
 }
 
 } // namespace klartraum

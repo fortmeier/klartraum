@@ -24,22 +24,20 @@ using DrawIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDrawIndire
 template <typename P = void>
 class GeneralComputation : public ComputeGraphElement {
 public:
-    GeneralComputation(VulkanContext &vulkanContext, const std::string &shaderPath) :
-        shaderPaths({shaderPath}) 
-    {
+    GeneralComputation(VulkanContext& vulkanContext, const std::string& shaderPath)
+        : shaderPaths({shaderPath}) {
         this->vulkanContext = &vulkanContext;
     }
 
-    GeneralComputation(VulkanContext &vulkanContext, const std::vector<std::string> &shaderPaths) :
-        shaderPaths(shaderPaths) 
-    {
+    GeneralComputation(VulkanContext& vulkanContext, const std::vector<std::string>& shaderPaths)
+        : shaderPaths(shaderPaths) {
         this->vulkanContext = &vulkanContext;
     }
 
     virtual ~GeneralComputation() {
-        if(initialized) {
+        if (initialized) {
             vkDestroyPipelineLayout(vulkanContext->getDevice(), computePipelineLayout, nullptr);
-            for(auto& computePipeline : computePipelines) {
+            for (auto& computePipeline : computePipelines) {
                 vkDestroyPipeline(vulkanContext->getDevice(), computePipeline, nullptr);
             }
             vkDestroyDescriptorSetLayout(vulkanContext->getDevice(), computeDescriptorSetLayout, nullptr);
@@ -52,7 +50,7 @@ public:
         this->vulkanContext = &vulkanContext;
         // TODO CHECK, suggetest by copilot and in BT, but I think it is not necessary
         // ADDEDUM: we setup them, since other is missleading, it should be named scratchBuffers
-        // these are not part of the compute graph 
+        // these are not part of the compute graph
         for (auto& other : otherInputs) {
             other->_setup(vulkanContext, numberPaths);
         }
@@ -60,14 +58,14 @@ public:
         createDescriptorPool();
         createComputeDescriptorSetLayout();
         createComputePipeline();
-        
+
         uint32_t inputSize = (uint32_t)inputs.size();
         if (inputSize == 0 && otherInputs.empty()) {
             throw std::runtime_error("no inputs provided!");
         }
 
         computeDescriptorSets.resize(numberPaths);
-        for(uint32_t i = 0; i < numberPaths; i++) {
+        for (uint32_t i = 0; i < numberPaths; i++) {
             createComputeDescriptorSets(i);
         }
 
@@ -80,44 +78,27 @@ public:
         groupCountZ = countZ;
     }
 
-    void setGroupCountX(uint32_t count) {
-        groupCountX = count;
-    }
+    void setGroupCountX(uint32_t count) { groupCountX = count; }
 
-    uint32_t getGroupCountX() const {
-        return groupCountX;
-    }
+    uint32_t getGroupCountX() const { return groupCountX; }
 
-    void setGroupCountY(uint32_t count) {
-        groupCountY = count;
-    }
+    void setGroupCountY(uint32_t count) { groupCountY = count; }
 
-    uint32_t getGroupCountY() const {
-        return groupCountY;
-    }
+    uint32_t getGroupCountY() const { return groupCountY; }
 
-    void setGroupCountZ(uint32_t count) {
-        groupCountZ = count;
-    }
+    void setGroupCountZ(uint32_t count) { groupCountZ = count; }
 
-    uint32_t getGroupCountZ() const {
-        return groupCountZ;
-    }
+    uint32_t getGroupCountZ() const { return groupCountZ; }
 
     void setDynamicGroupDispatchParams(const std::shared_ptr<DispatchIndirectCommandBufferElement>& params) {
         this->dynamicGroupDispatchParams = params;
     }
 
-    void setImageLayoutTransition(int inputIndex,
-                                  VkImageLayout oldLayout,
-                                  VkImageLayout newLayout,
-                                  VkPipelineStageFlags srcStageMask,
-                                  VkPipelineStageFlags dstStageMask,
-                                  VkAccessFlags srcAccessMask,
-                                  VkAccessFlags dstAccessMask) {
+    void setImageLayoutTransition(int inputIndex, VkImageLayout oldLayout, VkImageLayout newLayout,
+                                  VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                                  VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask) {
         imageLayoutTransitions[inputIndex] = {
-            oldLayout, newLayout, srcStageMask, dstStageMask,
-            srcAccessMask, dstAccessMask,
+            oldLayout, newLayout, srcStageMask, dstStageMask, srcAccessMask, dstAccessMask,
         };
     }
 
@@ -157,21 +138,14 @@ public:
                 imageBarrier.srcAccessMask = transition.srcAccessMask;
                 imageBarrier.dstAccessMask = transition.dstAccessMask;
 
-                vkCmdPipelineBarrier(
-                    commandBuffer,
-                    transition.srcStageMask,
-                    transition.dstStageMask,
-                    0,
-                    0, nullptr,
-                    0, nullptr,
-                    1, &imageBarrier
-                );
+                vkCmdPipelineBarrier(commandBuffer, transition.srcStageMask, transition.dstStageMask, 0, 0, nullptr, 0,
+                                     nullptr, 1, &imageBarrier);
             }
         }
 
         if constexpr (std::is_void<P>::value) {
             recordScratchToZero(commandBuffer, pathId);
-            for(VkPipeline computePipeline : computePipelines) {
+            for (VkPipeline computePipeline : computePipelines) {
                 bind(commandBuffer, pathId, computePipeline);
                 dispatch(commandBuffer, pathId, computePipeline);
             }
@@ -181,7 +155,7 @@ public:
             }
             for (const auto& pushConstant : pushConstants) {
                 recordScratchToZero(commandBuffer, pathId);
-                for(VkPipeline computePipeline : computePipelines) {
+                for (VkPipeline computePipeline : computePipelines) {
                     bind(commandBuffer, pathId, computePipeline);
                     dispatch(commandBuffer, pathId, computePipeline, &pushConstant);
                 }
@@ -196,7 +170,8 @@ public:
         TensorElementInterface* tensorSrc = std::dynamic_pointer_cast<TensorElementInterface>(input).get();
 
         if (bufferSrc == nullptr && imageSrc == nullptr && uboSrc == nullptr && tensorSrc == nullptr) {
-            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc or UniformBufferObject or TensorElementInterface!");
+            throw std::runtime_error("input is not a BufferElementInterface or ImageViewSrc or UniformBufferObject or "
+                                     "TensorElementInterface!");
         }
     }
 
@@ -204,9 +179,7 @@ public:
     //     return *dynamic_cast<BufferElementInterface*>(inputs[0].get());
     // }
 
-    virtual const char* getType() const {
-        return "GeneralComputation";
-    }    
+    virtual const char* getType() const { return "GeneralComputation"; }
 
     void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement, bool recordSetToZero = true) {
         otherInputs.push_back(bufferElement);
@@ -236,7 +209,6 @@ private:
 
     bool setToZero = false; // whether to set the scratch buffers to zero before dispatching
 
-
     const std::vector<std::string> shaderPaths;
 
     uint32_t groupCountX = 1;
@@ -265,38 +237,38 @@ private:
 
     void createDescriptorPool() {
         auto& device = vulkanContext->getDevice();
-        
+
         std::vector<VkDescriptorPoolSize> poolSizes(inputs.size() + otherInputs.size());
-        
+
         // Regular inputs
         for (size_t i = 0; i < inputs.size(); i++) {
             ComputeGraphElementPtr inputPtr = getInputElement(i);
             poolSizes[i].type = getDescriptorType(inputPtr);
             poolSizes[i].descriptorCount = numberPaths;
         }
-        
+
         // Other inputs
         for (size_t i = 0; i < otherInputs.size(); i++) {
             poolSizes[inputs.size() + i].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             poolSizes[inputs.size() + i].descriptorCount = numberPaths;
         }
-        
+
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.poolSizeCount = (uint32_t)poolSizes.size();
         poolInfo.pPoolSizes = poolSizes.data();
         poolInfo.maxSets = numberPaths;
-    
+
         if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor pool!");
         }
-    }    
+    }
 
     void createComputeDescriptorSetLayout() {
         auto& device = vulkanContext->getDevice();
 
         std::vector<VkDescriptorSetLayoutBinding> layoutBindings(inputs.size() + otherInputs.size());
-    
+
         // Regular inputs
         for (int i = 0; i < inputs.size(); i++) {
             ComputeGraphElementPtr inputPtr = getInputElement(i);
@@ -313,7 +285,7 @@ private:
             layoutBindings[i].pImmutableSamplers = nullptr;
             layoutBindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         }
-        
+
         // Other inputs
         for (int i = 0; i < otherInputs.size(); i++) {
             layoutBindings[inputs.size() + i].binding = inputs.size() + i;
@@ -322,12 +294,12 @@ private:
             layoutBindings[inputs.size() + i].pImmutableSamplers = nullptr;
             layoutBindings[inputs.size() + i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         }
-        
+
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = (uint32_t)layoutBindings.size();
         layoutInfo.pBindings = layoutBindings.data();
-        
+
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute descriptor set layout!");
         }
@@ -341,12 +313,12 @@ private:
         allocInfo.descriptorPool = descriptorPool;
         allocInfo.descriptorSetCount = 1;
         allocInfo.pSetLayouts = &computeDescriptorSetLayout;
-    
+
         if (vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSets[pathId]) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate descriptor sets!");
         }
 
-        // creates memory for the descriptor sets 
+        // creates memory for the descriptor sets
         // that is alive until the method goes out of scope
         // (past the vkUpdateDescriptorSets call)
         std::vector<VkDescriptorImageInfo> imageInfos;
@@ -355,9 +327,9 @@ private:
         bufferInfos.reserve(inputs.size());
 
         std::vector<VkWriteDescriptorSet> descriptorWrites{inputs.size() + otherInputs.size()};
-        
+
         // Regular inputs
-        for(int i = 0; i < inputs.size(); i++) {
+        for (int i = 0; i < inputs.size(); i++) {
             ComputeGraphElementPtr inputPtr = getInputElement(i);
 
             // Cast input to BufferElement to access underlying buffer
@@ -365,14 +337,13 @@ private:
             ImageViewSrc* imageElement = dynamic_cast<ImageViewSrc*>(inputPtr.get());
             UniformBufferObjectInterface* uboElement = dynamic_cast<UniformBufferObjectInterface*>(inputPtr.get());
 
-            
             if (imageElement) {
                 VkDescriptorImageInfo& imageInfo = imageInfos.emplace_back();
-                
+
                 imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 imageInfo.imageView = imageElement->getImageView(pathId);
                 // imageInfo.sampler = imageElement->getSampler();
-                
+
                 descriptorWrites[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[i].dstSet = computeDescriptorSets[pathId];
                 descriptorWrites[i].dstBinding = i;
@@ -410,12 +381,11 @@ private:
                 descriptorWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
                 descriptorWrites[i].descriptorCount = 1;
                 descriptorWrites[i].pBufferInfo = &inputBufferInfo;
-            }
-            else {
+            } else {
                 throw std::runtime_error("not implemented yet");
             }
         }
-        
+
         // Other inputs
         std::vector<VkDescriptorBufferInfo> storageBufferInfoOthers(otherInputs.size());
         for (int i = 0; i < otherInputs.size(); i++) {
@@ -453,7 +423,7 @@ private:
             computeShaderStages[i].module = computeShaderModules[i];
             computeShaderStages[i].pName = "main";
         }
-    
+
         // pushConstantRange must outlive vkCreatePipelineLayout — declare outside the
         // if constexpr block to avoid a dangling pointer in pPushConstantRanges.
         VkPushConstantRange pushConstantRange{};
@@ -479,15 +449,16 @@ private:
         std::vector<VkComputePipelineCreateInfo> pipelineInfos(computeShaderStages.size());
         for (size_t i = 0; i < computeShaderStages.size(); i++) {
             VkComputePipelineCreateInfo& pipelineInfo = pipelineInfos[i];
-            pipelineInfo.sType              = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-            pipelineInfo.layout             = computePipelineLayout;
-            pipelineInfo.stage              = computeShaderStages[i];
+            pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            pipelineInfo.layout = computePipelineLayout;
+            pipelineInfo.stage = computeShaderStages[i];
             pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-            pipelineInfo.basePipelineIndex  = -1;
+            pipelineInfo.basePipelineIndex = -1;
         }
 
         computePipelines.resize(computeShaderStages.size());
-        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, (uint32_t)computeShaderStages.size(), pipelineInfos.data(), nullptr, computePipelines.data()) != VK_SUCCESS) {
+        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, (uint32_t)computeShaderStages.size(), pipelineInfos.data(),
+                                     nullptr, computePipelines.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline!");
         }
 
@@ -495,7 +466,7 @@ private:
             vkDestroyShaderModule(device, computeShaderModules[i], nullptr);
         }
     }
-    
+
     void recordScratchToZero(VkCommandBuffer commandBuffer, uint32_t pathId) {
         for (size_t i = 0; i < otherInputs.size(); i++) {
             auto& scratch = otherInputs[i];
@@ -509,30 +480,27 @@ private:
 
     void bind(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[pathId], 0, 0);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1,
+                                &computeDescriptorSets[pathId], 0, 0);
     }
 
     void dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline) {
-        if (dynamicGroupDispatchParams == nullptr)
-        {
+        if (dynamicGroupDispatchParams == nullptr) {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
-        }
-        else
-        {
+        } else {
             vkCmdDispatchIndirect(commandBuffer, dynamicGroupDispatchParams->getVkBuffer(pathId), 0);
         }
     }
 
-    template<typename PushConstantType = P>
+    template <typename PushConstantType = P>
     typename std::enable_if<!std::is_void<PushConstantType>::value, void>::type
-    dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline, const PushConstantType* pushConstant) {
-        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstantType), pushConstant);
-        if (dynamicGroupDispatchParams == nullptr)
-        {
+    dispatch(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline,
+             const PushConstantType* pushConstant) {
+        vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                           sizeof(PushConstantType), pushConstant);
+        if (dynamicGroupDispatchParams == nullptr) {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
-        }
-        else
-        {
+        } else {
             vkCmdDispatchIndirect(commandBuffer, dynamicGroupDispatchParams->getVkBuffer(0), 0);
         }
         VkMemoryBarrier memoryBarrier{};
@@ -540,14 +508,8 @@ private:
         memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0,
-            1, &memoryBarrier,
-            0, nullptr,
-            0, nullptr
-        );
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 1, &memoryBarrier, 0, nullptr, 0, nullptr);
     }
 };
 

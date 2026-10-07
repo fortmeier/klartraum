@@ -34,9 +34,7 @@ public:
 
     // virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
 
-    virtual const char* getType() const {
-        return "TensorElement";
-    }
+    virtual const char* getType() const { return "TensorElement"; }
 
     // virtual size_t getBufferMemSize() const = 0;
 
@@ -81,14 +79,11 @@ public:
      * @param dataUsageFlags Vulkan usage flags for the data buffer
      * @param dimUsageFlags Vulkan usage flags for the dimensions buffer
      */
-    TensorElement(
-        VulkanContext& vulkanContext,
-        uint32_t batch,
-        uint32_t depth,
-        uint32_t height,
-        uint32_t width,
-        VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+    TensorElement(VulkanContext& vulkanContext, uint32_t batch, uint32_t depth, uint32_t height, uint32_t width,
+                  VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                  VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                     VK_BUFFER_USAGE_TRANSFER_DST_BIT)
         : TensorElementInterface(),
           vulkanContext(vulkanContext),
           dimensions({width, height, depth, batch}),
@@ -107,11 +102,11 @@ public:
      * @param dataUsageFlags Vulkan usage flags for the data buffer
      * @param dimUsageFlags Vulkan usage flags for the dimensions buffer
      */
-    TensorElement(
-        VulkanContext& vulkanContext,
-        const std::vector<uint32_t>& dimensions,
-        VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+    TensorElement(VulkanContext& vulkanContext, const std::vector<uint32_t>& dimensions,
+                  VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                  VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                     VK_BUFFER_USAGE_TRANSFER_DST_BIT)
         : TensorElementInterface(),
           vulkanContext(vulkanContext),
           dimensions(dimensions),
@@ -153,9 +148,7 @@ public:
         }
     }
 
-    virtual const char* getType() const override {
-        return "TensorElement";
-    }
+    virtual const char* getType() const override { return "TensorElement"; }
 
     // Tensor-specific accessors
 
@@ -172,23 +165,17 @@ public:
     /**
      * @brief Get the dimensions buffer
      */
-    virtual VulkanBuffer<uint32_t>& getDimensionsBuffer() {
-        return *dimensionBuffer;
-    }
+    virtual VulkanBuffer<uint32_t>& getDimensionsBuffer() { return *dimensionBuffer; }
 
     /**
      * @brief Get the Vulkan buffer handle for data buffer
      */
-    virtual VkBuffer& getDataVkBuffer(uint32_t pathId) override {
-        return getDataBuffer(pathId).getBuffer();
-    }
+    virtual VkBuffer& getDataVkBuffer(uint32_t pathId) override { return getDataBuffer(pathId).getBuffer(); }
 
     /**
      * @brief Get the Vulkan buffer handle for dimensions buffer
      */
-    virtual VkBuffer& getDimensionsVkBuffer() override {
-        return getDimensionsBuffer().getBuffer();
-    }
+    virtual VkBuffer& getDimensionsVkBuffer() override { return getDimensionsBuffer().getBuffer(); }
 
     /**
      * @brief Get tensor dimensions
@@ -221,9 +208,7 @@ public:
     /**
      * @brief Get total memory size for dimensions buffers
      */
-    size_t getDimensionsBufferMemSize() const {
-        return dimensionBuffer->getBufferMemSize();
-    }
+    size_t getDimensionsBufferMemSize() const { return dimensionBuffer->getBufferMemSize(); }
 
     /**
      * @brief Copy data to the data buffer for a specific compute path
@@ -234,8 +219,8 @@ public:
         }
 
         if (data.size() != dataElements) {
-            throw std::runtime_error("TensorElement: Data size mismatch. Expected " +
-                                     std::to_string(dataElements) + " but got " + std::to_string(data.size()));
+            throw std::runtime_error("TensorElement: Data size mismatch. Expected " + std::to_string(dataElements) +
+                                     " but got " + std::to_string(data.size()));
         }
 
         dataBuffers[pathId].memcopyFrom(data);
@@ -250,13 +235,9 @@ public:
     }
 
     // overrides for BufferElementInterface
-    virtual size_t getBufferMemSize() const override {
-        return dataBuffers[0].getBufferMemSize();
-    }
+    virtual size_t getBufferMemSize() const override { return dataBuffers[0].getBufferMemSize(); }
 
-    virtual VkBuffer& getVkBuffer(uint32_t pathId) override {
-        return getDataVkBuffer(pathId);
-    }
+    virtual VkBuffer& getVkBuffer(uint32_t pathId) override { return getDataVkBuffer(pathId); }
 
 private:
     VulkanContext& vulkanContext;
@@ -280,7 +261,8 @@ private:
 
     void validateDimensions(const std::vector<uint32_t>& dims) {
         // if (dims.size() != 4) {
-        //     throw std::runtime_error("TensorElement: Dimensions must contain exactly 4 values [width, height, depth, batch]");
+        //     throw std::runtime_error("TensorElement: Dimensions must contain exactly 4 values [width, height, depth,
+        //     batch]");
         // }
 
         for (size_t i = 0; i < dims.size(); ++i) {
@@ -314,15 +296,10 @@ public:
      * @param dimUsageFlags Vulkan usage flags for the dimensions buffer
      */
     TensorElementSinglePath(
-        VulkanContext& vulkanContext,
-        uint32_t batch,
-        uint32_t depth,
-        uint32_t height,
-        uint32_t width,
+        VulkanContext& vulkanContext, uint32_t batch, uint32_t depth, uint32_t height, uint32_t width,
         VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-        : TensorElement<DataType>(vulkanContext, batch, depth, height, width, dataUsageFlags, dimUsageFlags) {
-    }
+        : TensorElement<DataType>(vulkanContext, batch, depth, height, width, dataUsageFlags, dimUsageFlags) {}
 
     /**
      * @brief Construct a TensorElementSinglePath with specified dimensions
@@ -332,13 +309,12 @@ public:
      * @param dataUsageFlags Vulkan usage flags for the data buffer
      * @param dimUsageFlags Vulkan usage flags for the dimensions buffer
      */
-    TensorElementSinglePath(
-        VulkanContext& vulkanContext,
-        const std::vector<uint32_t>& dimensions,
-        VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-        : TensorElement<DataType>(vulkanContext, dimensions, dataUsageFlags, dimUsageFlags) {
-    }
+    TensorElementSinglePath(VulkanContext& vulkanContext, const std::vector<uint32_t>& dimensions,
+                            VkBufferUsageFlags dataUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                            VkBufferUsageFlags dimUsageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                               VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+        : TensorElement<DataType>(vulkanContext, dimensions, dataUsageFlags, dimUsageFlags) {}
 
     virtual ~TensorElementSinglePath() = default;
 
@@ -347,9 +323,7 @@ public:
         TensorElement<DataType>::_setup(vulkanContext, 1);
     }
 
-    virtual const char* getType() const override {
-        return "TensorElementSinglePath";
-    }
+    virtual const char* getType() const override { return "TensorElementSinglePath"; }
 
     VulkanBuffer<DataType>& getDataBuffer(uint32_t pathId = -1) override {
         return TensorElement<DataType>::getDataBuffer(0);
@@ -360,9 +334,7 @@ public:
         return TensorElement<DataType>::getDataVkBuffer(0);
     }
 
-    virtual VkBuffer& getVkBuffer(uint32_t pathId = -1) override {
-        return TensorElement<DataType>::getVkBuffer(0);
-    }
+    virtual VkBuffer& getVkBuffer(uint32_t pathId = -1) override { return TensorElement<DataType>::getVkBuffer(0); }
 
 private:
 };

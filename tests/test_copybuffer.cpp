@@ -65,7 +65,6 @@ TEST_F(CopyBufferTest, BasicCopyBufferTest) {
     // Verify the data matches
     for (size_t i = 0; i < testData.size(); ++i) {
         EXPECT_FLOAT_EQ(testData[i], resultData[i])
-            << "Mismatch at index " << i << ": expected " << testData[i]
-            << ", got " << resultData[i];
+            << "Mismatch at index " << i << ": expected " << testData[i] << ", got " << resultData[i];
     }
 }

@@ -22,9 +22,9 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
-    _CrtSetReportMode(_CRT_ERROR,  _CRTDBG_MODE_FILE);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
-    _CrtSetReportFile(_CRT_ERROR,  _CRTDBG_FILE_STDERR);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 #endif
 
     // Parse args:  --frames N   (close after N frames)
@@ -41,7 +41,10 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--frames" && i + 1 < argc) {
-            try { maxFrames = std::stoi(argv[++i]); } catch (...) {}
+            try {
+                maxFrames = std::stoi(argv[++i]);
+            } catch (...) {
+            }
         } else if (arg == "--backend" && i + 1 < argc) {
             std::string value = argv[++i];
             if (value == "compute") {
@@ -78,10 +81,8 @@ int main(int argc, char** argv) {
         flipY = true;
     }
 
-    const double cameraDistance = std::sqrt(
-        cameraPosition.x * cameraPosition.x +
-        cameraPosition.y * cameraPosition.y +
-        cameraPosition.z * cameraPosition.z);
+    const double cameraDistance = std::sqrt(cameraPosition.x * cameraPosition.x + cameraPosition.y * cameraPosition.y +
+                                            cameraPosition.z * cameraPosition.z);
     if (!std::isfinite(cameraDistance) || cameraDistance <= 0.0) {
         std::cerr << "--camera-position must be finite and different from the origin" << std::endl;
         return 1;
@@ -89,12 +90,13 @@ int main(int argc, char** argv) {
 
     std::cout << "Gaussian Splatting example";
     std::cout << " (backend: " << (backend == klartraum::GsplatBackend::Raster ? "raster" : "compute") << ")";
-    if (maxFrames > 0) std::cout << " (closing after " << maxFrames << " frames)";
+    if (maxFrames > 0)
+        std::cout << " (closing after " << maxFrames << " frames)";
     std::cout << std::endl;
     std::cout << "Loading scene: " << spzFile << std::endl;
-    if (flipY) std::cout << "Flipping scene Y axis" << std::endl;
-    std::cout << "Camera position: " << cameraPosition.x << " "
-              << cameraPosition.y << " " << cameraPosition.z
+    if (flipY)
+        std::cout << "Flipping scene Y axis" << std::endl;
+    std::cout << "Camera position: " << cameraPosition.x << " " << cameraPosition.y << " " << cameraPosition.z
               << " (looking at 0 0 0)" << std::endl;
 
     klartraum::GlfwFrontend frontend;
@@ -115,11 +117,11 @@ int main(int argc, char** argv) {
         auto& vc = e.getVulkanContext();
         uint32_t numImages = vc.getNumberOfSwapChainImages();
         std::vector<VkImageView> imageViews(numImages);
-        std::vector<VkImage>     images(numImages);
-        std::vector<VkExtent2D>  extents(numImages, vc.getSwapChainExtent());
+        std::vector<VkImage> images(numImages);
+        std::vector<VkExtent2D> extents(numImages, vc.getSwapChainExtent());
         for (uint32_t i = 0; i < numImages; ++i) {
             imageViews[i] = vc.getImageView(i);
-            images[i]     = vc.getSwapChainImage(i);
+            images[i] = vc.getSwapChainImage(i);
         }
         auto imageViewSrc = std::make_shared<klartraum::ImageViewSrc>(imageViews, images, extents);
         for (uint32_t i = 0; i < numImages; ++i) {
@@ -129,14 +131,13 @@ int main(int argc, char** argv) {
         auto cameraUBO = std::make_shared<klartraum::CameraUboType>();
         cameraUBO->setName("CameraUBO");
 
-        auto splatting = klartraum::createGaussianSplatting(
-            vc, backend, imageViewSrc, cameraUBO, model);
+        auto splatting = klartraum::createGaussianSplatting(vc, backend, imageViewSrc, cameraUBO, model);
         e.add(splatting);
         e.setCameraUBO(cameraUBO);
     });
 
-    auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
-        klartraum::InterfaceCameraOrbit::UpDirection::Y);
+    auto cameraOrbit =
+        std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
     cameraOrbit->initialize(vulkanContext);
     cameraOrbit->setPosition({0.0f, 0.0f, 0.0f});
     cameraOrbit->setAzimuth(std::atan2(cameraPosition.z, cameraPosition.x));

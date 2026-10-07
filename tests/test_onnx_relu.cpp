@@ -82,17 +82,14 @@ TEST_F(OnnxReluTest, ReluGeneralComputationFullTest) {
 
     // Create input and output tensors for ReLU operation
     // Input tensor [1, 2, 3, 4] - batch=1, channels=2, height=3, width=4
-    auto inputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 2, 3, 4});
+    auto inputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 2, 3, 4});
 
     // Output tensor [1, 2, 3, 4] - ReLU keeps same dimensions
-    auto outputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 2, 3, 4});
+    auto outputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 2, 3, 4});
 
     // Create GeneralComputation with ReLU shader
     std::string reluShaderPath = "shaders/onnx/relu.comp.spv";
-    auto reluComputation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(
-        reluShaderPath);
+    auto reluComputation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(reluShaderPath);
 
     // Set up push constants for ReLU
     TensorOpPushConstants pushConstants = {};
@@ -185,9 +182,7 @@ TEST_F(OnnxReluTest, ReluGeneralComputationFullTest) {
     const float epsilon = 1e-6f;
     for (size_t i = 0; i < expectedOutput.size(); ++i) {
         EXPECT_NEAR(outputData[i], expectedOutput[i], epsilon)
-            << "ReLU output mismatch at index " << i
-            << ": expected " << expectedOutput[i]
-            << ", got " << outputData[i]
+            << "ReLU output mismatch at index " << i << ": expected " << expectedOutput[i] << ", got " << outputData[i]
             << " (input was " << inputData[i] << ")";
     }
 
@@ -195,12 +190,12 @@ TEST_F(OnnxReluTest, ReluGeneralComputationFullTest) {
     for (size_t i = 0; i < inputData.size(); ++i) {
         if (inputData[i] <= 0.0f) {
             EXPECT_NEAR(outputData[i], 0.0f, epsilon)
-                << "Negative/zero input at index " << i
-                << " (value: " << inputData[i] << ") should produce zero output, got " << outputData[i];
+                << "Negative/zero input at index " << i << " (value: " << inputData[i]
+                << ") should produce zero output, got " << outputData[i];
         } else {
             EXPECT_NEAR(outputData[i], inputData[i], epsilon)
-                << "Positive input at index " << i
-                << " (value: " << inputData[i] << ") should be unchanged, got " << outputData[i];
+                << "Positive input at index " << i << " (value: " << inputData[i] << ") should be unchanged, got "
+                << outputData[i];
         }
     }
 }

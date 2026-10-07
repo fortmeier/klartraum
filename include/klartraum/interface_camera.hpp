@@ -13,7 +13,6 @@ namespace klartraum {
 
 class InterfaceCamera {
 public:
-
     virtual void initialize(VulkanContext& vulkanContext) = 0;
 
     virtual void update(CameraMVP& mvp) = 0;
@@ -21,6 +20,5 @@ public:
 };
 
 } // namespace klartraum
-
 
 #endif // KLARTRAUM_INTERFACE_CAMERA_HPP
