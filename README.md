@@ -36,4 +36,6 @@ Requirements, platform notes, tests and a walk-through of a first application ar
 
 ## License
 
-[MIT](LICENSE)
+Klartraum is licensed under the [MIT License](LICENSE). Builds include
+third-party software under its own licenses, listed with their notices in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
