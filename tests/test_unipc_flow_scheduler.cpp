@@ -4,10 +4,13 @@
 
 /**
  * TESTS:
- * - The shifted flow schedule and truncated timesteps match diffusers for four steps.
- * - A single step lands on the data prediction x - sigma * v.
- * - Four steps with a synthetic velocity reproduce diffusers' UniPC samples, warm-up and corrector included.
- * - Stepping past the schedule and mismatched sizes are rejected.
+ * - ScheduleMatchesDiffusers: The shifted flow schedule and truncated timesteps match
+ *   diffusers for four steps
+ * - SingleStepReturnsDataPrediction: A single step lands on the data prediction x -
+ *   sigma * v
+ * - FourStepsMatchDiffusers: Four steps with a synthetic velocity reproduce diffusers'
+ *   UniPC samples, warm-up and corrector included
+ * - RejectsInvalidUse: Stepping past the schedule and mismatched sizes are rejected
  **/
 
 #include <cstddef>

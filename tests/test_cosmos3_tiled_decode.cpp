@@ -4,13 +4,17 @@
 
 /**
  * TESTS:
- * - Tile offsets advance by the stride, end-align the last tile, and reduce to one tile when it fits.
- * - Invalid tile and stride sizes are rejected.
- * - Blend ramps rise and fall linearly, and keep weight one on sides without a neighbour.
- * - Ramps of tiles that overlap by the ramp length sum to one in the overlap.
- * - A single tile covering the tensor is returned unchanged.
- * - Tiles cut from a known [C, T, H, W] tensor blend back to it exactly (3x3 tiles, Cosmos3 layout).
- * - Uncovered samples are rejected.
+ * - tileOffsetsCoverTheAxis: Tile offsets advance by the stride, end-align the last
+ *   tile, and reduce to one tile when it fits
+ * - invalidTilingIsRejected: Invalid tile and stride sizes are rejected
+ * - blendRampShape: Blend ramps rise and fall linearly, and keep weight one on sides
+ *   without a neighbour
+ * - overlappingRampsSumToOne: Ramps of tiles that overlap by the ramp length sum to one
+ *   in the overlap
+ * - singleTileIsUnchanged: A single tile covering the tensor is returned unchanged
+ * - tilesOfAKnownTensorBlendBackExactly: Tiles cut from a known [C, T, H, W] tensor
+ *   blend back to it exactly (3x3 tiles, Cosmos3 layout)
+ * - uncoveredSamplesAreRejected: Uncovered samples are rejected
  **/
 
 #include <cstdint>
