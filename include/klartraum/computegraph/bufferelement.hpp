@@ -9,54 +9,47 @@
 
 namespace klartraum {
 
-
 class BufferElementInterface : public ComputeGraphElement {
 public:
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override = 0;
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override = 0;
 
-    virtual const char* getType() const override{
-        return "BufferElement";
-    }
+    virtual const char* getType() const override { return "BufferElement"; }
 
     virtual size_t getBufferMemSize() const = 0;
 
     virtual VkBuffer& getVkBuffer(uint32_t pathId) = 0;
 
 private:
-
 };
 
-template<typename BufferType>
+template <typename BufferType>
 class TemplatedBufferElementInterface : public BufferElementInterface {
 public:
     virtual BufferType& getBuffer(uint32_t pathId) = 0;
 };
 
-template<typename BufferType>
+template <typename BufferType>
 class BufferElement : public TemplatedBufferElementInterface<BufferType> {
 public:
-    BufferElement(VulkanContext& vulkanContext, uint32_t numberElements):
-        vulkanContext(vulkanContext), numberElements(numberElements) {
-    }
+    BufferElement(VulkanContext& vulkanContext, uint32_t numberElements)
+        : vulkanContext(vulkanContext),
+          numberElements(numberElements) {}
 
-    BufferElement(VulkanContext& vulkanContext, uint32_t numberElements, VkBufferUsageFlags flags):
-        vulkanContext(vulkanContext), numberElements(numberElements), bufferUsageFlags(flags) {
-    }
+    BufferElement(VulkanContext& vulkanContext, uint32_t numberElements, VkBufferUsageFlags flags)
+        : vulkanContext(vulkanContext),
+          numberElements(numberElements),
+          bufferUsageFlags(flags) {}
 
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         buffers.reserve(numberPaths);
-        for(uint32_t i = 0; i < numberPaths; i++) {
-            if (bufferUsageFlags == VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM)
-            {
+        for (uint32_t i = 0; i < numberPaths; i++) {
+            if (bufferUsageFlags == VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM) {
                 buffers.emplace_back(vulkanContext, numberElements);
-            }
-            else
-            {
+            } else {
                 buffers.emplace_back(vulkanContext, numberElements, bufferUsageFlags);
             }
-            
         }
     };
 
@@ -70,17 +63,11 @@ public:
         }
     };
 
-    virtual const char* getType() const {
-        return "BufferElement";
-    }
+    virtual const char* getType() const { return "BufferElement"; }
 
-    virtual size_t getBufferMemSize() const {
-        return buffers[0].getBufferMemSize();
-    }
+    virtual size_t getBufferMemSize() const { return buffers[0].getBufferMemSize(); }
 
-    virtual BufferType& getBuffer(uint32_t pathId) {
-        return buffers[pathId];
-    }
+    virtual BufferType& getBuffer(uint32_t pathId) { return buffers[pathId]; }
 
     void zero() {
         for (auto& buffer : buffers) {
@@ -88,9 +75,7 @@ public:
         }
     }
 
-    void setRecordToZero(bool _setToZero) {
-        recordToZero = _setToZero;
-    }
+    void setRecordToZero(bool _setToZero) { recordToZero = _setToZero; }
 
     // Reset only a byte range each frame (e.g. VkDrawIndirectCommand::instanceCount)
     // instead of blanket-zeroing the whole buffer, so other fields (vertexCount,
@@ -112,9 +97,7 @@ public:
         fillValue = value;
     }
 
-    virtual VkBuffer& getVkBuffer(uint32_t pathId) {
-        return buffers[pathId].getBuffer();
-    };
+    virtual VkBuffer& getVkBuffer(uint32_t pathId) { return buffers[pathId].getBuffer(); };
 
 private:
     VulkanContext& vulkanContext;
@@ -128,39 +111,29 @@ private:
     bool recordToFill = false;
     uint32_t fillValue = 0;
     VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM;
-
 };
 
-
-template<typename BufferType>
+template <typename BufferType>
 class BufferElementSinglePath : public TemplatedBufferElementInterface<BufferType> {
 public:
-    template<typename... Args>
-    BufferElementSinglePath(Args&&... args) : buffer(std::forward<Args>(args)...) {}
+    template <typename... Args>
+    BufferElementSinglePath(Args&&... args)
+        : buffer(std::forward<Args>(args)...) {}
 
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {};
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
 
-    virtual const char* getType() const {
-        return "BufferElementSinglePath";
-    }
+    virtual const char* getType() const { return "BufferElementSinglePath"; }
 
-    virtual size_t getBufferMemSize() const {
-        return buffer.getBufferMemSize();
-    }
+    virtual size_t getBufferMemSize() const { return buffer.getBufferMemSize(); }
 
-    BufferType& getBuffer(uint32_t pathId = 0) {
-        return buffer;
-    }
+    BufferType& getBuffer(uint32_t pathId = 0) { return buffer; }
 
-    virtual VkBuffer& getVkBuffer(uint32_t pathId = 0) {
-        return buffer.getBuffer();
-    };
+    virtual VkBuffer& getVkBuffer(uint32_t pathId = 0) { return buffer.getBuffer(); };
 
 private:
     BufferType buffer;
-
 };
 
 } // namespace klartraum

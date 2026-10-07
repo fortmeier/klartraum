@@ -61,7 +61,8 @@ std::vector<Gaussian3D> randomGaussians(uint32_t count, unsigned seed) {
 }
 
 // Reads a buffer (path 0) back as T values.
-template <typename T> std::vector<T> readBack(const BufferRef& ref) {
+template <typename T>
+std::vector<T> readBack(const BufferRef& ref) {
     auto element = std::dynamic_pointer_cast<TemplatedBufferElementInterface<VulkanBuffer<T>>>(ref.buffer());
     if (!element) {
         throw std::runtime_error("unexpected buffer type");
@@ -106,7 +107,9 @@ void expectSameGaussian(const Gaussian3D& a, const Gaussian3D& b, float toleranc
         EXPECT_NEAR(a.color[k], b.color[k], tolerance);
     }
     const float sign = (a.rotation[0] * b.rotation[0] + a.rotation[1] * b.rotation[1] + a.rotation[2] * b.rotation[2] +
-                        a.rotation[3] * b.rotation[3]) < 0.0f ? -1.0f : 1.0f;
+                        a.rotation[3] * b.rotation[3]) < 0.0f
+                           ? -1.0f
+                           : 1.0f;
     for (int k = 0; k < 4; ++k) {
         EXPECT_NEAR(a.rotation[k], sign * b.rotation[k], tolerance);
     }

@@ -14,10 +14,7 @@ namespace klartraum {
 
 class InterfaceCameraOrbit : public InterfaceCamera {
 public:
-    enum class UpDirection {
-        Z,
-        Y
-    };    
+    enum class UpDirection { Z, Y };
 
     InterfaceCameraOrbit(UpDirection up = UpDirection::Z);
 
@@ -28,67 +25,35 @@ public:
 
     void updatePosition(float deltaTime);
 
+    void setUpDirection(UpDirection up) { this->up = up; }
 
-    void setUpDirection(UpDirection up) {
-        this->up = up;
-    }
+    void setDistance(double distance) { this->distance = distance; }
 
-    void setDistance(double distance) {
-        this->distance = distance;
-    }
+    void setAzimuth(double azimuth) { this->azimuth = azimuth; }
 
-    void setAzimuth(double azimuth) {
-        this->azimuth = azimuth;
-    }
+    void setElevation(double elevation) { this->elevation = elevation; }
 
-    void setElevation(double elevation) {
-        this->elevation = elevation;
-    }
+    void setPosition(const glm::vec3& position) { this->position = position; }
 
-    void setPosition(const glm::vec3& position) {
-        this->position = position;
-    }
+    void setNearPlane(float nearPlane) { this->nearPlane = nearPlane; }
 
-    void setNearPlane(float nearPlane) {
-        this->nearPlane = nearPlane;
-    }
+    void setFarPlane(float farPlane) { this->farPlane = farPlane; }
 
-    void setFarPlane(float farPlane) {
-        this->farPlane = farPlane;
-    }
+    void setProjectionAspectRatio(float aspectRatio) { projectionAspectRatio = aspectRatio; }
 
-    void setProjectionAspectRatio(float aspectRatio) {
-        projectionAspectRatio = aspectRatio;
-    }
+    void useSwapChainAspectRatio() { projectionAspectRatio.reset(); }
 
-    void useSwapChainAspectRatio() {
-        projectionAspectRatio.reset();
-    }
+    double getDistance() const { return distance; }
 
-    double getDistance() const {
-        return distance;
-    }
+    double getAzimuth() const { return azimuth; }
 
-    double getAzimuth() const {
-        return azimuth;
-    }
+    double getElevation() const { return elevation; }
 
-    double getElevation() const {
-        return elevation;
-    }
+    const glm::vec3& getPosition() const { return position; }
 
-    const glm::vec3& getPosition() const {
-        return position;
-    }
+    float getNearPlane() const { return nearPlane; }
 
-    float getNearPlane() const {
-        return nearPlane;
-    }
-
-    float getFarPlane() const {
-        return farPlane;
-    }
-
+    float getFarPlane() const { return farPlane; }
 
 private:
     VulkanContext* vulkanContext = nullptr;

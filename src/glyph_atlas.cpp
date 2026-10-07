@@ -206,8 +206,8 @@ const char* const kGlyphPatterns[GLYPH_COUNT][GLYPH_PIXEL_HEIGHT] = {
 };
 
 // Pattern used for the "missing glyph" cell: a hollow box.
-const char* const kMissingGlyphPattern[GLYPH_PIXEL_HEIGHT] = {
-    "XXXXX", "X...X", "X...X", "X...X", "X...X", "X...X", "XXXXX"};
+const char* const kMissingGlyphPattern[GLYPH_PIXEL_HEIGHT] = {"XXXXX", "X...X", "X...X", "X...X",
+                                                              "X...X", "X...X", "XXXXX"};
 
 const char* const* patternForIndex(int index) {
     if (index >= 0 && index < GLYPH_COUNT) {
@@ -216,7 +216,7 @@ const char* const* patternForIndex(int index) {
     return kMissingGlyphPattern;
 }
 
-}  // namespace
+} // namespace
 
 int glyphIndexForChar(int charCode) {
     if (charCode < GLYPH_FIRST_CHAR || charCode > GLYPH_LAST_CHAR) {
@@ -233,10 +233,8 @@ GlyphUVRect glyphUVRect(int charCode) {
     GlyphUVRect rect;
     rect.u0 = static_cast<float>(col * GLYPH_CELL_WIDTH) / static_cast<float>(GLYPH_ATLAS_WIDTH);
     rect.v0 = static_cast<float>(row * GLYPH_CELL_HEIGHT) / static_cast<float>(GLYPH_ATLAS_HEIGHT);
-    rect.u1 = static_cast<float>(col * GLYPH_CELL_WIDTH + GLYPH_PIXEL_WIDTH) /
-              static_cast<float>(GLYPH_ATLAS_WIDTH);
-    rect.v1 = static_cast<float>(row * GLYPH_CELL_HEIGHT + GLYPH_PIXEL_HEIGHT) /
-              static_cast<float>(GLYPH_ATLAS_HEIGHT);
+    rect.u1 = static_cast<float>(col * GLYPH_CELL_WIDTH + GLYPH_PIXEL_WIDTH) / static_cast<float>(GLYPH_ATLAS_WIDTH);
+    rect.v1 = static_cast<float>(row * GLYPH_CELL_HEIGHT + GLYPH_PIXEL_HEIGHT) / static_cast<float>(GLYPH_ATLAS_HEIGHT);
     return rect;
 }
 
@@ -265,4 +263,4 @@ std::vector<uint8_t> generateGlyphAtlasBitmap() {
     return bitmap;
 }
 
-}  // namespace klartraum
+} // namespace klartraum

@@ -16,11 +16,11 @@ namespace klartraum {
 
 class RenderPass : public ImageViewSrc, public RenderGraphElement {
 public:
-    RenderPass(VkFormat swapChainImageFormat, VkExtent2D extent) :
-        swapChainImageFormat(swapChainImageFormat),
-        swapChainExtent(extent) {
-    
-    };
+    RenderPass(VkFormat swapChainImageFormat, VkExtent2D extent)
+        : swapChainImageFormat(swapChainImageFormat),
+          swapChainExtent(extent) {
+
+          };
 
     ~RenderPass() {
         // Nothing was created if the pass was never compiled into a graph.
@@ -32,7 +32,6 @@ public:
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
         vkDestroyRenderPass(device, renderPass, nullptr);
-
     };
 
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) {
@@ -49,22 +48,20 @@ public:
         }
     }
 
-    virtual const char* getType() const {
-        return "RenderPass";
-    }
+    virtual const char* getType() const { return "RenderPass"; }
 
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         this->vulkanContext = &vulkanContext;
-        
+
         auto& device = vulkanContext.getDevice();
 
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = swapChainImageFormat;
         colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    
+
         colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    
+
         colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
@@ -73,9 +70,8 @@ public:
         // offscreen rendering GENERAL is fine. A viewport target overrides this
         // with TRANSFER_SRC_OPTIMAL so the Window composite can blit from it.
         colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkImageLayout defaultFinal = vulkanContext.hasSurface()
-                                     ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-                                     : VK_IMAGE_LAYOUT_GENERAL;
+        VkImageLayout defaultFinal =
+            vulkanContext.hasSurface() ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL;
         if (auto* ivs = std::dynamic_pointer_cast<ImageViewSrcInterface>(getInputElement(0)).get()) {
             colorAttachment.finalLayout = ivs->getFinalLayoutOverride().value_or(defaultFinal);
         } else {
@@ -85,22 +81,20 @@ public:
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;
         colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    
+
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    
+
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
-    
+
         VkRenderPassCreateInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         renderPassInfo.attachmentCount = 1;
         renderPassInfo.pAttachments = &colorAttachment;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
-    
-    
-    
+
         VkSubpassDependency dependency{};
         dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         dependency.dstSubpass = 0;
@@ -108,10 +102,10 @@ public:
         dependency.srcAccessMask = 0;
         dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    
+
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = &dependency;
-    
+
         if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
             throw std::runtime_error("failed to create render pass!");
         }
@@ -120,13 +114,11 @@ public:
 
         for (uint32_t i = 0; i < framebuffers.size(); i++) {
             VkImageView imageView = this->getImageView(i);
-            VkImageView attachments[] = {
-                imageView
-            }; 
-    
+            VkImageView attachments[] = {imageView};
+
             // TODO create framebuffer with render pass computegraph element
             // and create imageviewsrc instead of framebuffer src
-    
+
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass = renderPass;
@@ -135,19 +127,18 @@ public:
             framebufferInfo.width = swapChainExtent.width;
             framebufferInfo.height = swapChainExtent.height;
             framebufferInfo.layers = 1;
-    
+
             if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create framebuffer!");
             }
         }
 
         auto cameraUBO = getCameraUBO();
-        for(auto& drawComponent : drawComponents) {
+        for (auto& drawComponent : drawComponents) {
             drawComponent->setNumberPaths(numberPaths);
             drawComponent->initialize(vulkanContext, renderPass, cameraUBO);
         }
     };
-
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
         // auto& camera = vulkanContext->getCamera();
@@ -167,43 +158,34 @@ public:
         barrierBack.subresourceRange.levelCount = 1;
         barrierBack.subresourceRange.baseArrayLayer = 0;
         barrierBack.subresourceRange.layerCount = 1;
-        
+
         barrierBack.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         barrierBack.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-        
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-            0,
-            0, nullptr,
-            0, nullptr,
-            1, &barrierBack);        
-       
+
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &barrierBack);
+
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = renderPass;
         renderPassInfo.framebuffer = framebuffers[pathId];
-    
-        renderPassInfo.renderArea.offset = { 0, 0 };
+
+        renderPassInfo.renderArea.offset = {0, 0};
         renderPassInfo.renderArea.extent = swapChainExtent;
-    
-        VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
+
+        VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
         renderPassInfo.clearValueCount = 1;
         renderPassInfo.pClearValues = &clearColor;
-    
+
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-        for(auto& drawComponent : drawComponents) {
+        for (auto& drawComponent : drawComponents) {
             drawComponent->recordCommandBuffer(commandBuffer, framebuffers[pathId], pathId);
         }
-    
-        vkCmdEndRenderPass(commandBuffer);
 
+        vkCmdEndRenderPass(commandBuffer);
     };
 
-    void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) {
-        drawComponents.push_back(drawComponent);
-    }
+    void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) { drawComponents.push_back(drawComponent); }
 
     // Makes `element` a scheduling dependency of this render pass: Kahn
     // ordering (and the per-edge semaphore the graph creates for it) then
@@ -213,9 +195,7 @@ public:
     // indirect draw, bridged through a BufferToGraphicsBarrier) gets ordered
     // ahead of the render pass, alongside the existing ImageViewSrc/camera
     // inputs at indices 0/1.
-    void addComputeDependency(ComputeGraphElementPtr element) {
-        computeDependencies.push_back(element);
-    }
+    void addComputeDependency(ComputeGraphElementPtr element) { computeDependencies.push_back(element); }
 
     virtual std::map<int, ComputeGraphElementPtr> getInputs() const override {
         auto allInputs = inputs;
@@ -227,7 +207,7 @@ public:
     }
 
     VkImageView& getImageView(uint32_t pathId) override {
-        if(inputs.size() == 0) {
+        if (inputs.size() == 0) {
             throw std::runtime_error("no input!");
         }
         ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
@@ -238,7 +218,7 @@ public:
     }
 
     VkImage& getImage(uint32_t pathId) override {
-        if(inputs.size() == 0) {
+        if (inputs.size() == 0) {
             throw std::runtime_error("no input!");
         }
         ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>((getInputElement(0))).get();
@@ -249,7 +229,7 @@ public:
     }
 
     VkExtent2D& getImageExtent(uint32_t pathId) override {
-        if(inputs.size() == 0) {
+        if (inputs.size() == 0) {
             throw std::runtime_error("no input!");
         }
         ImageViewSrc* imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>((getInputElement(0))).get();
@@ -267,10 +247,9 @@ private:
 
     std::vector<VkFramebuffer> framebuffers;
 
-    std::vector<std::shared_ptr<DrawComponent> > drawComponents;
+    std::vector<std::shared_ptr<DrawComponent>> drawComponents;
 
     std::vector<ComputeGraphElementPtr> computeDependencies;
-
 };
 
 typedef std::shared_ptr<RenderPass> RenderPassPtr;

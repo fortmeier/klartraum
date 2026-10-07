@@ -75,4 +75,4 @@ private:
     std::vector<void*> vertexBuffersMapped;
 };
 
-}  // namespace klartraum
+} // namespace klartraum

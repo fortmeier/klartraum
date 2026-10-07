@@ -48,8 +48,7 @@ std::vector<uint8_t> readImage(klartraum::VulkanContext& vc, VkImage image, VkEx
     VkBuffer buf;
     VkDeviceMemory mem;
     vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    buf, mem);
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buf, mem);
     VkCommandBufferAllocateInfo ai{};
     ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     ai.commandPool = vc.getCommandPool();
@@ -164,7 +163,8 @@ int main(int argc, char** argv) {
 
     const double distance = distanceOverride > 0.0 ? distanceOverride : double(glm::length(cameraPosition));
     if (frames == 0 || width == 0 || height == 0 || !(glm::length(cameraPosition) > 0.0f)) {
-        std::cerr << "--frames, --width and --height must be positive, --camera-position must differ from the origin" << std::endl;
+        std::cerr << "--frames, --width and --height must be positive, --camera-position must differ from the origin"
+                  << std::endl;
         return 1;
     }
 
@@ -231,7 +231,8 @@ int main(int argc, char** argv) {
     splatting.reset();
     target.reset();
 
-    std::cout << "wrote " << frames << " frames of " << width << "x" << height << " to " << outDir.string() << std::endl;
+    std::cout << "wrote " << frames << " frames of " << width << "x" << height << " to " << outDir.string()
+              << std::endl;
     std::cout << "mean difference between frame 0 and the view after a full turn: " << loopDifference << std::endl;
 
     // The full-turn view differs from frame 0 only by floating-point rounding

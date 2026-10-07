@@ -28,14 +28,7 @@ class ValueInfoProto;
 
 namespace klartraum {
 
-enum class OnnxDataType {
-    Float32,
-    Float16,
-    Int32,
-    Int64,
-    Uint8,
-    Unknown
-};
+enum class OnnxDataType { Float32, Float16, Int32, Int64, Uint8, Unknown };
 
 // struct OnnxTensorInfo {
 //     std::string name;
@@ -64,9 +57,7 @@ class OnnxNetwork : virtual public ComputeGraphElement, virtual public ComputeGr
      * 3. Managing GPU memory for tensors and intermediate results by ComputeGraphElement instances
      */
 public:
-    OnnxNetwork(
-        VulkanContext& vulkanContext,
-        const std::string& modelPath);
+    OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelPath);
     ~OnnxNetwork();
 
     // Print detailed model information
@@ -78,9 +69,7 @@ public:
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override;
 
     // RenderGraphElement interface
-    virtual const char* getType() const override {
-        return "OnnxNetwork";
-    }
+    virtual const char* getType() const override { return "OnnxNetwork"; }
 
     // Helper methods to access model information
     std::vector<float> getFloatInitializerData(const std::string& name) const;
@@ -89,8 +78,7 @@ public:
     // Replace a declared ONNX graph input with a tensor produced elsewhere in
     // the compute graph. When outputSlot is specified, the producer remains a
     // graph dependency while that output tensor is bound to the ONNX operation.
-    void setInputTensor(const std::string& name, ComputeGraphElementPtr producer,
-                        int outputSlot = -1);
+    void setInputTensor(const std::string& name, ComputeGraphElementPtr producer, int outputSlot = -1);
 
 private:
     // Load ONNX model from file
@@ -99,19 +87,16 @@ private:
     // Model parsing and graph creation
     void createComputeGraph();
 
-    
     void createGraphElementsFromNodes();
     void createGraphElementsFromOutputTensors();
     void connectGraphElements();
     void storeComputeGraphGroupOutputElements();
 
-    void createInfoTensor(const onnx::ValueInfoProto* input,
-        TensorInfoMap& name2TensorInfo,
-        VulkanContext* vulkanContext);
+    void createInfoTensor(const onnx::ValueInfoProto* input, TensorInfoMap& name2TensorInfo,
+                          VulkanContext* vulkanContext);
 
-    void createInitializerTensor(const onnx::TensorProto* initializer,
-        TensorInfoMap& name2TensorInfo,
-        VulkanContext* vulkanContext);
+    void createInitializerTensor(const onnx::TensorProto* initializer, TensorInfoMap& name2TensorInfo,
+                                 VulkanContext* vulkanContext);
 
     // ONNX model data
     std::unique_ptr<onnx::ModelProto> model;

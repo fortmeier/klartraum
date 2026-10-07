@@ -32,24 +32,20 @@ enum class GsplatBackend {
 // std::make_shared<GaussianDataStandard>(vulkanContext, path | gaussians)); the
 // same instance can be passed to several backends/viewports to load the model
 // only once.
-std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
-    VulkanContext& vulkanContext,
-    GsplatBackend backend,
-    std::shared_ptr<ImageViewSrc> imageViewSrc,
-    std::shared_ptr<CameraUboType> cameraUBO,
-    std::shared_ptr<GaussianDataStandard> model,
-    GsplatConfig config = GsplatConfig{});
+std::shared_ptr<ComputeGraphElement> createGaussianSplatting(VulkanContext& vulkanContext, GsplatBackend backend,
+                                                             std::shared_ptr<ImageViewSrc> imageViewSrc,
+                                                             std::shared_ptr<CameraUboType> cameraUBO,
+                                                             std::shared_ptr<GaussianDataStandard> model,
+                                                             GsplatConfig config = GsplatConfig{});
 
 // The same for Gaussians from any source, e.g. the outputs of a
 // GaussianTransform or GaussianMerge; the backend then depends on the
 // elements producing the buffers.
-std::shared_ptr<ComputeGraphElement> createGaussianSplatting(
-    VulkanContext& vulkanContext,
-    GsplatBackend backend,
-    std::shared_ptr<ImageViewSrc> imageViewSrc,
-    std::shared_ptr<CameraUboType> cameraUBO,
-    const GaussianSoABuffers& buffers,
-    GsplatConfig config = GsplatConfig{});
+std::shared_ptr<ComputeGraphElement> createGaussianSplatting(VulkanContext& vulkanContext, GsplatBackend backend,
+                                                             std::shared_ptr<ImageViewSrc> imageViewSrc,
+                                                             std::shared_ptr<CameraUboType> cameraUBO,
+                                                             const GaussianSoABuffers& buffers,
+                                                             GsplatConfig config = GsplatConfig{});
 
 } // namespace klartraum
 

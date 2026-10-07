@@ -20,8 +20,8 @@ typedef UniformBufferObject<CameraMVP> CameraUboType;
 
 class DrawComponent {
 public:
-    virtual void initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass, std::shared_ptr<CameraUboType> cameraUBO)
-    {
+    virtual void initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass,
+                            std::shared_ptr<CameraUboType> cameraUBO) {
         this->vulkanContext = &vulkanContext;
         this->renderPass = &renderPass;
         this->cameraUBO = cameraUBO;

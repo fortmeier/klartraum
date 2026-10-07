@@ -42,18 +42,15 @@ TEST_F(OnnxTransposeTest, Transpose2D) {
     transposeComputation->setGroupCount(2, 3, 1);
     ComputeGraph computeGraph(*vulkanContext, 1);
     computeGraph.compileFrom(transposeComputation);
-    std::vector<float> inputData = {1, 2, 3,
-                                    4, 5, 6};
+    std::vector<float> inputData = {1, 2, 3, 4, 5, 6};
     inputTensor->setData(0, inputData);
     computeGraph.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
-    std::vector<float> expected = {1, 4,
-                                   2, 5,
-                                   3, 6};
+    std::vector<float> expected = {1, 4, 2, 5, 3, 6};
     std::vector<float> readBack(6);
     outputTensor->getDataBuffer(0).memcopyTo(readBack);
     EXPECT_EQ(readBack, expected);
 }
-    TransposePushConstants pushConstants = {};
+TransposePushConstants pushConstants = {};
 
 TEST_F(OnnxTransposeTest, Transpose4D) {
     auto inputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 2, 4, 4});

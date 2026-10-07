@@ -41,4 +41,4 @@ private:
     std::vector<uint32_t> indices;
 };
 
-}  // namespace klartraum
+} // namespace klartraum

@@ -36,7 +36,7 @@ public:
 
 struct GaussianTransformResult {
     std::shared_ptr<GaussianTransform> element;
-    GaussianSoABuffers output;  // inputs 8 .. 14 of the element
+    GaussianSoABuffers output; // inputs 8 .. 14 of the element
 };
 
 inline GaussianTransformResult createGaussianTransform(VulkanContext& vulkanContext, const GaussianSoABuffers& source,

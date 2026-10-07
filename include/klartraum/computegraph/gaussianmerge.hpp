@@ -34,7 +34,7 @@ public:
 
 struct GaussianMergeResult {
     std::shared_ptr<GaussianMerge> element;
-    GaussianSoABuffers output;  // inputs 14 .. 20 of the element
+    GaussianSoABuffers output; // inputs 14 .. 20 of the element
 };
 
 inline GaussianMergeResult createGaussianMerge(VulkanContext& vulkanContext, const GaussianSoABuffers& a,

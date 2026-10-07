@@ -90,7 +90,7 @@ TEST(OnnxReferenceTest, encoderMatchesReference) {
     auto frozen = vc.create<OnnxNetwork>(kFrozenEncoder);
     auto encoder = vc.create<OnnxNetwork>(kEncoder);
 
-    const std::vector<std::string> layers{"/conv1/Conv_output_0", "/relu/Relu_output_0", "/conv2/Conv_output_0",
+    const std::vector<std::string> layers{"/conv1/Conv_output_0",  "/relu/Relu_output_0",  "/conv2/Conv_output_0",
                                           "/relu_1/Relu_output_0", "/conv3/Conv_output_0", "output"};
     const auto actual = runOnce(vc, encoder, {1, 3, 128, 128}, frozen->getFloatInitializerData("input"), layers);
     for (size_t i = 0; i < layers.size(); ++i) {
@@ -129,8 +129,9 @@ TEST(OnnxReferenceTest, encoderDecoderChainMatchesReference) {
     auto frozenEncoder = vc.create<OnnxNetwork>(kFrozenEncoder);
     auto frozenDecoder = vc.create<OnnxNetwork>(kFrozenDecoder);
     // The references form one chain: the decoder's input is the encoder's output.
-    ASSERT_LT(maxAbsDiff(frozenDecoder->getFloatInitializerData("input"),
-                         frozenEncoder->getFloatInitializerData("output")), 1e-5f);
+    ASSERT_LT(
+        maxAbsDiff(frozenDecoder->getFloatInitializerData("input"), frozenEncoder->getFloatInitializerData("output")),
+        1e-5f);
 
     auto encoder = vc.create<OnnxNetwork>(kEncoder);
     auto decoder = vc.create<OnnxNetwork>(kDecoder);

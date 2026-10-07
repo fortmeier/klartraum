@@ -73,7 +73,7 @@ void expectQuadColor(const std::vector<TextVertex>& vertices, size_t base, float
     }
 }
 
-}  // namespace
+} // namespace
 
 TEST(SimpleTextRendererTest, emptyStringProducesEmptyMesh) {
     SimpleTextRenderer renderer;
@@ -161,7 +161,7 @@ TEST(SimpleTextRendererTest, colorIsPropagatedToAllVertices) {
 
 TEST(SimpleTextRendererTest, outOfRangeCharacterUsesMissingGlyphUv) {
     SimpleTextRenderer renderer;
-    const std::string text = "\x01";  // control character, outside [32, 126]
+    const std::string text = "\x01"; // control character, outside [32, 126]
     renderer.setText(text, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
 
     const GlyphUVRect missingUv = glyphUVRect(0x01);

@@ -29,8 +29,8 @@ TEST(DrawIndirectCommandBufferElement, partialResetPreservesVertexCount) {
     auto& core = frontend.getKlartraumEngine();
     auto& vulkanContext = core.getVulkanContext();
 
-    auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(vulkanContext, 1,
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
+        vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     // Reset only instanceCount each frame; vertexCount must survive across submissions.
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
@@ -63,8 +63,8 @@ TEST(BufferElement, fillOverwritesBufferWithSentinelPatternEachFrame) {
     auto& vulkanContext = core.getVulkanContext();
 
     const uint32_t numElements = 8;
-    auto keys = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numElements,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto keys = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
+        vulkanContext, numElements, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     // Sentinel guaranteed to sort after any encoded depth key (guide §5 Stage B
     // sizing scheme): each frame the whole keys buffer is reset to it before the

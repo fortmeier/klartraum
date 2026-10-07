@@ -54,16 +54,16 @@ TEST(GaussianSplatRasterizer, rendersIndirectInstancedQuadsWithoutValidationErro
     // per-splat SoA attribute buffers, the sorted-index permutation, and the
     // VkDrawIndirectCommand args buffer (vertexCount=4, instanceCount=visible count).
     const VkBufferUsageFlags storageDst = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    auto positions   = std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vc, numSplats, storageDst);
-    auto rotations   = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vc, numSplats, storageDst);
-    auto scales      = std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vc, numSplats, storageDst);
+    auto positions = std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vc, numSplats, storageDst);
+    auto rotations = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vc, numSplats, storageDst);
+    auto scales = std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(vc, numSplats, storageDst);
     auto colorsAlpha = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vc, numSplats, storageDst);
-    auto shR         = std::make_shared<BufferElement<VulkanBuffer<float>>>(vc, 15 * numSplats, storageDst);
-    auto shG         = std::make_shared<BufferElement<VulkanBuffer<float>>>(vc, 15 * numSplats, storageDst);
-    auto shB         = std::make_shared<BufferElement<VulkanBuffer<float>>>(vc, 15 * numSplats, storageDst);
+    auto shR = std::make_shared<BufferElement<VulkanBuffer<float>>>(vc, 15 * numSplats, storageDst);
+    auto shG = std::make_shared<BufferElement<VulkanBuffer<float>>>(vc, 15 * numSplats, storageDst);
+    auto shB = std::make_shared<BufferElement<VulkanBuffer<float>>>(vc, 15 * numSplats, storageDst);
     auto sortedIndices = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, numSplats, storageDst);
-    auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(vc, 1,
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
+        vc, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     auto barrier = std::make_shared<BufferToGraphicsBarrier>();
     barrier->addBuffer(positions);
@@ -91,8 +91,8 @@ TEST(GaussianSplatRasterizer, rendersIndirectInstancedQuadsWithoutValidationErro
     rp->addDrawComponent(std::make_shared<DrawBasics>(DrawBasicsType::Axes));
 
     auto rasterizer = std::make_shared<GaussianSplatRasterizer>(
-        std::vector<std::shared_ptr<BufferElementInterface>>{
-            positions, rotations, scales, colorsAlpha, shR, shG, shB, sortedIndices },
+        std::vector<std::shared_ptr<BufferElementInterface>>{positions, rotations, scales, colorsAlpha, shR, shG, shB,
+                                                             sortedIndices},
         drawArgs);
 
     auto extent = vc.getSwapChainExtent();
@@ -110,21 +110,14 @@ TEST(GaussianSplatRasterizer, rendersIndirectInstancedQuadsWithoutValidationErro
     auto cg = ComputeGraph(vc, numImages);
     cg.compileFrom(rp);
 
-    std::vector<glm::vec3> positionData = {
-        {0.0f, 0.0f, -2.0f},
-        {0.5f, 0.0f, -2.5f},
-        {-0.5f, 0.3f, -3.0f}
-    };
+    std::vector<glm::vec3> positionData = {{0.0f, 0.0f, -2.0f}, {0.5f, 0.0f, -2.5f}, {-0.5f, 0.3f, -3.0f}};
     // Identity rotations + small uniform scales: stand-in covariance inputs,
     // exercising the real EWA projection/eigendecomposition math without
     // needing a meaningful 3D shape (only structural validity is asserted here).
     std::vector<glm::vec4> rotationData(numSplats, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     std::vector<glm::vec3> scaleData(numSplats, glm::vec3(0.05f, 0.05f, 0.05f));
     std::vector<glm::vec4> colorAlphaData = {
-        {1.0f, 0.0f, 0.0f, 1.0f},
-        {0.0f, 1.0f, 0.0f, 0.8f},
-        {0.0f, 0.0f, 1.0f, 0.6f}
-    };
+        {1.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 0.8f}, {0.0f, 0.0f, 1.0f, 0.6f}};
     std::vector<float> shZero(15 * numSplats, 0.0f);
     std::vector<uint32_t> sortedIndexData = {0, 1, 2};
     VkDrawIndirectCommand drawArgsData{4, numSplats, 0, 0};

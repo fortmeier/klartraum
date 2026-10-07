@@ -30,20 +30,16 @@ TEST_F(OnnxConvTest, CreateConvTensors) {
     // Test creating tensors for Conv operation
 
     // Input tensor [1, 3, 8, 8] - batch=1, channels=3, height=8, width=8
-    auto inputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 3, 8, 8});
+    auto inputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 3, 8, 8});
 
     // Weight tensor [16, 3, 3, 3] - out_channels=16, in_channels=3, kernel_h=3, kernel_w=3
-    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{16, 3, 3, 3});
+    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{16, 3, 3, 3});
 
     // Bias tensor [16] - one bias per output channel
-    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{16});
+    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{16});
 
     // Output tensor [1, 16, 6, 6] - assuming no padding, stride=1
-    auto outputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 16, 6, 6});
+    auto outputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 16, 6, 6});
 
     EXPECT_EQ(inputTensor->getDimensions()[0], 1);
     EXPECT_EQ(inputTensor->getDimensions()[1], 3);
@@ -66,29 +62,22 @@ TEST_F(OnnxConvTest, CreateConvTensors) {
 TEST_F(OnnxConvTest, SetConvData) {
     // Test setting data in Conv tensors
 
-    auto inputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 1, 4, 4} // Simple 4x4 single channel
-    );
+    auto inputTensor =
+        vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 1, 4, 4} // Simple 4x4 single channel
+        );
 
-    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{1, 1, 3, 3} // Simple 3x3 kernel
-    );
+    auto weightTensor =
+        vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{1, 1, 3, 3} // Simple 3x3 kernel
+        );
 
-    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{1} // Single bias
+    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{1} // Single bias
     );
 
     // Initialize test data
-    std::vector<float> inputData = {
-        1.0f, 2.0f, 3.0f, 4.0f,
-        5.0f, 6.0f, 7.0f, 8.0f,
-        9.0f, 10.0f, 11.0f, 12.0f,
-        13.0f, 14.0f, 15.0f, 16.0f};
+    std::vector<float> inputData = {1.0f, 2.0f,  3.0f,  4.0f,  5.0f,  6.0f,  7.0f,  8.0f,
+                                    9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f};
 
-    std::vector<float> weightData = {
-        1.0f, 0.0f, -1.0f,
-        1.0f, 0.0f, -1.0f,
-        1.0f, 0.0f, -1.0f};
+    std::vector<float> weightData = {1.0f, 0.0f, -1.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.0f, -1.0f};
 
     std::vector<float> biasData = {0.5f};
 
@@ -149,25 +138,20 @@ TEST_F(OnnxConvTest, ConvGeneralComputationFullTest) {
 
     // Create tensors for Conv operation
     // Input tensor [1, 2, 4, 4] - smaller for testing
-    auto inputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 2, 4, 4});
+    auto inputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 2, 4, 4});
 
     // Weight tensor [3, 2, 3, 3] - 3 output channels, 2 input channels, 3x3 kernel
-    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{3, 2, 3, 3});
+    auto weightTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{3, 2, 3, 3});
 
     // Bias tensor [3] - one bias per output channel
-    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(
-        std::vector<uint32_t>{3});
+    auto biasTensor = vulkanContext->create<TensorElementSinglePath<float>>(std::vector<uint32_t>{3});
 
     // Output tensor [1, 3, 2, 2] - with 3x3 kernel on 4x4 input, output is 2x2 (no padding, stride=1)
-    auto outputTensor = vulkanContext->create<TensorElement<float>>(
-        std::vector<uint32_t>{1, 3, 2, 2});
+    auto outputTensor = vulkanContext->create<TensorElement<float>>(std::vector<uint32_t>{1, 3, 2, 2});
 
     // Create GeneralComputation with conv shader
     std::string convShaderPath = "shaders/onnx/conv.comp.spv";
-    auto convComputation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(
-        convShaderPath);
+    auto convComputation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(convShaderPath);
 
     // Set up push constants
     ConvPushConstants pushConstants = {};
@@ -273,9 +257,11 @@ TEST_F(OnnxConvTest, ConvGeneralComputationFullTest) {
 
     std::cout << "ConvGeneralComputationFullTest: Created complete Conv computation with:" << std::endl;
     std::cout << "  - Input tensor: [1, 2, 4, 4] = " << inputTensor->getDataElementCount() << " elements" << std::endl;
-    std::cout << "  - Weight tensor: [3, 2, 3, 3] = " << weightTensor->getDataElementCount() << " elements" << std::endl;
+    std::cout << "  - Weight tensor: [3, 2, 3, 3] = " << weightTensor->getDataElementCount() << " elements"
+              << std::endl;
     std::cout << "  - Bias tensor: [3] = " << biasTensor->getDataElementCount() << " elements" << std::endl;
-    std::cout << "  - Output tensor: [1, 3, 2, 2] = " << outputTensor->getDataElementCount() << " elements" << std::endl;
+    std::cout << "  - Output tensor: [1, 3, 2, 2] = " << outputTensor->getDataElementCount() << " elements"
+              << std::endl;
     std::cout << "  - Compute groups: [" << groupsX << ", " << groupsY << ", " << groupsZ << "]" << std::endl;
 
     computegraph.submitAndWait(vulkanContext->getGraphicsQueue(), 0);

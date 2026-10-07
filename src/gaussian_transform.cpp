@@ -79,7 +79,7 @@ std::array<BandMatrix, 3> shRotation(const glm::mat3& rotation) {
     for (int i = 0; i < kDirections; ++i) {
         const double z = 1.0 - (2.0 * i + 1.0) / kDirections;
         const double r = std::sqrt(1.0 - z * z);
-        const double phi = i * 2.399963229728653;  // golden angle
+        const double phi = i * 2.399963229728653; // golden angle
         const glm::vec3 d(static_cast<float>(r * std::cos(phi)), static_cast<float>(r * std::sin(phi)),
                           static_cast<float>(z));
         basis[i] = shBasis(d);

@@ -12,7 +12,7 @@ namespace klartraum {
 // Range of supported ASCII characters (printable, codes 32..126).
 constexpr int GLYPH_FIRST_CHAR = 32;
 constexpr int GLYPH_LAST_CHAR = 126;
-constexpr int GLYPH_COUNT = GLYPH_LAST_CHAR - GLYPH_FIRST_CHAR + 1;  // 95
+constexpr int GLYPH_COUNT = GLYPH_LAST_CHAR - GLYPH_FIRST_CHAR + 1; // 95
 
 // Each glyph is rasterized into a fixed-size cell within the atlas. The
 // glyph itself occupies GLYPH_PIXEL_WIDTH x GLYPH_PIXEL_HEIGHT pixels in the
@@ -58,4 +58,4 @@ GlyphUVRect glyphUVRect(int charCode);
 // Each byte is 0 for background and 255 for glyph pixels.
 std::vector<uint8_t> generateGlyphAtlasBitmap();
 
-}  // namespace klartraum
+} // namespace klartraum

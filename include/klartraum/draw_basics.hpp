@@ -14,19 +14,15 @@
 
 namespace klartraum {
 
-enum class DrawBasicsType {
-    Triangle,
-    Cube,
-    Axes
-};
+enum class DrawBasicsType { Triangle, Cube, Axes };
 
 class DrawBasics : public DrawComponent {
 public:
-
     DrawBasics(DrawBasicsType type);
     ~DrawBasics();
 
-    virtual void initialize(VulkanContext& vulkanContext, VkRenderPass& renderpass, std::shared_ptr<CameraUboType> cameraUBO) override;
+    virtual void initialize(VulkanContext& vulkanContext, VkRenderPass& renderpass,
+                            std::shared_ptr<CameraUboType> cameraUBO) override;
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) override;
 
@@ -35,7 +31,6 @@ private:
     void createSyncObjects();
     void createVertexBuffer();
 
-
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
@@ -43,7 +38,6 @@ private:
     VkDeviceMemory vertexBufferMemory;
 
     DrawBasicsType type;
-
 };
 
 } // namespace klartraum

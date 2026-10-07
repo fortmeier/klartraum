@@ -40,4 +40,4 @@ void SimpleTextRenderer::setText(const std::string& text, float x, float y, floa
     }
 }
 
-}  // namespace klartraum
+} // namespace klartraum

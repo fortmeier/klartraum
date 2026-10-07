@@ -100,8 +100,8 @@ TEST(GaussianTransform, rotationTurnsPositionsAndOrientations) {
     transformGaussians(gaussians, kRotation);
     const glm::mat3 r = glm::mat3_cast(kRotation);
     for (size_t i = 0; i < gaussians.size(); ++i) {
-        const glm::vec3 expected = r * glm::vec3(original[i].position[0], original[i].position[1],
-                                                 original[i].position[2]);
+        const glm::vec3 expected =
+            r * glm::vec3(original[i].position[0], original[i].position[1], original[i].position[2]);
         for (int k = 0; k < 3; ++k) {
             EXPECT_NEAR(gaussians[i].position[k], expected[k], 1e-5f);
         }

@@ -21,15 +21,11 @@
 
 namespace klartraum {
 
-class VulkanGaussianSplatting : virtual public RenderGraphElement,
-                                virtual public ComputeGraphGroup {
+class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual public ComputeGraphGroup {
 public:
-    VulkanGaussianSplatting(
-        VulkanContext& vulkanContext,
-        std::shared_ptr<ImageViewSrc> imageViewSrc,
-        std::shared_ptr<CameraUboType> cameraUBO,
-        GaussianSoABuffers buffers,
-        GsplatConfig config = GsplatConfig{});
+    VulkanGaussianSplatting(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
+                            std::shared_ptr<CameraUboType> cameraUBO, GaussianSoABuffers buffers,
+                            GsplatConfig config = GsplatConfig{});
 
     ~VulkanGaussianSplatting();
 
@@ -40,15 +36,13 @@ public:
     virtual const char* getType() const override { return "GaussianSplatting"; }
 
 private:
-    void initialize(VulkanContext& vulkanContext,
-                    std::shared_ptr<ImageViewSrc> imageViewSrc,
-                    std::shared_ptr<CameraUboType> cameraUBO,
-                    GsplatConfig config);
+    void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
+                    std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
 
     GsplatConfig config_;
 
     VulkanContext* vulkanContext = nullptr;
-    uint32_t numberOfPaths       = 0;
+    uint32_t numberOfPaths = 0;
 
     // Static SoA input buffers (position, rotation, scale, colour+alpha, SH
     // R/G/B) + splat count, injected by the caller. Held as shared handles so a
@@ -56,15 +50,15 @@ private:
     GaussianSoABuffers buffers;
 
     // Pipeline stages
-    std::shared_ptr<GaussianProjection>     project3Dto2D;
-    std::shared_ptr<GaussianBinningCount>   binCount;
-    std::shared_ptr<GeneralComputation<>>   binPrefixSum;
+    std::shared_ptr<GaussianProjection> project3Dto2D;
+    std::shared_ptr<GaussianBinningCount> binCount;
+    std::shared_ptr<GeneralComputation<>> binPrefixSum;
     std::shared_ptr<GaussianBinningScatter> binScatter;
-    std::shared_ptr<GeneralComputation<>>   extractSortKeys;
-    std::shared_ptr<RadixSort>              sortOp;
-    std::shared_ptr<GeneralComputation<>>   gatherSorted;
-    std::shared_ptr<GeneralComputation<>>   computeBounds;
-    std::shared_ptr<GaussianSplatting>      splat;
+    std::shared_ptr<GeneralComputation<>> extractSortKeys;
+    std::shared_ptr<RadixSort> sortOp;
+    std::shared_ptr<GeneralComputation<>> gatherSorted;
+    std::shared_ptr<GeneralComputation<>> computeBounds;
+    std::shared_ptr<GaussianSplatting> splat;
 
     // Sort ping-pong value buffers (stored as members for _record pre-fill)
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sortRadixValA;

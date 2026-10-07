@@ -59,8 +59,10 @@ void runImmediate(VulkanContext& vc, const std::function<void(VkCommandBuffer)>&
     vkBeginCommandBuffer(cmd, &bi);
     record(cmd);
     vkEndCommandBuffer(cmd);
-    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
     vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(vc.getGraphicsQueue());
     vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
@@ -83,12 +85,14 @@ void fillOffscreen(VulkanContext& vc, VkImage image, std::array<float, 4> rgba) 
         toDst.subresourceRange = range;
         toDst.srcAccessMask = 0;
         toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &toDst);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &toDst);
 
         VkClearColorValue color{};
-        color.float32[0] = rgba[0]; color.float32[1] = rgba[1];
-        color.float32[2] = rgba[2]; color.float32[3] = rgba[3];
+        color.float32[0] = rgba[0];
+        color.float32[1] = rgba[1];
+        color.float32[2] = rgba[2];
+        color.float32[3] = rgba[3];
         vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range);
 
         VkImageMemoryBarrier toSrc{};
@@ -99,8 +103,8 @@ void fillOffscreen(VulkanContext& vc, VkImage image, std::array<float, 4> rgba) 
         toSrc.subresourceRange = range;
         toSrc.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         toSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &toSrc);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &toSrc);
     });
 }
 
@@ -109,10 +113,10 @@ void fillOffscreen(VulkanContext& vc, VkImage image, std::array<float, 4> rgba) 
 std::vector<uint8_t> readSwapchainImage0(VulkanContext& vc) {
     VkExtent2D ext = vc.getSwapChainExtent();
     const VkDeviceSize bytes = VkDeviceSize(ext.width) * ext.height * 4;
-    VkBuffer buf; VkDeviceMemory mem;
+    VkBuffer buf;
+    VkDeviceMemory mem;
     vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    buf, mem);
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buf, mem);
     runImmediate(vc, [&](VkCommandBuffer cmd) {
         VkBufferImageCopy region{};
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -122,8 +126,7 @@ std::vector<uint8_t> readSwapchainImage0(VulkanContext& vc) {
     });
     void* data;
     vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
-    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + bytes);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + bytes);
     vkUnmapMemory(vc.getDevice(), mem);
     vkFreeMemory(vc.getDevice(), mem, nullptr);
     vkDestroyBuffer(vc.getDevice(), buf, nullptr);
@@ -131,10 +134,12 @@ std::vector<uint8_t> readSwapchainImage0(VulkanContext& vc) {
 }
 
 // BGRA byte accessor for pixel (x, y).
-struct Bgra { uint8_t b, g, r, a; };
+struct Bgra {
+    uint8_t b, g, r, a;
+};
 Bgra pixelAt(const std::vector<uint8_t>& img, VkExtent2D ext, uint32_t x, uint32_t y) {
     size_t o = (size_t(y) * ext.width + x) * 4;
-    return { img[o + 0], img[o + 1], img[o + 2], img[o + 3] };
+    return {img[o + 0], img[o + 1], img[o + 2], img[o + 3]};
 }
 
 } // namespace
@@ -146,12 +151,12 @@ TEST(MultiViewportWindow, makeViewportProducesIndependentTargets) {
     uint32_t halfW = ext.width / 2;
 
     auto& window = frontend.getKlartraumEngine().getWindow();
-    auto left  = window.makeViewport(0,     0, halfW,             ext.height);
+    auto left = window.makeViewport(0, 0, halfW, ext.height);
     auto right = window.makeViewport(halfW, 0, ext.width - halfW, ext.height);
 
     EXPECT_NE(left.get(), right.get());
     EXPECT_NE(left->getImage(0), right->getImage(0));
-    EXPECT_EQ(left->getImageExtent(0).width,  halfW);
+    EXPECT_EQ(left->getImageExtent(0).width, halfW);
     EXPECT_EQ(left->getImageExtent(0).height, ext.height);
     EXPECT_EQ(right->getImageExtent(0).width, ext.width - halfW);
 }
@@ -162,8 +167,7 @@ TEST(MultiViewportWindow, scaledViewportUsesIndependentRenderResolution) {
     auto& vc = engine.getVulkanContext();
     const auto displayExtent = vc.getSwapChainExtent();
 
-    auto target = engine.getWindow().makeViewport(
-        0, 0, displayExtent.width, displayExtent.height, 32, 24);
+    auto target = engine.getWindow().makeViewport(0, 0, displayExtent.width, displayExtent.height, 32, 24);
     EXPECT_EQ(target->getImageExtent(0).width, 32u);
     EXPECT_EQ(target->getImageExtent(0).height, 24u);
 
@@ -172,8 +176,7 @@ TEST(MultiViewportWindow, scaledViewportUsesIndependentRenderResolution) {
     vkQueueWaitIdle(vc.getGraphicsQueue());
 
     const auto image = readSwapchainImage0(vc);
-    const auto corner = pixelAt(image, displayExtent,
-                                displayExtent.width - 1, displayExtent.height - 1);
+    const auto corner = pixelAt(image, displayExtent, displayExtent.width - 1, displayExtent.height - 1);
     EXPECT_GT(corner.r, 200);
     EXPECT_LT(corner.g, 50);
     EXPECT_LT(corner.b, 50);
@@ -187,10 +190,10 @@ TEST(MultiViewportWindow, compositePlacesViewportsInCorrectRegions) {
     uint32_t halfW = ext.width / 2;
 
     auto& window = engine.getWindow();
-    auto left  = window.makeViewport(0,     0, halfW,             ext.height);
+    auto left = window.makeViewport(0, 0, halfW, ext.height);
     auto right = window.makeViewport(halfW, 0, ext.width - halfW, ext.height);
 
-    fillOffscreen(vc, left->getImage(0),  {1.0f, 0.0f, 0.0f, 1.0f}); // red
+    fillOffscreen(vc, left->getImage(0), {1.0f, 0.0f, 0.0f, 1.0f});  // red
     fillOffscreen(vc, right->getImage(0), {0.0f, 0.0f, 1.0f, 1.0f}); // blue
 
     window.submitComposite(vc.getGraphicsQueue(), 0, {}, VK_NULL_HANDLE);
@@ -199,11 +202,13 @@ TEST(MultiViewportWindow, compositePlacesViewportsInCorrectRegions) {
     auto img = readSwapchainImage0(vc);
     uint32_t yMid = ext.height / 2;
 
-    Bgra l = pixelAt(img, ext, halfW / 2,           yMid);
-    Bgra r = pixelAt(img, ext, halfW + halfW / 2,   yMid);
+    Bgra l = pixelAt(img, ext, halfW / 2, yMid);
+    Bgra r = pixelAt(img, ext, halfW + halfW / 2, yMid);
 
-    EXPECT_GT(l.r, 200); EXPECT_LT(l.b, 50);  // left is red
-    EXPECT_GT(r.b, 200); EXPECT_LT(r.r, 50);  // right is blue
+    EXPECT_GT(l.r, 200);
+    EXPECT_LT(l.b, 50); // left is red
+    EXPECT_GT(r.b, 200);
+    EXPECT_LT(r.r, 50); // right is blue
 }
 
 TEST(MultiViewportWindow, gapsAreClearedBlack) {
@@ -223,11 +228,13 @@ TEST(MultiViewportWindow, gapsAreClearedBlack) {
     auto img = readSwapchainImage0(vc);
     uint32_t yMid = ext.height / 2;
 
-    Bgra covered = pixelAt(img, ext, quarterW / 2,              yMid);
-    Bgra gap     = pixelAt(img, ext, ext.width - ext.width / 8, yMid);
+    Bgra covered = pixelAt(img, ext, quarterW / 2, yMid);
+    Bgra gap = pixelAt(img, ext, ext.width - ext.width / 8, yMid);
 
-    EXPECT_GT(covered.g, 200);  // viewport region is green
-    EXPECT_LT(gap.r, 20); EXPECT_LT(gap.g, 20); EXPECT_LT(gap.b, 20); // gap is black
+    EXPECT_GT(covered.g, 200); // viewport region is green
+    EXPECT_LT(gap.r, 20);
+    EXPECT_LT(gap.g, 20);
+    EXPECT_LT(gap.b, 20); // gap is black
 }
 
 TEST(MultiViewportWindow, sharedCameraCanUseViewportAspectRatio) {
@@ -260,7 +267,7 @@ TEST(MultiViewportWindow, twoBackendsCompositeEndToEnd) {
     uint32_t halfW = ext.width / 2;
 
     auto& window = engine.getWindow();
-    auto left  = window.makeViewport(0,     0, halfW,             ext.height);
+    auto left = window.makeViewport(0, 0, halfW, ext.height);
     auto right = window.makeViewport(halfW, 0, ext.width - halfW, ext.height);
 
     // One camera UBO shared by both viewport scenes — the "single camera" the
@@ -273,11 +280,12 @@ TEST(MultiViewportWindow, twoBackendsCompositeEndToEnd) {
     orbit.update(cameraUBO->ubo);
 
     auto model = std::make_shared<GaussianDataStandard>(vc, scene.gaussians);
-    engine.add(createGaussianSplatting(vc, GsplatBackend::Compute, left,  cameraUBO, model));
-    engine.add(createGaussianSplatting(vc, GsplatBackend::Raster,  right, cameraUBO, model));
+    engine.add(createGaussianSplatting(vc, GsplatBackend::Compute, left, cameraUBO, model));
+    engine.add(createGaussianSplatting(vc, GsplatBackend::Raster, right, cameraUBO, model));
 
     uint32_t numImages = vc.getNumberOfSwapChainImages();
-    for (uint32_t i = 0; i < numImages; ++i) cameraUBO->update(i);
+    for (uint32_t i = 0; i < numImages; ++i)
+        cameraUBO->update(i);
 
     for (int f = 0; f < 5; ++f) {
         engine.step();
@@ -295,15 +303,18 @@ TEST(MultiViewportWindow, twoBackendsCompositeEndToEnd) {
         for (uint32_t x = x0; x < x1; ++x)
             for (uint32_t y = 0; y < ext.height; ++y) {
                 Bgra p = pixelAt(img, ext, x, y);
-                if (p.r > 15 || p.g > 15 || p.b > 15) { ++n; break; }
+                if (p.r > 15 || p.g > 15 || p.b > 15) {
+                    ++n;
+                    break;
+                }
             }
         return n;
     };
 
-    int leftLit  = litColumns(0, halfW);
+    int leftLit = litColumns(0, halfW);
     int rightLit = litColumns(halfW, ext.width);
-    EXPECT_GT(leftLit,  int(halfW * 0.9))
-        << "left (compute) viewport only filled " << leftLit << "/" << halfW << " columns";
+    EXPECT_GT(leftLit, int(halfW * 0.9)) << "left (compute) viewport only filled " << leftLit << "/" << halfW
+                                         << " columns";
     EXPECT_GT(rightLit, int((ext.width - halfW) * 0.9))
         << "right (raster) viewport only filled " << rightLit << "/" << (ext.width - halfW) << " columns";
 }

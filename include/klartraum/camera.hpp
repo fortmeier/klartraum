@@ -7,10 +7,9 @@
 
 #include <glm/glm.hpp>
 
-
 namespace klartraum {
 
-struct CameraMVP{
+struct CameraMVP {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
@@ -18,8 +17,6 @@ struct CameraMVP{
     // std140 layout matches glm::vec4 exactly on both the C++ and GLSL sides.
     glm::vec4 cameraWorldPos;
 };
-
-
 
 } // namespace klartraum
 

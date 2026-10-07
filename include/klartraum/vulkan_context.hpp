@@ -28,14 +28,15 @@ struct QueueFamilyIndices {
     std::optional<uint32_t> presentFamily;
     std::optional<uint32_t> graphicsAndComputeFamily;
 
-    bool isComplete() {
-        return graphicsAndComputeFamily.has_value() && presentFamily.has_value();
-    }
+    bool isComplete() { return graphicsAndComputeFamily.has_value() && presentFamily.has_value(); }
 };
 
-VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocater, VkDebugUtilsMessengerEXT* pDebugMessenger);
+VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+                                      const VkAllocationCallbacks* pAllocater,
+                                      VkDebugUtilsMessengerEXT* pDebugMessenger);
 
-void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator);
+void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger,
+                                   const VkAllocationCallbacks* pAllocator);
 
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -72,8 +73,7 @@ private:
 
     std::vector<VkImageView> swapChainImageViews;
 
-    const std::vector<const char*> validationLayers = {
-        "VK_LAYER_KHRONOS_validation"};
+    const std::vector<const char*> validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
     std::vector<const char*> deviceExtensions;
 
@@ -89,11 +89,10 @@ private:
 
     std::vector<const char*> getRequiredExtensions();
 
-    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-        VkDebugUtilsMessageTypeFlagsEXT messageType,
-        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-        void* pUserData);
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+                                                        VkDebugUtilsMessageTypeFlagsEXT messageType,
+                                                        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+                                                        void* pUserData);
 
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
 
@@ -129,10 +128,10 @@ private:
     void createLogicalDevice();
 
     enum class State {
-        PRE_INITIALIZED,  // Object created, no Vulkan work done
-        DEVICE_READY,     // Instance, device, queues initialized
-        SWAPCHAIN_READY,  // Swapchain/headless images, imageviews, sync objects ready
-        SHUTDOWN          // All resources cleaned up, object ready for destruction
+        PRE_INITIALIZED, // Object created, no Vulkan work done
+        DEVICE_READY,    // Instance, device, queues initialized
+        SWAPCHAIN_READY, // Swapchain/headless images, imageviews, sync objects ready
+        SHUTDOWN         // All resources cleaned up, object ready for destruction
     } state = State::PRE_INITIALIZED;
 
 public:
@@ -157,7 +156,7 @@ public:
 
     void shutdown();
 
-    template<typename T, typename... Args>
+    template <typename T, typename... Args>
     std::shared_ptr<T> create(Args&&... args) {
         if (state != State::SWAPCHAIN_READY) {
             throw std::runtime_error("VulkanContext is not fully initialized! Call initialize() first.");
@@ -206,7 +205,8 @@ public:
     BackendConfig config;
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
+                      VkDeviceMemory& bufferMemory);
     BackendConfig& getConfig();
 
     std::vector<VkFence> inFlightFences;
@@ -247,7 +247,7 @@ public:
     void createCommandPool();
     VkCommandPool getCommandPool() const { return commandPool; }
     bool hasSurface() const { return surface != VK_NULL_HANDLE; }
-    float getTimestampPeriod() const;   // nanoseconds per GPU timestamp unit
+    float getTimestampPeriod() const; // nanoseconds per GPU timestamp unit
 
     // VK_EXT_mesh_shader is enabled opportunistically at device creation when the
     // physical device supports it (with the meshShader feature). Consumers gate
@@ -255,9 +255,7 @@ public:
     // when false. vkCmdDrawMeshTasksIndirectEXT is loaded via vkGetDeviceProcAddr
     // since it is an extension entry point.
     bool isMeshShaderSupported() const { return meshShaderSupported_; }
-    PFN_vkCmdDrawMeshTasksIndirectEXT getCmdDrawMeshTasksIndirectEXT() const {
-        return vkCmdDrawMeshTasksIndirectEXT_;
-    }
+    PFN_vkCmdDrawMeshTasksIndirectEXT getCmdDrawMeshTasksIndirectEXT() const { return vkCmdDrawMeshTasksIndirectEXT_; }
 
     // The pipelineStatisticsQuery feature is enabled when the physical device
     // supports it. Apple GPUs (MoltenVK, KosmicKrisp) do not.

@@ -25,5 +25,4 @@ std::string getAssetRoot();
 
 VkShaderModule createShaderModule(const std::vector<char>& code, const VkDevice& device);
 
-
 } // namespace klartraum

@@ -73,14 +73,12 @@ void transitionImageLayout(VulkanContext& vulkanContext, VkImage image, VkImageL
 }
 
 // A vertex that contributes nothing visible: zero-size quad with zero alpha.
-TextVertex degenerateVertex() {
-    return {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-}
+TextVertex degenerateVertex() { return {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; }
 
-}  // namespace
+} // namespace
 
-TextDrawComponent::TextDrawComponent(uint32_t maxCharacters) : maxCharacters(maxCharacters) {
-}
+TextDrawComponent::TextDrawComponent(uint32_t maxCharacters)
+    : maxCharacters(maxCharacters) {}
 
 TextDrawComponent::~TextDrawComponent() {
     if (vulkanContext == nullptr) {
@@ -412,7 +410,7 @@ void TextDrawComponent::createGraphicsPipeline() {
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(float) * 2;  // vec2 screenSize
+    pushConstantRange.size = sizeof(float) * 2; // vec2 screenSize
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -468,8 +466,8 @@ void TextDrawComponent::createIndexBuffer() {
 
     const VkDeviceSize bufferSize = sizeof(uint32_t) * indices.size();
     vulkanContext->createBuffer(bufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                indexBuffer, indexBufferMemory);
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, indexBuffer,
+                                indexBufferMemory);
 
     void* data;
     vkMapMemory(device, indexBufferMemory, 0, bufferSize, 0, &data);
@@ -517,8 +515,7 @@ void TextDrawComponent::uploadVertices() {
     }
 }
 
-void TextDrawComponent::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer,
-                                             uint32_t pathId) {
+void TextDrawComponent::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) {
     auto& swapChainExtent = vulkanContext->getSwapChainExtent();
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
@@ -551,4 +548,4 @@ void TextDrawComponent::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFra
     vkCmdDrawIndexed(commandBuffer, maxCharacters * 6, 1, 0, 0, 0);
 }
 
-}  // namespace klartraum
+} // namespace klartraum

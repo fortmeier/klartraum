@@ -18,7 +18,8 @@
 namespace klartraum {
 
 OnnxNetwork::OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelPath)
-    : vulkanContext(&vulkanContext), modelPath(modelPath) {
+    : vulkanContext(&vulkanContext),
+      modelPath(modelPath) {
 
     std::cout << "OnnxNetwork: Initializing with model: " << modelPath << std::endl;
 
@@ -26,8 +27,7 @@ OnnxNetwork::OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelP
     createComputeGraph();
 }
 
-OnnxNetwork::~OnnxNetwork() {
-}
+OnnxNetwork::~OnnxNetwork() {}
 
 bool OnnxNetwork::loadModel(const std::string& modelPath) {
     std::cout << "OnnxNetwork: Loading model from " << modelPath << std::endl;
@@ -176,7 +176,8 @@ void OnnxNetwork::printModelInfo() const {
 
 std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
     // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
-    VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkBufferUsageFlags usage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
         return vulkanContext->create<TensorElement<float>>(tensorInfo.shape, usage);
     } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
@@ -190,9 +191,11 @@ std::shared_ptr<TensorElementInterface> createTensor(VulkanContext* vulkanContex
     throw std::runtime_error("Unsupported data type: " + std::to_string(tensorInfo.dataType));
 }
 
-std::shared_ptr<TensorElementInterface> createConstantTensor(VulkanContext* vulkanContext, const TensorInfo& tensorInfo) {
+std::shared_ptr<TensorElementInterface> createConstantTensor(VulkanContext* vulkanContext,
+                                                             const TensorInfo& tensorInfo) {
     // TODO we use VK_BUFFER_USAGE_TRANSFER_SRC_BIT for all buffers for now, might be not optimal
-    VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkBufferUsageFlags usage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     if (tensorInfo.dataType == onnx::TensorProto::FLOAT) {
         return vulkanContext->create<TensorElementSinglePath<float>>(tensorInfo.shape, usage);
     } else if (tensorInfo.dataType == onnx::TensorProto::DOUBLE) {
@@ -218,7 +221,9 @@ std::vector<uint32_t> getTensorShape(const onnx::TypeProto::Tensor& tensorType) 
     return shape;
 }
 
-std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(VulkanContext* vulkanContext, const onnx::NodeProto& node, TensorInfoMap& name2TensorInfo) {
+std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(VulkanContext* vulkanContext,
+                                                                           const onnx::NodeProto& node,
+                                                                           TensorInfoMap& name2TensorInfo) {
     auto output = node.output();
     auto x = output.size();
     // Create a compute operation for each node
@@ -277,10 +282,8 @@ std::map<std::string, ComputeGraphElementPtr> createTensorOperationOutputs(Vulka
     return outputs;
 }
 
-void OnnxNetwork::createInitializerTensor(const onnx::TensorProto* initializer,
-    TensorInfoMap& name2TensorInfo,
-    VulkanContext* vulkanContext)
-{
+void OnnxNetwork::createInitializerTensor(const onnx::TensorProto* initializer, TensorInfoMap& name2TensorInfo,
+                                          VulkanContext* vulkanContext) {
     std::cout << "Creating initializer tensor: " << initializer->name() << std::endl;
     std::vector<uint32_t> initShape;
     for (int j = 0; j < initializer->dims_size(); j++) {
@@ -295,15 +298,14 @@ void OnnxNetwork::createInitializerTensor(const onnx::TensorProto* initializer,
     tensor->setName(initializer->name());
     graphDataElements[initializer->name()] = tensor;
 
-    //std::cout << " - size: " << (initShape.empty() ? 0 : std::accumulate(initShape.begin(), initShape.end(), 1, std::multiplies<uint32_t>())) << " elements" << std::endl;
+    // std::cout << " - size: " << (initShape.empty() ? 0 : std::accumulate(initShape.begin(), initShape.end(), 1,
+    // std::multiplies<uint32_t>())) << " elements" << std::endl;
 }
 
-void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input,
-    TensorInfoMap& name2TensorInfo,
-    VulkanContext* vulkanContext)
-{
+void OnnxNetwork::createInfoTensor(const onnx::ValueInfoProto* input, TensorInfoMap& name2TensorInfo,
+                                   VulkanContext* vulkanContext) {
     std::cout << "Creating input tensor: " << input->name() << std::endl;
-    
+
     if (input->has_type() && input->type().has_tensor_type()) {
         std::vector<uint32_t> inputShape;
         const onnx::TypeProto::Tensor& tensor_type = input->type().tensor_type();
@@ -378,7 +380,8 @@ void OnnxNetwork::createComputeGraph() {
 
     const onnx::GraphProto& graph = model->graph();
 
-    std::cout << "OnnxNetwork: Analyzing " << graph.node_size() << " operations for compute graph creation" << std::endl;
+    std::cout << "OnnxNetwork: Analyzing " << graph.node_size() << " operations for compute graph creation"
+              << std::endl;
 
     // TODO: Implement actual compute graph creation
     // This would involve:
@@ -455,8 +458,7 @@ void OnnxNetwork::createComputeGraph() {
     storeComputeGraphGroupOutputElements();
 }
 
-void OnnxNetwork::createGraphElementsFromNodes()
-{
+void OnnxNetwork::createGraphElementsFromNodes() {
     const onnx::GraphProto& graph = model->graph();
 
     for (int i = 0; i < graph.node_size(); i++) {
@@ -470,13 +472,13 @@ void OnnxNetwork::createGraphElementsFromNodes()
     }
 }
 
-void OnnxNetwork::createGraphElementsFromOutputTensors()
-{
+void OnnxNetwork::createGraphElementsFromOutputTensors() {
     const onnx::GraphProto& graph = model->graph();
 
     for (int i = 0; i < graph.node_size(); i++) {
         const onnx::NodeProto& node = graph.node(i);
-        std::map<std::string, ComputeGraphElementPtr> outputs = createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
+        std::map<std::string, ComputeGraphElementPtr> outputs =
+            createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
         std::cout << " - Created operation outputs for node: " << node.name() << std::endl;
         // TODO WARNING BUG? ARE MAPS ALWAYS INSERTION ORDERD???
         // slots start just one after the slots of the inputs
@@ -490,8 +492,7 @@ void OnnxNetwork::createGraphElementsFromOutputTensors()
     }
 }
 
-void OnnxNetwork::connectGraphElements()
-{
+void OnnxNetwork::connectGraphElements() {
     /*
      * Go through all operation compute graph elements that have been created from the ONNX graph nodes
      * and connect them to their inputs and outputs.
@@ -519,11 +520,13 @@ void OnnxNetwork::connectGraphElements()
                 // inde
                 // we have a direct input, so no compute node but a tensor/buffer
                 operation->setInput(graphDataElements.at(index), j);
-                std::cout << " - Input from Data: \"" << index << "\" -> \"" << graphDataElements.at(index)->getName() << "\"" << std::endl;
+                std::cout << " - Input from Data: \"" << index << "\" -> \"" << graphDataElements.at(index)->getName()
+                          << "\"" << std::endl;
             } else {
                 auto [input, slot] = outputName2GraphElementAndSlot.at(index);
                 operation->setInput(input, j, slot);
-                std::cout << " - Input from Node " << j << ": \"" << index << "\" -> \"" << input->getName() << "\"" << std::endl;
+                std::cout << " - Input from Node " << j << ": \"" << index << "\" -> \"" << input->getName() << "\""
+                          << std::endl;
             }
             startIndex = j + 1;
         }
@@ -540,8 +543,7 @@ void OnnxNetwork::connectGraphElements()
     }
 }
 
-void OnnxNetwork::storeComputeGraphGroupOutputElements()
-{
+void OnnxNetwork::storeComputeGraphGroupOutputElements() {
     /**
      * OnnxNetwork is a klartraum ComputeGraphGroup and thus can have
      * multiple output elements.
@@ -569,26 +571,21 @@ void OnnxNetwork::storeComputeGraphGroupOutputElements()
         // fixtures may also expose graph inputs or initializers as outputs;
         // those are direct tensor dependencies with no producing operation.
         const auto producer = outputName2GraphElementAndSlot.find(outputName);
-        outputElements[outputIndex] = producer == outputName2GraphElementAndSlot.end()
-                                          ? tensor
-                                          : producer->second.first;
+        outputElements[outputIndex] =
+            producer == outputName2GraphElementAndSlot.end() ? tensor : producer->second.first;
 
-        std::cout << " - connected output " << outputName
-                  << " at slot " << outputIndex << std::endl;
+        std::cout << " - connected output " << outputName << " at slot " << outputIndex << std::endl;
     }
 }
 
-void OnnxNetwork::setInputTensor(const std::string& name,
-                                 ComputeGraphElementPtr producer,
-                                 int outputSlot) {
+void OnnxNetwork::setInputTensor(const std::string& name, ComputeGraphElementPtr producer, int outputSlot) {
     if (!producer) {
         throw std::runtime_error("ONNX input producer must not be null");
     }
 
     const auto& graph = model->graph();
-    const auto graphInput = std::find_if(
-        graph.input().begin(), graph.input().end(),
-        [&name](const onnx::ValueInfoProto& value) { return value.name() == name; });
+    const auto graphInput = std::find_if(graph.input().begin(), graph.input().end(),
+                                         [&name](const onnx::ValueInfoProto& value) { return value.name() == name; });
     if (graphInput == graph.input().end()) {
         throw std::runtime_error("ONNX graph input " + name + " not found");
     }
@@ -620,7 +617,6 @@ void OnnxNetwork::setInputTensor(const std::string& name,
 
     graphDataElements[name] = tensor;
 }
-
 
 // ComputeGraphGroup interface implementation
 void OnnxNetwork::checkInput(ComputeGraphElementPtr input, int index) {
@@ -659,18 +655,20 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
                 std::cout << " - Data type: FLOAT" << std::endl;
                 // Copy the data into the initializer tensor
                 auto element = graphDataElements[name];
-                std::shared_ptr<TensorElementSinglePath<float>> elementPtr = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
+                std::shared_ptr<TensorElementSinglePath<float>> elementPtr =
+                    std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
                 TensorElementSinglePath<float>* tensor = elementPtr.get();
                 tensor->getDataBuffer().memcopyFrom(initData.data(), initData.size());
                 break;
                 // TODO support other data types
             }
-        }
-        else if (init.float_data_size() > 0) {
+        } else if (init.float_data_size() > 0) {
             std::cout << " - Data type: FLOAT (float_data field)" << std::endl;
             auto element = graphDataElements[name];
-            std::shared_ptr<TensorElementSinglePath<float>> elementPtrSingle = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
-            std::shared_ptr<TensorElement<float>> elementPtrMulti = std::dynamic_pointer_cast<TensorElement<float>>(element);
+            std::shared_ptr<TensorElementSinglePath<float>> elementPtrSingle =
+                std::dynamic_pointer_cast<TensorElementSinglePath<float>>(element);
+            std::shared_ptr<TensorElement<float>> elementPtrMulti =
+                std::dynamic_pointer_cast<TensorElement<float>>(element);
             if (elementPtrSingle) {
                 TensorElementSinglePath<float>* tensor = elementPtrSingle.get();
                 tensor->getDataBuffer().memcopyFrom(init.float_data().data(), init.float_data_size());
@@ -697,16 +695,25 @@ void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
                     size_t dataSize = data.raw_data().size();
                     const char* dataLocation = data.raw_data().data();
                     if (type == onnx::TensorProto::FLOAT) {
-                        std::shared_ptr<TensorElementSinglePath<float>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<float>>(graphDataElements[node.output(0)]);
-                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
+                        std::shared_ptr<TensorElementSinglePath<float>> tensorElement =
+                            std::dynamic_pointer_cast<TensorElementSinglePath<float>>(
+                                graphDataElements[node.output(0)]);
+                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize
+                                  << std::endl;
                         tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
                     } else if (type == onnx::TensorProto::INT32) {
-                        std::shared_ptr<TensorElementSinglePath<int32_t>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(graphDataElements[node.output(0)]);
-                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
+                        std::shared_ptr<TensorElementSinglePath<int32_t>> tensorElement =
+                            std::dynamic_pointer_cast<TensorElementSinglePath<int32_t>>(
+                                graphDataElements[node.output(0)]);
+                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize
+                                  << std::endl;
                         tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
                     } else if (type == onnx::TensorProto::INT64) {
-                        std::shared_ptr<TensorElementSinglePath<int64_t>> tensorElement = std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(graphDataElements[node.output(0)]);
-                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize << std::endl;
+                        std::shared_ptr<TensorElementSinglePath<int64_t>> tensorElement =
+                            std::dynamic_pointer_cast<TensorElementSinglePath<int64_t>>(
+                                graphDataElements[node.output(0)]);
+                        std::cout << "copy values for constant node " << node.name() << " of size " << dataSize
+                                  << std::endl;
                         tensorElement->getDataBuffer().memcopyFrom(dataLocation, dataSize);
                     } else {
                         std::cerr << "Unsupported constant data type: " << type << std::endl;
@@ -741,7 +748,8 @@ std::vector<float> OnnxNetwork::getFloatInitializerData(const std::string& name)
             }
             if (init.has_raw_data()) {
                 return std::vector<float>(reinterpret_cast<const float*>(init.raw_data().data()),
-                                           reinterpret_cast<const float*>(init.raw_data().data()) + (init.raw_data().size() / sizeof(float)));
+                                          reinterpret_cast<const float*>(init.raw_data().data()) +
+                                              (init.raw_data().size() / sizeof(float)));
             } else if (init.float_data_size() > 0) {
                 // Data is stored in float_data field
                 const float* data = init.float_data().data();
@@ -754,7 +762,7 @@ std::vector<float> OnnxNetwork::getFloatInitializerData(const std::string& name)
     throw std::runtime_error("Initializer " + name + " not found");
 }
 
-ComputeGraphElementPtr OnnxNetwork::getOutputElement(const std::string& name) const{
+ComputeGraphElementPtr OnnxNetwork::getOutputElement(const std::string& name) const {
     /**
      * this methods returns the compute graph element that is associated with the given output name
      * it looks up the output name in the map outputName2GraphElementAndSlot

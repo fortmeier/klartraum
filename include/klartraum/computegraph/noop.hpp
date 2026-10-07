@@ -41,9 +41,7 @@ public:
         // The data flows directly from inputs to outputs without GPU operations
     }
 
-    virtual const char* getType() const override {
-        return "NoOp";
-    }
+    virtual const char* getType() const override { return "NoOp"; }
 
 private:
 };

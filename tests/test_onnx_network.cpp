@@ -14,15 +14,13 @@
 
 using namespace klartraum;
 
-
-void testLayer(std::shared_ptr<OnnxNetwork> onnxNetwork, std::string layerName)
-{
+void testLayer(std::shared_ptr<OnnxNetwork> onnxNetwork, std::string layerName) {
     auto element = onnxNetwork->getOutputElement(layerName);
     ASSERT_NE(element, nullptr);
     auto tensor = std::dynamic_pointer_cast<TensorElement<float>>(element);
     ASSERT_NE(tensor, nullptr);
 
-    std::vector<float> dataGPU( tensor->getDataElementCount() );
+    std::vector<float> dataGPU(tensor->getDataElementCount());
     tensor->getDataBuffer(0).memcopyTo(dataGPU);
 
     // now compare the output tensor to expected values
@@ -30,7 +28,7 @@ void testLayer(std::shared_ptr<OnnxNetwork> onnxNetwork, std::string layerName)
 
     ASSERT_EQ(dataGT.size(), dataGPU.size());
 
-    for(size_t i = 0; i < dataGT.size(); i++) {
+    for (size_t i = 0; i < dataGT.size(); i++) {
         ASSERT_NEAR(dataGT[i], dataGPU[i], 1e-3);
     }
 }
@@ -47,7 +45,6 @@ TEST(OnnxNetworkTest, ExecuteWithValidEncoderModel) {
     std::string modelPath = "./data/onnx/simple_encoder_with_onnx_frozen_intermediates.onnx";
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
-
 
     /*
     STEP 2: use the render engine to execute the computegraph so it can be debugged with renderdoc
@@ -94,4 +91,3 @@ TEST(OnnxNetworkTest, ExecuteWithValidDecoderModel) {
 
     return;
 }
-

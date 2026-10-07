@@ -48,13 +48,14 @@ namespace {
 // test_gaussian_splatting.cpp; kept local since that one is file-static).
 std::vector<uint8_t> readImageToHost(VulkanContext& vc, VkImage image, uint32_t W, uint32_t H) {
     const VkDeviceSize bytes = W * H * 4;
-    VkBuffer buf; VkDeviceMemory mem;
+    VkBuffer buf;
+    VkDeviceMemory mem;
     vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    buf, mem);
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buf, mem);
     VkCommandBufferAllocateInfo ai{};
     ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = vc.getCommandPool(); ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandPool = vc.getCommandPool();
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
     VkCommandBuffer cmd;
     vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
@@ -68,15 +69,16 @@ std::vector<uint8_t> readImageToHost(VulkanContext& vc, VkImage image, uint32_t 
     region.imageExtent = {W, H, 1};
     vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &region);
     vkEndCommandBuffer(cmd);
-    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
     vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(vc.getGraphicsQueue());
     vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
     void* data;
     vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
-    std::vector<uint8_t> result(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + bytes);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + bytes);
     vkUnmapMemory(vc.getDevice(), mem);
     vkFreeMemory(vc.getDevice(), mem, nullptr);
     vkDestroyBuffer(vc.getDevice(), buf, nullptr);
@@ -92,7 +94,7 @@ void writePPM(const std::string& filename, const uint8_t* bgra, uint32_t W, uint
     for (uint32_t y = 0; y < H; ++y)
         for (uint32_t x = 0; x < W; ++x) {
             const uint8_t* p = bgra + (y * W + x) * 4;
-            uint8_t rgb[3] = { p[2], p[1], p[0] };
+            uint8_t rgb[3] = {p[2], p[1], p[0]};
             f.write(reinterpret_cast<const char*>(rgb), 3);
         }
 }
@@ -113,11 +115,11 @@ TEST(GaussianSplattingRaster, classWithLanternScene) {
     uint32_t numImages = vc.getNumberOfSwapChainImages();
     VkExtent2D ext = vc.getSwapChainExtent();
     std::vector<VkImageView> views(numImages);
-    std::vector<VkImage>     imgs(numImages);
-    std::vector<VkExtent2D>  exts(numImages, ext);
+    std::vector<VkImage> imgs(numImages);
+    std::vector<VkExtent2D> exts(numImages, ext);
     for (uint32_t i = 0; i < numImages; ++i) {
         views[i] = vc.getImageView(i);
-        imgs[i]  = vc.getSwapChainImage(i);
+        imgs[i] = vc.getSwapChainImage(i);
     }
     auto imageViewSrc = std::make_shared<ImageViewSrc>(views, imgs, exts);
     for (uint32_t i = 0; i < numImages; ++i)
@@ -173,11 +175,11 @@ TEST(GaussianSplattingRaster, meshShaderPathMatchesVertexPath) {
         uint32_t numImages = vc.getNumberOfSwapChainImages();
         VkExtent2D ext = vc.getSwapChainExtent();
         std::vector<VkImageView> views(numImages);
-        std::vector<VkImage>     imgs(numImages);
-        std::vector<VkExtent2D>  exts(numImages, ext);
+        std::vector<VkImage> imgs(numImages);
+        std::vector<VkExtent2D> exts(numImages, ext);
         for (uint32_t i = 0; i < numImages; ++i) {
             views[i] = vc.getImageView(i);
-            imgs[i]  = vc.getSwapChainImage(i);
+            imgs[i] = vc.getSwapChainImage(i);
         }
         auto imageViewSrc = std::make_shared<ImageViewSrc>(views, imgs, exts);
         for (uint32_t i = 0; i < numImages; ++i)
@@ -206,14 +208,14 @@ TEST(GaussianSplattingRaster, meshShaderPathMatchesVertexPath) {
 
     bool dummy = false, meshUsed = false;
     auto vertexPixels = render(false, dummy);
-    auto meshPixels   = render(true,  meshUsed);
+    auto meshPixels = render(true, meshUsed);
     ASSERT_EQ(vertexPixels.size(), meshPixels.size());
 
     double sumAbsDiff = 0.0;
     uint32_t maxAbsDiff = 0;
     for (size_t i = 0; i < vertexPixels.size(); ++i) {
-        uint32_t d = static_cast<uint32_t>(std::abs(
-            static_cast<int>(vertexPixels[i]) - static_cast<int>(meshPixels[i])));
+        uint32_t d =
+            static_cast<uint32_t>(std::abs(static_cast<int>(vertexPixels[i]) - static_cast<int>(meshPixels[i])));
         sumAbsDiff += d;
         maxAbsDiff = std::max(maxAbsDiff, d);
     }

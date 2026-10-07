@@ -37,8 +37,7 @@ public:
 
     // Create a viewport whose offscreen render resolution differs from its
     // displayed size. The composite scales the source image to the destination.
-    std::shared_ptr<ImageViewSrc> makeViewport(int x, int y,
-                                               uint32_t displayWidth, uint32_t displayHeight,
+    std::shared_ptr<ImageViewSrc> makeViewport(int x, int y, uint32_t displayWidth, uint32_t displayHeight,
                                                uint32_t renderWidth, uint32_t renderHeight);
 
     bool hasViewports() const { return !viewports_.empty(); }
@@ -48,12 +47,11 @@ public:
     // finished semaphores plus the image-available semaphore). Signals — and
     // returns — the composite-finished semaphore for that image, and signals
     // `fence` (may be VK_NULL_HANDLE) when the composite completes.
-    VkSemaphore submitComposite(VkQueue queue, uint32_t imageIndex,
-                                const std::vector<VkSemaphore>& waitSemaphores,
+    VkSemaphore submitComposite(VkQueue queue, uint32_t imageIndex, const std::vector<VkSemaphore>& waitSemaphores,
                                 VkFence fence);
 
 private:
-    void finalize();   // allocate + record composite command buffers (idempotent)
+    void finalize(); // allocate + record composite command buffers (idempotent)
 
     struct Viewport {
         std::shared_ptr<OffscreenTarget> target;
@@ -64,8 +62,8 @@ private:
     std::vector<Viewport> viewports_;
 
     bool finalized_ = false;
-    std::vector<VkCommandBuffer> composite_;          // one per swapchain image
-    std::vector<VkSemaphore>     compositeFinished_;  // one per swapchain image
+    std::vector<VkCommandBuffer> composite_;     // one per swapchain image
+    std::vector<VkSemaphore> compositeFinished_; // one per swapchain image
 };
 
 } // namespace klartraum

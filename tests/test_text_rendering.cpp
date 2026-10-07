@@ -125,7 +125,8 @@ std::vector<uint8_t> renderTextToImage(const std::string& text, float x, float y
     vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
 
     auto& extent = vulkanContext.getSwapChainExtent();
-    std::vector<uint8_t> image = readImageToHost(vulkanContext, vulkanContext.getSwapChainImage(0), extent.width, extent.height);
+    std::vector<uint8_t> image =
+        readImageToHost(vulkanContext, vulkanContext.getSwapChainImage(0), extent.width, extent.height);
     writePPM(ppmName, image.data(), extent.width, extent.height);
     return image;
 }
@@ -133,14 +134,14 @@ std::vector<uint8_t> renderTextToImage(const std::string& text, float x, float y
 // Samples the center of glyph-local cell (col, row) for a glyph quad whose
 // top-left pixel is at (originX, originY) and whose pixels are `scale` screen
 // pixels wide/tall — i.e. the unambiguous interior of that cell's footprint.
-Pixel sampleGlyphCell(const std::vector<uint8_t>& image, uint32_t W, float originX, float originY, float scale,
-                      int col, int row) {
+Pixel sampleGlyphCell(const std::vector<uint8_t>& image, uint32_t W, float originX, float originY, float scale, int col,
+                      int row) {
     const uint32_t x = static_cast<uint32_t>(originX + (static_cast<float>(col) + 0.5f) * scale);
     const uint32_t y = static_cast<uint32_t>(originY + (static_cast<float>(row) + 0.5f) * scale);
     return samplePixel(image, W, x, y);
 }
 
-}  // namespace
+} // namespace
 
 TEST(TextRenderingTest, rendersGlyphShapeAtExpectedPosition) {
     const float x = 40.0f;
@@ -148,7 +149,7 @@ TEST(TextRenderingTest, rendersGlyphShapeAtExpectedPosition) {
     const float scale = 6.0f;
 
     std::vector<uint8_t> image = renderTextToImage("A", x, y, scale, 1.0f, 1.0f, 1.0f, 1.0f, "test_text_glyph_A.ppm");
-    const uint32_t imageWidth = 512;  // matches BackendConfig::WIDTH used by HeadlessFrontend
+    const uint32_t imageWidth = 512; // matches BackendConfig::WIDTH used by HeadlessFrontend
 
     for (int row = 0; row < GLYPH_PIXEL_HEIGHT; ++row) {
         for (int col = 0; col < GLYPH_PIXEL_WIDTH; ++col) {
@@ -191,8 +192,8 @@ TEST(TextRenderingTest, colorTintAndAdvanceAreApplied) {
                     // Red channel bright, green/blue suppressed -> confirms color tint, not just coverage.
                     EXPECT_TRUE(isBright(px.r) && isDark(px.g) && isDark(px.b))
                         << "glyph " << glyphIndex << " cell (col=" << col << ", row=" << row
-                        << "): expected red-tinted pixel, got (" << int(px.r) << ", " << int(px.g) << ", "
-                        << int(px.b) << ")";
+                        << "): expected red-tinted pixel, got (" << int(px.r) << ", " << int(px.g) << ", " << int(px.b)
+                        << ")";
                 } else {
                     EXPECT_TRUE(isDark(px.r) && isDark(px.g) && isDark(px.b))
                         << "glyph " << glyphIndex << " cell (col=" << col << ", row=" << row
@@ -209,14 +210,18 @@ TEST(TextRenderingTest, regionsOutsideTextRemainBackground) {
     const float y = 200.0f;
     const float scale = 4.0f;
 
-    std::vector<uint8_t> image = renderTextToImage("A", x, y, scale, 1.0f, 1.0f, 1.0f, 1.0f, "test_text_background.ppm");
+    std::vector<uint8_t> image =
+        renderTextToImage("A", x, y, scale, 1.0f, 1.0f, 1.0f, 1.0f, "test_text_background.ppm");
     const uint32_t imageWidth = 512;
     const uint32_t imageHeight = 384;
 
     // Sample a grid of points well away from the glyph's footprint
     // (glyph spans roughly [x, x + 5*scale] x [y, y + 7*scale]).
-    const std::vector<std::pair<uint32_t, uint32_t>> farPoints = {
-        {10, 10}, {imageWidth - 10, 10}, {10, imageHeight - 10}, {imageWidth - 10, imageHeight - 10}, {imageWidth / 2, 10}};
+    const std::vector<std::pair<uint32_t, uint32_t>> farPoints = {{10, 10},
+                                                                  {imageWidth - 10, 10},
+                                                                  {10, imageHeight - 10},
+                                                                  {imageWidth - 10, imageHeight - 10},
+                                                                  {imageWidth / 2, 10}};
 
     for (const auto& [px, py] : farPoints) {
         const Pixel pixel = samplePixel(image, imageWidth, px, py);

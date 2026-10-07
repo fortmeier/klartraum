@@ -33,13 +33,9 @@ struct ImageSize {
 
 class ImageResampleTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        frontend = std::make_unique<HeadlessFrontend>();
-    }
+    void SetUp() override { frontend = std::make_unique<HeadlessFrontend>(); }
 
-    void TearDown() override {
-        frontend.reset();
-    }
+    void TearDown() override { frontend.reset(); }
 
     VulkanContext& vc() { return frontend->getKlartraumEngine().getVulkanContext(); }
 
@@ -86,8 +82,10 @@ protected:
 // One plane per channel; green and blue are copies of red scaled by 0.5 and 0.25.
 std::vector<float> rgb(const std::vector<float>& red) {
     std::vector<float> planes = red;
-    for (float v : red) planes.push_back(0.5f * v);
-    for (float v : red) planes.push_back(0.25f * v);
+    for (float v : red)
+        planes.push_back(0.5f * v);
+    for (float v : red)
+        planes.push_back(0.25f * v);
     return planes;
 }
 
@@ -105,13 +103,9 @@ void expectPlanes(const std::vector<float>& actual, const std::vector<float>& ex
 } // namespace
 
 TEST_F(ImageResampleTest, nearestUpscale) {
-    const auto result = resample(rgb({0.2f, 0.4f,
-                                      0.6f, 0.8f}),
-                                 {2, 2}, {4, 4}, ResampleFilter::Nearest);
-    expectPlanes(result, {0.2f, 0.2f, 0.4f, 0.4f,
-                          0.2f, 0.2f, 0.4f, 0.4f,
-                          0.6f, 0.6f, 0.8f, 0.8f,
-                          0.6f, 0.6f, 0.8f, 0.8f});
+    const auto result = resample(rgb({0.2f, 0.4f, 0.6f, 0.8f}), {2, 2}, {4, 4}, ResampleFilter::Nearest);
+    expectPlanes(result,
+                 {0.2f, 0.2f, 0.4f, 0.4f, 0.2f, 0.2f, 0.4f, 0.4f, 0.6f, 0.6f, 0.8f, 0.8f, 0.6f, 0.6f, 0.8f, 0.8f});
 }
 
 TEST_F(ImageResampleTest, bilinearUpscale) {
@@ -120,8 +114,7 @@ TEST_F(ImageResampleTest, bilinearUpscale) {
 }
 
 TEST_F(ImageResampleTest, bilinearDownscale) {
-    const auto result = resample(rgb({0.0f, 0.4f, 0.8f, 0.8f,
-                                      0.4f, 0.8f, 0.0f, 0.4f}),
-                                 {4, 2}, {2, 1}, ResampleFilter::Bilinear);
+    const auto result =
+        resample(rgb({0.0f, 0.4f, 0.8f, 0.8f, 0.4f, 0.8f, 0.0f, 0.4f}), {4, 2}, {2, 1}, ResampleFilter::Bilinear);
     expectPlanes(result, {0.4f, 0.5f});
 }

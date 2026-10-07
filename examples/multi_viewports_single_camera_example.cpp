@@ -32,8 +32,8 @@
 
 int main(int /*argc*/, char** /*argv*/) {
     klartraum::GlfwFrontend frontend;
-    auto& engine         = frontend.getKlartraumEngine();
-    auto& vulkanContext  = engine.getVulkanContext();
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vulkanContext = engine.getVulkanContext();
 
     // ---- The single shared camera -----------------------------------------
     // One view and projection, shared by both equally sized viewports.
@@ -49,8 +49,8 @@ int main(int /*argc*/, char** /*argv*/) {
     auto extent = vulkanContext.getSwapChainExtent();
     uint32_t halfW = extent.width / 2;
 
-    auto leftViewport  = engine.getWindow().makeViewport(0,     0, halfW,                0 + extent.height);
-    auto rightViewport = engine.getWindow().makeViewport(halfW, 0, extent.width - halfW,     extent.height);
+    auto leftViewport = engine.getWindow().makeViewport(0, 0, halfW, 0 + extent.height);
+    auto rightViewport = engine.getWindow().makeViewport(halfW, 0, extent.width - halfW, extent.height);
 
     // ---- Two scenes, same camera, different backends, different targets ----
     // The lantern capture is stored with Y pointing down, hence flipY.
@@ -59,13 +59,11 @@ int main(int /*argc*/, char** /*argv*/) {
     // One model, loaded/uploaded once, shared by both backends.
     auto model = std::make_shared<klartraum::GaussianDataStandard>(vulkanContext, spzFile, true);
 
-    auto splatCompute = klartraum::createGaussianSplatting(
-        vulkanContext, klartraum::GsplatBackend::Compute,
-        rightViewport, cameraUBO, model);
+    auto splatCompute = klartraum::createGaussianSplatting(vulkanContext, klartraum::GsplatBackend::Compute,
+                                                           rightViewport, cameraUBO, model);
 
-    auto splatRaster = klartraum::createGaussianSplatting(
-        vulkanContext, klartraum::GsplatBackend::Raster,
-        leftViewport, cameraUBO, model);
+    auto splatRaster = klartraum::createGaussianSplatting(vulkanContext, klartraum::GsplatBackend::Raster, leftViewport,
+                                                          cameraUBO, model);
 
     // Both graphs go to the engine.  Because both viewport targets came from
     // the engine's single swapchain, the engine is responsible for sequencing
@@ -74,12 +72,11 @@ int main(int /*argc*/, char** /*argv*/) {
     engine.add(splatRaster);
 
     // ---- One camera drives the shared UBO ----------------------------------
-    auto cameraOrbit = std::make_shared<klartraum::InterfaceCameraOrbit>(
-        klartraum::InterfaceCameraOrbit::UpDirection::Y);
+    auto cameraOrbit =
+        std::make_shared<klartraum::InterfaceCameraOrbit>(klartraum::InterfaceCameraOrbit::UpDirection::Y);
     cameraOrbit->initialize(vulkanContext);
     auto viewportExtent = leftViewport->getImageExtent(0);
-    cameraOrbit->setProjectionAspectRatio(
-        viewportExtent.width / static_cast<float>(viewportExtent.height));
+    cameraOrbit->setProjectionAspectRatio(viewportExtent.width / static_cast<float>(viewportExtent.height));
     cameraOrbit->setAzimuth(0.9f);
     cameraOrbit->setElevation(-0.5f);
     cameraOrbit->setPosition({0.0f, -0.08f, 0.0f});

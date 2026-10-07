@@ -44,7 +44,8 @@ TEST(BufferToGraphicsBarrier, ordersComputeBufferBeforeRenderPass) {
     // Stand-in for a compute-produced buffer an indirect draw would consume
     // (sorted indices / VkDrawIndirectCommand args): a storage+indirect buffer
     // that gets (re-)written every frame, analogous to the dist.comp output.
-    auto computedBuffer = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, 4,
+    auto computedBuffer = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
+        vc, 4,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     computedBuffer->setRecordToZero(true);
 

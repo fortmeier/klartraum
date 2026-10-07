@@ -29,8 +29,8 @@ public:
     // resources indexed by it may be reused. The submission waits on
     // `waitSemaphore`, signals `fence`, and returns a semaphore that is
     // signaled once the overlay has finished; the engine presents on it.
-    virtual VkSemaphore submit(VkQueue queue, uint32_t imageIndex, uint32_t frameIndex,
-                               VkSemaphore waitSemaphore, VkFence fence) = 0;
+    virtual VkSemaphore submit(VkQueue queue, uint32_t imageIndex, uint32_t frameIndex, VkSemaphore waitSemaphore,
+                               VkFence fence) = 0;
 
     // Called after the swapchain has been recreated (e.g. window resize);
     // everything recorded against the old swapchain images must be rebuilt.

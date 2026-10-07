@@ -51,7 +51,6 @@ TEST_F(GeneralComputationTest, ComputeGraphCreation) {
     auto bufferElementB = std::make_shared<BufferElement<typeB>>(vulkanContext, 7);
     auto bufferElementR = std::make_shared<BufferElement<typeR>>(vulkanContext, 7);
 
-
     op->setInput(bufferElementA, 0);
     op->setInput(bufferElementB, 1);
     op->setInput(bufferElementR, 2);
@@ -61,11 +60,11 @@ TEST_F(GeneralComputationTest, ComputeGraphCreation) {
     /*
     STEP 2: create the computegraph backend and compile the computegraph
     */
-   
-   // this traverses the computegraph and creates the vulkan objects
-   auto computegraph = ComputeGraph(vulkanContext, 1);
-   computegraph.enableProfiling();   // enable before compileFrom
-   computegraph.compileFrom(op);
+
+    // this traverses the computegraph and creates the vulkan objects
+    auto computegraph = ComputeGraph(vulkanContext, 1);
+    computegraph.enableProfiling(); // enable before compileFrom
+    computegraph.compileFrom(op);
 
     std::vector<float> dataA = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
     std::vector<float> dataB = {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f};
