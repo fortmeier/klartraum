@@ -4,16 +4,25 @@
 
 /**
  * TESTS:
- * - The simple encoder executes and matches every frozen intermediate.
- * - The simple decoder executes and matches every frozen intermediate.
- * - The Stable Diffusion 1.5 encoder graph loads with the expected output shape.
- * - The Stable Diffusion 1.5 decoder graph loads with the expected output shape.
- * - The Stable Diffusion 1.5 VAE encodes and decodes lantern.jpg within the ONNX reference tolerance.
- * - The Stable Diffusion 1.5 graphs reuse transient tensor storage.
- * - Eligible ONNX Reshape tensors are zero-copy views of their inputs.
- * - The generated fixed-size SD1.5 UNet graph loads with complete operator coverage.
- * - The generated fixed-size SD1.5 UNet executes one denoising prediction against ONNX Runtime.
- * - The generated SD1.5 CLIP encoder executes token IDs against ONNX Runtime.
+ * - ExecuteWithValidEncoderModel: the simple encoder executes and matches every frozen
+ *   intermediate
+ * - ExecuteWithValidDecoderModel: the simple decoder executes and matches every frozen
+ *   intermediate
+ * - LoadsStableDiffusion15Encoder: the Stable Diffusion 1.5 encoder graph loads with the
+ *   expected output shape
+ * - LoadsStableDiffusion15Decoder: the Stable Diffusion 1.5 decoder graph loads with the
+ *   expected output shape
+ * - StableDiffusion15UsesTransientStoragePlan: the Stable Diffusion 1.5 graphs reuse
+ *   transient tensor storage, and an eligible Reshape output is a zero-copy view of its
+ *   input
+ * - LoadsStableDiffusion15Denoiser: the generated fixed-size SD1.5 UNet graph loads with
+ *   complete operator coverage
+ * - ExecutesStableDiffusion15DenoiserStep: the generated fixed-size SD1.5 UNet executes
+ *   one denoising prediction against ONNX Runtime
+ * - ExecutesStableDiffusion15TextEncoder: the generated SD1.5 CLIP encoder executes
+ *   token IDs against ONNX Runtime
+ * - ExecutesStableDiffusion15VaeOnLantern: the Stable Diffusion 1.5 VAE encodes and
+ *   decodes lantern.jpg within the ONNX reference tolerance
  **/
 
 #include <algorithm>

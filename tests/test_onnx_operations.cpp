@@ -4,26 +4,34 @@
 
 /**
  * TESTS:
- * - Add, Sub, and Mul apply ONNX right-aligned broadcasting.
- * - Sigmoid evaluates every tensor element.
- * - InstanceNormalization normalizes each N,C spatial slice.
- * - MatMul multiplies batched row-major matrices.
- * - Softmax normalizes rows along the last axis.
- * - Split writes three contiguous slices along the last axis.
- * - Slice extracts FLOAT and INT64 ranges on arbitrary tensor axes.
- * - Resize performs nearest-neighbor spatial upsampling.
- * - Transpose supports the rank-three permutation used by SD 1.5 attention.
- * - Div applies ONNX right-aligned broadcasting.
- * - Cos, Sin, Sqrt, and Erf evaluate the SD1.5 timestep and GELU functions.
- * - Concat joins skip connections along an arbitrary axis.
- * - Gemm applies transposed weights and bias.
- * - LayerNormalization normalizes and affine-transforms the last axis.
- * - Expand performs multidimensional ONNX broadcasting and supports INT64 timestep expansion.
- * - Gather selects embedding rows using INT64 token indices.
- * - Conv dispatches every item in a classifier-free-guidance batch.
- * - FusedAttention matches a CPU softmax(Q K) V reference for SD1.5 head widths and uneven query/key counts.
- * - Tiled FusedAttention for head widths 40 and 80 matches the same reference across partial query groups and key
- * tiles.
+ * - AddAndMulBroadcast: Add, Sub, and Mul apply ONNX right-aligned broadcasting
+ * - Sigmoid: Sigmoid evaluates every tensor element
+ * - InstanceNormalization: InstanceNormalization normalizes each N,C spatial slice
+ * - MatMul: MatMul multiplies batched row-major matrices
+ * - Softmax: Softmax normalizes rows along the last axis
+ * - SplitThree: Split writes three contiguous slices along the last axis
+ * - SliceChannelRange: Slice extracts a FLOAT channel range on an arbitrary tensor axis
+ * - SliceInt64ShapeValue: Slice extracts a value from an INT64 shape tensor
+ * - ResizeNearest: Resize performs nearest-neighbor spatial upsampling
+ * - TransposeRankThree: Transpose supports the rank-three permutation used by SD 1.5
+ *   attention
+ * - DivBroadcast: Div applies ONNX right-aligned broadcasting
+ * - DenoiserUnaryFunctions: Cos, Sin, Sqrt, and Erf evaluate the SD1.5 timestep and GELU
+ *   functions
+ * - ConcatSkipConnection: Concat joins skip connections along an arbitrary axis
+ * - GemmTransposedWeightsWithBias: Gemm applies transposed weights and bias
+ * - LayerNormalizationLastAxis: LayerNormalization normalizes and affine-transforms the
+ *   last axis
+ * - ExpandAndCastTimestep: Expand broadcasts an INT64 timestep, and Cast turns it into
+ *   floats
+ * - ExpandBroadcastsBatchRowsIndependently: Expand performs multidimensional ONNX
+ *   broadcasting for each batch row
+ * - GatherEmbeddingRows: Gather selects embedding rows using INT64 token indices
+ * - BatchedConvolution: Conv dispatches every item in a classifier-free-guidance batch
+ * - FusedAttentionMatchesSoftmaxReference: FusedAttention matches a CPU softmax(Q K) V
+ *   reference for SD1.5 head widths and uneven query/key counts
+ * - TiledFusedAttentionMatchesSoftmaxReference: tiled FusedAttention for head widths 40
+ *   and 80 matches the same reference across partial query groups and key tiles
  **/
 
 #include <algorithm>

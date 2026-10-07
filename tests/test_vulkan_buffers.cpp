@@ -14,6 +14,9 @@
  * - copyFromPreservesTailAndSource: prefix copies preserve the tail and source, clamp to
  *   destination capacity and leave zero-length copies unchanged
  * - copyStaticPrefixToIndependentPaths: each path receives a static prefix while retaining its own tail
+ * - batchedUploadGathersCopies: a BatchedUpload gathers small copies into one submission
+ *   per staging chunk, submits larger data on its own, and every buffer reads back its
+ *   data
  **/
 #include <gtest/gtest.h>
 
