@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_CORE_HPP
-#define KLARTRAUM_CORE_HPP
+#ifndef KLARTRAUM_KLARTRAUM_CORE_HPP
+#define KLARTRAUM_KLARTRAUM_CORE_HPP
 
 #include <functional>
 #include <string>
@@ -129,4 +129,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_CORE_HPP
+#endif // KLARTRAUM_KLARTRAUM_CORE_HPP

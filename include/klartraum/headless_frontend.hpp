@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef HEADLESS_FRONTEND_HPP
-#define HEADLESS_FRONTEND_HPP
+#ifndef KLARTRAUM_HEADLESS_FRONTEND_HPP
+#define KLARTRAUM_HEADLESS_FRONTEND_HPP
 
 #include "klartraum/klartraum_core.hpp"
 
@@ -33,4 +33,4 @@ private:
 
 } // namespace klartraum
 
-#endif // HEADLESS_FRONTEND_HPP
+#endif // KLARTRAUM_HEADLESS_FRONTEND_HPP

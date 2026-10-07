@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef VULKAN_GAUSSIAN_SPLATTING_HPP
-#define VULKAN_GAUSSIAN_SPLATTING_HPP
+#ifndef KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
+#define KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
 
 #include <memory>
 #include <string>
@@ -67,4 +67,4 @@ private:
 
 } // namespace klartraum
 
-#endif // VULKAN_GAUSSIAN_SPLATTING_HPP
+#endif // KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP

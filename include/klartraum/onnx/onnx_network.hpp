@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_ONNX_NETWORK_HPP
-#define KLARTRAUM_ONNX_NETWORK_HPP
+#ifndef KLARTRAUM_ONNX_ONNX_NETWORK_HPP
+#define KLARTRAUM_ONNX_ONNX_NETWORK_HPP
 
 #include <memory>
 #include <string>
@@ -124,4 +124,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_ONNX_NETWORK_HPP
+#endif // KLARTRAUM_ONNX_ONNX_NETWORK_HPP

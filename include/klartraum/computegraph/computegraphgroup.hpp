@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_COMPUTEGRAPHGROUP_HPP
-#define KLARTRAUM_COMPUTEGRAPHGROUP_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPH_COMPUTEGRAPHGROUP_HPP
+#define KLARTRAUM_COMPUTEGRAPH_COMPUTEGRAPHGROUP_HPP
 
 #include "klartraum/computegraph/computegraphelement.hpp"
 
@@ -24,4 +24,4 @@ protected:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_COMPUTEGRAPHGROUP_HPP
+#endif // KLARTRAUM_COMPUTEGRAPH_COMPUTEGRAPHGROUP_HPP

@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_ONNX_PUSH_CONSTANTS_HPP
-#define KLARTRAUM_ONNX_PUSH_CONSTANTS_HPP
+#ifndef KLARTRAUM_ONNX_ONNX_PUSH_CONSTANTS_HPP
+#define KLARTRAUM_ONNX_ONNX_PUSH_CONSTANTS_HPP
 
 #include <cstdint>
 
@@ -55,4 +55,4 @@ struct ConvTransposePushConstants {
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_ONNX_PUSH_CONSTANTS_HPP
+#endif // KLARTRAUM_ONNX_ONNX_PUSH_CONSTANTS_HPP

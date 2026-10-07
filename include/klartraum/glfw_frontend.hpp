@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef BACKEND_VULKAN_HPP
-#define BACKEND_VULKAN_HPP
+#ifndef KLARTRAUM_GLFW_FRONTEND_HPP
+#define KLARTRAUM_GLFW_FRONTEND_HPP
 
 #include <exception>
 
@@ -90,4 +90,4 @@ private:
 
 } // namespace klartraum
 
-#endif // BACKEND_VULKAN_HPP
+#endif // KLARTRAUM_GLFW_FRONTEND_HPP

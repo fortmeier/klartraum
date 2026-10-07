@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_NOOP_HPP
-#define KLARTRAUM_NOOP_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPH_NOOP_HPP
+#define KLARTRAUM_COMPUTEGRAPH_NOOP_HPP
 
 #include "klartraum/computegraph/computegraphelement.hpp"
 
@@ -48,4 +48,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_NOOP_HPP
+#endif // KLARTRAUM_COMPUTEGRAPH_NOOP_HPP
