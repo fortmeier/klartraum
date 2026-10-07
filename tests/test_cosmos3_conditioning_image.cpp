@@ -4,12 +4,18 @@
 
 /**
  * TESTS:
- * - A PPM written to build/TestingOutput reads back with its size and pixels; a non-PPM file is rejected.
- * - At the target size the image is only mapped to [-1, 1] (p / 127.5 - 1), planar RGB.
- * - A wider image at the target height is centre-cropped without resampling.
- * - An exact 2x downscale uses the antialiased triangle filter, renormalized at the borders.
- * - A 7x5 downscale-and-crop matches diffusers' _preprocess_conditioning_image.
- * - A 3x2 upscale-and-crop matches diffusers' _preprocess_conditioning_image.
+ * - readPpmRoundTrip: A PPM written to build/TestingOutput reads back with its size and
+ *   pixels; a non-PPM file is rejected
+ * - identitySizeOnlyNormalizes: At the target size the image is only mapped to [-1, 1]
+ *   (p / 127.5 - 1), planar RGB
+ * - widerImageIsCentreCropped: A wider image at the target height is centre-cropped
+ *   without resampling
+ * - exactDownscaleUsesAntialiasedTriangleFilter: An exact 2x downscale uses the
+ *   antialiased triangle filter, renormalized at the borders
+ * - downscaleAndCropMatchesDiffusers: A 7x5 downscale-and-crop matches diffusers'
+ *   _preprocess_conditioning_image
+ * - upscaleAndCropMatchesDiffusers: A 3x2 upscale-and-crop matches diffusers'
+ *   _preprocess_conditioning_image
  **/
 
 #include <cstdint>

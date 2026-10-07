@@ -5,6 +5,9 @@
 /**
  * TESTS:
  * - memcopy: data copied into a VulkanBuffer and back to the host is unchanged
+ * - batchedUploadGathersCopies: a BatchedUpload gathers small copies into one submission
+ *   per staging chunk, submits larger data on its own, and every buffer reads back its
+ *   data
  **/
 #include <gtest/gtest.h>
 
