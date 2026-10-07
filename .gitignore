@@ -27,7 +27,3 @@ docs/.venv/
 docs/_build/
 docs/_doxygen/
 _site/
-
-# Downloaded GGUF models (scripts/qwen_gguf/download.py)
-data/gguf/
-scripts/qwen_gguf/.venv/
