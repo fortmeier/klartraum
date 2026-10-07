@@ -7,6 +7,7 @@ distributes a build has to pass these notices on with it.
 | Component | Version | License |
 |---|---|---|
 | GLFW | 3.5.1 | Zlib |
+| Wayland protocols (part of GLFW, Linux builds only) | as bundled with GLFW 3.5.1 | MIT |
 | zlib | 1.3.2 | Zlib |
 | spz | 3.0.0 | MIT |
 | Protocol Buffers | 25.1 | BSD-3-Clause |
@@ -53,6 +54,67 @@ freely, subject to the following restrictions:
 
 3. This notice may not be removed or altered from any source
    distribution.
+```
+
+## Wayland protocols (part of GLFW)
+
+Version: as bundled with GLFW 3.5.1 in `3rdparty/glfw/deps/wayland/`.
+License: MIT. On Linux, GLFW generates code from these protocol descriptions
+and compiles it into the library; macOS and Windows builds do not contain it.
+All nine files carry the same license text.
+
+```text
+wayland.xml:
+Copyright © 2008-2011 Kristian Høgsberg
+Copyright © 2010-2011 Intel Corporation
+Copyright © 2012-2013 Collabora, Ltd.
+
+viewporter.xml:
+Copyright © 2013-2016 Collabora, Ltd.
+
+xdg-shell.xml:
+Copyright © 2008-2013 Kristian Høgsberg
+Copyright © 2013 Rafael Antognolli
+Copyright © 2013 Jasper St. Pierre
+Copyright © 2010-2013 Intel Corporation
+Copyright © 2015-2017 Samsung Electronics Co., Ltd
+Copyright © 2015-2017 Red Hat Inc.
+
+idle-inhibit-unstable-v1.xml:
+Copyright © 2015 Samsung Electronics Co., Ltd
+
+pointer-constraints-unstable-v1.xml, relative-pointer-unstable-v1.xml:
+Copyright © 2014 Jonas Ådahl
+Copyright © 2015 Red Hat Inc.
+
+fractional-scale-v1.xml:
+Copyright © 2022 Kenny Levinsen
+
+xdg-activation-v1.xml:
+Copyright © 2020 Aleix Pol Gonzalez <aleixpol@kde.org>
+Copyright © 2020 Carlos Garnacho <carlosg@gnome.org>
+
+xdg-decoration-unstable-v1.xml:
+Copyright © 2018 Simon Ser
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ```
 
 ## zlib
