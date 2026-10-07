@@ -1,25 +1,30 @@
+# Formatting of the C++ sources (.cpp/.hpp). Checked by the clang-format
+# pre-commit hook, which pins the clang-format version.
 BasedOnStyle: LLVM
 UseTab: Never
 IndentWidth: 4
 TabWidth: 4
+ColumnLimit: 120
 BreakBeforeBraces: Attach
 AllowShortIfStatementsOnASingleLine: false
 IndentCaseLabels: false
-ColumnLimit: 0
 AccessModifierOffset: -4
 NamespaceIndentation: None
 FixNamespaceComments: false
 PointerAlignment: Left
+# Keep the existing layout: `template <...>` on its own line, and one
+# constructor initializer per line.
+BreakTemplateDeclarations: Yes
+PackConstructorInitializers: Never
 
-IncludeBlocks: Regroup
+# Includes keep their order for now; sorting them can change which
+# declarations a header sees, so it is a separate step.
+SortIncludes: Never
+IncludeBlocks: Preserve
 IncludeCategories:
-  - Regex:           '^<([a-zA-Z0-9_]+)>$'
-    Priority:        1
-    Name:            std_libs
-  - Regex:           '^<.*>$'
-    Priority:        2
-    Name:            non_std_libs
-  - Regex:           '^".*"'
-    Priority:        3
-    Name:            local
-SortIncludes:       true
+  - Regex: '^<([a-zA-Z0-9_]+)>$'
+    Priority: 1
+  - Regex: '^<.*>$'
+    Priority: 2
+  - Regex: '^".*"'
+    Priority: 3
