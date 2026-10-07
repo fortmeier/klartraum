@@ -22,7 +22,6 @@ public:
     /**
      * @brief Construct a new CopyBuffer element
      * @param vulkanContext The Vulkan context for this element
-     * @param bufferSize Size in bytes to copy (0 means copy entire buffer)
      */
     CopyBuffer(VulkanContext& vulkanContext)
         : vulkanContext(vulkanContext) {}

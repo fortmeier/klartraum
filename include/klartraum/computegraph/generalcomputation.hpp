@@ -18,9 +18,6 @@
 
 namespace klartraum {
 
-using DispatchIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
-using DrawIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDrawIndirectCommand>>;
-
 template <typename P = void>
 class GeneralComputation : public ComputeGraphElement {
 public:

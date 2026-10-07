@@ -6,6 +6,7 @@
 #define KLARTRAUM_COMPUTEGRAPH_BUFFERELEMENT_HPP
 
 #include "klartraum/computegraph/computegraphelement.hpp"
+#include "klartraum/vulkan_buffer.hpp"
 
 namespace klartraum {
 
@@ -135,6 +136,12 @@ public:
 private:
     BufferType buffer;
 };
+
+/// Buffer element holding the arguments of an indirect compute dispatch (vkCmdDispatchIndirect).
+using DispatchIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDispatchIndirectCommand>>;
+
+/// Buffer element holding the arguments of an indirect draw (vkCmdDrawIndirect).
+using DrawIndirectCommandBufferElement = BufferElement<VulkanBuffer<VkDrawIndirectCommand>>;
 
 } // namespace klartraum
 

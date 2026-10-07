@@ -15,7 +15,9 @@ docs/.venv/bin/sphinx-build -W --keep-going docs docs/_build/html
 
 `conf.py` runs Doxygen itself, so no separate step is needed. Open
 `docs/_build/html/index.html` to view the result. `-W` turns warnings into
-errors, as in CI.
+errors, as in CI. Doxygen warnings fail the build too, for example an `@param`
+that names no parameter of the function; they are listed in
+`docs/_doxygen/warnings.log`.
 
 ## Documenting C++ code
 

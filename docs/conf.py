@@ -16,6 +16,13 @@ DOCS_DIR = os.path.dirname(os.path.abspath(__file__))
 os.makedirs(os.path.join(DOCS_DIR, "_doxygen"), exist_ok=True)
 subprocess.run(["doxygen", "Doxyfile"], cwd=DOCS_DIR, check=True)
 
+# Doxygen writes its warnings to a log file (WARN_LOGFILE) and still exits
+# with 0, so the build checks the log: any warning fails it.
+with open(os.path.join(DOCS_DIR, "_doxygen", "warnings.log"), encoding="utf-8") as warnings_file:
+    doxygen_warnings = warnings_file.read().strip()
+if doxygen_warnings:
+    raise RuntimeError("Doxygen reported warnings (docs/_doxygen/warnings.log):\n" + doxygen_warnings)
+
 project = "Klartraum Engine"
 author = "Dirk Fortmeier"
 copyright = "2025-2026, Dirk Fortmeier"
