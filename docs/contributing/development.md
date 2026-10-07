@@ -27,6 +27,26 @@ commit again. To run all checks on the whole repository:
 pre-commit run --all-files
 ```
 
+## Formatting
+
+C++ sources (`.cpp`, `.hpp`) are formatted with clang-format according to
+`.clang-format` in the repository root: four spaces, braces on the same line,
+at most 120 characters per line. The pre-commit check runs clang-format 23.1.2
+on the staged files and stops the commit if it had to change anything; stage
+the reformatted files and commit again. To format files by hand with the same
+version:
+
+```bash
+uvx --from clang-format==23.1.2 clang-format -i path/to/file.cpp
+```
+
+Commits that only reformat code are listed in `.git-blame-ignore-revs`. To
+have `git blame` skip them, run once per clone:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
 ## Copyright and license information
 
 The repository follows the [REUSE](https://reuse.software/) specification:
