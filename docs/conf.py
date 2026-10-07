@@ -1,6 +1,7 @@
 # Sphinx configuration for the Klartraum Engine documentation.
 
 import os
+import re
 import subprocess
 
 DOCS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +15,11 @@ subprocess.run(["doxygen", "Doxyfile"], cwd=DOCS_DIR, check=True)
 project = "Klartraum Engine"
 author = "Dirk Fortmeier"
 copyright = "2025, Dirk Fortmeier"
+
+# The version is defined once, in project() in the top-level CMakeLists.txt.
+with open(os.path.join(DOCS_DIR, "..", "CMakeLists.txt"), encoding="utf-8") as cmake_file:
+    release = re.search(r"project\(klartraum VERSION ([0-9.]+)", cmake_file.read()).group(1)
+version = ".".join(release.split(".")[:2])
 
 extensions = [
     "myst_parser",
@@ -61,7 +67,7 @@ needs_links = {
 needs_build_json = True
 
 html_theme = "furo"
-html_title = "Klartraum Engine"
+html_title = f"Klartraum Engine {release}"
 html_static_path = []
 
 # One Impressum and one privacy notice on klartraum.ai cover the landing page
