@@ -4,17 +4,23 @@
 
 /**
  * TESTS:
- * - matVec of every supported weight type matches a CPU product of the dequantized rows,
- *   for 3 active tokens and a row count that is not a multiple of the workgroup's rows.
- * - matVec with accumulate adds to the output in place; with lastTokenOnly it computes the last token only.
- * - rmsNorm normalizes several rows per token and leaves inactive tokens untouched.
- * - swiGlu computes silu(gate) * up for the active tokens.
- * - attentionPrep + attention over two submissions (a 3-token chunk, then 1 token) match a CPU
- *   gated causal GQA attention with per-head RMS norms and NEOX RoPE.
- * - linearConv carries its state across submissions: 2 + 3 tokens equal 5 tokens at once.
- * - gatedDeltaNet over two submissions matches a CPU gated delta rule with the gated RMS norm.
- * - matVecThroughput (only with KLARTRAUM_BENCHMARK set): prints the weight bandwidth of each type
- *   at the Qwen3.6-27B FFN shape, for 1 and 16 tokens.
+ * - MatVecAllWeightTypes: matVec of every supported weight type matches a CPU product of
+ *   the dequantized rows, for 3 active tokens and a row count that is not a multiple of
+ *   the workgroup's rows
+ * - MatVecAccumulateAndLastToken: matVec with accumulate adds to the output in place;
+ *   with lastTokenOnly it computes the last token only
+ * - RmsNormRowsPerToken: rmsNorm normalizes several rows per token and leaves inactive
+ *   tokens untouched
+ * - SwiGlu: swiGlu computes silu(gate) * up for the active tokens
+ * - AttentionWithCacheAcrossSubmissions: attentionPrep + attention over two submissions
+ *   (a 3-token chunk, then 1 token) match a CPU gated causal GQA attention with per-head
+ *   RMS norms and NEOX RoPE
+ * - LinearConvStateAcrossSubmissions: linearConv carries its state across submissions: 2
+ *   + 3 tokens equal 5 tokens at once
+ * - GatedDeltaNetAcrossSubmissions: gatedDeltaNet over two submissions matches a CPU
+ *   gated delta rule with the gated RMS norm
+ * - MatVecThroughput: matVecThroughput (only with KLARTRAUM_BENCHMARK set): prints the
+ *   weight bandwidth of each type at the Qwen3.6-27B FFN shape, for 1 and 16 tokens
  **/
 
 #include <chrono>
