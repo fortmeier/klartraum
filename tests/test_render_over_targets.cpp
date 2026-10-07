@@ -207,7 +207,7 @@ TEST_F(RenderOverTargetsTest, backendsRenderOverTheirTarget) {
     for (size_t i = 0; i < overBlue[0].size(); ++i) {
         difference += std::abs(int(overBlue[0][i]) - int(overBlue[1][i]));
     }
-    // As bothBackendsAgreeOnRaccoonScene, over a colored background.
+    // As bothBackendsAgreeOnLanternScene, over a colored background.
     EXPECT_LT(difference / overBlue[0].size(), 20.0) << "mean absolute channel difference between the backends";
 }
 
