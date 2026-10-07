@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#pragma once
+#ifndef KLARTRAUM_GLYPH_ATLAS_HPP
+#define KLARTRAUM_GLYPH_ATLAS_HPP
 
 #include <cstdint>
 #include <vector>
@@ -59,3 +60,5 @@ GlyphUVRect glyphUVRect(int charCode);
 std::vector<uint8_t> generateGlyphAtlasBitmap();
 
 } // namespace klartraum
+
+#endif // KLARTRAUM_GLYPH_ATLAS_HPP

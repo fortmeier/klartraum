@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#pragma once
+#ifndef KLARTRAUM_SIMPLE_TEXT_RENDERER_HPP
+#define KLARTRAUM_SIMPLE_TEXT_RENDERER_HPP
 
 #include <cstdint>
 #include <string>
@@ -42,3 +43,5 @@ private:
 };
 
 } // namespace klartraum
+
+#endif // KLARTRAUM_SIMPLE_TEXT_RENDERER_HPP

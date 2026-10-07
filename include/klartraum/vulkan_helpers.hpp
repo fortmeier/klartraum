@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
+#ifndef KLARTRAUM_VULKAN_HELPERS_HPP
+#define KLARTRAUM_VULKAN_HELPERS_HPP
+
 #include <vector>
 #include <string>
 
@@ -26,3 +29,5 @@ std::string getAssetRoot();
 VkShaderModule createShaderModule(const std::vector<char>& code, const VkDevice& device);
 
 } // namespace klartraum
+
+#endif // KLARTRAUM_VULKAN_HELPERS_HPP

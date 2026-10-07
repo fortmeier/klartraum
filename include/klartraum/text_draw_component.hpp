@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#pragma once
+#ifndef KLARTRAUM_TEXT_DRAW_COMPONENT_HPP
+#define KLARTRAUM_TEXT_DRAW_COMPONENT_HPP
 
 #include <string>
 #include <vector>
@@ -76,3 +77,5 @@ private:
 };
 
 } // namespace klartraum
+
+#endif // KLARTRAUM_TEXT_DRAW_COMPONENT_HPP

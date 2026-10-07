@@ -29,6 +29,16 @@ repos:
       # entry in REUSE.toml for everything else.
       - id: reuse-lint-file
 
+  - repo: local
+    hooks:
+      # Headers need an include guard named after their path; run
+      # `python3 scripts/dev/include_guards.py --fix` to add or rename it.
+      - id: include-guards
+        name: include guards
+        entry: python scripts/dev/include_guards.py
+        language: python
+        files: \.hpp$
+
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v23.1.2
     hooks:

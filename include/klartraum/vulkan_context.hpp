@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef VULKAN_CONTEXT_HPP
-#define VULKAN_CONTEXT_HPP
+#ifndef KLARTRAUM_VULKAN_CONTEXT_HPP
+#define KLARTRAUM_VULKAN_CONTEXT_HPP
 
 #include <algorithm>
 #include <iostream>
@@ -271,4 +271,4 @@ public:
 
 } // namespace klartraum
 
-#endif // VULKAN_CONTEXT_HPP
+#endif // KLARTRAUM_VULKAN_CONTEXT_HPP

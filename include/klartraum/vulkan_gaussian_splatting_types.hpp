@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
-#define VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
+#ifndef KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
+#define KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
 
 #include <array>
 #include <memory>
@@ -210,4 +210,4 @@ typedef GeneralComputation<> MeshArgsFill;
 
 } // namespace klartraum
 
-#endif // VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
+#endif // KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP

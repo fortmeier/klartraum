@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
+#ifndef KLARTRAUM_TESTS_TEST_HEADLESS_FRONTEND_HPP
+#define KLARTRAUM_TESTS_TEST_HEADLESS_FRONTEND_HPP
+
 #include <gtest/gtest.h>
 
 #include "klartraum/headless_frontend.hpp"
@@ -14,3 +17,5 @@ TEST(KlartraumHeadlessFrontend, smoke) {
     auto& vulkanContext = core.getVulkanContext();
     auto& device = vulkanContext.getDevice();
 }
+
+#endif // KLARTRAUM_TESTS_TEST_HEADLESS_FRONTEND_HPP

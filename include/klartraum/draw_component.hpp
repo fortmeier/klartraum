@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef DRAW_COMPONENT_HPP
-#define DRAW_COMPONENT_HPP
+#ifndef KLARTRAUM_DRAW_COMPONENT_HPP
+#define KLARTRAUM_DRAW_COMPONENT_HPP
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -44,4 +44,4 @@ protected:
 
 } // namespace klartraum
 
-#endif // DRAW_COMPONENT_HPP
+#endif // KLARTRAUM_DRAW_COMPONENT_HPP

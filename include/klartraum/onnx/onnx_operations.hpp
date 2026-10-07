@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
+#ifndef KLARTRAUM_ONNX_ONNX_OPERATIONS_HPP
+#define KLARTRAUM_ONNX_ONNX_OPERATIONS_HPP
+
 #include "klartraum/computegraph/generalcomputation.hpp"
 
 namespace klartraum {
@@ -336,3 +339,5 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
 }
 
 } // namespace klartraum
+
+#endif // KLARTRAUM_ONNX_ONNX_OPERATIONS_HPP

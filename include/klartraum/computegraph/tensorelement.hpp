@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_TENSORELEMENT_HPP
-#define KLARTRAUM_TENSORELEMENT_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPH_TENSORELEMENT_HPP
+#define KLARTRAUM_COMPUTEGRAPH_TENSORELEMENT_HPP
 
 #include <algorithm>
 #include <cstdint>
@@ -336,4 +336,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_TENSORELEMENT_HPP
+#endif // KLARTRAUM_COMPUTEGRAPH_TENSORELEMENT_HPP

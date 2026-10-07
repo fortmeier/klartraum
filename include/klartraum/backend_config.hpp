@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef BACKEND_CONFIG_HPP
-#define BACKEND_CONFIG_HPP
+#ifndef KLARTRAUM_BACKEND_CONFIG_HPP
+#define KLARTRAUM_BACKEND_CONFIG_HPP
 
 #include <stdint.h>
 
@@ -20,4 +20,4 @@ public:
 
 } // namespace klartraum
 
-#endif // BACKEND_CONFIG_HPP
+#endif // KLARTRAUM_BACKEND_CONFIG_HPP

@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_COPYBUFFER_HPP
-#define KLARTRAUM_COPYBUFFER_HPP
+#ifndef KLARTRAUM_COMPUTEGRAPH_COPYBUFFER_HPP
+#define KLARTRAUM_COMPUTEGRAPH_COPYBUFFER_HPP
 
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/computegraphelement.hpp"
@@ -96,4 +96,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_COPYBUFFER_HPP
+#endif // KLARTRAUM_COMPUTEGRAPH_COPYBUFFER_HPP
