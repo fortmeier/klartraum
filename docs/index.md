@@ -35,6 +35,7 @@ self
 vision
 getting-started/building
 getting-started/first-application
+getting-started/examples
 ```
 
 ```{toctree}

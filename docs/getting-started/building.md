@@ -102,3 +102,5 @@ the repository root.
 ./build/examples/gaussian_splatting_example --backend raster
 ./build/examples/gaussian_splatting_example --file data/lantern.spz --camera-position 0.55 0.48 0.69 --flip-y
 ```
+
+{doc}`examples` describes all example programs with their options.

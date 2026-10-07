@@ -38,6 +38,14 @@ repos:
         entry: python scripts/dev/include_guards.py
         language: python
         files: \.hpp$
+      # examples/README.md (also shown in the docs) has a section for every
+      # example and names only options that the example parses.
+      - id: example-docs
+        name: example docs
+        entry: python scripts/dev/check_examples.py
+        language: python
+        files: ^examples/
+        pass_filenames: false
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v23.1.2

@@ -2,25 +2,14 @@
 //
 // SPDX-License-Identifier: MIT
 
-// =============================================================================
-//  DISCUSSION ARTIFACT — imagined API, not yet implemented.
+// Renders the same scene twice, side by side, in one window: the raster
+// backend in the left half, the compute backend in the right half. Both read
+// one camera uniform buffer, so a single orbit camera moves both views.
 //
-//  Goal: render the SAME scene twice, side by side, into a SINGLE window:
-//          left half  -> gaussian splatting, compute backend
-//          right half -> gaussian splatting, raster  backend
-//        both sharing ONE camera UBO.
-//
-//  This is the "multiple viewports in one window" use case:
-//    * exactly ONE swapchain, owned by the engine / core
-//    * the user asks the engine for viewport targets (sub-regions of the
-//      swapchain images) via engine.makeViewport(x, y, w, h)
-//    * each viewport target is fed to a scene as its render target
-//    * both graphs are added to the engine; the engine knows they share the
-//      one swapchain and must both finish before a single present.
-//
-//  Methods like makeViewport() do not exist yet — this file exists to pin down
-//  what we WANT the call sites to look like before we build anything.
-// =============================================================================
+// The window has one swapchain. Window::makeViewport(x, y, w, h) returns a
+// render target (an ImageViewSrc) backed by its own offscreen image; the
+// engine composites all viewports into their rectangles of the swapchain image
+// and presents once per frame.
 
 #include <iostream>
 #include <string>
