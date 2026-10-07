@@ -12,6 +12,7 @@ path = [
     "docs/requirements.txt",
     ".clang-format",
     ".gitattributes",
+    ".git-blame-ignore-revs",
     ".gitignore",
     "**/.gitignore",
     ".gitmodules",

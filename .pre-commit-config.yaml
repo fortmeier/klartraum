@@ -24,3 +24,11 @@ repos:
       # header for source files (scripts/dev/reuse_annotate.sh adds it), an
       # entry in REUSE.toml for everything else.
       - id: reuse-lint-file
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v23.1.2
+    hooks:
+      # Formats staged C++ files with .clang-format. Shaders are not formatted.
+      - id: clang-format
+        types_or: [c++]
+        files: \.(cpp|hpp)$
