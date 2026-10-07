@@ -67,5 +67,6 @@ requirements/index
 :caption: Contributing
 
 contributing/development
+contributing/code-style
 contributing/documentation
 ```
