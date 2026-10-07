@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
 """Writes tests/data/gguf/qwen35_tokenizer_cases.gguf for tests/test_gguf_tokenizer.cpp.
 
 Encodes a list of test strings with the official Qwen3.6 tokenizer
