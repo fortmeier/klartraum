@@ -16,6 +16,7 @@ distributes a build has to pass these notices on with it.
 | GLM | 1.0.1 | MIT |
 | Zstandard | 1.5.6 | BSD-3-Clause |
 | ONNX (`onnx.proto`) | 1.20.1 | Apache-2.0 |
+| Vulkan headers | from the Vulkan SDK used for the build | MIT (dual-licensed Apache-2.0 OR MIT) |
 
 Not included in builds, but used by them or by the tests:
 
@@ -549,4 +550,32 @@ Apache License, Version 2.0. Neither project ships a NOTICE file.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+```
+
+## Vulkan headers
+
+Version: the headers of the Vulkan SDK used for the build (`vulkan/vulkan.h`;
+header version 1.4.357 at the time of writing), used under the MIT License.
+License: Apache-2.0 OR MIT.
+
+```text
+Copyright 2015-2026 The Khronos Group Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
