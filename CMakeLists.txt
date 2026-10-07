@@ -44,7 +44,10 @@ if(APPLE)
     )
 endif()
 
-set(ZLIB_BUILD_EXAMPLES OFF)
+# Only the static library is used (zlibstatic, linked into klartraum_lib).
+set(ZLIB_BUILD_TESTING OFF)
+set(ZLIB_BUILD_SHARED OFF)
+set(ZLIB_INSTALL OFF)
 add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/zlib)
 
 find_package(zstd QUIET)

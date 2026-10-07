@@ -7,7 +7,7 @@ distributes a build has to pass these notices on with it.
 | Component | Version | License |
 |---|---|---|
 | GLFW | 3.5.1 | Zlib |
-| zlib | 1.3.1 | Zlib |
+| zlib | 1.3.2 | Zlib |
 | spz | 3.0.0 | MIT |
 | Protocol Buffers | 25.1 | BSD-3-Clause |
 | Abseil (part of Protocol Buffers) | as bundled with Protocol Buffers 25.1 | Apache-2.0 |
@@ -57,12 +57,12 @@ freely, subject to the following restrictions:
 
 ## zlib
 
-Version: 1.3.1 (submodule `3rdparty/zlib`). License: Zlib.
+Version: 1.3.2 (submodule `3rdparty/zlib`). License: Zlib.
 
 ```text
 Copyright notice:
 
- (C) 1995-2024 Jean-loup Gailly and Mark Adler
+ (C) 1995-2026 Jean-loup Gailly and Mark Adler
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
