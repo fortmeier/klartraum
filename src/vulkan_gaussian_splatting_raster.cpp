@@ -81,10 +81,16 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     // --- Stage A: cull + depth-key + compaction (gsplat_dist.comp) ---
     const VkBufferUsageFlags storageDst = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
-    keysA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst);
-    indicesA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst);
-    keysB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst);
-    indicesB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst);
+    // Culling generates depth keys and splat indices; radix sort alternates between A and B.
+    // Device-local storage keeps this repeated sorting traffic in GPU memory.
+    keysA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst,
+                                                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    indicesA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst,
+                                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    keysB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst,
+                                                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    indicesB = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, N, storageDst,
+                                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     keysA->setName("RasterKeysA");
     indicesA->setName("RasterIndicesA");
     keysB->setName("RasterKeysB");
@@ -94,8 +100,10 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     // front of these buffers (slots [0, instanceCount)), so no sentinel fill of
     // the tail is needed — the sort never reads past instanceCount.
 
-    drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(vulkanContext, 1,
-                                                                  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst);
+    // Culling writes the visible count directly into GPU-resident indirect draw arguments.
+    // The renderer can consume it without a CPU readback between compute and drawing.
+    drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
+        vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     drawArgs->setName("RasterDrawArgs");
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
@@ -121,8 +129,9 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     // the Splat2D buffer the vertex shader reads verbatim (16 floats / splat,
     // 64-byte stride matching gsplat_raster_project.comp's scalar struct). Keyed
     // by splat id; the vertex shader dereferences it through the sorted index.
-    splat2D =
-        std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, 16 * N, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    // Projected attributes stay on the GPU between the compute and graphics stages.
+    splat2D = std::make_shared<BufferElement<VulkanBuffer<float>>>(
+        vulkanContext, 16 * N, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     splat2D->setName("RasterSplat2D");
 
     project = vulkanContext.create<GaussianRasterProject>("shaders/gsplat/gsplat_raster_project.comp.spv");
@@ -150,10 +159,16 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     const uint32_t tpg = 256;
     const uint32_t numSortWGs = std::max(1u, std::min(config.numSortWGsCap, N / tpg + 1));
 
-    scratchHist = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins * numSortWGs);
-    scratchCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins);
-    scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numSortWGs + 1);
-    totalCount = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1);
+    // GPU radix-sort passes exchange histograms, counts and offsets through this scratch storage.
+    // Each render path has device-local scratch so frames in flight use separate working data.
+    scratchHist = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
+        vulkanContext, numBins * numSortWGs, storageDst, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    scratchCounts = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numBins, storageDst,
+                                                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    scratchOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numSortWGs + 1, storageDst,
+                                                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    totalCount = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 1, storageDst,
+                                                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     scratchHist->setRecordToZero(true);
     scratchCounts->setRecordToZero(true);
     scratchOffsets->setRecordToZero(true);
@@ -221,8 +236,9 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     if (useMesh) {
         // VkDrawMeshTasksIndirectCommandEXT filled from the visible count by
         // gsplat_mesh_args.comp (groupCountX = ceil(visible / WG_SPLATS)).
+        // The optional mesh path also consumes GPU-generated arguments without CPU readback.
         meshArgs = std::make_shared<BufferElement<VulkanBuffer<VkDrawMeshTasksIndirectCommandEXT>>>(
-            vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst);
+            vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         meshArgs->setName("RasterMeshArgs");
 
         meshArgsOp = vulkanContext.create<MeshArgsFill>("shaders/gsplat/gsplat_mesh_args.comp.spv");

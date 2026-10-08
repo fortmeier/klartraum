@@ -34,6 +34,13 @@ public:
 
     void step();
 
+    // Upload application data for the acquired image's render path before graph submission.
+    // The callback receives the image/path index after GPU use of that path has completed.
+    // It may update that path's resources; other paths can still be in flight.
+    // An empty callback disables these application updates.
+    using FrameUpdate = std::function<void(uint32_t)>;
+    void setFrameUpdate(FrameUpdate update) { frameUpdate = std::move(update); }
+
     std::queue<std::unique_ptr<Event>>& getEventQueue();
 
     void setInterfaceCamera(std::shared_ptr<InterfaceCamera> camera);
@@ -108,6 +115,8 @@ private:
     bool rebuildForSwapChain();
 
     GraphBuilder graphBuilder;
+    // Application callback for per-path data uploads between acquisition and submission.
+    FrameUpdate frameUpdate;
 
     bool profilingEnabled = false;
     bool perfProfilingEnabled = false;

@@ -22,12 +22,20 @@
  *   must match within a tight tolerance. When the device lacks mesh shaders the
  *   backend falls back to the vertex path, so the two renders are byte-identical
  *   — verifying the device-support gate / fallback (perf plan R5)
+ * - deviceLocalWorkingBuffersRenderAcrossPaths: procedural splats render through device-local
+ *   projection, sort and draw buffers with correct culling and depth order on every path
+ * - deviceLocalMeshWorkingBuffersRenderOrFallBack: requesting mesh shaders retains device-local
+ *   working storage and visible output, including the vertex fallback on unsupported devices
  **/
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
+#include <set>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -235,4 +243,118 @@ TEST(GaussianSplattingRaster, meshShaderPathMatchesVertexPath) {
         // the two renders are identical — confirms the gate / fallback.
         EXPECT_EQ(meanAbsDiff, 0.0) << "fallback should reproduce the vertex path exactly";
     }
+}
+
+namespace {
+
+void expectDeviceLocalProceduralRender(bool requestMesh) {
+    HeadlessFrontend frontend;
+    auto& engine = frontend.getKlartraumEngine();
+    auto& vc = engine.getVulkanContext();
+    const uint32_t paths = vc.getNumberOfSwapChainImages();
+    const auto extent = vc.getSwapChainExtent();
+    auto camera = std::make_shared<CameraUboType>();
+    InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+    orbit.initialize(vc);
+    orbit.setDistance(5.0f);
+    orbit.update(camera->ubo);
+    const glm::vec3 cameraPosition = glm::vec3(camera->ubo.cameraWorldPos);
+    const glm::vec3 toOrigin = -cameraPosition;
+
+    // Two visible splats lie at different depths; the third is behind the camera.
+    std::vector<Gaussian3D> points(3);
+    for (auto& point : points) {
+        point.rotation = {0, 0, 0, 1};
+        point.scale = {0.2f, 0.3f, 0.2f};
+        point.color = {1, 0.2f, 0.1f};
+        point.alpha = 0.8f;
+    }
+    points[0].position = {0, 0, 0};
+    const auto near = cameraPosition + toOrigin * 0.6f;
+    const auto behind = cameraPosition - toOrigin * 2.0f;
+    points[1].position = {near.x, near.y, near.z};
+    points[2].position = {behind.x, behind.y, behind.z};
+    GaussianDataStandard model(vc, points);
+
+    std::vector<VkImageView> views;
+    std::vector<VkImage> images;
+    for (uint32_t path = 0; path < paths; ++path) {
+        views.push_back(vc.getImageView(path));
+        images.push_back(vc.getSwapChainImage(path));
+    }
+    auto imageSource = std::make_shared<ImageViewSrc>(views, images, std::vector<VkExtent2D>(paths, extent));
+    for (uint32_t path = 0; path < paths; ++path)
+        imageSource->setWaitFor(path, vc.imageAvailableSemaphoresPerImage[path]);
+    GsplatConfig config;
+    config.shDegree = 0;
+    config.numSortWGsCap = 1;
+    config.useMeshShader = requestMesh;
+    auto renderer = vc.create<VulkanGaussianSplattingRaster>(imageSource, camera, model.buffers(), config);
+    engine.add(renderer);
+
+    // Inspect graph-visible resources through their diagnostic names, then verify GPU results.
+    std::map<std::string, std::shared_ptr<BufferElementInterface>> buffers;
+    std::set<const ComputeGraphElement*> visited;
+    std::function<void(ComputeGraphElementPtr)> collect = [&](ComputeGraphElementPtr element) {
+        if (!element || !visited.insert(element.get()).second)
+            return;
+        if (auto buffer = std::dynamic_pointer_cast<BufferElementInterface>(element))
+            buffers.emplace(element->getName(), buffer);
+        for (const auto& [index, input] : element->getInputs())
+            collect(input);
+    };
+    collect(renderer);
+    auto expectDeviceLocal = [&](const std::string& name, auto type) {
+        using T = decltype(type);
+        auto found = buffers.find(name);
+        ASSERT_NE(found, buffers.end()) << name;
+        auto element = std::dynamic_pointer_cast<TemplatedBufferElementInterface<VulkanBuffer<T>>>(found->second);
+        ASSERT_NE(element, nullptr) << name;
+        for (uint32_t path = 0; path < paths; ++path)
+            EXPECT_NE(element->getBuffer(path).getMemoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0u)
+                << name << ", path " << path;
+    };
+    for (const char* name : {"RasterKeysA", "RasterIndicesA", "RasterKeysB", "RasterIndicesB", "RasterSortTotalCount"})
+        expectDeviceLocal(name, uint32_t{});
+    expectDeviceLocal("RasterSplat2D", float{});
+    expectDeviceLocal("RasterDrawArgs", VkDrawIndirectCommand{});
+    if (requestMesh && vc.isMeshShaderSupported())
+        expectDeviceLocal("RasterMeshArgs", VkDrawMeshTasksIndirectCommandEXT{});
+    else
+        EXPECT_EQ(buffers.count("RasterMeshArgs"), 0u);
+
+    auto indices = std::dynamic_pointer_cast<TemplatedBufferElementInterface<VulkanBuffer<uint32_t>>>(
+        buffers.at("RasterIndicesA"));
+    auto arguments = std::dynamic_pointer_cast<TemplatedBufferElementInterface<VulkanBuffer<VkDrawIndirectCommand>>>(
+        buffers.at("RasterDrawArgs"));
+    ASSERT_NE(indices, nullptr);
+    ASSERT_NE(arguments, nullptr);
+    for (uint32_t path = 0; path < paths; ++path)
+        camera->update(path);
+    for (uint32_t frame = 0; frame < 2 * paths; ++frame) {
+        const uint32_t path = vc.currentFrame % paths;
+        engine.step();
+        ASSERT_EQ(vkQueueWaitIdle(vc.getGraphicsQueue()), VK_SUCCESS);
+        std::vector<VkDrawIndirectCommand> draw(1);
+        arguments->getBuffer(path).memcopyTo(draw);
+        EXPECT_EQ(draw[0].instanceCount, 2u);
+        std::vector<uint32_t> sorted(3);
+        indices->getBuffer(path).memcopyTo(sorted);
+        EXPECT_EQ(sorted[0], 0u);
+        EXPECT_EQ(sorted[1], 1u);
+        const auto pixels = readImageToHost(vc, images[path], extent.width, extent.height);
+        size_t coloredPixels = 0;
+        for (size_t i = 0; i < pixels.size(); i += 4)
+            if (pixels[i] || pixels[i + 1] || pixels[i + 2])
+                ++coloredPixels;
+        EXPECT_GT(coloredPixels, 0u) << "frame " << frame << ", path " << path;
+    }
+}
+
+} // namespace
+
+TEST(GaussianSplattingRaster, deviceLocalWorkingBuffersRenderAcrossPaths) { expectDeviceLocalProceduralRender(false); }
+
+TEST(GaussianSplattingRaster, deviceLocalMeshWorkingBuffersRenderOrFallBack) {
+    expectDeviceLocalProceduralRender(true);
 }

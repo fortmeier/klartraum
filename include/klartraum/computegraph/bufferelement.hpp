@@ -46,13 +46,23 @@ public:
           numberElements(numberElements),
           bufferUsageFlags(flags) {}
 
+    // Configure the usage and memory properties of each render path's buffer.
+    // Device-local storage holds GPU results; coherent mapped storage accepts CPU uploads.
+    BufferElement(VulkanContext& vulkanContext, uint32_t numberElements, VkBufferUsageFlags flags,
+                  VkMemoryPropertyFlags memory)
+        : vulkanContext(vulkanContext),
+          numberElements(numberElements),
+          bufferUsageFlags(flags),
+          memoryProperties(memory) {}
+
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
         buffers.reserve(numberPaths);
         for (uint32_t i = 0; i < numberPaths; i++) {
             if (bufferUsageFlags == VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM) {
                 buffers.emplace_back(vulkanContext, numberElements);
             } else {
-                buffers.emplace_back(vulkanContext, numberElements, bufferUsageFlags);
+                // Separate allocations let each path update its data while other frames are in flight.
+                buffers.emplace_back(vulkanContext, numberElements, bufferUsageFlags, memoryProperties);
             }
         }
     };
@@ -115,6 +125,8 @@ private:
     bool recordToFill = false;
     uint32_t fillValue = 0;
     VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM;
+    // Coherent mapped storage is the default for direct CPU updates to a render path's buffer.
+    VkMemoryPropertyFlags memoryProperties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 };
 
 /**
