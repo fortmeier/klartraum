@@ -173,7 +173,7 @@ public:
         vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, 0);
     }
 
-    // Fills the whole buffer with a repeating 32-bit pattern each frame â€” e.g.
+    // Fills the whole buffer with a repeating 32-bit pattern each frame — e.g.
     // resetting a uint sort-key buffer to 0xFFFFFFFF (a sentinel guaranteed to
     // sort after any encoded depth key) so stale entries from a previous
     // frame's larger visible-splat count never contaminate this frame's sort.
@@ -181,7 +181,7 @@ public:
         vkCmdFillBuffer(commandBuffer, vertexBuffer, 0, sizeof(T) * size, value);
     }
 
-    // Zeroes only [byteOffset, byteOffset + byteSize) â€” e.g. to reset a single
+    // Zeroes only [byteOffset, byteOffset + byteSize) — e.g. to reset a single
     // field of a struct buffer (such as VkDrawIndirectCommand::instanceCount)
     // each frame while leaving the rest of the buffer untouched.
     void _recordZero(VkCommandBuffer commandBuffer, VkDeviceSize byteOffset, VkDeviceSize byteSize) {
@@ -233,6 +233,20 @@ private:
         vkFreeCommandBuffers(device, vulkanContext.getCommandPool(), 1, &cmd);
         if (result != VK_SUCCESS)
             throw std::runtime_error("Device-local buffer transfer failed");
+    }
+
+public:
+    // Copy the source's first count T elements, e.g. static data into each render path's output.
+    // Destination capacity bounds the copy; the source must provide that many readable elements.
+    // Both buffers must be available for the transfer; the copy completes before this call returns.
+    void copyFrom(VkBuffer source, uint32_t count) {
+        VkDeviceSize bytes = sizeof(T) * std::min(count, size);
+        if (!bytes)
+            return;
+        commands([&](VkCommandBuffer cmd) {
+            VkBufferCopy copy{0, 0, bytes};
+            vkCmdCopyBuffer(cmd, source, vertexBuffer, 1, &copy);
+        });
     }
 
 private:

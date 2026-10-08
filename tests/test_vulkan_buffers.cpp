@@ -11,6 +11,9 @@
  * - movedDeviceLocalBufferRemainsUsable: moving preserves storage properties and transfer behavior
  * - deviceLocalBufferElementKeepsPathsIndependent: device-local graph buffers retain separate path data
  * - deviceLocalBuffersFeedGpuCompute: staged input reaches a real dispatch and its result can be read back
+ * - copyFromPreservesTailAndSource: prefix copies preserve the tail and source, clamp to
+ *   destination capacity and leave zero-length copies unchanged
+ * - copyStaticPrefixToIndependentPaths: each path receives a static prefix while retaining its own tail
  **/
 #include <gtest/gtest.h>
 
@@ -140,4 +143,56 @@ TEST(VulkanBuffer, deviceLocalBuffersFeedGpuCompute) {
     std::vector<float> result(4);
     output->getBuffer(0).memcopyTo(result);
     EXPECT_EQ(result, (std::vector<float>{2, 6, 12, 20}));
+}
+
+TEST(VulkanBuffer, copyFromPreservesTailAndSource) {
+    klartraum::HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    klartraum::VulkanBuffer<uint32_t> source(vc, 6, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    klartraum::VulkanBuffer<uint32_t> destination(vc, 5, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    const std::vector<uint32_t> original{1, 2, 3, 4, 5, 6};
+    source.memcopyFrom(original);
+    destination.memcopyFrom(std::vector<uint32_t>(5, 99));
+    destination.copyFrom(source.getBuffer(), 3);
+    destination.copyFrom(VK_NULL_HANDLE, 0);
+    std::vector<uint32_t> result(5);
+    destination.memcopyTo(result);
+    EXPECT_EQ(result, (std::vector<uint32_t>{1, 2, 3, 99, 99}));
+
+    destination.copyFrom(source.getBuffer(), 8);
+    destination.memcopyTo(result);
+    EXPECT_EQ(result, (std::vector<uint32_t>{1, 2, 3, 4, 5}));
+    std::vector<uint32_t> unchanged(6);
+    source.memcopyTo(unchanged);
+    EXPECT_EQ(unchanged, original);
+}
+
+TEST(VulkanBuffer, copyStaticPrefixToIndependentPaths) {
+    klartraum::HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    klartraum::VulkanBuffer<uint32_t> source(vc, 3, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    source.memcopyFrom(std::vector<uint32_t>{1, 2, 3});
+    auto outputs = std::make_shared<klartraum::BufferElement<klartraum::VulkanBuffer<uint32_t>>>(
+        vc, 5, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    klartraum::ComputeGraph graph(vc, 2);
+    graph.compileFrom(outputs);
+    for (uint32_t path = 0; path < 2; ++path) {
+        outputs->getBuffer(path).memcopyFrom(std::vector<uint32_t>(5, path + 10));
+        outputs->getBuffer(path).copyFrom(source.getBuffer(), 3);
+        std::vector<uint32_t> result(5);
+        outputs->getBuffer(path).memcopyTo(result);
+        EXPECT_EQ(result, (std::vector<uint32_t>{1, 2, 3, path + 10, path + 10}));
+    }
+    outputs->getBuffer(1).memcopyFrom(std::vector<uint32_t>{77});
+    std::vector<uint32_t> result(5);
+    outputs->getBuffer(0).memcopyTo(result);
+    EXPECT_EQ(result, (std::vector<uint32_t>{1, 2, 3, 10, 10}));
+    outputs->getBuffer(1).memcopyTo(result);
+    EXPECT_EQ(result, (std::vector<uint32_t>{77, 2, 3, 11, 11}));
+    std::vector<uint32_t> unchanged(3);
+    source.memcopyTo(unchanged);
+    EXPECT_EQ(unchanged, (std::vector<uint32_t>{1, 2, 3}));
 }
