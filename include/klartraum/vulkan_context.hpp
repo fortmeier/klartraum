@@ -210,6 +210,9 @@ public:
     BackendConfig& getConfig();
 
     std::vector<VkFence> inFlightFences;
+    // For each image/path, borrow the frame-slot fence for its most recent submission.
+    // These handles are owned by inFlightFences; image-indexed uploads must wait for them.
+    std::vector<VkFence> imageFences;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerFrame;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerImage;
 
