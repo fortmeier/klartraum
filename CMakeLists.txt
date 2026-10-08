@@ -271,6 +271,7 @@ add_executable(
   tests/test_onnx_reference.cpp
 
   tests/test_headless_frontend.cpp
+  tests/test_frame_update.cpp
   tests/test_multi_viewport_window.cpp
   tests/test_glfw_frontend.cpp
   tests/test_window_resize.cpp
