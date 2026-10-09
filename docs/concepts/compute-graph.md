@@ -39,6 +39,9 @@ Elements whose data is identical for all paths (a loaded model, for example)
 keep a single buffer; elements whose output changes per frame keep one per
 path.
 
+See {doc}`../api/buffers` for allocation lifetime, host-visible and device-local
+storage, and per-path upload examples.
+
 ## Submitting
 
 - `submitTo(queue, pathId)` runs the host-side updates of the path, submits

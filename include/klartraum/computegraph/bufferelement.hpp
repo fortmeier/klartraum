@@ -10,6 +10,7 @@
 
 namespace klartraum {
 
+/// Untyped graph interface for a path's Vulkan buffer handle and byte capacity.
 class BufferElementInterface : public ComputeGraphElement {
 public:
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override = 0;
@@ -18,8 +19,10 @@ public:
 
     virtual const char* getType() const override { return "BufferElement"; }
 
+    /// Returns the byte capacity of one buffer after setup.
     virtual size_t getBufferMemSize() const = 0;
 
+    /// Returns the Vulkan handle for an initialized path.
     virtual VkBuffer& getVkBuffer(uint32_t pathId) = 0;
 
 private:
@@ -31,23 +34,39 @@ private:
 template <typename BufferType>
 class TemplatedBufferElementInterface : public BufferElementInterface {
 public:
+    /// Returns the typed allocation for an initialized path.
     virtual BufferType& getBuffer(uint32_t pathId) = 0;
 };
 
+/**
+ * @brief Owns one independent buffer per compute-graph path.
+ * @tparam BufferType Buffer implementation, usually VulkanBuffer<T>.
+ *
+ * Graph compilation creates the allocations. Access getBuffer(pathId) after
+ * compilation and synchronize that path's GPU use before CPU transfers.
+ * VulkanBuffer allocations default to coherent host-visible memory.
+ */
 template <typename BufferType>
 class BufferElement : public TemplatedBufferElementInterface<BufferType> {
 public:
+    /// Configures per-path capacity using the buffer type's default usage and memory properties.
     BufferElement(VulkanContext& vulkanContext, uint32_t numberElements)
         : vulkanContext(vulkanContext),
           numberElements(numberElements) {}
 
+    /// Configures GPU usage and per-path capacity, with coherent host-visible memory.
     BufferElement(VulkanContext& vulkanContext, uint32_t numberElements, VkBufferUsageFlags flags)
         : vulkanContext(vulkanContext),
           numberElements(numberElements),
           bufferUsageFlags(flags) {}
 
-    // Configure the usage and memory properties of each render path's buffer.
-    // Device-local storage holds GPU results; coherent mapped storage accepts CPU uploads.
+    /**
+     * @brief Configures per-path buffers with explicit usage and memory properties.
+     * @param vulkanContext Context owning the device; it must outlive the allocations.
+     * @param numberElements Capacity of each buffer in elements.
+     * @param flags GPU buffer usage flags.
+     * @param memory Required memory properties; pass DEVICE_LOCAL without HOST_VISIBLE for staged CPU access.
+     */
     BufferElement(VulkanContext& vulkanContext, uint32_t numberElements, VkBufferUsageFlags flags,
                   VkMemoryPropertyFlags memory)
         : vulkanContext(vulkanContext),
@@ -81,31 +100,36 @@ public:
 
     virtual size_t getBufferMemSize() const { return buffers[0].getBufferMemSize(); }
 
+    /// Returns the allocation for pathId after graph compilation.
     virtual BufferType& getBuffer(uint32_t pathId) { return buffers[pathId]; }
 
+    /// Immediately clears every path through the underlying buffer's zero() helper.
     void zero() {
         for (auto& buffer : buffers) {
             buffer.zero();
         }
     }
 
+    /// Configures whole-buffer GPU zeroing on each submission; set before graph compilation.
     void setRecordToZero(bool _setToZero) { recordToZero = _setToZero; }
 
-    // Reset only a byte range each frame (e.g. VkDrawIndirectCommand::instanceCount)
-    // instead of blanket-zeroing the whole buffer, so other fields (vertexCount,
-    // firstVertex, firstInstance) survive across frames. Takes precedence over
-    // setRecordToZero().
+    /**
+     * @brief Configures a GPU-cleared byte range on each submission, preserving other fields.
+     * @param byteOffset Start of the range in bytes.
+     * @param byteSize Length of the range in bytes.
+     * @note Set before graph compilation. Range zeroing takes precedence over whole-buffer zeroing and filling.
+     */
     void setRecordToZeroRange(VkDeviceSize byteOffset, VkDeviceSize byteSize) {
         recordToZeroRange = true;
         zeroRangeOffset = byteOffset;
         zeroRangeSize = byteSize;
     }
 
-    // Fill the whole buffer with a repeating 32-bit pattern each frame, e.g.
-    // resetting a uint key buffer to a sentinel (0xFFFFFFFF) that is guaranteed
-    // to sort after any real key, so a fixed-size sort can run over a
-    // GPU-determined visible-count without stale tail entries from a larger
-    // previous frame leaking into the result.
+    /**
+     * @brief Configures a repeating 32-bit GPU fill pattern for each submission.
+     * @param value Pattern to repeat, e.g. a sort-key sentinel.
+     * @note Set before graph compilation. Zeroing options take precedence over filling.
+     */
     void setRecordToFill(uint32_t value) {
         recordToFill = true;
         fillValue = value;
@@ -130,14 +154,17 @@ private:
 };
 
 /**
- * @brief Buffer element with one buffer for all paths.
+ * @brief Owns one buffer shared by every compute-graph path.
+ * @tparam BufferType Buffer implementation, usually VulkanBuffer<T>.
  *
- * The constructor arguments are passed on to the buffer; getBuffer() returns the
- * same buffer for every path.
+ * Construction forwards its arguments to BufferType and allocates immediately.
+ * The path index is ignored. Use shared storage for data such as immutable models;
+ * writes must be synchronized with GPU use across all paths.
  */
 template <typename BufferType>
 class BufferElementSinglePath : public TemplatedBufferElementInterface<BufferType> {
 public:
+    /// Constructs the shared buffer with the supplied allocation arguments.
     template <typename... Args>
     BufferElementSinglePath(Args&&... args)
         : buffer(std::forward<Args>(args)...) {}
@@ -150,8 +177,10 @@ public:
 
     virtual size_t getBufferMemSize() const { return buffer.getBufferMemSize(); }
 
+    /// Returns the shared typed allocation; pathId is ignored.
     BufferType& getBuffer(uint32_t pathId = 0) { return buffer; }
 
+    /// Returns the shared Vulkan handle; pathId is ignored.
     virtual VkBuffer& getVkBuffer(uint32_t pathId = 0) { return buffer.getBuffer(); };
 
 private:
