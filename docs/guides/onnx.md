@@ -19,6 +19,7 @@ graph.compileFrom(network);
 | `Conv` | 2D convolution |
 | `ConvTranspose` | 2D transposed convolution |
 | `Relu` | |
+| `Elu` | `alpha` attribute |
 | `Reshape` | |
 | `Transpose` | |
 | `Constant` | Used for weights and shapes |

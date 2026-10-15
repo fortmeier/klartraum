@@ -73,6 +73,13 @@ ComputeGraphElementPtr unary(VulkanContext& vulkanContext, UnaryOp op, const Sha
  */
 ComputeGraphElementPtr relu(VulkanContext& vulkanContext, const Shape& shape);
 
+/**
+ * @brief `output = input > 0 ? input : alpha * (exp(input) - 1)`; input and output have @p shape.
+ *
+ * Slots: 0 input, 1 output.
+ */
+ComputeGraphElementPtr elu(VulkanContext& vulkanContext, const Shape& shape, float alpha);
+
 /** @brief Attributes of a 2D (transposed) convolution. */
 struct ConvAttributes {
     std::array<uint32_t, 2> kernelShape{1, 1};

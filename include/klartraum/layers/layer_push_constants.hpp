@@ -18,6 +18,11 @@ struct UnaryPushConstants {
     uint32_t elementCount;
 };
 
+struct EluPushConstants {
+    uint32_t elementCount;
+    float alpha;
+};
+
 struct BinaryBroadcastPushConstants {
     uint32_t elementCount;
     uint32_t rank;
