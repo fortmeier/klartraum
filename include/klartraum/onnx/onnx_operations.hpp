@@ -295,6 +295,16 @@ ComputeGraphElementPtr createUnary(VulkanContext* vulkanContext, const onnx::Nod
     return layers::unary(*vulkanContext, op, getTensorDimensions(node.output(0), infos, graph));
 }
 
+ComputeGraphElementPtr createElu(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                 const onnx::GraphProto& graph) {
+    float alpha = 1.0f;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == "alpha")
+            alpha = attribute.f();
+    }
+    return layers::elu(*vulkanContext, getTensorDimensions(node.output(0), infos, graph), alpha);
+}
+
 ComputeGraphElementPtr createInstanceNormalization(VulkanContext* vulkanContext, const onnx::NodeProto& node,
                                                    const ValueInfos& infos, const onnx::GraphProto& graph) {
     return layers::instanceNormalization(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
@@ -613,6 +623,8 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
         operation = createResize(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Slice") {
         operation = createSlice(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Elu") {
+        operation = createElu(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Relu") {
         operation = createRelu(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Constant") {
