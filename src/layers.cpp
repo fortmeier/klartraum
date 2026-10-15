@@ -160,6 +160,13 @@ ComputeGraphElementPtr relu(VulkanContext& vulkanContext, const Shape& shape) {
     return operation;
 }
 
+ComputeGraphElementPtr elu(VulkanContext& vulkanContext, const Shape& shape, float alpha) {
+    EluPushConstants constants{elementCount(shape), alpha};
+    auto operation = computation(vulkanContext, "shaders/onnx/elu.comp.spv", constants);
+    operation->setGroupCountX((constants.elementCount + 63) / 64);
+    return operation;
+}
+
 ComputeGraphElementPtr conv(VulkanContext& vulkanContext, const ConvAttributes& attributes, const Shape& input,
                             const Shape& weights, const Shape& bias, const Shape& output) {
     if (output.size() != 4)
