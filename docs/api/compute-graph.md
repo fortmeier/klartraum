@@ -3,6 +3,16 @@
 A directed acyclic graph of elements. Each element records its own Vulkan
 command buffers; the graph connects them with semaphores.
 
+(compute-graph-paths)=
+## Paths
+
+A *path* is a numbered execution instance of the same graph, with its own
+recorded command buffers and per-path resources. In windowed rendering, `pathId`
+is the acquired swapchain image's index. Separate paths let frames run concurrently
+without overwriting one another's data; immutable model buffers may be shared.
+
+For memory placement, CPU transfers and per-path buffer storage, see {doc}`buffers`.
+
 ## Graph
 
 ```{doxygenclass} klartraum::ComputeGraph
@@ -23,17 +33,7 @@ Elements that are built from several graph elements.
 
 ## Buffers and tensors
 
-```{doxygenclass} klartraum::BufferElementInterface
-```
-
-```{doxygenclass} klartraum::TemplatedBufferElementInterface
-```
-
-```{doxygenclass} klartraum::BufferElement
-```
-
-```{doxygenclass} klartraum::BufferElementSinglePath
-```
+The buffer allocation and interface types are documented in {doc}`buffers`.
 
 ```{doxygentypedef} klartraum::DispatchIndirectCommandBufferElement
 ```

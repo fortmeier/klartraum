@@ -12,6 +12,8 @@
  *   re-laid out for the merged count
  * - hostValuesReachTheNextRun: a value set between two runs of a compiled graph is used by
  *   the second run
+ * - sourceUploadPreservesAllAttributesAcrossPaths: device-local model buffers share storage
+ *   across paths and preserve positions, rotations, scales, colors, opacity and SH layout
  **/
 
 #include <gtest/gtest.h>
@@ -223,4 +225,34 @@ TEST_F(GaussianElementsTest, hostValuesReachTheNextRun) {
     parameters[0]->set(0, 4.0f);
     graph.submitAndWait(vc().getGraphicsQueue(), 0);
     EXPECT_NEAR(readBack<float>(transform.transform)[0], 4.0f, 1e-6f);
+}
+
+TEST_F(GaussianElementsTest, sourceUploadPreservesAllAttributesAcrossPaths) {
+    const auto original = randomGaussians(9, 19);
+    GaussianDataStandard model(vc(), original);
+    const auto& buffers = model.buffers();
+    EXPECT_EQ(buffers.count, original.size());
+
+    auto expectDeviceLocalShared = [&](auto type, const BufferRef& ref) {
+        using T = decltype(type);
+        auto element = std::dynamic_pointer_cast<TemplatedBufferElementInterface<VulkanBuffer<T>>>(ref.buffer());
+        ASSERT_NE(element, nullptr);
+        EXPECT_NE(element->getBuffer(0).getMemoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0u);
+        EXPECT_EQ(element->getVkBuffer(0), element->getVkBuffer(1));
+    };
+    expectDeviceLocalShared(glm::vec3{}, buffers.pos);
+    expectDeviceLocalShared(glm::vec4{}, buffers.rot);
+    expectDeviceLocalShared(glm::vec3{}, buffers.scale);
+    expectDeviceLocalShared(glm::vec4{}, buffers.colAlpha);
+    expectDeviceLocalShared(float{}, buffers.shR);
+    expectDeviceLocalShared(float{}, buffers.shG);
+    expectDeviceLocalShared(float{}, buffers.shB);
+
+    // Distinct coefficients in every band expose errors in coefficient-major packing.
+    const auto restored = readBack(buffers);
+    ASSERT_EQ(restored.size(), original.size());
+    for (size_t i = 0; i < original.size(); ++i) {
+        SCOPED_TRACE(i);
+        expectSameGaussian(restored[i], original[i], 0.0f);
+    }
 }

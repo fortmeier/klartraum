@@ -922,6 +922,8 @@ void VulkanContext::createSyncObjects() {
     imageAvailableSemaphoresPerImage.resize(swapChainImages.size());
 
     inFlightFences.resize(config.MAX_FRAMES_IN_FLIGHT);
+    // Newly created images have no prior submission to wait for, including after a resize.
+    imageFences.assign(swapChainImages.size(), VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -956,6 +958,8 @@ void VulkanContext::destroySyncObjects() {
     }
     imageAvailableSemaphoresPerFrame.clear();
     inFlightFences.clear();
+    // Discard borrowed handles; their owning frame-slot fences were destroyed above.
+    imageFences.clear();
     imageAvailableSemaphoresPerImage.clear();
 }
 
@@ -1070,6 +1074,16 @@ bool VulkanContext::tryBeginRender(uint32_t& imageIndex, VkFence*& fencePtr) {
         submitInfo.waitSemaphoreCount = 0;
     }
 
+    // Per-image mapped resources are writable only after that image's last
+    // submission has completed, regardless of which frame slot acquired it.
+    // The current frame-slot fence was already waited for earlier in this function;
+    // only a different slot's fence needs an additional wait for this acquired image.
+    if (imageFences[imageIndex] != VK_NULL_HANDLE && imageFences[imageIndex] != fence) {
+        if (vkWaitForFences(device, 1, &imageFences[imageIndex], VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+            throw std::runtime_error("failed to wait for image resources");
+    }
+    // Associate this path with the fence that the final submission of this frame signals.
+    imageFences[imageIndex] = fence;
     // Reset only once this frame is certain to submit work that signals the fence.
     if (vkResetFences(device, 1, &fence) != VK_SUCCESS) {
         throw std::runtime_error("failed to reset inFlightFence");

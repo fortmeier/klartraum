@@ -8,6 +8,7 @@ Vulkan context at the bottom to the user-facing frontends at the top.
 :maxdepth: 1
 
 vulkan-context
+buffers
 compute-graph
 engine
 frontends
