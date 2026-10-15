@@ -21,6 +21,11 @@
  *   its [0, instanceCount) prefix — i.e. stage A + the sentinel-fill sizing
  *   scheme + the existing radix sort compose into a correct stage A/B pipeline
  *   without any sort-shader changes
+ * - compactsVisibleSplatsInSplatIndexOrder: over several workgroups, every
+ *   other splat is culled and all visible splats share one depth key; the
+ *   compacted indices are exactly the visible ids in ascending order, and the
+ *   visible count reaches drawArgs and the sort's count buffer, so the stable
+ *   sort breaks depth ties the same way on every run
  **/
 #include <gtest/gtest.h>
 
@@ -39,6 +44,22 @@
 #include "klartraum/interface_camera_orbit.hpp"
 
 using namespace klartraum;
+
+namespace {
+
+// GaussianDist with its three passes (count, scan, scatter) and the count and
+// workgroup-offset buffers the passes exchange (bindings 6 and 7). Bindings 0-5
+// are left to the caller.
+std::shared_ptr<GaussianDist> makeDist(VulkanContext& vc, uint32_t numSplats) {
+    auto dist = std::make_shared<GaussianDist>(
+        vc, std::vector<std::string>{"shaders/gsplat/gsplat_dist.comp.spv", "shaders/gsplat/gsplat_dist_scan.comp.spv",
+                                     "shaders/gsplat/gsplat_dist_scatter.comp.spv"});
+    dist->setInput(std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, 1), 6);
+    dist->setInput(std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, (numSplats + 255) / 256), 7);
+    return dist;
+}
+
+} // namespace
 
 TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
     HeadlessFrontend frontend;
@@ -82,7 +103,7 @@ TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
-    auto dist = std::make_shared<GaussianDist>(vc, "shaders/gsplat/gsplat_dist.comp.spv");
+    auto dist = makeDist(vc, numSplats);
     dist->setInput(positions, 0);
     dist->setInput(cameraUBO, 1);
     dist->setInput(keys, 2);
@@ -196,7 +217,7 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
     auto colorsAlpha = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(
         vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
-    auto dist = std::make_shared<GaussianDist>(vc, "shaders/gsplat/gsplat_dist.comp.spv");
+    auto dist = makeDist(vc, numSplats);
     dist->setInput(positions, 0);
     dist->setInput(cameraUBO, 1);
     dist->setInput(keysA, 2);
@@ -258,4 +279,77 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
     indicesA->getBuffer(0).memcopyTo(sortedIndices);
     std::vector<uint32_t> actualOrder(sortedIndices.begin(), sortedIndices.begin() + visibleCount);
     EXPECT_EQ(actualOrder, expectedBackToFront);
+}
+
+TEST(GaussianDist, compactsVisibleSplatsInSplatIndexOrder) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    auto cameraUBO = std::make_shared<CameraUboType>();
+    InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+    orbit.initialize(vc);
+    orbit.setDistance(5.0f);
+    orbit.update(cameraUBO->ubo);
+
+    // Even ids sit at the origin (visible, all with the same depth key), odd ids
+    // behind the camera (culled). 1000 splats span four workgroups of 256.
+    glm::vec3 camPos = glm::vec3(cameraUBO->ubo.cameraWorldPos);
+    const uint32_t numSplats = 1000;
+    std::vector<glm::vec3> positionData(numSplats);
+    std::vector<uint32_t> expectedOrder;
+    for (uint32_t id = 0; id < numSplats; ++id) {
+        if (id % 2 == 0) {
+            positionData[id] = glm::vec3(0.0f);
+            expectedOrder.push_back(id);
+        } else {
+            positionData[id] = camPos * 3.0f;
+        }
+    }
+
+    auto positions = std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(
+        vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto keys = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, numSplats);
+    auto indices = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, numSplats);
+    auto colorsAlpha = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(
+        vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
+        vc, 1,
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto count = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, 1);
+
+    auto dist = makeDist(vc, numSplats);
+    dist->setInput(positions, 0);
+    dist->setInput(cameraUBO, 1);
+    dist->setInput(keys, 2);
+    dist->setInput(indices, 3);
+    dist->setInput(drawArgs, 4);
+    dist->setInput(colorsAlpha, 5);
+    dist->setInput(count, 6);
+    dist->setGroupCountX((numSplats + 255) / 256);
+    dist->setPushConstants({{numSplats, 0.0f}});
+
+    auto computegraph = ComputeGraph(vc, 1);
+    computegraph.compileFrom(dist);
+
+    positions->getBuffer(0).memcopyFrom(positionData);
+    colorsAlpha->getBuffer(0).memcopyFrom(std::vector<glm::vec4>(numSplats, glm::vec4(1.0f)));
+    cameraUBO->update(0);
+    computegraph.submitAndWait(vc.getGraphicsQueue(), 0);
+
+    std::vector<VkDrawIndirectCommand> argsVec(1);
+    drawArgs->getBuffer(0).memcopyTo(argsVec);
+    std::vector<uint32_t> countResult(1);
+    count->getBuffer(0).memcopyTo(countResult);
+    ASSERT_EQ(argsVec[0].instanceCount, expectedOrder.size());
+    EXPECT_EQ(countResult[0], expectedOrder.size());
+
+    std::vector<uint32_t> indicesResult(numSplats);
+    std::vector<uint32_t> keysResult(numSplats);
+    indices->getBuffer(0).memcopyTo(indicesResult);
+    keys->getBuffer(0).memcopyTo(keysResult);
+    std::vector<uint32_t> actualOrder(indicesResult.begin(), indicesResult.begin() + expectedOrder.size());
+    EXPECT_EQ(actualOrder, expectedOrder);
+    for (size_t slot = 1; slot < expectedOrder.size(); ++slot) {
+        EXPECT_EQ(keysResult[slot], keysResult[0]) << "all visible splats share one depth key";
+    }
 }

@@ -1,0 +1,52 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+// Pass 2 of 3 of the cull + compaction: the first workgroup turns the per-workgroup
+// visible counts of pass 1 into exclusive offsets, in place, and writes the total into
+// the indirect draw arguments and the radix sort's count buffer (binding 6), so the
+// sort processes only the visible range (perf plan R3). The other workgroups of the
+// shared dispatch size return right away.
+layout(local_size_x = 256) in;
+
+#include "gsplat_dist_include.glsl"
+
+layout(scalar, set = 0, binding = 6) buffer CountBuf {
+    uint numberTotalGaussians;
+} cnt;
+
+shared uint scan[256];
+
+void main() {
+    if (gl_WorkGroupID.x != 0u) {
+        return;
+    }
+    const uint lid = gl_LocalInvocationID.x;
+    const uint numberWorkgroups = gl_NumWorkGroups.x;
+    uint carry = 0u;
+    for (uint base = 0u; base < numberWorkgroups; base += 256u) {
+        const uint index = base + lid;
+        const uint count = index < numberWorkgroups ? workgroupOffsets[index] : 0u;
+        scan[lid] = count;
+        barrier();
+        // Inclusive Hillis-Steele scan of this chunk of 256 counts.
+        for (uint stride = 1u; stride < 256u; stride <<= 1u) {
+            const uint add = lid >= stride ? scan[lid - stride] : 0u;
+            barrier();
+            scan[lid] += add;
+            barrier();
+        }
+        if (index < numberWorkgroups) {
+            workgroupOffsets[index] = carry + scan[lid] - count;
+        }
+        carry += scan[255];
+        barrier();
+    }
+    if (lid == 0u) {
+        drawArgs.instanceCount = carry;
+        cnt.numberTotalGaussians = carry;
+    }
+}
