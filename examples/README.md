@@ -29,6 +29,8 @@ relative to the working directory.
 | `draw_basics_example` | Coordinate axes drawn with `DrawBasics` in a render pass | yes |
 | `onnx_example` | Loading an ONNX model, printing its structure and compiling it into a compute graph | opens one, exits right away |
 | `turntable_example` | Headless rendering: one image per frame from a camera circling the scene | no |
+| `sd15_vae_example` | The Stable Diffusion 1.5 VAE encoder and decoder run as ONNX networks | no |
+| `sd15_denoiser_example` | The complete Stable Diffusion 1.5 text-to-image pipeline run as ONNX networks | no |
 
 ### Camera controls
 
@@ -141,4 +143,45 @@ uses it for the animation at the top of the project README.
 ./build/examples/turntable_example --file data/lantern.spz --flip-y --frames 60 \
     --width 400 --height 300 --camera-position 0.55 0.48 0.69 --distance 0.65 \
     --out-dir build/TestingOutput/turntable
+```
+
+### `sd15_vae_example`
+
+Encodes `lantern_input_f32.bin` with the Stable Diffusion 1.5 VAE encoder and
+decodes the latent again, both run as ONNX networks without a window, and
+writes the decoded image. The models are third-party and are not part of
+Klartraum: export them first with `scripts/sd15_onnx` (see its README).
+
+| Option | Meaning |
+|---|---|
+| `--size N` | Image size the models were exported for (default 64) |
+| `--model-dir DIR` | Directory of the exported models (default `data/onnx/sd15`) |
+| `--output PATH` | Output image (default `build/TestingOutput/sd15_vae_klartraum.ppm`) |
+| `--load-only` | Only parse both graphs, without allocating or running them |
+
+```bash
+./build/examples/sd15_vae_example --size 64 --model-dir data/onnx/sd15
+```
+
+### `sd15_denoiser_example`
+
+Runs the complete Stable Diffusion 1.5 pipeline without a window: CLIP text
+encoder, UNet denoising with classifier-free guidance and DDIM steps, and the
+VAE decoder, all as ONNX networks. For the prompt the models were exported
+with, it checks the results against the Python reference. The models are
+third-party and are not part of Klartraum: export them first with
+`scripts/sd15_onnx` (see its README).
+
+| Option | Meaning |
+|---|---|
+| `--size N` | Image size the models were exported for (default 256) |
+| `--model-dir DIR` | Directory of the exported models (default `data/onnx/sd15_denoiser_256`) |
+| `--prompt TEXT`, `--negative-prompt TEXT` | Prompts; others than the exported ones skip the reference checks |
+| `--output PATH` | Output image (default `build/TestingOutput/sd15_pipeline_klartraum.ppm`) |
+| `--max-denoise-steps N` | Stop after N scheduler steps |
+| `--skip-decoder` | Do not run the VAE decoder |
+| `--profile` | Print GPU timings per operation |
+
+```bash
+./build/examples/sd15_denoiser_example --prompt "a red sports car parked on a city street"
 ```
