@@ -28,6 +28,8 @@
  * - Conv3dPointwiseWithBias: Conv3d applies a pointwise 1x1x1 kernel with bias
  * - WideRankThreeAttentionRunsUnfused: Single-head rank-three attention with a 1024-wide
  *   head runs unfused and matches a CPU reference
+ * - EluDefaultAndCustomAlpha: Elu keeps positive values and maps negative ones to
+ *   alpha * (exp(x) - 1), with the default alpha 1 and an explicit alpha attribute
  **/
 
 #include <algorithm>
@@ -132,6 +134,13 @@ public:
         proto->set_type(onnx::AttributeProto::INTS);
         for (auto value : values)
             proto->add_ints(value);
+    }
+
+    static void real(onnx::NodeProto* node, const std::string& attribute, float value) {
+        auto* proto = node->add_attribute();
+        proto->set_name(attribute);
+        proto->set_type(onnx::AttributeProto::FLOAT);
+        proto->set_f(value);
     }
 
     static void integer(onnx::NodeProto* node, const std::string& attribute, int64_t value) {
@@ -483,4 +492,23 @@ TEST(OnnxNdOperationsTest, WideRankThreeAttentionRunsUnfused) {
         }
     }
     expectNear(builder.run({{"q", q}, {"kt", kt}, {"v", v}}, "y"), expected, 1e-5f);
+}
+
+TEST(OnnxNdOperationsTest, EluDefaultAndCustomAlpha) {
+    const Shape shape{3, 70};
+    for (const float alpha : {1.0f, 0.3f}) {
+        ModelBuilder builder(alpha == 1.0f ? "elu_default_alpha" : "elu_custom_alpha");
+        builder.input("x", shape);
+        builder.output("y", shape);
+        auto* node = builder.node("Elu", {"x"}, {"y"});
+        if (alpha != 1.0f)
+            ModelBuilder::real(node, "alpha", alpha);
+        auto x = patternedValues(elementCount(shape), 21);
+        for (auto& value : x)
+            value *= 8.0f;
+        std::vector<float> expected(x.size());
+        for (size_t i = 0; i < x.size(); ++i)
+            expected[i] = x[i] > 0.0f ? x[i] : alpha * (std::exp(x[i]) - 1.0f);
+        expectNear(builder.run({{"x", x}}, "y"), expected, 1e-6f);
+    }
 }
