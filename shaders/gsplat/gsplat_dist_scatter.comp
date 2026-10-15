@@ -1,0 +1,38 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+// Pass 3 of 3 of the cull + compaction: each visible splat is written to its
+// workgroup's offset (pass 2) plus its rank among the visible splats of the
+// workgroup, so the visible splats keep their splat-index order.
+layout(local_size_x = 256) in;
+
+#include "gsplat_dist_include.glsl"
+
+shared uint scan[256];
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x;
+    const uint id = gl_GlobalInvocationID.x;
+    uint key;
+    const bool visible = visibleSplat(id, key);
+
+    // Inclusive Hillis-Steele scan of the visibility flags gives each splat's rank.
+    scan[lid] = visible ? 1u : 0u;
+    barrier();
+    for (uint stride = 1u; stride < 256u; stride <<= 1u) {
+        const uint add = lid >= stride ? scan[lid - stride] : 0u;
+        barrier();
+        scan[lid] += add;
+        barrier();
+    }
+
+    if (visible) {
+        const uint slot = workgroupOffsets[gl_WorkGroupID.x] + scan[lid] - 1u;
+        indices[slot] = id;
+        keys[slot] = key;
+    }
+}
