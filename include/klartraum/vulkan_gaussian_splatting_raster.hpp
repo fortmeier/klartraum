@@ -28,7 +28,8 @@ namespace klartraum {
  *
  * The counterpart to VulkanGaussianSplatting, which rasterizes in compute shaders.
  * It reads the same Gaussian data and connects:
- * - GaussianDist: culling, depth keys and compaction (`gsplat_dist.comp`);
+ * - GaussianDist: culling, depth keys and compaction in splat-index order
+ *   (`gsplat_dist.comp`, `gsplat_dist_scan.comp`, `gsplat_dist_scatter.comp`);
  * - a radix sort of the depth keys;
  * - BufferToGraphicsBarrier, which orders the indirect draw after the compute work;
  * - a RenderPass with a GaussianSplatRasterizer (or, where mesh shaders are
@@ -70,6 +71,8 @@ private:
 
     // Stage A: cull + depth-key + compaction
     std::shared_ptr<GaussianDist> dist;
+    // Per-workgroup visible counts of dist, scanned in place into output offsets.
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> workgroupOffsets;
 
     // Per-splat 2D attribute precompute (project once per splat, not 4x per
     // vertex): writes the Splat2D buffer the vertex shader reads verbatim.

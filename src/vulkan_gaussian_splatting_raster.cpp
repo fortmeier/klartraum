@@ -105,15 +105,22 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
         vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     drawArgs->setName("RasterDrawArgs");
-    drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
-    // dist runs two sub-shaders: gsplat_dist.comp (cull + depth-key + compaction)
-    // then gsplat_dist_count.comp, which copies the finalized instanceCount into
-    // the sort's count buffer (binding 5) so the sort processes only the visible
-    // range (perf plan R3). The count buffer (totalCount) is wired below once it
-    // is created. GeneralComputation's inter-pipeline barrier orders the two.
-    dist = vulkanContext.create<GaussianDist>(
-        std::vector<std::string>{"shaders/gsplat/gsplat_dist.comp.spv", "shaders/gsplat/gsplat_dist_count.comp.spv"});
+    // dist compacts the visible splats in splat-index order with three sub-shaders
+    // that share one dispatch size: gsplat_dist.comp counts the visible splats per
+    // workgroup, gsplat_dist_scan.comp turns the counts into offsets and writes the
+    // total into drawArgs.instanceCount and the sort's count buffer (binding 6), and
+    // gsplat_dist_scatter.comp writes keys and indices. The order makes the stable
+    // sort break depth-key ties by splat index, so every run draws the same image.
+    // The count buffer (totalCount) is wired below once it is created.
+    // GeneralComputation's inter-pipeline barrier orders the three.
+    const uint32_t numDistWGs = (N + 255) / 256;
+    workgroupOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numDistWGs, storageDst,
+                                                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    workgroupOffsets->setName("RasterDistWorkgroupOffsets");
+    dist = vulkanContext.create<GaussianDist>(std::vector<std::string>{"shaders/gsplat/gsplat_dist.comp.spv",
+                                                                       "shaders/gsplat/gsplat_dist_scan.comp.spv",
+                                                                       "shaders/gsplat/gsplat_dist_scatter.comp.spv"});
     dist->setName("GaussianDist");
     buffers.pos.connectTo(*dist, 0);
     dist->setInput(cameraUBO, 1);
@@ -121,7 +128,8 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     dist->setInput(indicesA, 3);
     dist->setInput(drawArgs, 4);
     buffers.colAlpha.connectTo(*dist, 5); // alpha for the opacity cull
-    dist->setGroupCountX((N + 255) / 256);
+    dist->setInput(workgroupOffsets, 7);
+    dist->setGroupCountX(numDistWGs);
     dist->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
 
     // --- Stage A2: per-splat 2D attribute precompute (perf plan R1+R2) ---
@@ -180,7 +188,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     scratchOffsets->setName("RasterSortScratchOffsets");
     totalCount->setName("RasterSortTotalCount");
 
-    // Wire the count buffer as dist's binding 6 so gsplat_dist_count.comp writes
+    // Wire the count buffer as dist's binding 6 so gsplat_dist_scan.comp writes
     // the visible count into it; the existing dist -> sort edge then makes that
     // write visible to the sort, which reads it as binding 6 (inputBuffer2).
     dist->setInput(totalCount, 6);
