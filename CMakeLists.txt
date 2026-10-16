@@ -337,6 +337,7 @@ add_executable(
   tests/test_gaussian_morph.cpp
   tests/test_demo_timeline.cpp
   tests/test_gaussian_lighting.cpp
+  tests/test_skeleton_gaussians.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -377,6 +378,7 @@ set(KLARTRAUM_LIB_SRC
   src/rendering/gaussian_morph.cpp
   src/rendering/gaussian_lighting.cpp
   src/demo_timeline.cpp
+  src/skeleton_gaussians.cpp
   ${SPZ_SRC}
   )
 
