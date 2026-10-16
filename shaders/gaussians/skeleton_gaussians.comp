@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Draws a skeleton as Gaussians (SkeletonGaussians): per bone, samplesPerBone
+// thin Gaussians spaced evenly along it with their long (y) axis along the
+// bone, then one round Gaussian per listed joint. Joints are moved into the
+// scene by toScene; sizes are in scene units.
+
+#extension GL_EXT_scalar_block_layout : require
+
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PushConstants {
+    uint boneCount;
+    uint samplesPerBone;
+    uint jointCount;
+    uint total;
+} pc;
+
+struct Params {
+    mat4 toScene;
+    vec4 colourOpacity;
+    vec4 shape; // x: bone radius, y: joint radius relative to it
+};
+
+layout(scalar, set = 0, binding = 0) readonly buffer Joints { vec4 joints[]; };
+// Bone pairs (2 per bone), then the joints that get a sphere.
+layout(scalar, set = 0, binding = 1) readonly buffer Indices { uint indices[]; };
+layout(scalar, set = 0, binding = 2) readonly buffer ParamBuffer { Params params; };
+layout(scalar, set = 0, binding = 3) writeonly buffer OutPos { vec3 outPos[]; };
+layout(scalar, set = 0, binding = 4) writeonly buffer OutRot { vec4 outRot[]; };
+layout(scalar, set = 0, binding = 5) writeonly buffer OutScale { vec3 outScale[]; };
+layout(scalar, set = 0, binding = 6) writeonly buffer OutColAlpha { vec4 outColAlpha[]; };
+layout(scalar, set = 0, binding = 7) writeonly buffer OutShR { float outShR[]; };
+layout(scalar, set = 0, binding = 8) writeonly buffer OutShG { float outShG[]; };
+layout(scalar, set = 0, binding = 9) writeonly buffer OutShB { float outShB[]; };
+
+const float kC0 = 0.282094792;
+
+vec3 toScene(uint joint) {
+    return (params.toScene * vec4(joints[joint].xyz, 1.0)).xyz;
+}
+
+// The rotation (x, y, z, w) that turns +y onto the unit vector d.
+vec4 rotationFromUp(vec3 d) {
+    float c = d.y; // dot((0, 1, 0), d)
+    if (c < -0.99999) {
+        return vec4(1.0, 0.0, 0.0, 0.0); // half a turn about x
+    }
+    return normalize(vec4(d.z, 0.0, -d.x, 1.0 + c)); // cross((0, 1, 0), d), 1 + dot
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.total) {
+        return;
+    }
+    float radius = params.shape.x;
+    uint boneSamples = pc.boneCount * pc.samplesPerBone;
+    if (i < boneSamples) {
+        uint bone = i / pc.samplesPerBone;
+        uint k = i % pc.samplesPerBone;
+        vec3 a = toScene(indices[2u * bone]);
+        vec3 b = toScene(indices[2u * bone + 1u]);
+        vec3 along = b - a;
+        float len = length(along);
+        outPos[i] = mix(a, b, (float(k) + 0.5) / float(pc.samplesPerBone));
+        outRot[i] = len > 1e-9 ? rotationFromUp(along / len) : vec4(0.0, 0.0, 0.0, 1.0);
+        outScale[i] = vec3(radius, max(0.6 * len / float(pc.samplesPerBone), radius), radius);
+    } else {
+        uint joint = indices[2u * pc.boneCount + (i - boneSamples)];
+        outPos[i] = toScene(joint);
+        outRot[i] = vec4(0.0, 0.0, 0.0, 1.0);
+        outScale[i] = vec3(radius * params.shape.y);
+    }
+    outColAlpha[i] = vec4((params.colourOpacity.rgb - 0.5) / kC0, params.colourOpacity.a);
+    for (uint c = 0u; c < 15u; ++c) {
+        outShR[c * pc.total + i] = 0.0;
+        outShG[c * pc.total + i] = 0.0;
+        outShB[c * pc.total + i] = 0.0;
+    }
+}
