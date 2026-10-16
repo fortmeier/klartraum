@@ -7,9 +7,11 @@
 
 #include <memory>
 
+#include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/draw_component.hpp" // for CameraUboType
+#include "klartraum/vulkan_buffer.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
@@ -52,6 +54,17 @@ std::shared_ptr<ComputeGraphElement> createGaussianSplatting(VulkanContext& vulk
                                                              std::shared_ptr<CameraUboType> cameraUBO,
                                                              const GaussianSoABuffers& buffers,
                                                              GsplatConfig config = GsplatConfig{});
+
+/**
+ * @brief The depth buffer of a backend made by createGaussianSplatting() with GsplatConfig::outputDepth.
+ *
+ * Returns nullptr if the backend was made without depth output. See
+ * GsplatConfig::outputDepth for its contents. Elements that read it in the same
+ * graph must depend on the backend (and, for graphics stages, on a
+ * BufferToGraphicsBarrier with the buffer).
+ */
+std::shared_ptr<BufferElement<VulkanBuffer<float>>>
+getGaussianSplattingDepth(const std::shared_ptr<ComputeGraphElement>& splatting);
 
 } // namespace klartraum
 
