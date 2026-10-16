@@ -100,3 +100,33 @@ executing all scheduler steps.
 
 Benchmark results and retained/rejected optimization cycles are recorded in
 [`PERFORMANCE.md`](PERFORMANCE.md).
+
+## ControlNet-OpenPose with LCM-LoRA
+
+`export_controlnet.py` exports SD1.5 conditioned on OpenPose pose maps for few-step
+sampling. It downloads two more third-party models with their own licenses:
+ControlNet `lllyasviel/control_v11p_sd15_openpose` (CreativeML Open RAIL-M) and
+LCM-LoRA `latent-consistency/lcm-lora-sdv1-5`. The LoRA is fused into the UNet
+weights at export time, so the exported UNet samples in four steps without
+classifier-free guidance.
+
+```bash
+# A pose map to condition the reference on, drawn by Klartraum.
+./build/examples/openpose_skeleton_example --frames 1 --width 256 --height 256 --distance 3.0 \
+    --out-dir build/TestingOutput/openpose_pose_256
+cd scripts/sd15_onnx
+uv run python export_controlnet.py --size 256 --pose ../../build/TestingOutput/openpose_pose_256/frame_0000.ppm
+```
+
+If the Hugging Face download of the ControlNet stalls, download its
+`config.json` and `diffusion_pytorch_model.safetensors` into a directory and pass
+it with `--controlnet DIR`.
+
+It writes `sd15_controlnet.onnx` (pose map and latents to the twelve down-block
+residuals and the mid-block residual) and `sd15_unet_control.onnx` (the UNet that
+adds them) to `data/onnx/sd15_controlnet_<size>/`, together with the LCM schedule,
+the noise, and reference tensors of a four-step run for
+`tests/test_sd15_controlnet.cpp`. The export folds the shape expressions the
+tracer leaves behind, so both graphs use only operators Klartraum supports. The
+CLIP text encoder and VAE decoder come from `export_denoiser.py` with the same
+`--size`. `pose_to_video_example` uses all of them.

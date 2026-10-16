@@ -288,6 +288,7 @@ add_executable(
   tests/test_drawindirectbuffer.cpp
   tests/test_buffertographicsbarrier.cpp
   tests/test_gaussian_splat_rasterizer.cpp
+  tests/test_sd15_controlnet.cpp
   tests/test_gaussian_splat_crop.cpp
   tests/test_gaussian_splat_depth.cpp
   tests/test_depth_composition.cpp
@@ -348,6 +349,8 @@ set(KLARTRAUM_LIB_SRC
   src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
+  src/lcm_scheduler.cpp
+  src/controlnet_denoiser.cpp
   src/rendering/gaussian_splat_rasterizer.cpp
   src/rendering/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
