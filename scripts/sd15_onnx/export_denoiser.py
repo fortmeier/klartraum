@@ -237,7 +237,8 @@ def concretize_fixed_shapes(model: onnx.ModelProto) -> int:
 
     constants: dict[str, np.ndarray] = {}
     for tensor in model.graph.initializer:
-        if np.prod(tensor.dims, dtype=np.int64) <= 4096:
+        # Weights stored in the external data file are not needed for shapes.
+        if np.prod(tensor.dims, dtype=np.int64) <= 4096 and not tensor.external_data:
             try:
                 constants[tensor.name] = numpy_helper.to_array(tensor)
             except ValueError:
@@ -411,15 +412,32 @@ def export(
     embeddings: torch.Tensor,
     path: Path,
 ) -> None:
+    export_graph(
+        model,
+        (sample, timestep, embeddings),
+        path,
+        ["sample", "timestep", "encoder_hidden_states"],
+        ["noise_prediction"],
+    )
+
+
+def export_graph(
+    model: nn.Module,
+    inputs: tuple[torch.Tensor, ...],
+    path: Path,
+    input_names: list[str],
+    output_names: list[str],
+) -> None:
+    """Exports a fixed-shape model with external weights, folded shape expressions and concrete dimensions."""
     raw_path = path.with_suffix(".raw.onnx")
     inferred_path = path.with_suffix(".inferred.onnx")
     weights_name = path.name + ".data"
     torch.onnx.export(
         model,
-        (sample, timestep, embeddings),
+        inputs,
         str(raw_path),
-        input_names=["sample", "timestep", "encoder_hidden_states"],
-        output_names=["noise_prediction"],
+        input_names=input_names,
+        output_names=output_names,
         opset_version=17,
         dynamo=False,
         do_constant_folding=True,
