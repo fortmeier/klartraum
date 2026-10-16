@@ -26,9 +26,16 @@ Not included in builds, but used by them or by the tests:
   Vulkan SDK or the operating system.
 - GoogleTest (BSD-3-Clause) is linked into the test program only.
 
-The scenes, images and models in `data/` are the project's own material and
-contain no third-party content; their licenses are given in
-[REUSE.toml](REUSE.toml).
+The scenes, images and models in `data/` are the project's own material; their
+licenses are given in [REUSE.toml](REUSE.toml). One of them is derived from
+third-party data:
+
+- `data/character/` holds the character controller network and its test
+  fixtures. The network was trained by `scripts/character_animation` on motion
+  capture from the **100STYLE dataset** by Ian Mason, Sebastian Starke and Taku
+  Komura (https://zenodo.org/records/8127870, DOI 10.1145/3522618), licensed
+  under Creative Commons Attribution 4.0 International (CC BY 4.0). The network
+  is shared under CC BY 4.0 as well; the dataset itself is not included.
 
 ## GLFW
 
