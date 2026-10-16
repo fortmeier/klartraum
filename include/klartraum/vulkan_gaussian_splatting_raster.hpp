@@ -54,11 +54,15 @@ public:
 
     virtual const char* getType() const override { return "GaussianSplattingRaster"; }
 
+    /// The depth buffer (see GsplatConfig::outputDepth), or nullptr if it was not requested.
+    std::shared_ptr<BufferElement<VulkanBuffer<float>>> getDepth() { return depth; }
+
     void setPushConstants(const GaussianSplatRasterPushConstants& pushConstants) {
         rasterizer->setPushConstants(pushConstants);
     }
 
 private:
+    std::shared_ptr<BufferElement<VulkanBuffer<float>>> depth;
     void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                     std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
 
@@ -99,6 +103,11 @@ private:
     std::shared_ptr<BufferToGraphicsBarrier> barrier;
     std::shared_ptr<RenderPass> renderPass;
     std::shared_ptr<GaussianSplatRasterizer> rasterizer;
+    // Depth output (GsplatConfig::outputDepth): encoded depths written while
+    // rasterizing, decoded by a compute pass after the render pass.
+    void addDepthOutput(VulkanContext& vulkanContext, VkExtent2D extent);
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> depthBits;
+    std::shared_ptr<GeneralComputation<uint32_t>> depthResolve;
 
     // Optional VK_EXT_mesh_shader draw path (perf plan R5), selected when
     // config.useMeshShader && the device supports mesh shaders; otherwise the

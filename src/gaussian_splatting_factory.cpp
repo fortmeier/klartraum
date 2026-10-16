@@ -33,4 +33,15 @@ std::shared_ptr<ComputeGraphElement> createGaussianSplatting(VulkanContext& vulk
     throw std::runtime_error("createGaussianSplatting: unknown GsplatBackend");
 }
 
+std::shared_ptr<BufferElement<VulkanBuffer<float>>>
+getGaussianSplattingDepth(const std::shared_ptr<ComputeGraphElement>& splatting) {
+    if (auto compute = std::dynamic_pointer_cast<VulkanGaussianSplatting>(splatting)) {
+        return compute->getDepth();
+    }
+    if (auto raster = std::dynamic_pointer_cast<VulkanGaussianSplattingRaster>(splatting)) {
+        return raster->getDepth();
+    }
+    throw std::runtime_error("getGaussianSplattingDepth: not a Gaussian splatting backend");
+}
+
 } // namespace klartraum

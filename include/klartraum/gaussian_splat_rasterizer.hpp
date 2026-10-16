@@ -55,6 +55,15 @@ public:
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, uint32_t pathId) override;
 
+    /**
+     * @brief Also writes the encoded depth of opaque splat cores (see GsplatConfig::outputDepth).
+     *
+     * `depthBits` holds one uint per pixel, filled with the encoding of +inf
+     * before the render pass; it is bound as set 1, binding 2 for the fragment
+     * shader. Call before initialize() and with exactly two splat buffers.
+     */
+    void setDepthOutput(std::shared_ptr<BufferElementInterface> depthBits);
+
     void setPushConstants(const GaussianSplatRasterPushConstants& pushConstants) {
         this->pushConstants = pushConstants;
     }
@@ -76,6 +85,7 @@ private:
     VkPipeline graphicsPipeline;
 
     GaussianSplatRasterPushConstants pushConstants{};
+    bool outputDepth = false;
 };
 
 } // namespace klartraum
