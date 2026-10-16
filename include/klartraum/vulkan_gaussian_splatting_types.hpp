@@ -57,6 +57,15 @@ struct GsplatConfig {
     // path. Only takes effect when the device supports mesh shaders; otherwise
     // the raster backend falls back to the vertex path. Default off (portable).
     bool useMeshShader = false;
+
+    // Also write a depth buffer for compositing other geometry into the scene, read with
+    // getGaussianSplattingDepth(). It holds, per pixel (row-major, screen size), the NDC
+    // depth (clip.z / clip.w) of the scene's surface, or +inf where there is none. The
+    // compute backend reports the median depth: where the transmittance first falls to
+    // 0.5. The raster backend reports the nearest depth of a Gaussian that alone covers
+    // the pixel with an opacity of at least 0.5; it uses the vertex path then. Both agree
+    // on opaque surfaces. Off by default; the colour image is the same either way.
+    bool outputDepth = false;
 };
 
 /**
