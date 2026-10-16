@@ -243,7 +243,9 @@ void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shar
     computeBounds->setGroupCountX(maxBinned / 256 + 1);
 
     // Stage 9: splatting
-    splat = std::make_shared<GaussianSplatting>(vulkanContext, "shaders/gsplat/gsplat_binned_splatting.comp.spv");
+    splat = std::make_shared<GaussianSplatting>(
+        vulkanContext, config.outputDepth ? "shaders/gsplat/gsplat_binned_splatting_depth.comp.spv"
+                                          : "shaders/gsplat/gsplat_binned_splatting.comp.spv");
     splat->setName("GaussianSplatting");
     splat->setInput(gatherSorted, 0, 7);  // sortedPos2D
     splat->setInput(gatherSorted, 1, 10); // sortedCovInv
@@ -256,6 +258,16 @@ void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shar
     splat->setImageLayoutTransition(5, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                     VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    if (config.outputDepth) {
+        // Every pixel of the image is written each frame, so the buffer needs no clearing.
+        depth = std::make_shared<BufferElement<VulkanBuffer<float>>>(
+            vulkanContext, ext.width * ext.height,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        depth->setName("SplatDepth");
+        splat->setInput(gatherSorted, 6, 8); // sortedZ
+        splat->setInput(depth, 7);
+    }
 
     const uint32_t tbX = config.splatTileX;
     const uint32_t tbY = config.splatTileY;

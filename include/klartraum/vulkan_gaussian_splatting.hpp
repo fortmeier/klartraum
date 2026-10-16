@@ -35,6 +35,9 @@ public:
 
     virtual const char* getType() const override { return "GaussianSplatting"; }
 
+    /// The depth buffer (see GsplatConfig::outputDepth), or nullptr if it was not requested.
+    std::shared_ptr<BufferElement<VulkanBuffer<float>>> getDepth() { return depth; }
+
 private:
     void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                     std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
@@ -59,6 +62,7 @@ private:
     std::shared_ptr<GeneralComputation<>> gatherSorted;
     std::shared_ptr<GeneralComputation<>> computeBounds;
     std::shared_ptr<GaussianSplatting> splat;
+    std::shared_ptr<BufferElement<VulkanBuffer<float>>> depth;
 
     // Sort ping-pong value buffers (stored as members for _record pre-fill)
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sortRadixValA;
