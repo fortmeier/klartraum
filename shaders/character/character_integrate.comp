@@ -1,0 +1,91 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Applies the network output to the state (controller.py: integrate): moves
+// and turns the root, appends it to the history, blends the predicted pose with
+// the previous one advanced by the predicted velocity, keeps the predicted
+// future trajectory, and writes the joints in world space and as COCO-18
+// OpenPose keypoints. One invocation updates the state in place.
+
+#include "character_common.glsl"
+
+layout(local_size_x = 1) in;
+
+layout(std430, set = 0, binding = 0) buffer State { float state[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Output { float outputData[]; };
+layout(std430, set = 0, binding = 2) buffer Joints { vec4 joints[]; };
+layout(std430, set = 0, binding = 3) writeonly buffer OpenPose { vec4 openpose[]; };
+
+// Controller joint of each COCO-18 keypoint; the neck (keypoint 1) is the middle of the shoulders.
+const uint OPENPOSE_JOINTS[18] = uint[](5u, 0u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 20u, 21u, 22u, 6u, 7u,
+                                        8u, 9u);
+const uint RIGHT_SHOULDER = 10u;
+const uint LEFT_SHOULDER = 13u;
+
+void main() {
+    vec2 root = vec2(state[0], state[1]);
+    float angle = state[2];
+    vec2 delta = toWorld(vec2(outputData[0], outputData[1]), angle);
+    vec2 newRoot = root + delta;
+    float newAngle = angle + outputData[2];
+
+    for (uint i = 0u; i + 1u < HISTORY; ++i) {
+        for (uint k = 0u; k < 5u; ++k) {
+            state[HISTORY_OFFSET + i * 5u + k] = state[HISTORY_OFFSET + (i + 1u) * 5u + k];
+        }
+    }
+    uint newest = HISTORY_OFFSET + (HISTORY - 1u) * 5u;
+    state[newest + 0u] = newRoot.x;
+    state[newest + 1u] = newRoot.y;
+    state[newest + 2u] = newAngle;
+    state[newest + 3u] = delta.x * float(FPS);
+    state[newest + 4u] = delta.y * float(FPS);
+
+    const float frameTime = 1.0 / float(FPS);
+    for (uint joint = 0u; joint < JOINT_COUNT; ++joint) {
+        uint base = POSE_OFFSET + joint * 6u;
+        uint predicted = 3u + joint * 6u;
+        vec3 previous = vec3(state[base], state[base + 1u], state[base + 2u]);
+        vec3 predictedPosition = vec3(outputData[predicted], outputData[predicted + 1u], outputData[predicted + 2u]);
+        vec3 predictedVelocity =
+            vec3(outputData[predicted + 3u], outputData[predicted + 4u], outputData[predicted + 5u]);
+        vec2 previousWorld = root + toWorld(previous.xz, angle);
+        vec2 carriedXZ = toLocal(previousWorld - newRoot, newAngle);
+        vec3 carried = vec3(carriedXZ.x, previous.y, carriedXZ.y) + predictedVelocity * frameTime;
+        vec3 position = predictedPosition + (1.0 - POSE_BLEND) * (carried - predictedPosition);
+        int parent = CONSTRAINT_PARENTS[joint];
+        if (parent >= 0) {
+            uint parentBase = POSE_OFFSET + uint(parent) * 6u;
+            vec3 parentPosition = vec3(state[parentBase], state[parentBase + 1u], state[parentBase + 2u]);
+            vec3 bone = position - parentPosition;
+            float boneLength = length(bone);
+            if (boneLength > 1e-6) {
+                position = parentPosition + bone * (state[REST_OFFSET + joint] / boneLength);
+            }
+        }
+        state[base + 0u] = position.x;
+        state[base + 1u] = position.y;
+        state[base + 2u] = position.z;
+        state[base + 3u] = predictedVelocity.x;
+        state[base + 4u] = predictedVelocity.y;
+        state[base + 5u] = predictedVelocity.z;
+        vec2 world = newRoot + toWorld(position.xz, newAngle);
+        joints[joint] = vec4(world.x, position.y, world.y, 1.0);
+    }
+
+    uint futureStart = 3u + POSE_SIZE;
+    for (uint i = 0u; i < FUTURE_SAMPLES * 6u; ++i) {
+        state[FUTURE_OFFSET + i] = outputData[futureStart + i];
+    }
+    state[0] = newRoot.x;
+    state[1] = newRoot.y;
+    state[2] = newAngle;
+
+    for (uint keypoint = 0u; keypoint < 18u; ++keypoint) {
+        openpose[keypoint] = keypoint == 1u ? vec4(0.5 * (joints[RIGHT_SHOULDER].xyz + joints[LEFT_SHOULDER].xyz), 1.0)
+                                            : joints[OPENPOSE_JOINTS[keypoint]];
+    }
+}

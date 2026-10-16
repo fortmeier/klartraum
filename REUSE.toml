@@ -33,6 +33,13 @@ path = [
 SPDX-FileCopyrightText = "Dirk Fortmeier"
 SPDX-License-Identifier = "MIT"
 
+# The character controller, trained on the 100STYLE dataset (CC BY 4.0) by
+# Ian Mason, Sebastian Starke and Taku Komura; see THIRD_PARTY_NOTICES.md.
+[[annotations]]
+path = ["data/character/**"]
+SPDX-FileCopyrightText = ["Dirk Fortmeier", "100STYLE dataset: Ian Mason, Sebastian Starke, Taku Komura"]
+SPDX-License-Identifier = "CC-BY-4.0"
+
 # Photos, videos and the captured lantern scene.
 [[annotations]]
 path = [
