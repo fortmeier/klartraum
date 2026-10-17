@@ -1,0 +1,72 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// The full view with the pasted close-up (compositeCloseUp() on the GPU):
+// inside the feathered character mask, the close-up and its alpha are sampled
+// bilinearly at the pixel's position in the close-up window and blended over
+// the scene; elsewhere the scene stays. Output packed as bytes B, G, R, A.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant) uniform PushConstants {
+    uint width; // the full view
+    uint height;
+    uint size;  // the close-up
+} pc;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D scene;
+layout(set = 0, binding = 1, rgba8) uniform readonly image2D characterMask;
+layout(set = 0, binding = 2) readonly buffer CloseUp { uint closeUp[]; }; // B, G, R, alpha
+layout(set = 0, binding = 3) readonly buffer State { float state[]; };   // centre.xy, halfExtent.xy, ...
+layout(set = 0, binding = 4) writeonly buffer Frame { uint frame[]; };
+
+uint byteOf(float unorm) { return uint(unorm * 255.0 + 0.5); }
+
+float channelAt(int x, int y, int channel) {
+    return float((closeUp[uint(y) * pc.size + uint(x)] >> (8 * channel)) & 0xffu);
+}
+
+// Bilinear sample of a byte channel at continuous pixel coordinates (pixel centres at integers).
+float sampleChannel(vec2 position, int channel) {
+    int size = int(pc.size);
+    float x = clamp(position.x, 0.0, float(size - 1)), y = clamp(position.y, 0.0, float(size - 1));
+    int x0 = int(x), y0 = int(y), x1 = min(x0 + 1, size - 1), y1 = min(y0 + 1, size - 1);
+    float fx = x - float(x0), fy = y - float(y0);
+    return (1.0 - fy) * ((1.0 - fx) * channelAt(x0, y0, channel) + fx * channelAt(x1, y0, channel)) +
+           fy * ((1.0 - fx) * channelAt(x0, y1, channel) + fx * channelAt(x1, y1, channel));
+}
+
+bool insideMask(ivec2 pixel) {
+    ivec2 last = ivec2(pc.width, pc.height) - 1;
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            if (imageLoad(characterMask, clamp(pixel + ivec2(dx, dy), ivec2(0), last)).r > 0.0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= int(pc.width) || pixel.y >= int(pc.height)) {
+        return;
+    }
+    vec4 original = imageLoad(scene, pixel);
+    uint bytes[4] = uint[4](byteOf(original.b), byteOf(original.g), byteOf(original.r), byteOf(original.a));
+    if (insideMask(pixel)) {
+        vec2 ndc = (vec2(pixel) + 0.5) / vec2(pc.width, pc.height) * 2.0 - 1.0;
+        vec2 closeUpNdc = (ndc - vec2(state[0], state[1])) / vec2(state[2], state[3]);
+        vec2 source = (closeUpNdc * 0.5 + 0.5) * float(pc.size) - 0.5;
+        float alpha = sampleChannel(source, 3) / 255.0;
+        for (int c = 0; c < 3; ++c) {
+            float value = sampleChannel(source, c);
+            bytes[c] = uint(alpha * value + (1.0 - alpha) * float(bytes[c]) + 0.5);
+        }
+    }
+    frame[uint(pixel.y) * pc.width + uint(pixel.x)] = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
+}
