@@ -288,6 +288,7 @@ add_executable(
   tests/test_drawindirectbuffer.cpp
   tests/test_buffertographicsbarrier.cpp
   tests/test_gaussian_splat_rasterizer.cpp
+  tests/test_openpose_skeleton.cpp
   tests/test_sd15_controlnet.cpp
   tests/test_temporal_lcm_sampler.cpp
   tests/test_latent_inpainting.cpp
@@ -351,6 +352,7 @@ set(KLARTRAUM_LIB_SRC
   src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
+  src/openpose_skeleton_renderer.cpp
   src/lcm_scheduler.cpp
   src/temporal_lcm_sampler.cpp
   src/latent_inpainting.cpp
