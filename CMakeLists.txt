@@ -369,6 +369,7 @@ set(KLARTRAUM_LIB_SRC
   src/character_mask.cpp
   src/latent_inpainting.cpp
   src/gpu_inpainting.cpp
+  src/closeup_inpainting.cpp
   src/controlnet_denoiser.cpp
   src/rendering/gaussian_splat_rasterizer.cpp
   src/rendering/gaussian_splat_mesh_rasterizer.cpp

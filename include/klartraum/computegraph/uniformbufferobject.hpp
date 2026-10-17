@@ -71,6 +71,13 @@ public:
 
     void update(uint32_t pathId) { memcpy(uniformBuffersMapped[pathId], &ubo, sizeof(ubo)); }
 
+    // The values in the buffer of a path, e.g. after a graph wrote them on the GPU.
+    UniformBufferObjectType read(uint32_t pathId) const {
+        UniformBufferObjectType values;
+        memcpy(&values, uniformBuffersMapped[pathId], sizeof(values));
+        return values;
+    }
+
     UniformBufferObjectType ubo;
 
     virtual size_t getBufferMemSize() const override { return sizeof(UniformBufferObjectType); }
@@ -111,7 +118,9 @@ private:
         uniformBuffersMapped.resize(numberOfPaths);
 
         for (size_t i = 0; i < numberOfPaths; i++) {
-            vulkanContext->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            // TRANSFER_DST: a graph may write the values on the GPU, e.g. a camera computed from GPU data.
+            vulkanContext->createBuffer(bufferSize,
+                                        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                         uniformBuffers[i], uniformBuffersMemory[i]);
 

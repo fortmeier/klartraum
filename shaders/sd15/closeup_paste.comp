@@ -1,0 +1,53 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// The generated close-up pasted into the close-up scene through the feathered
+// body mask (pasteGenerated() on the GPU). Output per pixel, packed as bytes
+// B, G, R, alpha: the pasted colour and the feathered mask.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant) uniform PushConstants {
+    uint size; // the close-up is size x size pixels
+} pc;
+
+layout(set = 0, binding = 0) readonly buffer Generated { float generated[]; }; // [3, size, size] in [-1, 1]
+layout(set = 0, binding = 1, rgba8) uniform readonly image2D scene;
+layout(set = 0, binding = 2, rgba8) uniform readonly image2D bodyMask;
+layout(set = 0, binding = 3) writeonly buffer CloseUp { uint closeUp[]; };
+
+uint byteOf(float unorm) { return uint(unorm * 255.0 + 0.5); }
+
+// Coverage of the 5 x 5 box around a pixel, clamped at the borders (featherMask()).
+float feather(ivec2 pixel, int size) {
+    float coverage = 0.0;
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            ivec2 p = clamp(pixel + ivec2(dx, dy), ivec2(0), ivec2(size - 1));
+            coverage += imageLoad(bodyMask, p).r > 0.0 ? 1.0 : 0.0;
+        }
+    }
+    return coverage / 25.0;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    int size = int(pc.size);
+    if (pixel.x >= size || pixel.y >= size) {
+        return;
+    }
+    uint plane = pc.size * pc.size, i = uint(pixel.y) * pc.size + uint(pixel.x);
+    float alpha = feather(pixel, size);
+    vec4 original = imageLoad(scene, pixel);
+    uint channels[3];
+    for (int c = 0; c < 3; ++c) {
+        float value = (clamp(generated[uint(c) * plane + i], -1.0, 1.0) + 1.0) * 127.5;
+        float originalByte = float(byteOf(original[c]));
+        channels[c] = uint(alpha * value + (1.0 - alpha) * originalByte + 0.5);
+    }
+    uint alphaByte = uint(alpha * 255.0 + 0.5);
+    closeUp[i] = channels[2] | (channels[1] << 8) | (channels[0] << 16) | (alphaByte << 24);
+}
