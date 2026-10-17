@@ -289,6 +289,7 @@ private:
 
     // ---- Timestamp profiling ---------------------------------------------
     bool profilingEnabled = false;
+    bool simultaneousUse = false;
     static constexpr uint32_t kProfilingElementsPerPool = 2048;
     std::vector<VkQueryPool> profilingQueryPools;
     float profilingTimestampPeriodNs = 1.0f;
@@ -316,8 +317,30 @@ private:
     PFN_vkReleaseProfilingLockKHR pfn_ReleaseLock_ = nullptr;
 
 public:
+    // The compiled elements in the order they are recorded into the command
+    // buffer, including those that record no GPU work (buffers, groups).
+    const std::vector<ComputeGraphElementPtr>& getElements() const { return ordered_elements; }
+
     // Call before compileFrom().
     void enableProfiling() { profilingEnabled = true; }
+
+    // Records the command buffers with VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT, so a path can be submitted
+    // again while an earlier submission of it is pending, e.g. several times in one GraphChain. Call before
+    // compileFrom().
+    void enableSimultaneousUse() { simultaneousUse = true; }
+    bool allowsSimultaneousUse() const { return simultaneousUse; }
+
+    // The recorded command buffer of a path, for submissions the graph does not make itself (GraphChain).
+    VkCommandBuffer getCommandBuffer(uint32_t pathId) const { return commandBuffers.at(pathId); }
+
+    // What submitTo() does before submitting a path: checks the queue and runs the host-side updates.
+    void prepareSubmit(VkQueue queue, uint32_t pathId) {
+        checkQueue(queue);
+        updateElements(pathId);
+    }
+
+    // Whether a path waits for semaphores given to its elements (setWaitFor()), e.g. a swapchain image.
+    bool hasExternalWaits(uint32_t pathId) const { return !pathSubmits.at(pathId).waitSemaphores.empty(); }
 
     // Enable VK_KHR_performance_query counter collection.  Call before compileFrom().
     // nameFilter: sub-strings to match against counter name/description.  Empty = all counters.
@@ -548,6 +571,7 @@ private:
 
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = simultaneousUse ? VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT : 0;
 
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
             throw std::runtime_error("failed to begin recording command buffer!");
@@ -677,6 +701,9 @@ private:
 
     typedef std::map<ComputeGraphElementPtr, std::vector<ComputeGraphElementPtr>> EdgeList;
 
+public:
+    // The elements that must execute before `element`: its inputs and its
+    // execution-only dependencies, each once.
     std::vector<ComputeGraphElementPtr> getPredecessors(const ComputeGraphElementPtr& element) const {
         std::vector<ComputeGraphElementPtr> predecessors;
         for (const auto& input : element->getInputs()) {
@@ -692,6 +719,7 @@ private:
         return predecessors;
     }
 
+private:
     void fill_edges(EdgeList& edges, EdgeList& incoming, ComputeGraphElementPtr element) {
         for (auto& input : getPredecessors(element)) {
             // check if input already in graph

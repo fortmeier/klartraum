@@ -248,6 +248,7 @@ add_executable(
   tests/test_vulkan_context.cpp
   tests/test_vulkan_helpers.cpp
   tests/test_computegraph.cpp
+  tests/test_graph_chain.cpp
   tests/test_buffertransformation.cpp
   tests/test_drawindirectbuffer.cpp
   tests/test_buffertographicsbarrier.cpp
