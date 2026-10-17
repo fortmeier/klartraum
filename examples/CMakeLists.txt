@@ -134,3 +134,14 @@ target_link_libraries(pose_to_video_example
 )
 
 add_dependencies(pose_to_video_example Shaders)
+
+# A neural animated character walking around the lantern, drawn as an OpenPose skeleton over the scene
+add_executable(lantern_walk_example
+    lantern_walk_example.cpp
+)
+
+target_link_libraries(lantern_walk_example
+    klartraum_lib
+)
+
+add_dependencies(lantern_walk_example Shaders)
