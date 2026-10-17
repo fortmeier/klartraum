@@ -1,0 +1,33 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// RGB of an image as a [3, height, width] tensor with values from `low` to
+// `high` (bgraToTensor() on the GPU).
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+    float low;
+    float high;
+} pc;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D inputImage;
+layout(set = 0, binding = 1) writeonly buffer OutputTensor { float outputData[]; };
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= pc.width || pixel.y >= pc.height) {
+        return;
+    }
+    vec3 color = imageLoad(inputImage, ivec2(pixel)).rgb;
+    uint plane = pc.width * pc.height;
+    uint offset = pixel.y * pc.width + pixel.x;
+    outputData[offset] = pc.low + (pc.high - pc.low) * color.r;
+    outputData[plane + offset] = pc.low + (pc.high - pc.low) * color.g;
+    outputData[2 * plane + offset] = pc.low + (pc.high - pc.low) * color.b;
+}
