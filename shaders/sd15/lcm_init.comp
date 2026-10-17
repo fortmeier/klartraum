@@ -1,0 +1,46 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Start of LCM inpainting (sampleInpainted): the clean latent to keep is the
+// encoder's latent times the VAE scaling factor; the start latent is the
+// noise where the mask generates and the noised known latent where it keeps.
+// Also sets the timestep of the first denoising step.
+
+layout(local_size_x = 256) in;
+
+layout(push_constant) uniform PushConstants {
+    uint count;     // values of a latent, channels * plane
+    uint plane;     // latent pixels
+    float scale;    // VAE scaling factor
+    float sqrtAlpha;
+    float sqrtOneMinusAlpha;
+    uint timestepLow;
+    uint timestepHigh;
+} pc;
+
+layout(set = 0, binding = 0) readonly buffer Encoded { float encoded[]; };
+layout(set = 0, binding = 1) readonly buffer Mask { float mask[]; };
+layout(set = 0, binding = 2) readonly buffer Noise { float noise[]; }; // [steps][count]
+layout(set = 0, binding = 3) writeonly buffer Known { float known[]; };
+layout(set = 0, binding = 4) writeonly buffer Latents { float latents[]; };
+layout(set = 0, binding = 5) writeonly buffer Timestep { uint timestep[]; }; // one int64
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i == 0) {
+        timestep[0] = pc.timestepLow;
+        timestep[1] = pc.timestepHigh;
+    }
+    if (i >= pc.count) {
+        return;
+    }
+    float clean = encoded[i] * pc.scale;
+    known[i] = clean;
+    float m = mask[i % pc.plane];
+    float n = noise[i];
+    float outside = pc.sqrtAlpha * clean + pc.sqrtOneMinusAlpha * n;
+    latents[i] = m * n + (1.0 - m) * outside;
+}

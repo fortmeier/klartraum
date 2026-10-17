@@ -268,6 +268,7 @@ add_executable(
   tests/test_kernel_benchmarks.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
+  tests/test_sd15_gpu_inpainting.cpp
   tests/test_buffertransformation.cpp
   tests/test_drawindirectbuffer.cpp
   tests/test_buffertographicsbarrier.cpp
@@ -351,6 +352,7 @@ set(KLARTRAUM_LIB_SRC
   src/scene_placement.cpp
   src/character_mask.cpp
   src/latent_inpainting.cpp
+  src/gpu_inpainting.cpp
   src/controlnet_denoiser.cpp
   src/rendering/gaussian_splat_rasterizer.cpp
   src/rendering/gaussian_splat_mesh_rasterizer.cpp
