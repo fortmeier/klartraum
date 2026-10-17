@@ -4,11 +4,18 @@
 
 /**
  * TESTS:
+ * - exactCountSampling: the title sampled for a given number of splats gives exactly that many,
+ *   all inside the letters, for counts below and above the natural count of the spacing
  * - placementFacesCamera: text placed for a camera is centred on the pivot, faces the camera and
  *   reads left to right, bottom to top in the camera's right and up directions
+ * - placedTitleRendersLikeMask: the title placed for the lantern camera (from above and the
+ *   side) and rendered matches the FreeType mask (IoU >= 0.90); frame in
+ *   build/TestingOutput/gaussian_morph/
  * - matchingIsPermutation: the screen-space matching uses every text splat exactly once
  * - matchingFindsIdenticalPoints: two copies of a point set in shuffled order are matched point
  *   to point
+ * - matchingIsCoherent: for the title and the lantern, neighbouring text splats get partners in
+ *   the scene that are close to each other (mean distance < 0.3x that of a random matching)
  * - prepareTextMorphOrdersLikeScene: the prepared text is the placed text in matched order, with
  *   wave delays from 0 (leftmost) to 1 (rightmost)
  * - timelineHoldsMorphsAndSpins: the default shot has 255 frames at 30 fps; the first 60 hold
@@ -31,13 +38,17 @@
  * - explosionsBurstOutward: at the end of the burst, every Gaussian of the explode variants is
  *   between half and the full explode radius from its start, moved away from the centre, and in
  *   the shatter towards the given direction
+ * - morphRendersTitleThenLantern: the morph of the title into the lantern, rendered at progress
+ *   0, looks like the placed title and at progress 1 like the lantern rendered directly
  **/
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <functional>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <numeric>
@@ -52,11 +63,82 @@
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/gaussian_morph.hpp"
+#include "klartraum/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/interface_camera_orbit.hpp"
+#include "klartraum/offscreen_target.hpp"
+#include "klartraum/text_gaussians.hpp"
+
+#include "test_scene.hpp"
 
 using namespace klartraum;
 
 namespace {
+
+std::shared_ptr<Font> loadFont(const std::string& name) {
+    try {
+        return std::make_shared<Font>("fonts/" + name + ".ttf");
+    } catch (const std::exception&) {
+        return nullptr;
+    }
+}
+
+#define REQUIRE_FONT(var, name)                                                                                        \
+    auto var = loadFont(name);                                                                                         \
+    if (!var) {                                                                                                        \
+        GTEST_SKIP() << "font not available: " << name << " (configure with KLARTRAUM_DOWNLOAD_FONTS=ON)";             \
+    }
+
+// The promo title with the wordmark `size` em high.
+TitleLayout promoTitle(const std::shared_ptr<Font>& font, const std::shared_ptr<Font>& mono, float size) {
+    TitleLayout layout;
+    layout.lines.push_back({"klartraum", font, 500.0f, size, 0.0f});
+    layout.lines.push_back({"tech demo 000", mono, 400.0f, 0.4f * size, 0.05f});
+    layout.pixelsPerUnit = 1024.0f / size;
+    return layout;
+}
+
+// Reads an OffscreenTarget image back as tightly-packed BGRA bytes; the
+// backends leave it in TRANSFER_SRC_OPTIMAL.
+std::vector<uint8_t> readImage(VulkanContext& vc, VkImage image, VkExtent2D extent) {
+    const VkDeviceSize bytes = VkDeviceSize(extent.width) * extent.height * 4;
+    VkBuffer buf;
+    VkDeviceMemory mem;
+    vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buf, mem);
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = vc.getCommandPool();
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(vc.getDevice(), &ai, &cmd);
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {extent.width, extent.height, 1};
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &region);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
+    vkQueueSubmit(vc.getGraphicsQueue(), 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vc.getGraphicsQueue());
+    vkFreeCommandBuffers(vc.getDevice(), vc.getCommandPool(), 1, &cmd);
+
+    void* data;
+    vkMapMemory(vc.getDevice(), mem, 0, bytes, 0, &data);
+    std::vector<uint8_t> result(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + bytes);
+    vkUnmapMemory(vc.getDevice(), mem);
+    vkFreeMemory(vc.getDevice(), mem, nullptr);
+    vkDestroyBuffer(vc.getDevice(), buf, nullptr);
+    return result;
+}
 
 std::vector<Gaussian3D> randomPoints(size_t n, uint32_t seed) {
     std::mt19937 rng(seed);
@@ -180,7 +262,46 @@ float easeInOutCubic(float s) { return s < 0.5f ? 4.0f * s * s * s : 1.0f - std:
 
 glm::vec3 positionOf(const Gaussian3D& g) { return {g.position[0], g.position[1], g.position[2]}; }
 
+// The lantern camera of test_scene::frameLantern() without a Vulkan context.
+glm::mat4 lanternView(const test_scene::Scene& scene) {
+    const glm::mat4 view = glm::lookAt(glm::vec3(0.35f, 0.0f, 0.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
+                           glm::rotate(glm::mat4(1.0f), -0.5f, glm::vec3(0.0f, 0.0f, 1.0f)) *
+                           glm::rotate(glm::mat4(1.0f), 0.9f, glm::vec3(0.0f, 1.0f, 0.0f)) *
+                           glm::translate(glm::mat4(1.0f), -scene.centre);
+    return view;
+}
+
+void writePPM(const std::filesystem::path& path, const std::vector<uint8_t>& bgra, VkExtent2D extent) {
+    std::ofstream out(path, std::ios::binary);
+    out << "P6\n" << extent.width << " " << extent.height << "\n255\n";
+    for (size_t i = 0; i < bgra.size(); i += 4) {
+        const char rgb[3] = {char(bgra[i + 2]), char(bgra[i + 1]), char(bgra[i])};
+        out.write(rgb, 3);
+    }
+}
+
 } // namespace
+
+TEST(GaussianMorph, exactCountSampling) {
+    REQUIRE_FONT(font, "Unbounded");
+    REQUIRE_FONT(mono, "JetBrainsMono");
+    const CoverageMask mask = rasterizeTitle(promoTitle(font, mono, 0.5f));
+    TextSplatParams params;
+    params.spacing = 0.01f;
+    const size_t natural = sampleTextGaussians(mask, params).size();
+    ASSERT_GT(natural, 1000u);
+
+    for (uint32_t count : {uint32_t(natural / 3), uint32_t(natural * 3 + 17)}) {
+        SCOPED_TRACE(count);
+        const auto splats = sampleTextGaussians(mask, params, count);
+        ASSERT_EQ(splats.size(), count);
+        size_t outside = 0;
+        for (const Gaussian3D& g : splats) {
+            outside += mask.sample(g.position[0], g.position[1]) < params.threshold;
+        }
+        EXPECT_EQ(outside, 0u);
+    }
+}
 
 TEST(GaussianMorph, placementFacesCamera) {
     // A camera above and to the side of the pivot, two units away.
@@ -223,6 +344,73 @@ TEST(GaussianMorph, placementFacesCamera) {
     EXPECT_NEAR(normal.z, 1.0f, 1e-5f);
 }
 
+TEST(GaussianMorph, placedTitleRendersLikeMask) {
+    REQUIRE_FONT(font, "Unbounded");
+    REQUIRE_FONT(mono, "JetBrainsMono");
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
+    }
+    const auto scene = test_scene::loadLantern();
+    const VkExtent2D extent{1920, 1080};
+    const float aspect = float(extent.width) / float(extent.height);
+
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto target = std::make_shared<OffscreenTarget>(vc, extent, 1u);
+    auto cameraUBO = std::make_shared<CameraUboType>();
+    InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+    orbit.initialize(vc);
+    test_scene::frameLantern(orbit, scene);
+    orbit.setProjectionAspectRatio(aspect);
+    CameraMVP mvp;
+    orbit.update(mvp);
+
+    // The wordmark spans 70 % of the image width at the pivot's distance.
+    const double distance = 0.35;
+    const double focal = 0.5 * extent.height / std::tan(0.5 * glm::radians(45.0));
+    const float visibleWidth = float(extent.width * distance / focal);
+    const float size = 0.7f * visibleWidth / measureLine({"klartraum", font, 500.0f, 1.0f, 0.0f});
+    const CoverageMask mask = rasterizeTitle(promoTitle(font, mono, size));
+    auto splats = sampleTextGaussians(mask, TextSplatParams{}, uint32_t(scene.gaussians.size()));
+    placeFacingCamera(splats, mvp.view, scene.centre);
+
+    auto model = std::make_shared<GaussianDataStandard>(vc, splats);
+    auto splatting = createGaussianSplatting(vc, GsplatBackend::Compute, target, cameraUBO, model);
+    std::vector<uint8_t> pixels;
+    {
+        ComputeGraph graph(vc, 1);
+        graph.compileFrom(splatting);
+        orbit.update(cameraUBO->ubo);
+        cameraUBO->update(0);
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        pixels = readImage(vc, target->getImage(0), extent);
+    }
+    splatting.reset();
+    target.reset();
+    const std::filesystem::path outDir = "build/TestingOutput/gaussian_morph";
+    std::filesystem::create_directories(outDir);
+    writePPM(outDir / "placed_title.ppm", pixels, extent);
+
+    // The text faces the camera at the pivot's distance, so each pixel
+    // centre maps onto the text plane by the pinhole model.
+    size_t both = 0, either = 0;
+    for (uint32_t y = 0; y < extent.height; ++y) {
+        for (uint32_t x = 0; x < extent.width; ++x) {
+            const float tx = float((x + 0.5 - 0.5 * extent.width) * distance / focal);
+            const float ty = float((0.5 * extent.height - (y + 0.5)) * distance / focal);
+            const bool expected = mask.sample(tx, ty) >= 0.5f;
+            const size_t i = (size_t(y) * extent.width + x) * 4;
+            const bool rendered = (int(pixels[i]) + pixels[i + 1] + pixels[i + 2]) / 3 >= 128;
+            both += expected && rendered;
+            either += expected || rendered;
+        }
+    }
+    ASSERT_GT(either, 0u);
+    const double iou = double(both) / double(either);
+    std::cout << "placed title: " << splats.size() << " splats, IoU " << iou << std::endl;
+    EXPECT_GE(iou, 0.90);
+}
+
 TEST(GaussianMorph, matchingIsPermutation) {
     const auto text = randomPoints(1001, 1);
     const auto scene = randomPoints(1001, 2);
@@ -251,6 +439,41 @@ TEST(GaussianMorph, matchingFindsIdenticalPoints) {
     for (size_t i = 0; i < scene.size(); ++i) {
         EXPECT_EQ(positionOf(text[match[i]]), positionOf(scene[i])) << i;
     }
+}
+
+TEST(GaussianMorph, matchingIsCoherent) {
+    REQUIRE_FONT(font, "Unbounded");
+    REQUIRE_FONT(mono, "JetBrainsMono");
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
+    }
+    const auto scene = test_scene::loadLantern();
+    const glm::mat4 view = lanternView(scene);
+    const CoverageMask mask = rasterizeTitle(promoTitle(font, mono, 0.05f));
+    auto text = sampleTextGaussians(mask, TextSplatParams{}, uint32_t(scene.gaussians.size()));
+    placeFacingCamera(text, view, scene.centre);
+
+    const std::vector<uint32_t> match = matchByScreenPosition(text, scene.gaussians, view);
+    std::vector<uint32_t> shuffled(match);
+    std::shuffle(shuffled.begin(), shuffled.end(), std::mt19937(5));
+    // Where each text splat ends up, for the matching and for a random one.
+    std::vector<uint32_t> target(text.size()), randomTarget(text.size());
+    for (uint32_t i = 0; i < match.size(); ++i) {
+        target[match[i]] = i;
+        randomTarget[shuffled[i]] = i;
+    }
+    // Text splats come in grid order, so consecutive ones are mostly
+    // neighbours on the letters; their partners should be close as well.
+    double matched = 0.0, random = 0.0;
+    for (size_t i = 0; i + 1 < text.size(); ++i) {
+        matched += glm::distance(positionOf(scene.gaussians[target[i]]), positionOf(scene.gaussians[target[i + 1]]));
+        random += glm::distance(positionOf(scene.gaussians[randomTarget[i]]),
+                                positionOf(scene.gaussians[randomTarget[i + 1]]));
+    }
+    std::cout << "mean distance between the partners of neighbours: matched " << matched / text.size() << ", random "
+              << random / text.size() << std::endl;
+    // Measured: 0.038 against 0.195 for a random matching.
+    EXPECT_LT(matched, 0.3 * random);
 }
 
 TEST(GaussianMorph, prepareTextMorphOrdersLikeScene) {
@@ -517,5 +740,83 @@ TEST_F(GaussianMorphGpu, explosionsBurstOutward) {
             wrong += glm::dot(moved, away) <= 0.0f;
         }
         EXPECT_EQ(wrong, 0u);
+    }
+}
+
+TEST_F(GaussianMorphGpu, morphRendersTitleThenLantern) {
+    REQUIRE_FONT(font, "Unbounded");
+    REQUIRE_FONT(mono, "JetBrainsMono");
+    if (!std::filesystem::exists(test_scene::kLanternPath)) {
+        GTEST_SKIP() << "SPZ scene not found: " << test_scene::kLanternPath;
+    }
+    const auto scene = test_scene::loadLantern();
+    const VkExtent2D extent{960, 540};
+    auto target = std::make_shared<OffscreenTarget>(vc(), extent, 1u);
+    auto cameraUBO = std::make_shared<CameraUboType>();
+    InterfaceCameraOrbit orbit(InterfaceCameraOrbit::UpDirection::Y);
+    orbit.initialize(vc());
+    test_scene::frameLantern(orbit, scene);
+    orbit.setProjectionAspectRatio(float(extent.width) / float(extent.height));
+    CameraMVP mvp;
+    orbit.update(mvp);
+
+    const CoverageMask mask = rasterizeTitle(promoTitle(font, mono, 0.05f));
+    const TextMorphStart start =
+        prepareTextMorph(sampleTextGaussians(mask, TextSplatParams{}, uint32_t(scene.gaussians.size())),
+                         scene.gaussians, mvp.view, scene.centre);
+
+    // Renders `gaussians` with the same camera and target.
+    auto render = [&](const GaussianSoABuffers& gaussians, const std::function<void()>& beforeRun) {
+        auto splatting = createGaussianSplatting(vc(), GsplatBackend::Compute, target, cameraUBO, gaussians);
+        ComputeGraph graph(vc(), 1);
+        graph.compileFrom(splatting);
+        orbit.update(cameraUBO->ubo);
+        cameraUBO->update(0);
+        beforeRun();
+        graph.submitAndWait(vc().getGraphicsQueue(), 0);
+        return readImage(vc(), target->getImage(0), extent);
+    };
+    auto meanAbsDifference = [](const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+        double sum = 0.0;
+        for (size_t i = 0; i < a.size(); i += 4) {
+            for (size_t c = 0; c < 3; ++c) {
+                sum += std::abs(int(a[i + c]) - int(b[i + c]));
+            }
+        }
+        return sum / double(a.size() / 4 * 3);
+    };
+
+    auto textData = std::make_shared<GaussianDataStandard>(vc(), start.gaussians);
+    auto sceneData = std::make_shared<GaussianDataStandard>(vc(), scene.gaussians);
+    const auto title = render(textData->buffers(), [] {});
+    const auto lantern = render(sceneData->buffers(), [] {});
+
+    auto params = std::make_shared<HostFloat>(vc(), MorphParams{}.values());
+    const auto morph = createGaussianMorph(vc(), textData->buffers(), sceneData->buffers(), BufferRef{params},
+                                           uploadFloats(vc(), start.delays, "MorphDelays"));
+    const std::filesystem::path outDir = "build/TestingOutput/gaussian_morph";
+    std::filesystem::create_directories(outDir);
+    for (MorphVariant variant : kVariants) {
+        SCOPED_TRACE(int(variant));
+        MorphParams values;
+        values.variant = variant;
+        values.centre = scene.centre;
+        values.scatterRadius = 0.2f;
+        for (float progress : {0.0f, 0.5f, 1.0f}) {
+            values.progress = progress;
+            const auto frame = render(morph.output, [&] { params->set(values.values()); });
+            const std::string name =
+                "morph_" + std::to_string(int(variant)) + "_" + std::to_string(int(progress * 100)) + ".ppm";
+            writePPM(outDir / name, frame, extent);
+            if (progress == 0.0f) {
+                EXPECT_EQ(meanAbsDifference(frame, title), 0.0);
+            } else if (progress == 1.0f) {
+                EXPECT_EQ(meanAbsDifference(frame, lantern), 0.0);
+            } else {
+                // Halfway, the frame is neither the title nor the lantern.
+                EXPECT_GT(meanAbsDifference(frame, title), 1.0);
+                EXPECT_GT(meanAbsDifference(frame, lantern), 1.0);
+            }
+        }
     }
 }
