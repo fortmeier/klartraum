@@ -129,4 +129,5 @@ the noise, and reference tensors of a four-step run for
 `tests/test_sd15_controlnet.cpp`. The export folds the shape expressions the
 tracer leaves behind, so both graphs use only operators Klartraum supports. The
 CLIP text encoder and VAE decoder come from `export_denoiser.py` with the same
-`--size`. `pose_to_video_example` uses all of them.
+`--size`. `pose_to_video_example` uses all of them; export at 512 pixels for usable images
+(SD1.5 and the ControlNet were trained at that size), 256 serves the tests.
