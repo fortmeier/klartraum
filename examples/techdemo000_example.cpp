@@ -824,8 +824,11 @@ public:
     /// The frame for the joints and camera of the main graph's last submission.
     GeneratedFrame frame() {
         const auto start = std::chrono::steady_clock::now();
-        chain.submitAndWait(vc.getGraphicsQueue());
+        chain.submit(vc.getGraphicsQueue());
+        const auto submitted = std::chrono::steady_clock::now();
+        chain.wait();
         chainMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        submitMs += std::chrono::duration<double, std::milli>(submitted - start).count();
         ++chainRuns;
         if (profiling) {
             // The denoiser's timestamps are those of its last run in the chain; all runs do the same work.
@@ -884,7 +887,16 @@ public:
         for (size_t i = 0; i < stepGraphs.size(); ++i) {
             out << ", \"denoise\", \"lcm_step_" << i << "\"";
         }
-        out << ", \"decode\"],\n  \"wall_ms\": " << (chainRuns ? chainMs / chainRuns : 0.0) << "\n}\n";
+        const uint32_t runs = std::max(1u, chainRuns);
+        out << ", \"decode\"],\n  \"wall_ms\": " << chainMs / runs << ",\n  \"submit_ms\": " << submitMs / runs;
+        // Per compiled graph, the GPU time from its first element's start to its last element's end (the denoiser's
+        // of its last run in the chain).
+        out << ",\n  \"gpu_span_ms\": {\"prepare\": " << prepareGraph->getGpuSpanMs()
+            << ", \"denoise\": " << denoiseGraph->getGpuSpanMs();
+        for (size_t i = 0; i < stepGraphs.size(); ++i) {
+            out << ", \"lcm_step_" << i << "\": " << stepGraphs[i]->getGpuSpanMs();
+        }
+        out << ", \"decode\": " << decodeGraph->getGpuSpanMs() << "}\n}\n";
     }
 
 private:
@@ -893,8 +905,9 @@ private:
     VkExtent2D fullExtent;
     std::shared_ptr<klartraum::GaussianDataStandard> model;
     bool profiling;
-    // From the submission of the chain until its fence, summed over the frames.
+    // From the submission of the chain until its fence, and the vkQueueSubmit call alone, summed over the frames.
     double chainMs = 0.0;
+    double submitMs = 0.0;
     uint32_t chainRuns = 0;
     std::shared_ptr<klartraum::CameraUboType> sceneCamera;
     klartraum::CloseUpWindowElements window;
