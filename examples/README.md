@@ -30,6 +30,7 @@ relative to the working directory.
 | `onnx_example` | Loading an ONNX model, printing its structure and compiling it into a compute graph | opens one, exits right away |
 | `turntable_example` | Headless rendering: one image per frame from a camera circling the scene | no |
 | `title_font_example` | The promo title set in several fonts and turned into Gaussians, rendered front-on for comparison | no |
+| `title_morph_example` | The promo opening shot: the title, made of the scene's Gaussians, morphs into the turning lantern | no |
 
 ### Camera controls
 
@@ -176,4 +177,50 @@ to `contact_sheet.ppm`. The fonts are downloaded by the build to `build/fonts/`
 ```bash
 ./build/examples/title_font_example --weight 600 --out-dir build/TestingOutput/title_fonts
 ffmpeg -i build/TestingOutput/title_fonts/contact_sheet.ppm title_fonts.png
+```
+
+### `title_morph_example`
+
+Renders the opening shot of the promo video without a window. The title
+("klartraum" in Unbounded over "tech demo 000" in JetBrains Mono) is sampled
+with exactly as many splats as the scene has Gaussians and placed facing the
+camera at the scene centre. After `--title-seconds` it morphs into the scene
+(`GaussianMorph`, each text splat flies to the Gaussian it is matched with by
+screen position), while the camera speeds up evenly into a turntable orbit that
+completes `--turns` turns by the end of the shot. The morph runs on the GPU in a
+graph recorded once; only the progress changes per frame.
+
+Frames go to `<out-dir>/<variant>/frames/frame_XXXX.ppm`. Afterwards the program
+checks each variant: the title frames must be identical and the last frame must
+equal the scene rendered directly from the same camera; otherwise it exits with
+an error.
+
+| Option | Meaning |
+|---|---|
+| `--variant NAME` | `straight`, `swirl` (spirals around the vertical axis), `scatter` (out into a cloud and back), `wave` (letter by letter from the left), `explode` (the letters burst apart, come to rest, then fly into place), `explode-swirl` (burst, then spiral in), `shatter` (burst towards the camera, then into place), `swirl-scatter` (the scatter while circling the vertical axis), `swirl-wave` (letter by letter, each on a spiral) or `all` (default) |
+| `--fps F` | Frame rate (default 30) |
+| `--title-seconds S`, `--morph-seconds S`, `--spin-seconds S` | Length of the still title, the morph and the turntable after it (default 2, 1.5, 5) |
+| `--turns N` | Camera turns from the start of the morph to the end of the shot (default 1) |
+| `--swirl-turns N` | Extra turns of each splat around the axis in the swirls, rounded to whole turns (default 1) |
+| `--scatter-radius R` | How far splats fly out in the scatter, in world units (default 0.25) |
+| `--wave-spread F` | Part of the morph over which the starts of the wave are spread (default 0.6) |
+| `--explode-radius R` | How far splats burst out in the explosions, in world units (default 0.3) |
+| `--explode-share F` | Part of the morph the burst takes before the splats fly into place (default 0.35) |
+| `--file PATH`, `--no-flip-y` | Scene (default `data/lantern.spz`, mirrored across Y as the lantern needs) |
+| `--camera-position X Y Z`, `--distance D` | Start position of the camera relative to the scene centre and its distance (default `0.55 0.48 0.69`, 0.65) |
+| `--width W`, `--height H` | Image size in pixels (default 1920×1080) |
+| `--text-width F` | Width of the wordmark as a fraction of the image width (default 0.7) |
+| `--font NAME`, `--weight W`, `--subtitle-font NAME` | Fonts as in `title_font_example` (default Unbounded at 500, JetBrains Mono) |
+| `--title TEXT`, `--subtitle TEXT` | The two lines (default `klartraum`, `tech demo 000`) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/promo_shot1`) |
+
+```bash
+./build/examples/title_morph_example --variant all
+cd build/TestingOutput/promo_shot1
+for v in straight swirl scatter wave explode explode-swirl shatter swirl-scatter swirl-wave; do
+    ffmpeg -framerate 30 -i $v/frames/frame_%04d.ppm -c:v libx264 -crf 16 -pix_fmt yuv420p $v/$v.mp4
+done
+ffmpeg -i straight/straight.mp4 -i swirl/swirl.mp4 -i scatter/scatter.mp4 -i wave/wave.mp4 -filter_complex \
+    "[0]scale=960:540[a];[1]scale=960:540[b];[2]scale=960:540[c];[3]scale=960:540[d];[a][b]hstack[t];[c][d]hstack[u];[t][u]vstack" \
+    -c:v libx264 -crf 18 -pix_fmt yuv420p variants_2x2.mp4
 ```
