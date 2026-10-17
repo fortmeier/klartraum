@@ -456,10 +456,13 @@ does (the splatting, the relighting with three lights, the controller walking a
 skeleton of Gaussians next to the lantern), runs each with GPU timestamps for a few
 warm-up frames and then `--frames` frames while the camera circles the scene, and
 writes it with each element's mean GPU time as JSON (`klartraum::writeGraphJson()`).
+It then runs each graph again without timestamps, which slow small elements down, and
+writes the times per frame of both runs (submission, wait, GPU span) next to it.
 The SD1.5 chain of chapter 6 comes from `techdemo000_example` with its option to dump graphs.
 `scripts/techdemo000/graph_dispatches.py` counts the commands every element records
 (with the api_dump layer), `scripts/techdemo000/draw_graphs.py` draws each graph as a
-screen of at most twelve blocks with their dispatches, draws and GPU times, and
+screen of at most twelve blocks with their dispatches, draws and shares of the GPU time,
+headed by the time per frame without timestamps, and
 `scripts/techdemo000/compose_chapter8.py` turns the screens into the demo's chapter 8.
 
 | Option | Meaning |
