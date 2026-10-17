@@ -265,6 +265,7 @@ add_executable(
   tests/test_character_controller.cpp
   tests/test_sd15_controlnet.cpp
   tests/test_temporal_lcm_sampler.cpp
+  tests/test_character_mask.cpp
   tests/test_latent_inpainting.cpp
   tests/test_gaussian_splat_crop.cpp
   tests/test_gaussian_splat_depth.cpp
@@ -327,6 +328,7 @@ set(KLARTRAUM_LIB_SRC
   src/character_controller.cpp
   src/lcm_scheduler.cpp
   src/temporal_lcm_sampler.cpp
+  src/character_mask.cpp
   src/latent_inpainting.cpp
   src/controlnet_denoiser.cpp
   src/gaussian_splat_rasterizer.cpp
