@@ -11,23 +11,25 @@
 //                       scene and splatted (chapter 4)
 // The SD1.5 chain of chapter 6 is written by techdemo000_example --dump-graphs.
 //
-//   techdemo000_graphs [--graph NAME] [--backend raster|compute] [--frames 50]
+//   techdemo000_graphs [--graph NAME] [--backend raster|compute] [--frames 50] [--rounds 10]
 //                      [--out-dir build/TestingOutput/techdemo000_graphs] [--file data/lantern.spz]
 //
 // Each graph is compiled with timestamp profiling and run for a few warm-up
 // frames, then for --frames frames while the camera circles the scene as in
-// the demo. It goes to <out-dir>/<name>.json (klartraum::writeGraphJson()):
+// the demo. Then all graphs are compiled again without profiling and run in
+// turns, --rounds rounds of --frames frames each. It goes to <out-dir>/<name>.json (klartraum::writeGraphJson()):
 // the elements with their mean GPU time, and the edges. Every element's
 // commands lie between a pair of timestamps; run with the api_dump layer to
 // count them (scripts/techdemo000/graph_dispatches.py). <name>.wall.json holds
-// the mean times per frame, in ms, of the profiled run and of a second run
-// without profiling (its timestamps cost time):
+// the mean times per frame, in ms, of the profiled run and the median times
+// per frame of the runs without profiling (its timestamps cost time):
 //   wall_ms        from the submission until its fence (submit_ms + wait_ms)
 //   submit_ms      the vkQueueSubmit call, with the graph's per-frame updates
 //                  (MoltenVK encodes the Metal commands in it)
 //   wait_ms        from the submission until the fence
 //   gpu_span_ms    from the first element's start to the last element's end
-//   unprofiled_*   wall_ms, submit_ms and wait_ms without profiling
+//   unprofiled_*   wall_ms, submit_ms and wait_ms without profiling, and the
+//                  number of frames they are the median of
 
 #include <algorithm>
 #include <chrono>
@@ -72,6 +74,9 @@ struct GraphSpec {
     std::function<void(uint32_t frame)> perFrame;
     std::vector<std::shared_ptr<void>> keep;
 };
+
+// What a graph changes per frame besides its camera, which has been moved for the frame.
+using FrameUpdate = std::function<void(uint32_t frame, const klartraum::CameraUboType& camera)>;
 
 std::vector<ComputeGraphElementPtr> buffers(const klartraum::GaussianSoABuffers& soa) {
     std::vector<ComputeGraphElementPtr> result;
@@ -128,9 +133,9 @@ public:
                 vc, data->buffers(), klartraum::bakeSplatMaterials(gaussians), klartraum::BufferRef{values});
             lit.element->setName("GaussianLighting");
             // Dusk, and a red, a green and a blue light circling the lantern at half its height.
-            auto lights = [this, values](uint32_t frame) {
+            auto lights = [this, values](uint32_t frame, const klartraum::CameraUboType& camera) {
                 klartraum::LightingFrame lighting;
-                lighting.camera = glm::vec4(glm::vec3(cameraUBO->ubo.cameraWorldPos), 0.0f);
+                lighting.camera = glm::vec4(glm::vec3(camera.ubo.cameraWorldPos), 0.0f);
                 lighting.control.x = 1.0f;
                 lighting.ambient = glm::vec4(0.2f, 0.22f, 0.3f, 1.0f);
                 const glm::vec3 colours[3] = {{1.0f, 0.12f, 0.08f}, {0.1f, 1.0f, 0.15f}, {0.12f, 0.25f, 1.0f}};
@@ -177,7 +182,7 @@ public:
                  controller->getNetwork(),
                  {controller->getMotionInput(), controller->getGatingInput()}},
             };
-            auto walk = [controller](uint32_t) {
+            auto walk = [controller](uint32_t, const klartraum::CameraUboType&) {
                 klartraum::CharacterControl control;
                 control.velocity = glm::vec2(0.0f, 1.2f);
                 controller->setControl(control);
@@ -191,10 +196,10 @@ public:
     }
 
     // The camera for frame `frame`: the orbit turning as in the demo.
-    void moveCamera(uint32_t frame) {
+    void moveCamera(klartraum::CameraUboType& camera, uint32_t frame) {
         orbit.setAzimuth(startAzimuth + 2.0 * 3.14159265 * double(frame) / (15.0 * 30.0));
-        orbit.update(cameraUBO->ubo);
-        cameraUBO->update(0);
+        orbit.update(camera.ubo);
+        camera.update(0);
     }
 
 private:
@@ -203,10 +208,10 @@ private:
     }
 
     GraphSpec splatting(const klartraum::GaussianSoABuffers& input, std::vector<klartraum::ExportGroup> groups,
-                        std::function<void(uint32_t)> perFrame) {
+                        FrameUpdate perFrame) {
         auto target = std::make_shared<klartraum::OffscreenTarget>(vc, kExtent, 1u);
         target->setName("Target");
-        cameraUBO = std::make_shared<klartraum::CameraUboType>();
+        auto cameraUBO = std::make_shared<klartraum::CameraUboType>();
         cameraUBO->setName("Camera");
         klartraum::GsplatConfig config;
         config.outputDepth = true;
@@ -218,10 +223,10 @@ private:
         GraphSpec spec;
         spec.sink = splat;
         spec.groups = groups;
-        spec.perFrame = [this, perFrame](uint32_t frame) {
-            moveCamera(frame);
+        spec.perFrame = [this, cameraUBO, perFrame](uint32_t frame) {
+            moveCamera(*cameraUBO, frame);
             if (perFrame) {
-                perFrame(frame);
+                perFrame(frame, *cameraUBO);
             }
         };
         spec.keep = {target};
@@ -234,7 +239,6 @@ private:
     klartraum::UprightObjectBounds lantern;
     klartraum::InterfaceCameraOrbit orbit;
     double startAzimuth = 0.0;
-    std::shared_ptr<klartraum::CameraUboType> cameraUBO;
 };
 
 struct Times {
@@ -242,9 +246,21 @@ struct Times {
     double waitMs = 0.0;
 };
 
-/// Runs the graph for warm-up frames, then `frames` frames, and returns the mean times of the submission and of the
-/// wait for its fence; the graph's profiling covers the measured frames.
-Times run(klartraum::VulkanContext& vc, klartraum::ComputeGraph& graph, GraphSpec& spec, uint32_t frames) {
+/// One frame of a graph: its per-frame update, the submission and the wait for its fence.
+Times runFrame(klartraum::VulkanContext& vc, klartraum::GraphChain& chain, GraphSpec& spec, uint32_t frame) {
+    spec.perFrame(frame);
+    const auto start = std::chrono::steady_clock::now();
+    chain.submit(vc.getGraphicsQueue());
+    const auto submitted = std::chrono::steady_clock::now();
+    chain.wait();
+    const auto finished = std::chrono::steady_clock::now();
+    return {std::chrono::duration<double, std::milli>(submitted - start).count(),
+            std::chrono::duration<double, std::milli>(finished - submitted).count()};
+}
+
+/// Runs the profiled graph for warm-up frames, then `frames` frames, and returns the mean times of the submission and
+/// of the wait for its fence; the graph's profiling covers the measured frames.
+Times runProfiled(klartraum::VulkanContext& vc, klartraum::ComputeGraph& graph, GraphSpec& spec, uint32_t frames) {
     klartraum::GraphChain chain(vc);
     chain.add(graph);
     Times times;
@@ -252,22 +268,33 @@ Times run(klartraum::VulkanContext& vc, klartraum::ComputeGraph& graph, GraphSpe
         if (frame == kWarmUpFrames) {
             graph.resetProfiling();
         }
-        spec.perFrame(frame);
-        const auto start = std::chrono::steady_clock::now();
-        chain.submit(vc.getGraphicsQueue());
-        const auto submitted = std::chrono::steady_clock::now();
-        chain.wait();
-        const auto finished = std::chrono::steady_clock::now();
+        const Times t = runFrame(vc, chain, spec, frame);
         graph.readProfiling();
         if (frame >= kWarmUpFrames) {
-            times.submitMs += std::chrono::duration<double, std::milli>(submitted - start).count();
-            times.waitMs += std::chrono::duration<double, std::milli>(finished - submitted).count();
+            times.submitMs += t.submitMs / frames;
+            times.waitMs += t.waitMs / frames;
         }
     }
-    times.submitMs /= std::max(1u, frames);
-    times.waitMs /= std::max(1u, frames);
     return times;
 }
+
+double median(std::vector<double> values) {
+    if (values.empty()) {
+        return 0.0;
+    }
+    auto middle = values.begin() + values.size() / 2;
+    std::nth_element(values.begin(), middle, values.end());
+    return *middle;
+}
+
+/// A graph without profiling and the times of its measured frames.
+struct Unprofiled {
+    GraphSpec spec;
+    std::unique_ptr<klartraum::ComputeGraph> graph;
+    std::unique_ptr<klartraum::GraphChain> chain;
+    uint32_t frame = 0;
+    std::vector<double> submitMs, waitMs, wallMs;
+};
 
 } // namespace
 
@@ -277,6 +304,7 @@ int main(int argc, char** argv) {
     std::string spzFile = "./data/lantern.spz";
     klartraum::GsplatBackend backend = klartraum::GsplatBackend::Raster;
     uint32_t frames = 50;
+    uint32_t rounds = 10;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -288,6 +316,8 @@ int main(int argc, char** argv) {
             spzFile = argv[++i];
         } else if (arg == "--frames" && hasValue) {
             frames = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--rounds" && hasValue) {
+            rounds = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--backend" && hasValue) {
             const std::string value = argv[++i];
             if (value != "raster" && value != "compute") {
@@ -305,33 +335,61 @@ int main(int argc, char** argv) {
     klartraum::HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     Builder builder(vc, spzFile, backend);
+    std::vector<Times> profiled;
+    std::vector<double> spans;
     for (const auto& name : names) {
         GraphSpec spec = builder.build(name);
         klartraum::ComputeGraph graph(vc, 1);
         graph.enableProfiling();
         graph.compileFrom(spec.sink);
-        const Times profiled = run(vc, graph, spec, frames);
+        profiled.push_back(runProfiled(vc, graph, spec, frames));
+        spans.push_back(graph.getGpuSpanMs());
         const auto path = outDir / (name + ".json");
         klartraum::writeGraphJson(path, name, graph, spec.groups);
-
-        // The same graph without timestamps.
-        GraphSpec plainSpec = builder.build(name);
-        klartraum::ComputeGraph plain(vc, 1);
-        plain.compileFrom(plainSpec.sink);
-        const Times unprofiled = run(vc, plain, plainSpec, frames);
-
-        std::ofstream(outDir / (name + ".wall.json"))
-            << "{\"wall_ms\": " << profiled.submitMs + profiled.waitMs << ", \"submit_ms\": " << profiled.submitMs
-            << ", \"wait_ms\": " << profiled.waitMs << ", \"gpu_span_ms\": " << graph.getGpuSpanMs()
-            << ", \"unprofiled_wall_ms\": " << unprofiled.submitMs + unprofiled.waitMs
-            << ", \"unprofiled_submit_ms\": " << unprofiled.submitMs
-            << ", \"unprofiled_wait_ms\": " << unprofiled.waitMs << "}\n";
         double total = 0.0;
         for (double time : graph.getElementTimesMs()) {
             total += time;
         }
         std::cout << name << ": " << graph.getElements().size() << " elements, " << total << " ms GPU per frame, "
                   << path.string() << std::endl;
+    }
+
+    // The graphs without timestamps, side by side: in rounds of `frames` frames each, in turns, the order reversed
+    // every other round, so that the GPU's clock and temperature change alike for all of them. The median frame is
+    // the graph's time per frame.
+    std::vector<Unprofiled> plain(names.size());
+    for (size_t g = 0; g < names.size(); ++g) {
+        plain[g].spec = builder.build(names[g]);
+        plain[g].graph = std::make_unique<klartraum::ComputeGraph>(vc, 1);
+        plain[g].graph->compileFrom(plain[g].spec.sink);
+        plain[g].chain = std::make_unique<klartraum::GraphChain>(vc);
+        plain[g].chain->add(*plain[g].graph);
+        for (; plain[g].frame < kWarmUpFrames; ++plain[g].frame) {
+            runFrame(vc, *plain[g].chain, plain[g].spec, plain[g].frame);
+        }
+    }
+    for (uint32_t round = 0; round < rounds; ++round) {
+        for (size_t k = 0; k < plain.size(); ++k) {
+            Unprofiled& p = plain[round % 2 ? plain.size() - 1 - k : k];
+            for (uint32_t i = 0; i < frames; ++i, ++p.frame) {
+                const Times t = runFrame(vc, *p.chain, p.spec, p.frame);
+                p.submitMs.push_back(t.submitMs);
+                p.waitMs.push_back(t.waitMs);
+                p.wallMs.push_back(t.submitMs + t.waitMs);
+            }
+        }
+    }
+
+    for (size_t g = 0; g < names.size(); ++g) {
+        std::ofstream(outDir / (names[g] + ".wall.json"))
+            << "{\"wall_ms\": " << profiled[g].submitMs + profiled[g].waitMs
+            << ", \"submit_ms\": " << profiled[g].submitMs << ", \"wait_ms\": " << profiled[g].waitMs
+            << ", \"gpu_span_ms\": " << spans[g] << ", \"unprofiled_wall_ms\": " << median(plain[g].wallMs)
+            << ", \"unprofiled_submit_ms\": " << median(plain[g].submitMs)
+            << ", \"unprofiled_wait_ms\": " << median(plain[g].waitMs)
+            << ", \"unprofiled_frames\": " << plain[g].wallMs.size() << "}\n";
+        std::cout << names[g] << ": " << median(plain[g].wallMs) << " ms per frame without profiling (median of "
+                  << plain[g].wallMs.size() << " frames)" << std::endl;
     }
     return 0;
 }

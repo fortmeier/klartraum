@@ -458,8 +458,10 @@ does (the splatting, the relighting with three lights, the controller walking a
 skeleton of Gaussians next to the lantern), runs each with GPU timestamps for a few
 warm-up frames and then `--frames` frames while the camera circles the scene, and
 writes it with each element's mean GPU time as JSON (`klartraum::writeGraphJson()`).
-It then runs each graph again without timestamps, which slow small elements down, and
-writes the times per frame of both runs (submission, wait, GPU span) next to it.
+It then runs all graphs again without timestamps, which slow small elements down, in
+turns (`--rounds` rounds of `--frames` frames each, so that the GPU's clock changes alike
+for all of them), and writes the mean times per frame of the profiled run and the median
+times of the others (submission, wait, GPU span) next to it.
 The SD1.5 chain of chapter 6 comes from `techdemo000_example` with its option to dump graphs.
 `scripts/techdemo000/graph_dispatches.py` counts the commands every element records
 (with the api_dump layer), `scripts/techdemo000/draw_graphs.py` draws each graph as a
@@ -472,6 +474,7 @@ headed by the time per frame without timestamps, and
 | `--graph NAME` | Only `gaussian_splatting`, `dynamic_lighting` or `neural_animation` (default: all three) |
 | `--backend raster\|compute` | The Gaussian splatting backend (default: raster) |
 | `--frames N` | Measured frames after the warm-up (default 50) |
+| `--rounds N` | Rounds of `--frames` frames per graph without profiling (default 10) |
 | `--file PATH` | Scene (default `data/lantern.spz`) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo000_graphs`) |
 
