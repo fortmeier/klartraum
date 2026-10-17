@@ -120,3 +120,14 @@ target_link_libraries(lantern_walk_example
 )
 
 add_dependencies(lantern_walk_example Shaders)
+
+# The promo title as Gaussians, rendered once per candidate font
+add_executable(title_font_example
+    title_font_example.cpp
+)
+
+target_link_libraries(title_font_example
+    klartraum_lib
+)
+
+add_dependencies(title_font_example Shaders)
