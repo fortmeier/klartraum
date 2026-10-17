@@ -36,6 +36,7 @@ relative to the working directory.
 | `openpose_skeleton_example` | A 3D skeleton drawn as ControlNet OpenPose pose maps from a camera circling it | no |
 | `pose_to_video_example` | Neural character animation turned into a photorealistic video with ControlNet-OpenPose and SD1.5 | no |
 | `lantern_walk_example` | A neural animated character walking around the lantern scene, as an OpenPose skeleton with inpainting masks | no |
+| `techdemo000_example` | "klartraum tech demo 000": the promo video in one continuous shot around the lantern, chapter by chapter with captions | no |
 
 ### Camera controls
 
@@ -390,4 +391,54 @@ ffmpeg -framerate 15 -i build/TestingOutput/lantern_walk/panels_%04d.ppm -pix_fm
 
 ./build/examples/lantern_walk_example --generate --out-dir build/TestingOutput/lantern_generate
 ffmpeg -framerate 15 -i build/TestingOutput/lantern_generate/generated_%04d.ppm -pix_fmt yuv420p lantern_person.mp4
+```
+
+### `techdemo000_example`
+
+Renders the promo video "klartraum tech demo 000" without a window: one
+continuous shot that circles the lantern, in chapters that each add a feature.
+So far: (1) the title made of the lantern's Gaussians holds still and morphs
+into the scene (`MorphVariant::SwirlScatter`), (2) the captured scene with a
+slow push-in, (3) dynamic lighting (`GaussianLighting`): dusk falls, a
+candle flickers and glows in the lantern's fire box, then a red, a green and a
+blue light circle the scene, (4) the neural character controller (`CharacterController`)
+walking a plain skeleton in from the side and around the lantern
+(`WalkInPathFollower`), drawn as Gaussians merged with the scene
+(`SkeletonGaussians`, `GaussianMerge`), so the lantern hides it; it runs in and
+slows to a walk, and the camera turns four times slower from here on. (5) The
+skeleton turns into an OpenPose pose map over the scene. (6) SD1.5 with
+ControlNet-OpenPose and LCM-LoRA inpaints a person over the skeleton, as
+`lantern_walk_example` does when it generates, in a square close-up cut from the wide
+frame (about 8 s per frame); the pose map ControlNet sees is shown picture in
+picture. With `--placeholder` the character mask stands in for the person, to
+work on the timing quickly. (7) The scene's Gaussians explode and the picture
+fades to black.
+The character starts walking with chapter 4; when only later chapters are
+rendered, its steps since then still run, without writing frames. Each chapter
+shows a caption with the papers it builds on, lower left over a darkened corner
+(Unbounded and JetBrains Mono, `blendCaption`). The timing is a `DemoTimeline`:
+the camera starts orbiting with the morph and keeps one turn per
+`--seconds-per-turn` until the character appears.
+
+Frames go to `<out-dir>/frames/frame_XXXX.ppm`, numbered through the whole video,
+so `--from`/`--to` re-render chapters into the same sequence. The program checks
+that the title frames are identical and that the first frame after the morph
+equals the scene rendered directly; otherwise it exits with an error.
+
+| Option | Meaning |
+|---|---|
+| `--from N`, `--to N` | First and last chapter to render (default: all) |
+| `--step N` | Render only every Nth frame, for a quick preview (default 1) |
+| `--placeholder` | Show the character mask instead of generating the person in chapter 6 |
+| `--prompt TEXT`, `--seed N` | What the generated person looks like, and the seed of its noise (default: a woman in a dark blue kimono, 5) |
+| `--width W`, `--height H` | Image size in pixels (default 1920×1080); captions scale with the height |
+| `--fps F` | Frame rate (default 30) |
+| `--seconds-per-turn S` | Time for one camera turn around the lantern (default 15) |
+| `--file PATH` | Scene (default `data/lantern.spz`, read with a flipped y axis) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo000`) |
+
+```bash
+./build/examples/techdemo000_example
+ffmpeg -framerate 30 -i build/TestingOutput/techdemo000/frames/frame_%04d.ppm -c:v libx264 -crf 16 \
+    -pix_fmt yuv420p build/TestingOutput/techdemo000/techdemo000.mp4
 ```
