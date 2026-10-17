@@ -7,7 +7,8 @@
 Each graph becomes at most twelve blocks on one line, in the order the GPU runs
 them: a block is a stage (an ONNX network, the splatting, a render pass, ...)
 with its compute dispatches and raster draws (counted with api_dump) and its
-measured GPU time. Below the line, a bar splits the graph's total GPU time into
+measured GPU time. The machine the times were measured on is named at the bottom (detected, or --hardware).
+Below the line, a bar splits the graph's total GPU time into
 the blocks and the time between them (the barriers the graph puts between its
 elements, and elements that record nothing), so the parts add up to the total.
 The upper right corner stays free for a picture in picture of the chapter.
@@ -24,7 +25,9 @@ Inputs: <name>.json with GPU times (techdemo000_graphs, or techdemo000_example
 import argparse
 import collections
 import json
+import platform
 import re
+import subprocess
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -111,6 +114,42 @@ def work(commands):
     draws = sum(v for k, v in commands.items() if k.startswith("vkCmdDraw"))
     transfers = sum(v for k, v in commands.items() if k in TRANSFER)
     return dispatches, draws, transfers
+
+
+def run(command):
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def hardware():
+    """What the measurements ran on: the GPU, CPU cores, memory, OS and the Vulkan driver the loader picks first."""
+    parts = []
+    summary = run(["vulkaninfo", "--summary"])
+    device = re.search(r"deviceName\s*=\s*(.+)", summary)
+    if platform.system() == "Darwin":
+        chip = run(["sysctl", "-n", "machdep.cpu.brand_string"]).strip()
+        displays = run(["system_profiler", "SPDisplaysDataType"])
+        gpu_cores = re.search(r"Total Number of Cores:\s*(\d+)", displays)
+        parts.append(chip + (f", {gpu_cores.group(1)}-core GPU" if gpu_cores else ""))
+        performance = run(["sysctl", "-n", "hw.perflevel0.physicalcpu"]).strip()
+        efficiency = run(["sysctl", "-n", "hw.perflevel1.physicalcpu"]).strip()
+        if performance and efficiency:
+            parts.append(f"{performance} + {efficiency} CPU cores")
+        memory = run(["sysctl", "-n", "hw.memsize"]).strip()
+        if memory:
+            parts.append(f"{int(memory) // 2 ** 30} GB unified memory")
+        parts.append(f"macOS {platform.mac_ver()[0]}")
+    elif device:
+        parts.append(device.group(1).strip())
+    api = re.search(r"apiVersion\s*=\s*(\d+\.\d+)", summary)
+    driver = re.search(r"driverName\s*=\s*(.+)", summary)
+    driver_info = re.search(r"driverInfo\s*=\s*(.+)", summary)
+    if api:
+        parts.append(f"Vulkan {api.group(1)}" + (f" via {driver.group(1).strip()}" if driver else "") +
+                     (f" {driver_info.group(1).strip()}" if driver_info else ""))
+    return " · ".join(parts)
 
 
 def plural(count, word):
@@ -349,7 +388,7 @@ def size_blocks(blocks, fonts, scale):
         b.pad = pad
 
 
-def draw_screen(blocks, edges, segments, total_ms, sync_ms, wall_ms, heading, sub, stats, out, fonts):
+def draw_screen(blocks, edges, segments, total_ms, sync_ms, wall_ms, heading, sub, stats, out, fonts, machine=""):
     """Blocks in GPU order; segments of a chain: (label, first block index, last block index, repeat)."""
     c = Canvas(fonts)
     segment_gap = 34 * max(0, len(segments) - 1)
@@ -439,10 +478,13 @@ def draw_screen(blocks, edges, segments, total_ms, sync_ms, wall_ms, heading, su
         if w >= 0.5:
             c.rect(x, bar_y, x + max(0.5, w - 2), bar_y + 24, fill=colour + (255,), radius=3 if w > 10 else 0)
         text = f"{label} {ms_text(ms)}"
-        if w > 60 and x >= label_end:
+        if w > fonts.width(text, 13) + 8 and x >= label_end:  # only labels that fit under their segment
             c.text(x + 3, bar_y + 32, text, 13, DIM)
             label_end = x + fonts.width(text, 13) + 12
         x += w
+
+    if machine:
+        c.text(LEFT, HEIGHT - 52, f"measured on {machine}", 15, DIM)
 
     c.text(70, 58, heading, 40, TEXT, "Unbounded", 500)
     c.text(72, 118, sub, 20, DIM)
@@ -450,7 +492,7 @@ def draw_screen(blocks, edges, segments, total_ms, sync_ms, wall_ms, heading, su
     c.save(out)
 
 
-def chapter_screen(directory, name, out, fonts):
+def chapter_screen(directory, name, out, fonts, machine=""):
     graph = load(directory, name)
     blocks = GraphBlocks(graph, expand_splatting=True)
     total = max(blocks.total_ms, 1e-9)
@@ -468,11 +510,11 @@ def chapter_screen(directory, name, out, fonts):
     heading, sub = TITLES[name]
     stats = "   ·   ".join([plural(len(blocks.blocks), "block"), f"{d:,} compute dispatches",
                             plural(dr, "raster draw"), "1 command buffer, 1 submit"])
-    draw_screen(blocks.blocks, blocks.edges, [], total, blocks.sync_ms, wall, heading, sub, stats, out, fonts)
+    draw_screen(blocks.blocks, blocks.edges, [], total, blocks.sync_ms, wall, heading, sub, stats, out, fonts, machine)
     return len(blocks.blocks), whole
 
 
-def chain_screen(directory, out, fonts):
+def chain_screen(directory, out, fonts, machine=""):
     """The SD1.5 chain: prepare, the denoiser and an LCM step once per step, decode."""
     chain = json.loads((directory / "chain.json").read_text())
     step_names = [name for name in chain["compiled"] if name.startswith("lcm_step")]
@@ -516,7 +558,7 @@ def chain_screen(directory, out, fonts):
                             f"{len(chain['links'])} command buffers, 1 submit"])
     draw_screen(blocks, edges, segments, total, sync, wall, "SD1.5 inpainting on the GPU",
                 "close-up, VAE encoder, ControlNet + UNet with LCM, VAE decoder: one chain of graphs", stats, out,
-                fonts)
+                fonts, machine)
     return len(blocks), whole
 
 
@@ -526,18 +568,20 @@ def main():
     parser.add_argument("--dir", default="build/TestingOutput/techdemo000_graphs")
     parser.add_argument("--fonts", default="build/fonts")
     parser.add_argument("--chain", help="draw the SD1.5 chain written by techdemo000_example --dump-graphs")
+    parser.add_argument("--hardware", help="the machine the graphs were measured on (default: this one)")
     args = parser.parse_args()
     fonts = Fonts(args.fonts)
+    machine = args.hardware if args.hardware is not None else hardware()
     if args.chain:
         directory = Path(args.chain)
         out = directory.parent / "sd15_chain.png"
-        count, total = chain_screen(directory, out, fonts)
+        count, total = chain_screen(directory, out, fonts, machine)
         print(f"sd15_chain: {count} blocks, {total:.1f} ms, {out}")
         return
     directory = Path(args.dir)
     for name in args.names or [n for n in TITLES if (directory / f"{n}.json").exists()]:
         out = directory / f"{name}.png"
-        count, total = chapter_screen(directory, name, out, fonts)
+        count, total = chapter_screen(directory, name, out, fonts, machine)
         print(f"{name}: {count} blocks, {total:.2f} ms, {out}")
 
 
