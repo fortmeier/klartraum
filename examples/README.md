@@ -32,6 +32,7 @@ relative to the working directory.
 | `sd15_vae_example` | The Stable Diffusion 1.5 VAE encoder and decoder run as ONNX networks | no |
 | `sd15_denoiser_example` | The complete Stable Diffusion 1.5 text-to-image pipeline run as ONNX networks | no |
 | `openpose_skeleton_example` | A 3D skeleton drawn as ControlNet OpenPose pose maps from a camera circling it | no |
+| `pose_to_video_example` | Neural character animation turned into a photorealistic video with ControlNet-OpenPose and SD1.5 | no |
 
 ### Camera controls
 
@@ -202,4 +203,42 @@ ControlNet-OpenPose model. The first frame looks at the front of the skeleton.
 
 ```bash
 ./build/examples/openpose_skeleton_example --frames 36 --out-dir build/TestingOutput/openpose_skeleton
+```
+
+### `pose_to_video_example`
+
+Walks a character with the neural character controller (`CharacterController`)
+along a scripted path, draws each frame as an OpenPose pose map, and turns the
+frames into a photorealistic video with SD1.5, ControlNet-OpenPose and four
+LCM steps, all without a window (`PoseVideoPipeline`). The character stands at
+first, walks forward and then turns right; the camera follows it. Frames are
+sampled as img2img variations of one keyframe with shared noise
+(`TemporalLcmSampler`), which keeps appearance and background stable from frame
+to frame and needs three instead of four steps per frame. It writes
+`pose_XXXX.ppm` and `frame_XXXX.ppm` per frame and prints the mean difference
+between consecutive frames.
+
+The SD1.5, ControlNet and LCM-LoRA models are third-party and not part of
+Klartraum: export them first with `scripts/sd15_onnx` (`export_denoiser.py` and
+`export_controlnet.py` with the same `--size`, see its README). Use 512 pixels:
+SD1.5 and the ControlNet were trained at that size, and at 256 pixels faces and
+backgrounds fall apart (the tests use 256 only to stay fast). The controller in
+`data/character` comes with the repository.
+
+| Option | Meaning |
+|---|---|
+| `--size N` | Image size the models were exported for (default 512) |
+| `--frames N` | Number of frames (default 50) |
+| `--controller-steps N` | Controller steps (at 30 per second) per frame (default 2) |
+| `--prompt TEXT` | What the video shows |
+| `--style NAME` | Walking style of the controller, e.g. `Neutral`, `Proud`, `Old` (default `Neutral`) |
+| `--speed V` | Walking speed in m/s (default 1.3) |
+| `--start-step K` | LCM step at which each frame starts from the noised keyframe (default 1 of 4) |
+| `--anchor W` | Weight of the keyframe against the previous frame for a frame's start (default 1) |
+| `--independent` | Sample every frame from noise instead, for comparison |
+| `--character-dir DIR`, `--sd-dir DIR`, `--control-dir DIR` | Model directories (defaults `data/character`, `data/onnx/sd15_denoiser_<size>`, `data/onnx/sd15_controlnet_<size>`) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/pose_to_video`) |
+
+```bash
+./build/examples/pose_to_video_example --size 512 --frames 50 --out-dir build/TestingOutput/pose_to_video
 ```
