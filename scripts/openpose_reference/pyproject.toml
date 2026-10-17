@@ -1,0 +1,12 @@
+[project]
+name = "klartraum-openpose-reference"
+version = "0.1.0"
+description = "Reference OpenPose skeleton drawings for Klartraum's skeleton renderer tests"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy==2.2.6",
+    "opencv-python-headless==4.11.0.86",
+]
+
+[tool.uv]
+package = false
