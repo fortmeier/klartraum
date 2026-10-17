@@ -20,7 +20,14 @@
 // the elements with their mean GPU time, and the edges. Every element's
 // commands lie between a pair of timestamps; run with the api_dump layer to
 // count them (scripts/techdemo000/graph_dispatches.py). <name>.wall.json holds
-// the mean time from the submission until its fence.
+// the mean times per frame, in ms, of the profiled run and of a second run
+// without profiling (its timestamps cost time):
+//   wall_ms        from the submission until its fence (submit_ms + wait_ms)
+//   submit_ms      the vkQueueSubmit call, with the graph's per-frame updates
+//                  (MoltenVK encodes the Metal commands in it)
+//   wait_ms        from the submission until the fence
+//   gpu_span_ms    from the first element's start to the last element's end
+//   unprofiled_*   wall_ms, submit_ms and wait_ms without profiling
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +44,7 @@
 
 #include "klartraum/character_controller.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/graphchain.hpp"
 #include "klartraum/computegraph/gaussianmerge.hpp"
 #include "klartraum/computegraph/graph_export.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
@@ -229,6 +237,38 @@ private:
     std::shared_ptr<klartraum::CameraUboType> cameraUBO;
 };
 
+struct Times {
+    double submitMs = 0.0;
+    double waitMs = 0.0;
+};
+
+/// Runs the graph for warm-up frames, then `frames` frames, and returns the mean times of the submission and of the
+/// wait for its fence; the graph's profiling covers the measured frames.
+Times run(klartraum::VulkanContext& vc, klartraum::ComputeGraph& graph, GraphSpec& spec, uint32_t frames) {
+    klartraum::GraphChain chain(vc);
+    chain.add(graph);
+    Times times;
+    for (uint32_t frame = 0; frame < kWarmUpFrames + frames; ++frame) {
+        if (frame == kWarmUpFrames) {
+            graph.resetProfiling();
+        }
+        spec.perFrame(frame);
+        const auto start = std::chrono::steady_clock::now();
+        chain.submit(vc.getGraphicsQueue());
+        const auto submitted = std::chrono::steady_clock::now();
+        chain.wait();
+        const auto finished = std::chrono::steady_clock::now();
+        graph.readProfiling();
+        if (frame >= kWarmUpFrames) {
+            times.submitMs += std::chrono::duration<double, std::milli>(submitted - start).count();
+            times.waitMs += std::chrono::duration<double, std::milli>(finished - submitted).count();
+        }
+    }
+    times.submitMs /= std::max(1u, frames);
+    times.waitMs /= std::max(1u, frames);
+    return times;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -270,22 +310,22 @@ int main(int argc, char** argv) {
         klartraum::ComputeGraph graph(vc, 1);
         graph.enableProfiling();
         graph.compileFrom(spec.sink);
-        double wallMs = 0.0;
-        for (uint32_t frame = 0; frame < kWarmUpFrames + frames; ++frame) {
-            if (frame == kWarmUpFrames) {
-                graph.resetProfiling();
-            }
-            spec.perFrame(frame);
-            const auto start = std::chrono::steady_clock::now();
-            graph.submitAndWait(vc.getGraphicsQueue(), 0);
-            if (frame >= kWarmUpFrames) {
-                wallMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-            }
-        }
+        const Times profiled = run(vc, graph, spec, frames);
         const auto path = outDir / (name + ".json");
         klartraum::writeGraphJson(path, name, graph, spec.groups);
-        // From the submission until its fence, the time the graph took per frame.
-        std::ofstream(outDir / (name + ".wall.json")) << "{\"wall_ms\": " << wallMs / std::max(1u, frames) << "}\n";
+
+        // The same graph without timestamps.
+        GraphSpec plainSpec = builder.build(name);
+        klartraum::ComputeGraph plain(vc, 1);
+        plain.compileFrom(plainSpec.sink);
+        const Times unprofiled = run(vc, plain, plainSpec, frames);
+
+        std::ofstream(outDir / (name + ".wall.json"))
+            << "{\"wall_ms\": " << profiled.submitMs + profiled.waitMs << ", \"submit_ms\": " << profiled.submitMs
+            << ", \"wait_ms\": " << profiled.waitMs << ", \"gpu_span_ms\": " << graph.getGpuSpanMs()
+            << ", \"unprofiled_wall_ms\": " << unprofiled.submitMs + unprofiled.waitMs
+            << ", \"unprofiled_submit_ms\": " << unprofiled.submitMs
+            << ", \"unprofiled_wait_ms\": " << unprofiled.waitMs << "}\n";
         double total = 0.0;
         for (double time : graph.getElementTimesMs()) {
             total += time;
