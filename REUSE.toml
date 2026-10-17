@@ -28,6 +28,7 @@ path = [
     "scripts/site/package-lock.json",
     "site/*.html",
     "data/onnx/*.onnx",
+    "data/openpose/*",
 ]
 SPDX-FileCopyrightText = "Dirk Fortmeier"
 SPDX-License-Identifier = "MIT"

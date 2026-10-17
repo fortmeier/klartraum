@@ -87,3 +87,14 @@ target_link_libraries(sd15_denoiser_example
 )
 
 add_dependencies(sd15_denoiser_example Shaders)
+
+# Headless OpenPose pose maps of a 3D skeleton seen from an orbiting camera
+add_executable(openpose_skeleton_example
+    openpose_skeleton_example.cpp
+)
+
+target_link_libraries(openpose_skeleton_example
+    klartraum_lib
+)
+
+add_dependencies(openpose_skeleton_example Shaders)

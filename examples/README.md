@@ -31,6 +31,7 @@ relative to the working directory.
 | `turntable_example` | Headless rendering: one image per frame from a camera circling the scene | no |
 | `sd15_vae_example` | The Stable Diffusion 1.5 VAE encoder and decoder run as ONNX networks | no |
 | `sd15_denoiser_example` | The complete Stable Diffusion 1.5 text-to-image pipeline run as ONNX networks | no |
+| `openpose_skeleton_example` | A 3D skeleton drawn as ControlNet OpenPose pose maps from a camera circling it | no |
 
 ### Camera controls
 
@@ -184,4 +185,21 @@ third-party and are not part of Klartraum: export them first with
 
 ```bash
 ./build/examples/sd15_denoiser_example --prompt "a red sports car parked on a city street"
+### `openpose_skeleton_example`
+
+Draws a fixed 3D standing pose with `OpenPoseSkeletonRenderer` without a
+window, from a camera that circles it once, and writes one pose map per frame
+(`frame_0000.ppm`, `frame_0001.ppm`, …). The pose maps follow the drawing
+convention of ControlNet's OpenPose annotator, so they can condition a
+ControlNet-OpenPose model. The first frame looks at the front of the skeleton.
+
+| Option | Meaning |
+|---|---|
+| `--frames N` | Number of frames in one turn (default 36) |
+| `--width W`, `--height H` | Image size in pixels (default 512×512) |
+| `--distance D` | Distance of the camera from the hips in metres (default 3.2) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/openpose_skeleton`) |
+
+```bash
+./build/examples/openpose_skeleton_example --frames 36 --out-dir build/TestingOutput/openpose_skeleton
 ```
