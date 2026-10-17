@@ -110,7 +110,8 @@ createLcmStep(VulkanContext& vulkanContext, const LcmScheduler& scheduler, size_
 /**
  * Images the elements below read are rendered by other elements (splatting, render passes) and are in `layout`
  * (an OffscreenTarget: TRANSFER_SRC_OPTIMAL); the elements move them to GENERAL. An image read a second time in
- * the same frame is already in GENERAL.
+ * the same frame is already in GENERAL. An image rendered by another graph must be passed as an ImageViewSrc that
+ * does not clear (setClear(false)): an image element recorded in a graph clears its image by default.
  */
 
 struct ImageTensorRangePushConstants {
