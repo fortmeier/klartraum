@@ -22,13 +22,13 @@
 // Each chapter shows a caption with the papers it builds on, lower left.
 //
 //   techdemo000_example [--from 1] [--to 7] [--step 1] [--placeholder] [--mesh-skeleton] [--prompt TEXT] [--seed 5]
-//                       [--backend compute|raster] [--sd-path gpu|cpu|both] [--dump-graphs DIR]
+//                       [--backend raster|compute] [--sd-path gpu|cpu|both] [--dump-graphs DIR]
 //                       [--width 1920] [--height 1080] [--fps 30]
 //                       [--seconds-per-turn 15] [--file data/lantern.spz]
 //                       [--out-dir build/TestingOutput/techdemo000]
 //
 // --backend selects the Gaussian splatting backend of every graph (default:
-// compute). --sd-path selects how chapter 6 generates the person: entirely on
+// raster). --sd-path selects how chapter 6 generates the person: entirely on
 // the GPU as one chain of graphs per frame (gpu, the default), with the CPU
 // between the graphs (cpu), or both, writing the GPU path's frames to
 // <out-dir>/frames_gpu and their difference and times to <out-dir>/sd_compare.csv.
@@ -926,7 +926,7 @@ int main(int argc, char** argv) {
     uint32_t step = 1;
     bool placeholder = false;
     bool meshSkeleton = false;
-    klartraum::GsplatBackend backend = klartraum::GsplatBackend::Compute;
+    klartraum::GsplatBackend backend = klartraum::GsplatBackend::Raster;
     std::string sdPath = "gpu";
     std::filesystem::path dumpGraphs;
     std::string prompt = "a photograph of a woman in a dark blue kimono walking in a japanese moss garden, full body, "

@@ -435,7 +435,7 @@ equals the scene rendered directly; otherwise it exits with an error.
 | `--mesh-skeleton` | Draw the skeleton in chapters 4 and 5 as rasterized cylinders and spheres instead of Gaussians |
 | `--prompt TEXT`, `--seed N` | What the generated person looks like, and the seed of its noise (default: a woman in a dark blue kimono, 5) |
 | `--sd-path gpu\|cpu\|both` | How chapter 6 generates the person: entirely on the GPU, one `GraphChain` per frame (default), with the CPU between the graphs, or both, writing the GPU path's frames to `<out-dir>/frames_gpu` and the times and differences of both paths to `<out-dir>/sd_compare.csv` |
-| `--backend compute\|raster` | The Gaussian splatting backend of every graph (default: compute) |
+| `--backend raster\|compute` | The Gaussian splatting backend of every graph (default: raster) |
 | `--dump-graphs DIR` | Record GPU timestamps in the graphs of the SD1.5 chain and write them, with each element's mean time, as JSON to `DIR` at the end (for the graph pictures of `techdemo000_graphs`) |
 | `--width W`, `--height H` | Image size in pixels (default 1920×1080); captions scale with the height |
 | `--fps F` | Frame rate (default 30) |
