@@ -438,6 +438,7 @@ equals the scene rendered directly; otherwise it exits with an error.
 | `--prompt TEXT`, `--seed N` | What the generated person looks like, and the seed of its noise (default: a woman in a dark blue kimono, 5) |
 | `--sd-path gpu\|cpu\|both` | How chapter 6 generates the person: entirely on the GPU, one `GraphChain` per frame (default), with the CPU between the graphs, or both, writing the GPU path's frames to `<out-dir>/frames_gpu` and the times and differences of both paths to `<out-dir>/sd_compare.csv` |
 | `--backend compute\|raster` | The Gaussian splatting backend of every graph (default: compute) |
+| `--dump-graphs DIR` | Record GPU timestamps in the graphs of the SD1.5 chain and write them, with each element's mean time, as JSON to `DIR` at the end (for the graph pictures of `techdemo000_graphs`) |
 | `--width W`, `--height H` | Image size in pixels (default 1920×1080); captions scale with the height |
 | `--fps F` | Frame rate (default 30) |
 | `--seconds-per-turn S` | Time for one camera turn around the lantern (default 15) |
@@ -449,3 +450,31 @@ equals the scene rendered directly; otherwise it exits with an error.
 ffmpeg -framerate 30 -i build/TestingOutput/techdemo000/frames/frame_%04d.ppm -c:v libx264 -crf 16 \
     -pix_fmt yuv420p build/TestingOutput/techdemo000/techdemo000.mp4
 ```
+
+### `techdemo000_graphs`
+
+Builds the compute graphs of the tech demo's chapters 2 to 4 as `techdemo000_example`
+does (the splatting, the relighting with three lights, the controller walking a
+skeleton of Gaussians next to the lantern), runs each with GPU timestamps for a few
+warm-up frames and then `--frames` frames while the camera circles the scene, and
+writes it with each element's mean GPU time as JSON (`klartraum::writeGraphJson()`).
+The SD1.5 chain of chapter 6 comes from `techdemo000_example` with its option to dump graphs.
+`scripts/techdemo000/graph_dispatches.py` counts the commands every element records
+(with the api_dump layer), `scripts/techdemo000/draw_graphs.py` draws each graph as a
+screen of at most twelve blocks with their dispatches, draws and GPU times, and
+`scripts/techdemo000/compose_chapter8.py` turns the screens into the demo's chapter 8.
+
+| Option | Meaning |
+|---|---|
+| `--graph NAME` | Only `gaussian_splatting`, `dynamic_lighting` or `neural_animation` (default: all three) |
+| `--backend raster\|compute` | The Gaussian splatting backend (default: raster) |
+| `--frames N` | Measured frames after the warm-up (default 50) |
+| `--file PATH` | Scene (default `data/lantern.spz`) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo000_graphs`) |
+
+```bash
+./build/examples/techdemo000_graphs
+python3 scripts/techdemo000/graph_dispatches.py gaussian_splatting
+```
+
+The SD1.5 chain and chapter 8 are described in the docstrings of the scripts.

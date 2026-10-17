@@ -22,7 +22,7 @@
 // Each chapter shows a caption with the papers it builds on, lower left.
 //
 //   techdemo000_example [--from 1] [--to 7] [--step 1] [--placeholder] [--mesh-skeleton] [--prompt TEXT] [--seed 5]
-//                       [--backend compute|raster] [--sd-path gpu|cpu|both]
+//                       [--backend compute|raster] [--sd-path gpu|cpu|both] [--dump-graphs DIR]
 //                       [--width 1920] [--height 1080] [--fps 30]
 //                       [--seconds-per-turn 15] [--file data/lantern.spz]
 //                       [--out-dir build/TestingOutput/techdemo000]
@@ -31,7 +31,9 @@
 // compute). --sd-path selects how chapter 6 generates the person: entirely on
 // the GPU as one chain of graphs per frame (gpu, the default), with the CPU
 // between the graphs (cpu), or both, writing the GPU path's frames to
-// <out-dir>/frames_gpu and their difference and times to <out-dir>/sd_compare.csv. At the end, the mean time of the
+// <out-dir>/frames_gpu and their difference and times to <out-dir>/sd_compare.csv.
+// --dump-graphs records GPU timestamps in the graphs of the GPU path and writes them, with the mean time of each
+// element over the generated frames, as JSON at the end. At the end, the mean time of the
 // per-frame graph submission is printed per chapter.
 //
 // Frames go to <out-dir>/frames/frame_XXXX.ppm, numbered through the whole
@@ -59,6 +61,7 @@
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/gaussianmerge.hpp"
 #include "klartraum/computegraph/gaussianmorph.hpp"
+#include "klartraum/computegraph/graph_export.hpp"
 #include "klartraum/computegraph/graphchain.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
@@ -690,55 +693,88 @@ public:
                        const std::vector<float>& embedding, const std::vector<std::vector<float>>& noise,
                        klartraum::GsplatBackend backend, std::shared_ptr<klartraum::CameraUboType> fullCamera,
                        const std::shared_ptr<klartraum::OffscreenTarget>& fullScene,
-                       const std::shared_ptr<klartraum::OffscreenTarget>& fullMask)
+                       const std::shared_ptr<klartraum::OffscreenTarget>& fullMask, bool profile = false)
         : vc(vc),
           extent{size, size},
           fullExtent(fullExtent),
+          model(model),
+          profiling(profile),
           chain(vc) {
+        // Profiling marks every element's commands with timestamps, which the graph pictures need (--dump-graphs).
+        auto makeGraph = [&](bool simultaneous = false) {
+            auto graph = std::make_unique<klartraum::ComputeGraph>(vc, 1);
+            if (profile) {
+                graph->enableProfiling();
+            }
+            if (simultaneous) {
+                graph->enableSimultaneousUse();
+            }
+            return graph;
+        };
         const uint32_t latentSize = size / 8;
         const auto scheduler = klartraum::LcmScheduler::load(controlDirectory(size) / "lcm_schedule_f32.bin");
 
         // prepare
-        auto sceneCamera = std::make_shared<klartraum::CameraUboType>();
+        sceneCamera = std::make_shared<klartraum::CameraUboType>();
+        sceneCamera->setName("close-up camera");
         auto skeletonCamera = std::make_shared<klartraum::CameraUboType>();
+        skeletonCamera->setName("close-up camera");
+        fullCamera->setName("camera");
+        joints->setName("joints");
         window = klartraum::createCloseUpWindow(
             vc, joints, klartraum::CharacterController::kOpenPoseJointCount, fullCamera, characterToScene,
             float(fullExtent.width) / float(fullExtent.height), sceneCamera, skeletonCamera);
         closeUp = renderCloseUp(vc, extent, backend, model, joints, sceneCamera, skeletonCamera);
+        closeUp.sceneTarget->setName("close-up");
+        closeUp.poseTarget->setName("pose map");
+        closeUp.maskTarget->setName("mask");
+        closeUp.pasteTarget->setName("body mask");
+        closeUp.posePass->setName("PosePass");
+        closeUp.maskPass->setName("MaskPass");
+        closeUp.pastePass->setName("BodyMaskPass");
         auto encoderInput =
             vc.create<klartraum::TensorElement<float>>(std::vector<uint32_t>{1, 3, size, size}, kTensorUsage);
-        auto sceneToTensor =
+        encoderInput->setName("close-up tensor");
+        sceneToTensor =
             klartraum::createImageToTensor(vc, closeUp.sceneTarget, kRendered, encoderInput, extent, -1.0f, 1.0f);
         sceneToTensor->addDependency(closeUp.splatting);
         denoiser = std::make_shared<klartraum::ControlNetDenoiser>(vc, controlDirectory(size), latentSize);
+        denoiser->getSample()->setName("latents");
+        denoiser->getTimestep()->setName("timestep");
+        denoiser->getEmbeddings()->setName("prompt embedding");
+        denoiser->getPose()->setName("pose tensor");
+        denoiser->getNoisePrediction()->setName("noise prediction");
+        sceneToTensor->setName("SceneToTensor");
         auto poseToTensor =
             klartraum::createImageToTensor(vc, closeUp.poseTarget, kRendered, denoiser->getPose(), extent, 0.0f, 1.0f);
         poseToTensor->addDependency(closeUp.posePass);
+        poseToTensor->setName("PoseToTensor");
         buffers = klartraum::LcmInpaintingBuffers::create(vc, 4, latentSize * latentSize, noise);
         auto latentMask = klartraum::createCloseUpLatentMask(vc, closeUp.maskTarget, kRendered, closeUp.pasteTarget,
                                                              kRendered, buffers.mask, extent);
         latentMask->addDependency(closeUp.pastePass);
         encoder = vc.create<klartraum::OnnxNetwork>((vaeDirectory(size) / "sd15_vae_encoder.onnx").string());
+        encoder->setName("VAE encoder");
         encoder->setInputTensor("input", sceneToTensor, 1);
         auto init = klartraum::createLcmInit(vc, scheduler, kVaeScalingFactor, encoder->getOutputElement("output"),
                                              buffers, denoiser->getSample(), denoiser->getTimestep());
         init->addDependency(encoder);
         init->addDependency(latentMask);
         init->addDependency(poseToTensor);
-        prepareGraph = std::make_unique<klartraum::ComputeGraph>(vc, 1);
+        prepareGraph = makeGraph();
         prepareGraph->compileFrom(init);
 
         // denoise
-        denoiseGraph = std::make_unique<klartraum::ComputeGraph>(vc, 1);
-        denoiseGraph->enableSimultaneousUse();
+        denoiseGraph = makeGraph(true);
         denoiseGraph->compileFrom(denoiser);
         denoiser->getEmbeddings()->setData(0, embedding);
 
         // LCM steps
-        auto decoderInput = vc.create<klartraum::TensorElement<float>>(
-            std::vector<uint32_t>{1, 4, latentSize, latentSize}, kTensorUsage);
+        decoderInput = vc.create<klartraum::TensorElement<float>>(std::vector<uint32_t>{1, 4, latentSize, latentSize},
+                                                                  kTensorUsage);
+        decoderInput->setName("decoder input");
         for (size_t index = 0; index < scheduler.size(); ++index) {
-            stepGraphs.push_back(std::make_unique<klartraum::ComputeGraph>(vc, 1));
+            stepGraphs.push_back(makeGraph());
             stepGraphs.back()->compileFrom(klartraum::createLcmStep(
                 vc, scheduler, index, kVaeScalingFactor, denoiser->getSample(), denoiser->getNoisePrediction(), buffers,
                 denoiser->getTimestep(), decoderInput));
@@ -751,11 +787,14 @@ public:
                                                                    std::vector<VkImage>{target->getImage(0)},
                                                                    std::vector<VkExtent2D>{imageExtent});
             image->setClear(false);
+            image->setName(target->getName());
             return image;
         };
         decoder = vc.create<klartraum::OnnxNetwork>((vaeDirectory(size) / "sd15_vae_decoder.onnx").string());
+        decoder->setName("VAE decoder");
         decoder->setInputTensor("input", decoderInput);
         closeUpPixels = std::make_shared<klartraum::BufferElement<klartraum::VulkanBuffer<uint32_t>>>(vc, size * size);
+        closeUpPixels->setName("pasted close-up");
         // The scene and the paste mask were read by prepare, which left them in GENERAL.
         auto paste = klartraum::createCloseUpPaste(
             vc, decoder->getOutputElement("output"), wrap(closeUp.sceneTarget, extent), VK_IMAGE_LAYOUT_GENERAL,
@@ -763,11 +802,15 @@ public:
         paste->addDependency(decoder);
         fullFrame = std::make_shared<klartraum::BufferElement<klartraum::VulkanBuffer<uint32_t>>>(
             vc, fullExtent.width * fullExtent.height);
-        auto composite =
-            klartraum::createCloseUpComposite(vc, wrap(fullScene, fullExtent), kRendered, wrap(fullMask, fullExtent),
-                                              kRendered, closeUpPixels, window.state, fullFrame, fullExtent, size);
+        fullFrame->setName("frame with person");
+        auto fullSceneView = wrap(fullScene, fullExtent);
+        fullSceneView->setName("frame");
+        auto fullMaskView = wrap(fullMask, fullExtent);
+        fullMaskView->setName("character mask");
+        auto composite = klartraum::createCloseUpComposite(vc, fullSceneView, kRendered, fullMaskView, kRendered,
+                                                           closeUpPixels, window.state, fullFrame, fullExtent, size);
         composite->addDependency(paste);
-        decodeGraph = std::make_unique<klartraum::ComputeGraph>(vc, 1);
+        decodeGraph = makeGraph();
         decodeGraph->compileFrom(composite);
 
         chain.add(*prepareGraph);
@@ -780,7 +823,19 @@ public:
 
     /// The frame for the joints and camera of the main graph's last submission.
     GeneratedFrame frame() {
+        const auto start = std::chrono::steady_clock::now();
         chain.submitAndWait(vc.getGraphicsQueue());
+        chainMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        ++chainRuns;
+        if (profiling) {
+            // The denoiser's timestamps are those of its last run in the chain; all runs do the same work.
+            prepareGraph->readProfiling();
+            denoiseGraph->readProfiling();
+            for (auto& step : stepGraphs) {
+                step->readProfiling();
+            }
+            decodeGraph->readProfiling();
+        }
         GeneratedFrame result;
         std::vector<uint32_t> packed(size_t(fullExtent.width) * fullExtent.height);
         fullFrame->getBuffer(0).memcopyTo(packed);
@@ -791,22 +846,61 @@ public:
         return result;
     }
 
-    /// The graphs of the chain, in chain order, for inspecting them.
-    std::vector<const klartraum::ComputeGraph*> graphs() const {
-        std::vector<const klartraum::ComputeGraph*> result{prepareGraph.get(), denoiseGraph.get()};
-        for (const auto& step : stepGraphs) {
-            result.push_back(step.get());
+    /**
+     * Writes the graphs of the chain as JSON to `directory` (klartraum::writeGraphJson()), in the order they were
+     * compiled, and `chain.json` with the order of the links; scripts/techdemo000 draws them.
+     */
+    void exportGraphs(const std::filesystem::path& directory) const {
+        std::filesystem::create_directories(directory);
+        std::vector<klartraum::ComputeGraphElementPtr> splattingInputs{sceneCamera, closeUp.sceneTarget};
+        for (const auto* ref : model->buffers().all()) {
+            splattingInputs.push_back(ref->element);
         }
-        result.push_back(decodeGraph.get());
-        return result;
+        const std::vector<klartraum::ComputeGraphElementPtr> denoiserInputs{
+            denoiser->getSample(), denoiser->getTimestep(), denoiser->getEmbeddings(), denoiser->getPose()};
+        auto unetInputs = denoiserInputs;
+        unetInputs.push_back(denoiser->getControlNet());
+        std::vector<std::string> compiled = {"prepare", "denoise"};
+        klartraum::writeGraphJson(
+            directory / "prepare.json", "prepare", *prepareGraph,
+            {{"Gaussian splatting", closeUp.splatting, splattingInputs}, {"VAE encoder", encoder, {sceneToTensor}}});
+        klartraum::writeGraphJson(
+            directory / "denoise.json", "denoise", *denoiseGraph,
+            {{"ControlNet", denoiser->getControlNet(), denoiserInputs}, {"UNet", denoiser->getUnet(), unetInputs}});
+        for (size_t i = 0; i < stepGraphs.size(); ++i) {
+            const std::string name = "lcm_step_" + std::to_string(i);
+            klartraum::writeGraphJson(directory / (name + ".json"), name, *stepGraphs[i], {});
+            compiled.push_back(name);
+        }
+        klartraum::writeGraphJson(directory / "decode.json", "decode", *decodeGraph,
+                                  {{"VAE decoder", decoder, {decoderInput}}});
+        compiled.push_back("decode");
+        std::ofstream out(directory / "chain.json");
+        out << "{\n  \"compiled\": [";
+        for (size_t i = 0; i < compiled.size(); ++i) {
+            out << (i ? ", " : "") << "\"" << compiled[i] << "\"";
+        }
+        out << "],\n  \"links\": [\"prepare\"";
+        for (size_t i = 0; i < stepGraphs.size(); ++i) {
+            out << ", \"denoise\", \"lcm_step_" << i << "\"";
+        }
+        out << ", \"decode\"],\n  \"wall_ms\": " << (chainRuns ? chainMs / chainRuns : 0.0) << "\n}\n";
     }
 
 private:
     klartraum::VulkanContext& vc;
     VkExtent2D extent;
     VkExtent2D fullExtent;
+    std::shared_ptr<klartraum::GaussianDataStandard> model;
+    bool profiling;
+    // From the submission of the chain until its fence, summed over the frames.
+    double chainMs = 0.0;
+    uint32_t chainRuns = 0;
+    std::shared_ptr<klartraum::CameraUboType> sceneCamera;
     klartraum::CloseUpWindowElements window;
     CloseUpRender closeUp;
+    std::shared_ptr<klartraum::ComputeGraphElement> sceneToTensor;
+    std::shared_ptr<klartraum::TensorElement<float>> decoderInput;
     klartraum::LcmInpaintingBuffers buffers;
     std::shared_ptr<klartraum::OnnxNetwork> encoder;
     std::shared_ptr<klartraum::ControlNetDenoiser> denoiser;
@@ -834,6 +928,7 @@ int main(int argc, char** argv) {
     bool meshSkeleton = false;
     klartraum::GsplatBackend backend = klartraum::GsplatBackend::Compute;
     std::string sdPath = "gpu";
+    std::filesystem::path dumpGraphs;
     std::string prompt = "a photograph of a woman in a dark blue kimono walking in a japanese moss garden, full body, "
                          "natural light, realistic";
     uint32_t seed = 5;
@@ -876,6 +971,8 @@ int main(int argc, char** argv) {
                 std::cerr << "--sd-path must be cpu, gpu or both" << std::endl;
                 return 1;
             }
+        } else if (arg == "--dump-graphs" && hasValue) {
+            dumpGraphs = argv[++i];
         } else if (arg == "--mesh-skeleton") {
             meshSkeleton = true;
         } else if (arg == "--prompt" && hasValue) {
@@ -1145,8 +1242,14 @@ int main(int argc, char** argv) {
             if (sdPath != "cpu") {
                 gpuGenerator = std::make_unique<GpuPersonGenerator>(
                     vc, kGenerationSize, extent, sceneData, controller->getOpenPoseJoints(), characterToScene,
-                    embedding, noise, backend, cameraUBO, target, maskTarget);
+                    embedding, noise, backend, cameraUBO, target, maskTarget, !dumpGraphs.empty());
             }
+        }
+        if (!dumpGraphs.empty() && !gpuGenerator) {
+            std::cerr << "--dump-graphs needs the GPU path of chapter 6 (--from/--to including 6, no "
+                         "--placeholder, --sd-path gpu or both)"
+                      << std::endl;
+            return 1;
         }
         // With --sd-path both: the GPU path's frames, and per frame the times of both paths and how much their
         // generated frames differ.
@@ -1355,6 +1458,11 @@ int main(int argc, char** argv) {
         if (endFrame > walkStart) {
             std::cout << "the character reached its circle: " << (follower.onCircle() ? "yes" : "no") << ", turns "
                       << follower.completedTurns() << std::endl;
+        }
+        if (!dumpGraphs.empty()) {
+            gpuGenerator->exportGraphs(dumpGraphs);
+            std::cout << "wrote the graphs of the SD1.5 chain, with their GPU times over " << generatedFrames
+                      << " frames, to " << dumpGraphs.string() << std::endl;
         }
         if (generatedFrames > 0) {
             std::cout << "person generation: " << generatedFrames << " frames";
