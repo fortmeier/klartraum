@@ -319,6 +319,7 @@ add_executable(
   tests/test_simple_text_renderer.cpp
   tests/test_text_rendering.cpp
   tests/test_gaussian_morph.cpp
+  tests/test_demo_timeline.cpp
   tests/test_gaussian_lighting.cpp
 )
 
@@ -361,6 +362,7 @@ set(KLARTRAUM_LIB_SRC
   src/image_io.cpp
   src/rendering/gaussian_morph.cpp
   src/rendering/gaussian_lighting.cpp
+  src/demo_timeline.cpp
   ${SPZ_SRC}
   )
 
