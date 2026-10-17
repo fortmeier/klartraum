@@ -35,6 +35,7 @@ relative to the working directory.
 | `sd15_denoiser_example` | The complete Stable Diffusion 1.5 text-to-image pipeline run as ONNX networks | no |
 | `openpose_skeleton_example` | A 3D skeleton drawn as ControlNet OpenPose pose maps from a camera circling it | no |
 | `pose_to_video_example` | Neural character animation turned into a photorealistic video with ControlNet-OpenPose and SD1.5 | no |
+| `lantern_walk_example` | A neural animated character walking around the lantern scene, as an OpenPose skeleton with inpainting masks | no |
 
 ### Camera controls
 
@@ -323,4 +324,68 @@ backgrounds fall apart (the tests use 256 only to stay fast). The controller in
 
 ```bash
 ./build/examples/pose_to_video_example --size 512 --frames 50 --out-dir build/TestingOutput/pose_to_video
+```
+
+### `lantern_walk_example`
+
+Places the neural character controller (`CharacterController`) in the lantern
+scene and lets it walk once around the lantern, without a window. The lantern
+is measured from its Gaussians: the character is scaled to about half the
+lantern's height and walks on the moss, between the lantern's footprint and the
+edge of the moss (`measureUprightObject`, `CirclePathFollower`). The splatting
+writes its depth (`GsplatConfig::outputDepth`), so the skeleton and the
+character mask are cut where the lantern is in front of the character.
+
+Per frame it writes `frame_XXXX.ppm` (scene with skeleton), `pose_XXXX.ppm`
+(the OpenPose pose map), `character_mask_XXXX.ppm` (the region of the body,
+`CharacterMaskRenderer`), `scene_mask_XXXX.ppm` (where the scene has a surface,
+`createSceneMask`) and `panels_XXXX.ppm`: these four in a 2 × 2 grid, with both
+masks in the last panel (scene blue-grey, character white).
+
+| Option | Meaning |
+|---|---|
+| `--file PATH` | Scene (default `data/lantern.spz`, read with a flipped y axis) |
+| `--size N` | Image size in pixels (default 512) |
+| `--controller-steps N` | Controller steps (at 30 per second) per written frame (default 2) |
+| `--relative-height F` | Character height as a fraction of the lantern's (default 0.5) |
+| `--path-position F` | Path between the lantern's footprint (0) and the edge of the moss (1) (default 0.5) |
+| `--speed V` | Walking speed in m/s (default 1.2) |
+| `--style NAME` | Walking style of the controller (default `Neutral`) |
+| `--camera-position X Y Z`, `--distance D` | Camera direction and distance from the lantern at the start |
+| `--turns F` | How many times the character walks around the lantern (default 1) |
+| `--orbit-degrees A` | How far the camera orbits around the lantern over the walk (default 20) |
+| `--push-in F` | Fraction of its distance the camera moves closer over the walk (default 0.12) |
+| `--character-dir DIR` | Controller model (default `data/character`) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/lantern_walk`) |
+| `--generate` | Also render the person with SD1.5, ControlNet-OpenPose and LCM-LoRA into the scene (see below) |
+| `--prompt TEXT` | What the generated person looks like (default: a woman in a dark blue kimono in a moss garden) |
+| `--seed N` | Seed of the noise the person is generated from (default 5) |
+| `--paste-margin F` | Margin of the mask the close-up is pasted with, around the body (default 0) |
+| `--ring-weight F` | How freely SD may repaint the margin around the body (1: freely, 0: keep the scene; default 0.5) |
+| `--latent-composite` | Combine scene and person only in latent space: the close-up is the decoded latent as a whole, not pasted into the scene render |
+| `--sd-dir DIR`, `--vae-dir DIR`, `--control-dir DIR` | Model directories (defaults `data/onnx/sd15_denoiser_<size>`, `data/onnx/sd15_<size>`, `data/onnx/sd15_controlnet_<size>`) |
+
+With `--generate`, every written frame also gets `generated_XXXX.ppm`, the scene
+with a generated person, `closeup_XXXX.ppm`, the close-up the person was
+generated in, and `generated_panels_XXXX.ppm`: the generated frame, the
+close-up, its pose map and its masks (pasted region white, repainted margin
+grey) in a 2 × 2 grid. The person is too small in the full view for SD1.5, so a crop
+camera (`cropProjection`) renders the scene, its depth, the pose map and the
+character mask of a window around the character at full resolution. The
+close-up is inpainted inside the character mask by latent blending
+(`sampleInpainted`: every step keeps the scene's latent outside the mask), and
+pasted into the scene render with a feathered mask, so the lantern stays exactly
+as rendered, also where it is in front of the person. All frames use the same
+noise; the character stays centred in the close-up, so it meets the same noise
+every frame. Generation takes about 8 s per frame at 512 pixels on an Apple M4.
+It needs the third-party models exported by `scripts/sd15_onnx` for the same
+size: `export_denoiser.py` (CLIP), `export_onnx.py` (VAE encoder and decoder,
+into `data/onnx/sd15_<size>`) and `export_controlnet.py`.
+
+```bash
+./build/examples/lantern_walk_example --out-dir build/TestingOutput/lantern_walk
+ffmpeg -framerate 15 -i build/TestingOutput/lantern_walk/panels_%04d.ppm -pix_fmt yuv420p lantern_walk_panels.mp4
+
+./build/examples/lantern_walk_example --generate --out-dir build/TestingOutput/lantern_generate
+ffmpeg -framerate 15 -i build/TestingOutput/lantern_generate/generated_%04d.ppm -pix_fmt yuv420p lantern_person.mp4
 ```
