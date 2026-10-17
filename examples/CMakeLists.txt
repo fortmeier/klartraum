@@ -156,3 +156,14 @@ target_link_libraries(techdemo000_example
 )
 
 add_dependencies(techdemo000_example Shaders)
+
+# The tech demo's compute graphs as JSON, for the technical chapter's graph pictures
+add_executable(techdemo000_graphs
+    techdemo000_graphs.cpp
+)
+
+target_link_libraries(techdemo000_graphs
+    klartraum_lib
+)
+
+add_dependencies(techdemo000_graphs Shaders)
