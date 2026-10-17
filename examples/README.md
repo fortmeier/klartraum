@@ -410,7 +410,9 @@ skeleton turns into an OpenPose pose map over the scene. (6) SD1.5 with
 ControlNet-OpenPose and LCM-LoRA inpaints a person over the skeleton, as
 `lantern_walk_example` does when it generates, in a square close-up cut from the wide
 frame (about 8 s per frame); the pose map ControlNet sees is shown picture in
-picture. With `--placeholder` the character mask stands in for the person, to
+picture. The whole frame runs on the GPU as one `GraphChain`: the close-up window and
+cameras, the VAE encoder, four times ControlNet + UNet each followed by an LCM step,
+the VAE decoder and the paste into the wide frame, without the CPU in between. With `--placeholder` the character mask stands in for the person, to
 work on the timing quickly. (7) The scene's Gaussians explode and the picture
 fades to black.
 The character starts walking with chapter 4; when only later chapters are
@@ -432,6 +434,8 @@ equals the scene rendered directly; otherwise it exits with an error.
 | `--placeholder` | Show the character mask instead of generating the person in chapter 6 |
 | `--mesh-skeleton` | Draw the skeleton in chapters 4 and 5 as rasterized cylinders and spheres instead of Gaussians |
 | `--prompt TEXT`, `--seed N` | What the generated person looks like, and the seed of its noise (default: a woman in a dark blue kimono, 5) |
+| `--sd-path gpu\|cpu\|both` | How chapter 6 generates the person: entirely on the GPU, one `GraphChain` per frame (default), with the CPU between the graphs, or both, writing the GPU path's frames to `<out-dir>/frames_gpu` and the times and differences of both paths to `<out-dir>/sd_compare.csv` |
+| `--backend compute\|raster` | The Gaussian splatting backend of every graph (default: compute) |
 | `--width W`, `--height H` | Image size in pixels (default 1920×1080); captions scale with the height |
 | `--fps F` | Frame rate (default 30) |
 | `--seconds-per-turn S` | Time for one camera turn around the lantern (default 15) |
