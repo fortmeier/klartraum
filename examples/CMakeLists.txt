@@ -131,3 +131,14 @@ target_link_libraries(title_font_example
 )
 
 add_dependencies(title_font_example Shaders)
+
+# The opening shot of the promo video: the title morphs into the rotating lantern
+add_executable(title_morph_example
+    title_morph_example.cpp
+)
+
+target_link_libraries(title_morph_example
+    klartraum_lib
+)
+
+add_dependencies(title_morph_example Shaders)
