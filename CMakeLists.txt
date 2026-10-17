@@ -284,6 +284,7 @@ add_executable(
   tests/test_glyph_atlas.cpp
   tests/test_simple_text_renderer.cpp
   tests/test_text_rendering.cpp
+  tests/test_gaussian_morph.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -310,6 +311,7 @@ set(KLARTRAUM_LIB_SRC
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
+  src/gaussian_morph.cpp
   ${SPZ_SRC}
   )
 
