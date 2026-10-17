@@ -290,6 +290,7 @@ add_executable(
   tests/test_gaussian_splat_rasterizer.cpp
   tests/test_sd15_controlnet.cpp
   tests/test_temporal_lcm_sampler.cpp
+  tests/test_latent_inpainting.cpp
   tests/test_gaussian_splat_crop.cpp
   tests/test_gaussian_splat_depth.cpp
   tests/test_depth_composition.cpp
@@ -352,6 +353,7 @@ set(KLARTRAUM_LIB_SRC
   src/draw_basics.cpp
   src/lcm_scheduler.cpp
   src/temporal_lcm_sampler.cpp
+  src/latent_inpainting.cpp
   src/controlnet_denoiser.cpp
   src/rendering/gaussian_splat_rasterizer.cpp
   src/rendering/gaussian_splat_mesh_rasterizer.cpp
