@@ -157,6 +157,25 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# FreeType rasterizes TrueType/OpenType fonts, including variable fonts at a
+# chosen weight (text_gaussians). Built without optional dependencies; its own
+# copy of zlib handles compressed fonts.
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON)
+FetchContent_Declare(
+  freetype
+  URL https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-3.tar.gz
+  URL_HASH SHA256=dc49de6b01a266eef4876a4dd34d9842c475d3e28ff2eff63bd2fb760ab56261
+)
+FetchContent_MakeAvailable(freetype)
+unset(SKIP_INSTALL_ALL)
+
+include(cmake/KlartraumFonts.cmake)
+
 # Add Protobuf for ONNX support
 set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -287,6 +306,7 @@ add_executable(
   tests/test_glyph_atlas.cpp
   tests/test_simple_text_renderer.cpp
   tests/test_text_rendering.cpp
+  tests/test_text_gaussians.cpp
   tests/test_gaussian_morph.cpp
   tests/test_gaussian_lighting.cpp
 )
@@ -315,6 +335,7 @@ set(KLARTRAUM_LIB_SRC
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
+  src/text_gaussians.cpp
   src/gaussian_morph.cpp
   src/gaussian_lighting.cpp
   ${SPZ_SRC}
@@ -331,6 +352,7 @@ set(LIBRARIES
     glm::glm
     protobuf::libprotobuf
     onnx_proto
+    freetype
 )
 
 if(APPLE)

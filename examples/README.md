@@ -29,6 +29,7 @@ relative to the working directory.
 | `draw_basics_example` | Coordinate axes drawn with `DrawBasics` in a render pass | yes |
 | `onnx_example` | Loading an ONNX model, printing its structure and compiling it into a compute graph | opens one, exits right away |
 | `turntable_example` | Headless rendering: one image per frame from a camera circling the scene | no |
+| `title_font_example` | The promo title set in several fonts and turned into Gaussians, rendered front-on for comparison | no |
 
 ### Camera controls
 
@@ -141,4 +142,38 @@ uses it for the animation at the top of the project README.
 ./build/examples/turntable_example --file data/lantern.spz --flip-y --frames 60 \
     --width 400 --height 300 --camera-position 0.55 0.48 0.69 --distance 0.65 \
     --out-dir build/TestingOutput/turntable
+```
+
+### `title_font_example`
+
+Sets the promo title ("klartraum" over "tech demo 000") in each of several
+fonts with FreeType, places white Gaussians inside the letters
+(`text_gaussians.hpp`) and renders them front-on, white on black. Writes one
+image per font to `frames/<Font>.ppm` and all of them, half size and labelled,
+to `contact_sheet.ppm`. The fonts are downloaded by the build to `build/fonts/`
+(see `cmake/KlartraumFonts.cmake`); configure with
+`-DKLARTRAUM_DOWNLOAD_FONTS=OFF` to skip that.
+
+| Option | Meaning |
+|---|---|
+| `--fonts A,B,...` | Fonts for the title: names from `build/fonts/` or paths to `.ttf`/`.otf` files (default: SpaceGrotesk, Geist, Unbounded, Syne, IBMPlexSans, Fraunces) |
+| `--title TEXT`, `--subtitle TEXT` | The two lines (default `klartraum`, `tech demo 000`; an empty subtitle leaves it out) |
+| `--subtitle-font NAME` | Font of the subtitle (default `JetBrainsMono`) |
+| `--weight W`, `--subtitle-weight W` | Value of the fonts' `wght` axis (default 500 and 400) |
+| `--size S`, `--subtitle-size S` | Em size in world units (default 0.5 and 0.2) |
+| `--letter-spacing E`, `--subtitle-letter-spacing E` | Extra space between letters, in em (default 0 and 0.05) |
+| `--line-spacing F` | Distance between the baselines, in em of the larger line (default 1.2) |
+| `--spacing D` | Distance between neighbouring splats in world units (default 0.003) |
+| `--splat-scale F` | Splat size relative to `--spacing` (default 0.6) |
+| `--jitter F` | Random offset of each splat, relative to `--spacing` (default 0.35) |
+| `--inset F` | How far splats keep inside the outline, relative to `--spacing` (default 0.7), so the soft splat edges do not make the letters bolder |
+| `--depth-jitter D` | Random depth offset of each splat in world units (default 0) |
+| `--seed N` | Seed of the jitter (default 1) |
+| `--width W`, `--height H` | Image size in pixels (default 1920×1080) |
+| `--distance D` | Camera distance from the text (default 3) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/title_fonts`) |
+
+```bash
+./build/examples/title_font_example --weight 600 --out-dir build/TestingOutput/title_fonts
+ffmpeg -i build/TestingOutput/title_fonts/contact_sheet.ppm title_fonts.png
 ```
