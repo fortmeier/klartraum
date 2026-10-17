@@ -123,3 +123,14 @@ target_link_libraries(openpose_skeleton_example
 )
 
 add_dependencies(openpose_skeleton_example Shaders)
+
+# Neural character animation rendered as a video with ControlNet-OpenPose and SD1.5 LCM
+add_executable(pose_to_video_example
+    pose_to_video_example.cpp
+)
+
+target_link_libraries(pose_to_video_example
+    klartraum_lib
+)
+
+add_dependencies(pose_to_video_example Shaders)
