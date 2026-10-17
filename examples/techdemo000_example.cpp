@@ -11,7 +11,8 @@
 //   3. Dynamic lighting: dusk falls, a candle flickers in the lantern's fire
 //      box and a moon light circles the scene (GaussianLighting)
 //   4. Neural character animation: the mixture-of-experts controller walks a
-//      plain skeleton, drawn as Gaussians, in from the side and around the lantern
+//      plain skeleton, drawn as Gaussians (--mesh-skeleton: as rasterized
+//      cylinders and spheres), in from the side and around the lantern
 //   5. OpenPose keypoints: the skeleton turns into the OpenPose pose map
 //   6. Diffusion on the pose: SD1.5 + ControlNet-OpenPose + LCM-LoRA inpaint a
 //      person over the skeleton (about 8 s per frame), with the pose map
@@ -20,7 +21,7 @@
 //   7. Finale: the scene's Gaussians explode and the picture fades to black
 // Each chapter shows a caption with the papers it builds on, lower left.
 //
-//   techdemo000_example [--from 1] [--to 7] [--step 1] [--placeholder] [--prompt TEXT] [--seed 5]
+//   techdemo000_example [--from 1] [--to 7] [--step 1] [--placeholder] [--mesh-skeleton] [--prompt TEXT] [--seed 5]
 //                       [--width 1920] [--height 1080] [--fps 30]
 //                       [--seconds-per-turn 15] [--file data/lantern.spz]
 //                       [--out-dir build/TestingOutput/techdemo000]
@@ -49,6 +50,7 @@
 #include "klartraum/computegraph/gaussianmerge.hpp"
 #include "klartraum/computegraph/gaussianmorph.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
+#include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/computegraph/skeletongaussians.hpp"
 #include "klartraum/demo_timeline.hpp"
@@ -66,6 +68,7 @@
 #include "klartraum/sd15/latent_inpainting.hpp"
 #include "klartraum/sd15/lcm_scheduler.hpp"
 #include "klartraum/sd15/pose_video_pipeline.hpp"
+#include "klartraum/skeleton_mesh_renderer.hpp"
 #include "klartraum/text_gaussians.hpp"
 
 namespace {
@@ -780,6 +783,7 @@ int main(int argc, char** argv) {
     int toChapter = int(kChapters.size());
     uint32_t step = 1;
     bool placeholder = false;
+    bool meshSkeleton = false;
     std::string prompt = "a photograph of a woman in a dark blue kimono walking in a japanese moss garden, full body, "
                          "natural light, realistic";
     uint32_t seed = 5;
@@ -809,6 +813,8 @@ int main(int argc, char** argv) {
             toChapter = std::stoi(argv[++i]);
         } else if (arg == "--placeholder") {
             placeholder = true;
+        } else if (arg == "--mesh-skeleton") {
+            meshSkeleton = true;
         } else if (arg == "--prompt" && hasValue) {
             prompt = argv[++i];
         } else if (arg == "--seed" && hasValue) {
@@ -973,6 +979,9 @@ int main(int argc, char** argv) {
         klartraum::createSkeletonGaussians(vc, klartraum::BufferRef{controller->getJoints()},
                                            klartraum::characterSkeletonBones(), klartraum::BufferRef{skeletonValues});
     skeleton.element->addDependency(controller);
+    // With --mesh-skeleton the skeleton Gaussians stay transparent and the mesh skeleton takes the parameters.
+    auto meshSkeletonValues = std::make_shared<klartraum::HostValues<klartraum::SkeletonGaussianParams>>(
+        vc, std::vector<klartraum::SkeletonGaussianParams>{skeletonParams});
     const auto merged = klartraum::createGaussianMerge(vc, lit.output, skeleton.output);
 
     const std::filesystem::path frameDir = outDir / "frames";
@@ -998,7 +1007,31 @@ int main(int argc, char** argv) {
         auto skeletonCamera = std::make_shared<klartraum::CameraUboType>();
         auto barrier = std::make_shared<klartraum::BufferToGraphicsBarrier>();
         barrier->addBuffer(controller->getOpenPoseJoints());
+        barrier->addBuffer(controller->getJoints());
         barrier->setInput(controller, 0);
+
+        // With --mesh-skeleton: the skeleton as cylinders and spheres over the splatted scene, hidden where the
+        // scene is in front of it.
+        std::shared_ptr<klartraum::RenderPass> meshSkeletonPass;
+        if (meshSkeleton) {
+            auto meshRenderer = std::make_shared<klartraum::SkeletonMeshRenderer>(
+                controller->getJoints(), klartraum::characterSkeletonBones(), meshSkeletonValues, extent);
+            meshRenderer->setOcclusionDepth(klartraum::getGaussianSplattingDepth(splatting));
+            // Splatting leaves the target ready for transfers; drawing over it needs GENERAL (see RenderPass).
+            auto toGeneral = std::make_shared<klartraum::ImageViewSrcTransition>(
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
+                VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            toGeneral->setInput(splatting, 0, 0);
+            meshSkeletonPass = std::make_shared<klartraum::RenderPass>(vc.getSwapChainImageFormat(), extent);
+            meshSkeletonPass->setLoadExisting(true);
+            meshSkeletonPass->setDepthBuffer(true);
+            meshSkeletonPass->setInput(toGeneral, 0, 0);
+            meshSkeletonPass->setInput(cameraUBO, 1);
+            meshSkeletonPass->addDrawComponent(meshRenderer);
+            meshSkeletonPass->addComputeDependency(barrier);
+            meshSkeletonPass->addComputeDependency(meshSkeletonValues);
+        }
         auto poseRenderer =
             std::make_shared<klartraum::OpenPoseSkeletonRenderer>(controller->getOpenPoseJoints(), 1, extent);
         poseRenderer->setOcclusionDepth(klartraum::getGaussianSplattingDepth(splatting));
@@ -1011,6 +1044,9 @@ int main(int argc, char** argv) {
         posePass->addDrawComponent(poseRenderer);
         posePass->addComputeDependency(barrier);
         posePass->addComputeDependency(splatting);
+        if (meshSkeletonPass) {
+            posePass->addComputeDependency(meshSkeletonPass);
+        }
 
         // The character mask: the region of its body, cut by the scene in front.
         auto maskRenderer = std::make_shared<klartraum::CharacterMaskRenderer>(controller->getOpenPoseJoints(), extent);
@@ -1087,7 +1123,7 @@ int main(int argc, char** argv) {
                 skeletonOpacity = 1.0f - ramp(timeline.timeInChapter(f), 0.0f, 0.5f);
             }
             skeletonParams.colourOpacity.a = skeletonOpacity;
-            skeletonValues->set(0, skeletonParams);
+            (meshSkeleton ? meshSkeletonValues : skeletonValues)->set(0, skeletonParams);
             g.submitAndWait(vc.getGraphicsQueue(), 0);
         };
 
