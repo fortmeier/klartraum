@@ -4,17 +4,18 @@
 
 """Draws the compute graphs of the tech demo's chapters as 1920 x 1080 screens.
 
-Each graph becomes at most twelve blocks on one line, in the order the GPU runs
-them: a block is a stage (an ONNX network, the splatting, a render pass, ...)
-with its compute dispatches and raster draws (counted with api_dump) and its
-measured GPU time. The machine the times were measured on is named at the bottom (detected, or --hardware).
-Below the line, a bar splits the graph's total GPU time into
-the blocks and the time between them (the barriers the graph puts between its
-elements, and elements that record nothing), so the parts add up to the total.
-The upper right corner stays free for a picture in picture of the chapter.
+Each graph becomes at most twelve blocks: a block is a stage (an ONNX network,
+the splatting, a render pass, ...) with its compute dispatches and raster draws
+(counted with api_dump) and its measured GPU time. The blocks stand in the order
+the GPU runs them, one column each from left to right, numbered along an axis
+below them; their rows (lanes) group the stages one stream of data passes
+through, and arrows between the blocks show where data goes to another stage.
+The machine the times were measured on is named at the bottom (detected, or
+--hardware). The upper right corner stays free for a picture in picture of the
+chapter.
 
     uv run --with pillow scripts/techdemo000/draw_graphs.py [NAME ...]
-        [--dir build/TestingOutput/techdemo000_graphs] [--fonts build/fonts]
+        [--dir build/TestingOutput/techdemo000_graphs] [--fonts build/fonts] [--scene data/lantern.spz]
     uv run --with pillow scripts/techdemo000/draw_graphs.py --chain DIR
 
 Inputs: <name>.json with GPU times (techdemo000_graphs, or techdemo000_example
@@ -27,6 +28,7 @@ import collections
 import json
 import platform
 import re
+import struct
 import subprocess
 from pathlib import Path
 
@@ -35,7 +37,8 @@ from PIL import Image, ImageDraw, ImageFont
 WIDTH, HEIGHT = 1920, 1080
 SS = 2  # supersampling
 LEFT, RIGHT = 70, WIDTH - 70
-LINE_Y = 540  # centre of the blocks
+PIP_LEFT = WIDTH - 70 - 480  # the picture in picture of compose_chapter8.py, at the upper right
+GRAPH_TOP, GRAPH_BOTTOM = 196, 994  # the lanes and the order axis
 
 BACKGROUND = (0, 0, 0)
 TEXT = (240, 240, 240)
@@ -45,14 +48,31 @@ BOX_FILL = (18, 18, 20)
 BOX_LINE = (200, 200, 200)
 EDGE = (130, 130, 138)
 SEMAPHORE = (245, 166, 35)
-BAR_WORK = (200, 200, 205)
-BAR_SYNC = (110, 110, 116)
-BAR_OUTSIDE = (55, 55, 60)
+LANE_FILL = (11, 11, 13)
 
+# Heading and subtitle; {gaussians} is the number of Gaussians in the scene.
 TITLES = {
-    "gaussian_splatting": ("3D Gaussian splatting", "the scene rasterized as depth-sorted Gaussians"),
-    "dynamic_lighting": ("Dynamic lighting", "the Gaussians relit by three lights, then splatted"),
-    "neural_animation": ("Neural character animation", "the controller walks the skeleton, drawn as Gaussians"),
+    "gaussian_splatting": ("3D Gaussian splatting", "rasterize {gaussians} Gaussians"),
+    "dynamic_lighting": ("Dynamic lighting", "additional relighting by three lights"),
+    "neural_animation": ("Neural character animation",
+                         "MoE network and skeleton visualization by Gaussians as compute graph elements before splatting"),
+    "sd15": ("SD1.5 inpainting on the GPU",
+             "rasterization of Gaussians, pose image generation, diffusion and composition in simultaneously "
+             "submitted graphs"),
+}
+
+# The lane of each block (0 at the top, default 0), and the lanes' names where they have one.
+LANES = {
+    "gaussian_splatting": {"project": 1},
+    "dynamic_lighting": {"project": 1},
+    "neural_animation": {"merge with scene": 1, "cull & depth keys": 1, "radix sort": 1, "rasterize": 1, "depth": 1,
+                         "project": 2},
+    "sd15": {"pose crop window": 1, "pose map & masks": 1, "pose → tensor": 1, "LCM start": 2, "ControlNet": 2,
+             "UNet": 2, "LCM step": 2, "VAE decoder": 2, "paste & composite": 3},
+}
+LANE_TITLES = {
+    "neural_animation": ["character", "splatting"],
+    "sd15": ["rasterization of Gaussians", "pose image generation", "diffusion", "composition"],
 }
 
 # Block names, by element name; elements of a collapsed group take the group's name.
@@ -80,13 +100,13 @@ BLOCKS = {
     "SkeletonGaussians": "skeleton Gaussians",
     "GaussianMerge": "merge with scene",
     # SD1.5
-    "CloseUpWindow": "close-up window",
+    "CloseUpWindow": "pose crop window",
     "PosePass": "pose map & masks",
     "MaskPass": "pose map & masks",
     "BodyMaskPass": "pose map & masks",
-    "SceneToTensor": "image → tensor",
-    "PoseToTensor": "image → tensor",
-    "LatentMask": "latent mask",
+    "SceneToTensor": "scene → tensor",
+    "PoseToTensor": "pose → tensor",
+    "LatentMask": "pose map & masks",
     "LcmInit": "LCM start",
     "CloseUpPaste": "paste & composite",
     "CloseUpComposite": "paste & composite",
@@ -152,6 +172,14 @@ def hardware():
     return " · ".join(parts)
 
 
+def gaussian_count(spz):
+    """The number of Gaussians in an uncompressed .spz file (magic, version, count)."""
+    magic, _, count = struct.unpack("<4sII", Path(spz).read_bytes()[:12])
+    if magic != b"NGSP":
+        raise SystemExit(f"{spz}: not an uncompressed .spz file")
+    return count
+
+
 def plural(count, word):
     return f"{count:,} {word}" + ("" if count == 1 else "es" if word.endswith(("ch", "sh")) else "s")
 
@@ -180,11 +208,17 @@ class Block:
         self.share_text = ""
         self.inputs = []
         self.link = 0  # which graph of a chain
+        self.lane = 0
         self.x = self.w = self.h = 0.0
 
 
 class GraphBlocks:
-    """The blocks of one graph, the edges between them, and the GPU time outside any block."""
+    """The blocks of one graph, the edges between them, and the GPU time outside any block.
+
+    `uses` names the blocks using each element (by key), which links the blocks of the graphs of a chain. A
+    buffer's writers depend on it like its readers do, so the graph does not tell them apart; in a chain, the
+    order of the graphs does.
+    """
 
     def __init__(self, graph, expand_splatting):
         elements = graph["elements"]
@@ -218,7 +252,7 @@ class GraphBlocks:
                     block_of[i] = label  # buffers and tensors of a block's group count with it
                     continue
             elif d + dr:
-                label = BLOCKS.get(e["name"], e["name"] or e["type"])
+                label = "LCM step" if e["name"].startswith("LcmStep") else BLOCKS.get(e["name"], e["name"] or e["type"])
             else:
                 continue
             if label not in blocks:
@@ -286,6 +320,24 @@ class GraphBlocks:
                     stack.extend(preds[p])
                 elif a != b:
                     self.edges.add((a, b))
+
+        def nearest(i):
+            """The blocks reached first from element i along its successors."""
+            found, stack, seen = set(), list(succs[i]), set()
+            while stack:
+                j = stack.pop()
+                if j in seen:
+                    continue
+                seen.add(j)
+                if j in block_of:
+                    found.add(block_of[j])
+                else:
+                    stack.extend(succs[j])
+            return found
+
+        self.uses = collections.defaultdict(set)
+        for e in elements:
+            self.uses[e["key"]] |= {block_of[e["id"]]} if e["id"] in block_of else nearest(e["id"])
 
 
 def load(directory, name):
@@ -373,28 +425,75 @@ def wrap(text, width):
 
 
 def size_blocks(blocks, fonts, scale):
+    """The lines and size of each block; the blocks of a lane have the same lines, the same height."""
     label, small, time = round(19 * scale), round(14 * scale), round(16 * scale)
     pad = round(11 * scale)
-    lines = max(len(wrap(b.label, 11)) for b in blocks)
     for b in blocks:
+        lane = [o for o in blocks if o.lane == b.lane]
+        lines = max(len(wrap(o.label, 11)) for o in lane)
+        any_compute = any(work(o.commands)[0] for o in lane)
+        any_raster = any(work(o.commands)[1] for o in lane)
         d, dr, _ = work(b.commands)
         name = wrap(b.label, 11)
         name += [""] * (lines - len(name))
-        counts = [f"{d:,} compute" if d else "", f"{dr} raster" if dr else ""]
+        counts = ([f"{d:,} compute" if d else ""] if any_compute else []) + (
+            [f"{dr} raster" if dr else ""] if any_raster else [])
         b.lines = ([(text, label, TEXT) for text in name] + [(text, small, DIM) for text in counts] +
-                   [(b.time_text, time, TEXT), (b.share_text, small, DIM)])
+                   [(f"{b.time_text} · {b.share_text}", time, TEXT)])
         b.w = max(fonts.width(text, size) for text, size, _ in b.lines) + 2 * pad
         b.h = sum(size + 6 for _, size, _ in b.lines) + 2 * pad
         b.pad = pad
 
 
-def draw_screen(blocks, edges, segments, total_ms, sync_ms, wall_ms, heading, sub, stats, out, fonts, machine=""):
-    """Blocks in GPU order; segments of a chain: (label, first block index, last block index, repeat)."""
+INPUTS_ROW = 30  # space above a lane for the inputs of its blocks
+TITLE_ROW = 28  # and above that, for its name
+CORRIDOR = 26  # space below a lane, for the arrows between lanes
+
+
+def lane_heights(blocks, lanes, titled):
+    """The space above each lane, the height of its blocks and the whole height of the lanes."""
+    above = [(TITLE_ROW if titled else 0) + (INPUTS_ROW if any(b.inputs for b in blocks if b.lane == lane) else 10)
+             for lane in range(lanes)]
+    height = [max(b.h for b in blocks if b.lane == lane) for lane in range(lanes)]
+    return above, height, sum(above) + sum(height) + (lanes - 1) * CORRIDOR
+
+
+def shown_edges(blocks, edges):
+    """The edges drawn: those going forward in the GPU order (a loop shows as the repeated segment), without those
+    within a lane whose data also takes a way through other blocks."""
+    index = {b.label: i for i, b in enumerate(blocks)}
+    lane = {b.label: b.lane for b in blocks}
+    forward = {(a, b) for a, b in edges if index[a] < index[b]}
+    succs = collections.defaultdict(set)
+    for a, b in forward:
+        succs[a].add(b)
+
+    def detour(a, b):
+        stack, seen = [n for n in succs[a] if n != b], set()
+        while stack:
+            n = stack.pop()
+            if n == b:
+                return True
+            if n not in seen:
+                seen.add(n)
+                stack.extend(succs[n])
+        return False
+
+    return {(a, b) for a, b in forward if lane[a] != lane[b] or not detour(a, b)}
+
+
+def draw_screen(blocks, edges, segments, heading, sub, stats, out, fonts, machine="", lane_titles=()):
+    """Blocks in GPU order, each with its lane; segments of a chain: (label, first block index, last block index,
+    repeat)."""
     c = Canvas(fonts)
+    lanes = max(b.lane for b in blocks) + 1
     segment_gap = 34 * max(0, len(segments) - 1)
+    order_space = 102 if segments else 56  # the order axis below the lanes, its caption and the segments
     for scale in (1.0, 0.92, 0.85, 0.78, 0.72, 0.66, 0.6, 0.55):
         size_blocks(blocks, fonts, scale)
-        if sum(b.w for b in blocks) + 28 * (len(blocks) - 1) + segment_gap <= RIGHT - LEFT:
+        _, _, lanes_height = lane_heights(blocks, lanes, bool(lane_titles))
+        if (sum(b.w for b in blocks) + 28 * (len(blocks) - 1) + segment_gap <= RIGHT - LEFT and
+                lanes_height + order_space <= GRAPH_BOTTOM - GRAPH_TOP):
             break
     gap = min(90, (RIGHT - LEFT - sum(b.w for b in blocks) - segment_gap) / max(1, len(blocks) - 1))
     starts = {s[1] for s in segments[1:]}
@@ -405,94 +504,115 @@ def draw_screen(blocks, edges, segments, total_ms, sync_ms, wall_ms, heading, su
         b.x = x
         x += b.w + gap
 
+    # The lanes, from the top; the whole graph centred in its area.
+    above, height, lanes_height = lane_heights(blocks, lanes, bool(lane_titles))
+    y = GRAPH_TOP + (GRAPH_BOTTOM - GRAPH_TOP - lanes_height - order_space) / 2
+    lane_top, lane_y = [], []
+    for lane in range(lanes):
+        lane_top.append(y)
+        y += above[lane]
+        lane_y.append(y + height[lane] / 2)
+        y += height[lane] + CORRIDOR
+    axis_y = y + 22
     index = {b.label: i for i, b in enumerate(blocks)}
-    height = max(b.h for b in blocks)
-    top, bottom = LINE_Y - height / 2, LINE_Y + height / 2
-    in_loop = {i for s in segments if s[3] > 1 for i in range(s[1], s[2] + 1)}
 
-    # Data that skips blocks: arcs below the line.
-    for a, b in sorted(edges, key=lambda e: index[e[1]] - index[e[0]]):
-        ia, ib = index[a], index[b]
-        if ib - ia <= 1:
-            continue
-        xa, xb = blocks[ia].x + blocks[ia].w * 0.6, blocks[ib].x + blocks[ib].w * 0.4
-        c.arc(xa, xb, bottom, min(100, 24 + 12 * (ib - ia)), EDGE + (255,), 1.1)
+    # Named lanes: a band behind their blocks, with the name above the inputs.
+    for lane, title in enumerate(lane_titles):
+        members = [b for b in blocks if b.lane == lane]
+        x0 = min(b.x for b in members) - 14
+        x1 = max(b.x + b.w for b in members) + 14
+        c.rect(x0, lane_top[lane] - 6, x1, lane_y[lane] + height[lane] / 2 + 12, fill=LANE_FILL + (255,), radius=10)
+        c.text(x0 + 10, lane_top[lane] + 2, title, 15, DIM)
 
-    # The order of the GPU work: arrows between neighbours, amber where the next command buffer of a chain starts
-    # (it waits for a semaphore).
-    for i in range(len(blocks) - 1):
-        semaphore = blocks[i + 1].link != blocks[i].link
-        colour = SEMAPHORE if semaphore else EDGE
-        c.arrow(blocks[i].x + blocks[i].w + 4, blocks[i + 1].x - 4, LINE_Y, colour + (255,), 2.2 if semaphore else 1.6)
+    # Data from one block to another, left to right: along the lanes, and down or up in the gaps between the
+    # columns. An arrow stays in a lane only where no other block of that lane is in the way.
+    def blocked(lane, a, b):
+        return any(o.lane == lane and a.x < o.x < b.x for o in blocks)
 
-    # A repeated segment: the way back.
-    for label, first, last, repeat in segments:
-        if repeat > 1:
-            xa, xb = blocks[first].x + 24, blocks[last].x + blocks[last].w - 24
-            y = top - 26
-            c.line([(xb, top - 3), (xb, y), (xa, y), (xa, top - 9)], SEMAPHORE + (255,), 2.2)
-            c.triangle((xa, top - 2), (xa - 4.5, top - 10), (xa + 4.5, top - 10), SEMAPHORE + (255,))
-            c.text((xa + xb) / 2, y - 8, f"{repeat} ×, once per LCM step", 15, SEMAPHORE, anchor="md")
+    channels = collections.Counter()
+
+    def channel(after):
+        """x of a vertical run in the gap after block `after`, next to the runs already there."""
+        k = channels[after]
+        channels[after] += 1
+        b = blocks[after]
+        return b.x + b.w + gap / 2 + (k - 0.5 * (k > 0)) * 7 * (1 if k % 2 else -1)
+
+    for a, b in sorted(shown_edges(blocks, edges), key=lambda e: (index[e[0]], index[e[1]])):
+        a, b = blocks[index[a]], blocks[index[b]]
+        ya, yb = lane_y[a.lane], lane_y[b.lane]
+        x0, x1 = a.x + a.w, b.x
+        if a.lane == b.lane and not blocked(a.lane, a, b):
+            points = [(x0, ya), (x1, yb)]
+        elif a.lane != b.lane and not blocked(b.lane, a, b):
+            cx = channel(index[a.label])
+            points = [(x0, ya), (cx, ya), (cx, yb), (x1, yb)]
+        elif a.lane != b.lane and not blocked(a.lane, a, b):
+            cx = channel(index[b.label] - 1)
+            points = [(x0, ya), (cx, ya), (cx, yb), (x1, yb)]
+        else:
+            # Through the corridor below the upper of the two lanes.
+            upper = min(a.lane, b.lane)
+            corridor = lane_y[upper] + height[upper] / 2 + CORRIDOR / 2
+            ca, cb = channel(index[a.label]), channel(index[b.label] - 1)
+            points = [(x0, ya), (ca, ya), (ca, corridor), (cb, corridor), (cb, yb), (x1, yb)]
+        points[-1] = (x1 - 2, yb)
+        c.line(points, EDGE + (255,), 1.4)
+        c.triangle((x1, yb), (x1 - 8, yb - 4.5), (x1 - 8, yb + 4.5), EDGE + (255,))
 
     # Blocks, and their inputs above them.
     for i, b in enumerate(blocks):
-        y0 = LINE_Y - b.h / 2
+        y0 = lane_y[b.lane] - b.h / 2
         c.rect(b.x, y0, b.x + b.w, y0 + b.h, fill=BOX_FILL + (255,), outline=BOX_LINE + (255,), width=1.2, radius=7)
         y = y0 + b.pad - 2
         for text, size, colour in b.lines:
             c.text(b.x + b.pad, y, text, size, colour)
             y += size + 6
         if b.inputs:
-            lift = 54 if i in in_loop else 0
             cx = b.x + b.w / 2
-            c.line([(cx, y0 - 14 - lift), (cx, y0 - 2)], FAINT + (255,), 1.0)
-            for k, name in enumerate(reversed(b.inputs)):
-                c.text(cx, y0 - 18 - lift - 19 * k, name, 13, DIM, anchor="md")
+            c.line([(cx, y0 - 14), (cx, y0 - 2)], FAINT + (255,), 1.0)
+            c.text(cx, y0 - 18, " · ".join(b.inputs), 13, DIM, anchor="md")
 
-    # Segments of a chain, below the arcs.
-    seg_y = bottom + 124
+    # The order the GPU runs the blocks in: one after another, left to right. Amber: the next command buffer of a
+    # chain, which waits for a semaphore.
+    for i, b in enumerate(blocks):
+        c.text(b.x + b.w / 2, axis_y, str(i + 1), 15, DIM, anchor="mm")
+        if i + 1 < len(blocks):
+            n = blocks[i + 1]
+            semaphore = n.link != b.link
+            colour = SEMAPHORE if semaphore else FAINT
+            c.arrow(b.x + b.w / 2 + 14, n.x + n.w / 2 - 14, axis_y, colour + (255,), 2.0 if semaphore else 1.2)
+
+    # A repeated segment: the way back.
     for label, first, last, repeat in segments:
-        xa, xb = blocks[first].x, blocks[last].x + blocks[last].w
-        c.line([(xa, seg_y - 7), (xa, seg_y), (xb, seg_y), (xb, seg_y - 7)], FAINT + (255,), 1.2)
-        c.text((xa + xb) / 2, seg_y + 9, label, 14, DIM, anchor="ma")
+        if repeat > 1:
+            xa, xb = blocks[first].x + blocks[first].w / 2, blocks[last].x + blocks[last].w / 2
+            y = axis_y + 24
+            c.line([(xb, axis_y + 12), (xb, y), (xa, y), (xa, axis_y + 18)], SEMAPHORE + (255,), 2.0)
+            c.triangle((xa, axis_y + 11), (xa - 4.5, axis_y + 19), (xa + 4.5, axis_y + 19), SEMAPHORE + (255,))
+            c.text((xa + xb) / 2, y + 6, f"{repeat} ×", 15, SEMAPHORE, anchor="ma")
 
-    # The time from submission to finish, split into the blocks, the time between them, and what the timestamps
-    # of the elements do not cover (between command buffers, outside the elements).
-    bar_y = HEIGHT - 150
-    uncovered = max(0.0, wall_ms - total_ms)
-    whole = max(wall_ms, total_ms)
-    headline = f"per frame, submit to finish: {ms_text(whole)}"
-    c.text(LEFT, bar_y - 40, headline, 20, TEXT, "Unbounded", 500)
-    note = f"= blocks (GPU timestamps) + {ms_text(sync_ms)} barriers"
-    if uncovered > 0:
-        note += f" + {ms_text(uncovered)} outside the timestamps (sync, driver)"
-    c.text(LEFT + fonts.width(headline, 20, "Unbounded") + 18, bar_y - 35, note, 14, DIM)
-    parts = [(b.label, b.total_ms, BAR_WORK) for b in blocks] + [("barriers", sync_ms, BAR_SYNC)]
-    if uncovered > 0:
-        parts.append(("outside the timestamps", uncovered, BAR_OUTSIDE))
-    scale = (RIGHT - LEFT) / max(whole, 1e-9)
-    x = LEFT
-    label_end = LEFT - 10
-    for label, ms, colour in parts:
-        w = ms * scale
-        if w >= 0.5:
-            c.rect(x, bar_y, x + max(0.5, w - 2), bar_y + 24, fill=colour + (255,), radius=3 if w > 10 else 0)
-        text = f"{label} {ms_text(ms)}"
-        if w > fonts.width(text, 13) + 8 and x >= label_end:  # only labels that fit under their segment
-            c.text(x + 3, bar_y + 32, text, 13, DIM)
-            label_end = x + fonts.width(text, 13) + 12
-        x += w
+    # Segments of a chain: its graphs.
+    if segments:
+        seg_y = axis_y + 54
+        for label, first, last, repeat in segments:
+            xa, xb = blocks[first].x, blocks[last].x + blocks[last].w
+            c.line([(xa, seg_y - 7), (xa, seg_y), (xb, seg_y), (xb, seg_y - 7)], FAINT + (255,), 1.2)
+            c.text((xa + xb) / 2, seg_y + 9, label, 14, DIM, anchor="ma")
 
     if machine:
         c.text(LEFT, HEIGHT - 52, f"measured on {machine}", 15, DIM)
+    c.text(blocks[0].x, axis_y + 24, "GPU order: the blocks run one after another, left to right", 13, FAINT, anchor="lm")
 
     c.text(70, 58, heading, 40, TEXT, "Unbounded", 500)
-    c.text(72, 118, sub, 20, DIM)
+    # The subtitle ends left of the picture in picture (compose_chapter8.py).
+    size = next(size for size in (20, 19, 18, 17, 16) if 72 + fonts.width(sub, size) <= PIP_LEFT - 30 or size == 16)
+    c.text(72, 118, sub, size, DIM)
     c.text(72, 154, stats, 18, TEXT)
     c.save(out)
 
 
-def chapter_screen(directory, name, out, fonts, machine=""):
+def chapter_screen(directory, name, out, fonts, machine="", gaussians=0):
     graph = load(directory, name)
     blocks = GraphBlocks(graph, expand_splatting=True)
     total = max(blocks.total_ms, 1e-9)
@@ -500,7 +620,7 @@ def chapter_screen(directory, name, out, fonts, machine=""):
     wall = json.loads(wall_path.read_text())["wall_ms"] if wall_path.exists() else total
     whole = max(wall, total)
     for b in blocks.blocks:
-        b.total_ms = b.ms
+        b.lane = LANES[name].get(b.label, 0)
         b.time_text = ms_text(b.ms)
         b.share_text = f"{100 * b.ms / whole:.0f} %"
     count = collections.Counter()
@@ -508,9 +628,10 @@ def chapter_screen(directory, name, out, fonts, machine=""):
         count.update(e["commands"])
     d, dr, _ = work(count)
     heading, sub = TITLES[name]
-    stats = "   ·   ".join([plural(len(blocks.blocks), "block"), f"{d:,} compute dispatches",
-                            plural(dr, "raster draw"), "1 command buffer, 1 submit"])
-    draw_screen(blocks.blocks, blocks.edges, [], total, blocks.sync_ms, wall, heading, sub, stats, out, fonts, machine)
+    stats = "   ·   ".join([f"{ms_text(whole)} per frame", f"{d:,} compute dispatches", plural(dr, "raster draw"),
+                            "1 command buffer, 1 submit"])
+    draw_screen(blocks.blocks, blocks.edges, [], heading, sub.format(gaussians=f"{gaussians:,}"), stats, out, fonts,
+                machine, LANE_TITLES.get(name, ()))
     return len(blocks.blocks), whole
 
 
@@ -525,40 +646,41 @@ def chain_screen(directory, out, fonts, machine=""):
     decode = GraphBlocks(load(directory, "decode"), False)
     # The steps differ only in their constants: one block with their mean time.
     step = steps[0]
-    step.blocks[0].label = "LCM step"
     step.blocks[0].ms = sum(g.blocks[0].ms for g in steps) / repeat
     step.total_ms = sum(g.total_ms for g in steps) / repeat
-    step.sync_ms = step.total_ms - step.blocks[0].ms
 
+    parts = [prepare, denoise, step, decode]
     blocks, edges = [], set()
-    for link, (part, times) in enumerate([(prepare, 1), (denoise, repeat), (step, repeat), (decode, 1)]):
+    for link, (part, times) in enumerate(zip(parts, [1, repeat, repeat, 1])):
         for b in part.blocks:
             b.link = link
+            b.lane = LANES["sd15"].get(b.label, 0)
             b.total_ms = b.ms * times
             b.time_text = ms_text(b.ms) + (f" ×{times}" if times > 1 else "")
             blocks.append(b)
         edges.update(part.edges)
+    # Data one graph of the chain leaves for a later one.
+    for i, earlier in enumerate(parts):
+        for later in parts[i + 1:]:
+            for key, users in earlier.uses.items():
+                edges.update((a, b) for a in users for b in later.uses.get(key, ()) if a != b)
     total = max(prepare.total_ms + repeat * (denoise.total_ms + step.total_ms) + decode.total_ms, 1e-9)
-    sync = prepare.sync_ms + repeat * (denoise.sync_ms + step.sync_ms) + decode.sync_ms
-    wall = chain.get("wall_ms", total)
-    whole = max(wall, total)
+    whole = max(chain.get("wall_ms", total), total)
     for b in blocks:
         b.share_text = f"{100 * b.total_ms / whole:.0f} %"
     n_prepare, n_loop = len(prepare.blocks), len(denoise.blocks) + 1
-    loop_ms = denoise.total_ms + step.total_ms
-    segments = [(f"prepare · {ms_text(prepare.total_ms)}", 0, n_prepare - 1, 1),
-                (f"denoise + LCM step · {repeat} × {ms_text(loop_ms)}", n_prepare, n_prepare + n_loop - 1, repeat),
-                (f"decode · {ms_text(decode.total_ms)}", n_prepare + n_loop, len(blocks) - 1, 1)]
+    segments = [("prepare graph", 0, n_prepare - 1, 1),
+                ("denoise graph + LCM step graph", n_prepare, n_prepare + n_loop - 1, repeat),
+                ("decode graph", n_prepare + n_loop, len(blocks) - 1, 1)]
     count = collections.Counter()
     for link in chain["links"]:
         for e in load(directory, link)["elements"]:
             count.update(e["commands"])
     d, dr, _ = work(count)
-    stats = "   ·   ".join([plural(len(blocks), "block"), f"{d:,} compute dispatches", plural(dr, "raster draw"),
+    stats = "   ·   ".join([f"{ms_text(whole)} per frame", f"{d:,} compute dispatches", plural(dr, "raster draw"),
                             f"{len(chain['links'])} command buffers, 1 submit"])
-    draw_screen(blocks, edges, segments, total, sync, wall, "SD1.5 inpainting on the GPU",
-                "close-up, VAE encoder, ControlNet + UNet with LCM, VAE decoder: one chain of graphs", stats, out,
-                fonts, machine)
+    heading, sub = TITLES["sd15"]
+    draw_screen(blocks, edges, segments, heading, sub, stats, out, fonts, machine, LANE_TITLES["sd15"])
     return len(blocks), whole
 
 
@@ -569,6 +691,7 @@ def main():
     parser.add_argument("--fonts", default="build/fonts")
     parser.add_argument("--chain", help="draw the SD1.5 chain written by techdemo000_example --dump-graphs")
     parser.add_argument("--hardware", help="the machine the graphs were measured on (default: this one)")
+    parser.add_argument("--scene", default="data/lantern.spz", help="the scene the graphs splat")
     args = parser.parse_args()
     fonts = Fonts(args.fonts)
     machine = args.hardware if args.hardware is not None else hardware()
@@ -581,7 +704,7 @@ def main():
     directory = Path(args.dir)
     for name in args.names or [n for n in TITLES if (directory / f"{n}.json").exists()]:
         out = directory / f"{name}.png"
-        count, total = chapter_screen(directory, name, out, fonts, machine)
+        count, total = chapter_screen(directory, name, out, fonts, machine, gaussian_count(args.scene))
         print(f"{name}: {count} blocks, {total:.2f} ms, {out}")
 
 

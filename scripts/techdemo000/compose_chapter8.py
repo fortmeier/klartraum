@@ -17,19 +17,19 @@ import argparse
 import re
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 WIDTH, HEIGHT = 1920, 1080
 PIP_SIZE = (480, 270)
 PIP_POS = (WIDTH - 70 - PIP_SIZE[0], 40)
 FADE_SECONDS = 0.5
 
-# The screens, in order: graph picture, the chapter (1-based) it shows, its name in the picture in picture.
+# The screens, in order: graph picture and the chapter (1-based) it shows.
 SCREENS = [
-    ("gaussian_splatting.png", 2, "chapter 2 · Gaussian splatting"),
-    ("dynamic_lighting.png", 3, "chapter 3 · dynamic lighting"),
-    ("neural_animation.png", 4, "chapter 4 · neural animation"),
-    ("sd15_chain.png", 6, "chapter 6 · diffusion"),
+    ("gaussian_splatting.png", 2),
+    ("dynamic_lighting.png", 3),
+    ("neural_animation.png", 4),
+    ("sd15_chain.png", 6),
 ]
 
 
@@ -49,7 +49,6 @@ def main():
     parser.add_argument("--graphs", default="build/TestingOutput/techdemo000_graphs")
     parser.add_argument("--seconds", type=float, default=7.0, help="per screen")
     parser.add_argument("--fps", type=float, default=30.0)
-    parser.add_argument("--fonts", default="build/fonts")
     args = parser.parse_args()
     run, graphs = Path(args.run), Path(args.graphs)
     frames_dir = run / "frames"
@@ -58,12 +57,11 @@ def main():
     if not existing:
         raise SystemExit(f"no frames in {frames_dir}")
     first = max(existing) + 1
-    font = ImageFont.truetype(str(Path(args.fonts) / "JetBrainsMono.ttf"), 15)
 
     per_screen = round(args.seconds * args.fps)
     fade = round(FADE_SECONDS * args.fps)
     number = first
-    for picture, chapter, caption in SCREENS:
+    for picture, chapter in SCREENS:
         screen = Image.open(graphs / picture).convert("RGB")
         start = starts[chapter]
         end = starts.get(chapter + 1, max(existing) + 1)
@@ -75,7 +73,6 @@ def main():
             draw = ImageDraw.Draw(frame)
             x0, y0 = PIP_POS
             draw.rectangle([x0 - 1, y0 - 1, x0 + PIP_SIZE[0], y0 + PIP_SIZE[1]], outline=(200, 200, 200), width=1)
-            draw.text((x0, y0 + PIP_SIZE[1] + 8), caption, font=font, fill=(150, 150, 150))
             # Fade in and out of black.
             level = min(1.0, (k + 1) / fade, (per_screen - k) / fade)
             if level < 1.0:
