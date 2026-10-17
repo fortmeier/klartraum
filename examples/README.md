@@ -404,7 +404,9 @@ candle flickers and glows in the lantern's fire box, then a red, a green and a
 blue light circle the scene, (4) the neural character controller (`CharacterController`)
 walking a plain skeleton in from the side and around the lantern
 (`WalkInPathFollower`), drawn as Gaussians merged with the scene
-(`SkeletonGaussians`, `GaussianMerge`), so the lantern hides it; it runs in and
+(`SkeletonGaussians`, `GaussianMerge`), so the lantern hides it (with
+`--mesh-skeleton` as rasterized cylinders and spheres over the scene instead,
+`SkeletonMeshRenderer`, hidden by the splatting's depth); it runs in and
 slows to a walk, and the camera turns four times slower from here on. (5) The
 skeleton turns into an OpenPose pose map over the scene. (6) SD1.5 with
 ControlNet-OpenPose and LCM-LoRA inpaints a person over the skeleton, as
@@ -430,6 +432,7 @@ equals the scene rendered directly; otherwise it exits with an error.
 | `--from N`, `--to N` | First and last chapter to render (default: all) |
 | `--step N` | Render only every Nth frame, for a quick preview (default 1) |
 | `--placeholder` | Show the character mask instead of generating the person in chapter 6 |
+| `--mesh-skeleton` | Draw the skeleton in chapters 4 and 5 as rasterized cylinders and spheres instead of Gaussians |
 | `--prompt TEXT`, `--seed N` | What the generated person looks like, and the seed of its noise (default: a woman in a dark blue kimono, 5) |
 | `--width W`, `--height H` | Image size in pixels (default 1920×1080); captions scale with the height |
 | `--fps F` | Frame rate (default 30) |
