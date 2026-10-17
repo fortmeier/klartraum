@@ -142,3 +142,14 @@ target_link_libraries(title_morph_example
 )
 
 add_dependencies(title_morph_example Shaders)
+
+# klartraum tech demo 000: the promo video in one continuous shot around the lantern
+add_executable(techdemo000_example
+    techdemo000_example.cpp
+)
+
+target_link_libraries(techdemo000_example
+    klartraum_lib
+)
+
+add_dependencies(techdemo000_example Shaders)
