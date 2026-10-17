@@ -6,7 +6,9 @@
 
 Each graph becomes at most twelve blocks: a block is a stage (an ONNX network,
 the splatting, a render pass, ...) with its compute dispatches and raster draws
-(counted with api_dump) and its measured GPU time. The blocks stand in the order
+(counted with api_dump) and its share of the GPU time of all blocks. The shares
+come from a run with GPU timestamps, which slow the graph down; the time per
+frame in the headline comes from a run without them. The blocks stand in the order
 the GPU runs them, one column each from left to right, numbered along an axis
 below them; their rows (lanes) group the stages one stream of data passes
 through, and arrows between the blocks show where data goes to another stage.
@@ -16,11 +18,13 @@ chapter.
 
     uv run --with pillow scripts/techdemo000/draw_graphs.py [NAME ...]
         [--dir build/TestingOutput/techdemo000_graphs] [--fonts build/fonts] [--scene data/lantern.spz]
-    uv run --with pillow scripts/techdemo000/draw_graphs.py --chain DIR
+    uv run --with pillow scripts/techdemo000/draw_graphs.py --chain DIR --chain-log LOG
 
 Inputs: <name>.json with GPU times (techdemo000_graphs, or techdemo000_example
---dump-graphs for the SD1.5 chain) and <name>.commands.json
-(graph_dispatches.py).
+--dump-graphs for the SD1.5 chain), <name>.commands.json (graph_dispatches.py)
+and the time per frame without timestamps: unprofiled_wall_ms of
+<name>.wall.json (techdemo000_graphs), for the SD1.5 chain the "person
+generation" line of the log of a render of techdemo000_example.
 """
 
 import argparse
@@ -177,6 +181,11 @@ def gaussian_count(spz):
     return count
 
 
+def share_text(ms, total):
+    share = 100 * ms / total
+    return f"{share:.0f} %" if share >= 0.5 else "<1 %"
+
+
 def plural(count, word):
     return f"{count:,} {word}" + ("" if count == 1 else "es" if word.endswith(("ch", "sh")) else "s")
 
@@ -201,7 +210,6 @@ class Block:
         self.commands = collections.Counter()
         self.ms = 0.0
         self.total_ms = 0.0
-        self.time_text = ""
         self.share_text = ""
         self.inputs = []
         self.link = 0  # which graph of a chain
@@ -436,7 +444,7 @@ def size_blocks(blocks, fonts, scale):
         counts = ([f"{d:,} compute" if d else ""] if any_compute else []) + (
             [f"{dr} raster" if dr else ""] if any_raster else [])
         b.lines = ([(text, label, TEXT) for text in name] + [(text, small, DIM) for text in counts] +
-                   [(f"{b.time_text} · {b.share_text}", time, TEXT)])
+                   [(b.share_text, time, TEXT)])
         b.w = max(fonts.width(text, size) for text, size, _ in b.lines) + 2 * pad
         b.h = sum(size + 6 for _, size, _ in b.lines) + 2 * pad
         b.pad = pad
@@ -601,27 +609,24 @@ def draw_screen(blocks, edges, segments, heading, sub, stats, out, fonts, machin
 def chapter_screen(directory, name, out, fonts, machine="", gaussians=0):
     graph = load(directory, name)
     blocks = GraphBlocks(graph, expand_splatting=True)
-    total = max(blocks.total_ms, 1e-9)
-    wall_path = directory / f"{name}.wall.json"
-    wall = json.loads(wall_path.read_text())["wall_ms"] if wall_path.exists() else total
-    whole = max(wall, total)
+    real = json.loads((directory / f"{name}.wall.json").read_text())["unprofiled_wall_ms"]
+    total = max(sum(b.ms for b in blocks.blocks), 1e-9)
     for b in blocks.blocks:
         b.lane = LANES[name].get(b.label, 0)
-        b.time_text = ms_text(b.ms)
-        b.share_text = f"{100 * b.ms / whole:.0f} %"
+        b.share_text = share_text(b.ms, total)
     count = collections.Counter()
     for e in graph["elements"]:
         count.update(e["commands"])
     d, dr, _ = work(count)
     heading, sub = TITLES[name]
-    stats = "   ·   ".join([f"{ms_text(whole)} per frame", f"{d:,} compute dispatches", plural(dr, "raster draw"),
+    stats = "   ·   ".join([f"{ms_text(real)} per frame", f"{d:,} compute dispatches", plural(dr, "raster draw"),
                             "1 command buffer, 1 submit"])
     draw_screen(blocks.blocks, blocks.edges, [], heading, sub.format(gaussians=f"{gaussians:,}"), stats, out, fonts,
                 machine)
-    return len(blocks.blocks), whole
+    return len(blocks.blocks), real
 
 
-def chain_screen(directory, out, fonts, machine=""):
+def chain_screen(directory, real, out, fonts, machine=""):
     """The SD1.5 chain: prepare, the denoiser and an LCM step once per step, decode."""
     chain = json.loads((directory / "chain.json").read_text())
     step_names = [name for name in chain["compiled"] if name.startswith("lcm_step")]
@@ -642,7 +647,6 @@ def chain_screen(directory, out, fonts, machine=""):
             b.link = link
             b.lane = LANES["sd15"].get(b.label, 0)
             b.total_ms = b.ms * times
-            b.time_text = ms_text(b.ms) + (f" ×{times}" if times > 1 else "")
             blocks.append(b)
         edges.update(part.edges)
     # Data one graph of the chain leaves for a later one.
@@ -650,10 +654,9 @@ def chain_screen(directory, out, fonts, machine=""):
         for later in parts[i + 1:]:
             for key, users in earlier.uses.items():
                 edges.update((a, b) for a in users for b in later.uses.get(key, ()) if a != b)
-    total = max(prepare.total_ms + repeat * (denoise.total_ms + step.total_ms) + decode.total_ms, 1e-9)
-    whole = max(chain.get("wall_ms", total), total)
+    total = max(sum(b.total_ms for b in blocks), 1e-9)
     for b in blocks:
-        b.share_text = f"{100 * b.total_ms / whole:.0f} %"
+        b.share_text = share_text(b.total_ms, total)
     n_prepare, n_loop = len(prepare.blocks), len(denoise.blocks) + 1
     # One command buffer per graph in the chain: the denoiser's four times, and one LCM step graph per step.
     segments = [("prepare · 1 command buffer", 0, n_prepare - 1, 1),
@@ -665,11 +668,19 @@ def chain_screen(directory, out, fonts, machine=""):
         for e in load(directory, link)["elements"]:
             count.update(e["commands"])
     d, dr, _ = work(count)
-    stats = "   ·   ".join([f"{ms_text(whole)} per frame", f"{d:,} compute dispatches", plural(dr, "raster draw"),
+    stats = "   ·   ".join([f"{ms_text(real)} per frame", f"{d:,} compute dispatches", plural(dr, "raster draw"),
                             f"{len(chain['links'])} command buffers, 1 submit"])
     heading, sub = TITLES["sd15"]
     draw_screen(blocks, edges, segments, heading, sub, stats, out, fonts, machine)
-    return len(blocks), whole
+    return len(blocks), real
+
+
+def chain_time(log):
+    """The GPU path's time per generated frame from the log of a render of techdemo000_example."""
+    m = re.search(r"person generation: \d+ frames.*gpu path ([\d.]+) ms per frame", Path(log).read_text())
+    if not m:
+        raise SystemExit(f"{log}: no time of the GPU path")
+    return float(m.group(1))
 
 
 def main():
@@ -678,6 +689,7 @@ def main():
     parser.add_argument("--dir", default="build/TestingOutput/techdemo000_graphs")
     parser.add_argument("--fonts", default="build/fonts")
     parser.add_argument("--chain", help="draw the SD1.5 chain written by techdemo000_example --dump-graphs")
+    parser.add_argument("--chain-log", help="log of a render without --dump-graphs, for the chain's time per frame")
     parser.add_argument("--hardware", help="the machine the graphs were measured on (default: this one)")
     parser.add_argument("--scene", default="data/lantern.spz", help="the scene the graphs splat")
     args = parser.parse_args()
@@ -686,7 +698,9 @@ def main():
     if args.chain:
         directory = Path(args.chain)
         out = directory.parent / "sd15_chain.png"
-        count, total = chain_screen(directory, out, fonts, machine)
+        if not args.chain_log:
+            parser.error("--chain needs --chain-log")
+        count, total = chain_screen(directory, chain_time(args.chain_log), out, fonts, machine)
         print(f"sd15_chain: {count} blocks, {total:.1f} ms, {out}")
         return
     directory = Path(args.dir)
