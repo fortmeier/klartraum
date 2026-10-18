@@ -14,6 +14,9 @@
 
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
 
+// Built only with the CMake option KLARTRAUM_WITH_FREETYPE, which defines the
+// macro of the same name for code linking klartraum_lib.
+
 namespace klartraum {
 
 /// A TrueType/OpenType font loaded with FreeType. Variable fonts can be set to

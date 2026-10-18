@@ -40,6 +40,9 @@
  *   the shatter towards the given direction
  * - morphRendersTitleThenLantern: the morph of the title into the lantern, rendered at progress
  *   0, looks like the placed title and at progress 1 like the lantern rendered directly
+ *
+ * The tests that set text (exactCountSampling, placedTitleRendersLikeMask, matchingIsCoherent,
+ * morphRendersTitleThenLantern) are built with KLARTRAUM_WITH_FREETYPE only.
  **/
 
 #include <gtest/gtest.h>
@@ -75,6 +78,7 @@ using namespace klartraum;
 
 namespace {
 
+#ifdef KLARTRAUM_WITH_FREETYPE
 std::shared_ptr<Font> loadFont(const std::string& name) {
     try {
         return std::make_shared<Font>("fonts/" + name + ".ttf");
@@ -139,6 +143,7 @@ std::vector<uint8_t> readImage(VulkanContext& vc, VkImage image, VkExtent2D exte
     vkDestroyBuffer(vc.getDevice(), buf, nullptr);
     return result;
 }
+#endif // KLARTRAUM_WITH_FREETYPE
 
 std::vector<Gaussian3D> randomPoints(size_t n, uint32_t seed) {
     std::mt19937 rng(seed);
@@ -262,6 +267,7 @@ float easeInOutCubic(float s) { return s < 0.5f ? 4.0f * s * s * s : 1.0f - std:
 
 glm::vec3 positionOf(const Gaussian3D& g) { return {g.position[0], g.position[1], g.position[2]}; }
 
+#ifdef KLARTRAUM_WITH_FREETYPE
 // The lantern camera of test_scene::frameLantern() without a Vulkan context.
 glm::mat4 lanternView(const test_scene::Scene& scene) {
     const glm::mat4 view = glm::lookAt(glm::vec3(0.35f, 0.0f, 0.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
@@ -280,8 +286,11 @@ void writePPM(const std::filesystem::path& path, const std::vector<uint8_t>& bgr
     }
 }
 
+#endif // KLARTRAUM_WITH_FREETYPE
+
 } // namespace
 
+#ifdef KLARTRAUM_WITH_FREETYPE
 TEST(GaussianMorph, exactCountSampling) {
     REQUIRE_FONT(font, "Unbounded");
     REQUIRE_FONT(mono, "JetBrainsMono");
@@ -302,6 +311,7 @@ TEST(GaussianMorph, exactCountSampling) {
         EXPECT_EQ(outside, 0u);
     }
 }
+#endif // KLARTRAUM_WITH_FREETYPE
 
 TEST(GaussianMorph, placementFacesCamera) {
     // A camera above and to the side of the pivot, two units away.
@@ -344,6 +354,7 @@ TEST(GaussianMorph, placementFacesCamera) {
     EXPECT_NEAR(normal.z, 1.0f, 1e-5f);
 }
 
+#ifdef KLARTRAUM_WITH_FREETYPE
 TEST(GaussianMorph, placedTitleRendersLikeMask) {
     REQUIRE_FONT(font, "Unbounded");
     REQUIRE_FONT(mono, "JetBrainsMono");
@@ -410,6 +421,7 @@ TEST(GaussianMorph, placedTitleRendersLikeMask) {
     std::cout << "placed title: " << splats.size() << " splats, IoU " << iou << std::endl;
     EXPECT_GE(iou, 0.90);
 }
+#endif // KLARTRAUM_WITH_FREETYPE
 
 TEST(GaussianMorph, matchingIsPermutation) {
     const auto text = randomPoints(1001, 1);
@@ -441,6 +453,7 @@ TEST(GaussianMorph, matchingFindsIdenticalPoints) {
     }
 }
 
+#ifdef KLARTRAUM_WITH_FREETYPE
 TEST(GaussianMorph, matchingIsCoherent) {
     REQUIRE_FONT(font, "Unbounded");
     REQUIRE_FONT(mono, "JetBrainsMono");
@@ -475,6 +488,7 @@ TEST(GaussianMorph, matchingIsCoherent) {
     // Measured: 0.038 against 0.195 for a random matching.
     EXPECT_LT(matched, 0.3 * random);
 }
+#endif // KLARTRAUM_WITH_FREETYPE
 
 TEST(GaussianMorph, prepareTextMorphOrdersLikeScene) {
     auto text = randomPoints(500, 6);
@@ -743,6 +757,7 @@ TEST_F(GaussianMorphGpu, explosionsBurstOutward) {
     }
 }
 
+#ifdef KLARTRAUM_WITH_FREETYPE
 TEST_F(GaussianMorphGpu, morphRendersTitleThenLantern) {
     REQUIRE_FONT(font, "Unbounded");
     REQUIRE_FONT(mono, "JetBrainsMono");
@@ -820,3 +835,4 @@ TEST_F(GaussianMorphGpu, morphRendersTitleThenLantern) {
         }
     }
 }
+#endif // KLARTRAUM_WITH_FREETYPE
