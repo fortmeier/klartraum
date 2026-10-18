@@ -146,16 +146,19 @@ target_link_libraries(lantern_walk_example
 
 add_dependencies(lantern_walk_example Shaders)
 
-# klartraum tech demo 000: the promo video in one continuous shot around the lantern
-add_executable(techdemo000_example
-    techdemo000_example.cpp
-)
+# The tech demo sets its title and captions with FreeType (KLARTRAUM_WITH_FREETYPE).
+if(KLARTRAUM_WITH_FREETYPE)
+  # klartraum tech demo 000: the promo video in one continuous shot around the lantern
+  add_executable(techdemo000_example
+      techdemo000_example.cpp
+  )
 
-target_link_libraries(techdemo000_example
-    klartraum_lib
-)
+  target_link_libraries(techdemo000_example
+      klartraum_lib
+  )
 
-add_dependencies(techdemo000_example Shaders)
+  add_dependencies(techdemo000_example Shaders)
+endif()
 
 # The tech demo's compute graphs as JSON, for the technical chapter's graph pictures
 add_executable(techdemo000_graphs

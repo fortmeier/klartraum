@@ -320,7 +320,6 @@ add_executable(
   tests/test_simple_text_renderer.cpp
   tests/test_text_rendering.cpp
   tests/test_gaussian_morph.cpp
-  tests/test_demo_timeline.cpp
   tests/test_gaussian_lighting.cpp
   tests/test_skeleton_gaussians.cpp
   tests/test_skeleton_mesh_renderer.cpp
@@ -367,7 +366,6 @@ set(KLARTRAUM_LIB_SRC
   src/image_io.cpp
   src/rendering/gaussian_morph.cpp
   src/rendering/gaussian_lighting.cpp
-  src/demo_timeline.cpp
   src/skeleton_gaussians.cpp
   src/skeleton_mesh_renderer.cpp
   ${SPZ_SRC}
@@ -387,7 +385,7 @@ set(LIBRARIES
 )
 
 if(KLARTRAUM_WITH_FREETYPE)
-  target_sources(klartraum_lib PRIVATE src/rendering/text_gaussians.cpp)
+  target_sources(klartraum_lib PRIVATE src/rendering/text_gaussians.cpp src/demo_timeline.cpp)
   list(APPEND LIBRARIES freetype)
 endif()
 
@@ -418,7 +416,7 @@ target_link_libraries(
   klartraum_lib
   )
 if(KLARTRAUM_WITH_FREETYPE)
-  target_sources(klartraum_tests PRIVATE tests/test_text_gaussians.cpp)
+  target_sources(klartraum_tests PRIVATE tests/test_text_gaussians.cpp tests/test_demo_timeline.cpp)
 endif()
 
 include(GoogleTest)

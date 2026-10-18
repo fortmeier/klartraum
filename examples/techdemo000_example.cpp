@@ -487,7 +487,7 @@ std::filesystem::path vaeDirectory(uint32_t size) { return "data/onnx/sd15_" + s
  */
 struct CloseUpRender {
     std::shared_ptr<klartraum::OffscreenTarget> sceneTarget, poseTarget, maskTarget, pasteTarget;
-    std::shared_ptr<klartraum::ComputeGraphElement> splatting;
+    std::shared_ptr<klartraum::GaussianSplattingInterface> splatting;
     std::shared_ptr<klartraum::RenderPass> posePass, maskPass, pastePass;
 };
 
