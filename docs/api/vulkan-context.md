@@ -11,8 +11,7 @@ queue families and synchronization primitives.
 
 ## Buffers
 
-```{doxygenclass} klartraum::VulkanBuffer
-```
+{cpp:class}`klartraum::VulkanBuffer` and the buffer elements are documented in {doc}`buffers`.
 
 ## Shader and asset files
 

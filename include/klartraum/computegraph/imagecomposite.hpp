@@ -53,6 +53,11 @@ struct ImageCompositePushConstants {
 class ImageComposite : public ImageViewForward {
 public:
     /**
+     * @param vulkanContext The context the draw computation runs in.
+     * @param sourceExtent The extent of the source image.
+     * @param targetExtent The extent of the target image.
+     * @param mode How the source's pixels combine with the target's.
+     * @param fit Where the source is drawn on the target.
      * @param sourceLayout The layout the source is in; it is read in, and
      *        left in, VK_IMAGE_LAYOUT_GENERAL.
      */

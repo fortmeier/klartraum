@@ -159,7 +159,9 @@ public:
     /**
      * @brief Copies `source` (of the same extent and the swapchain's format)
      *        into the image, waiting for the copy to finish.
+     * @param source The image to copy.
      * @param sourceLayout The layout `source` is in; it is left in it.
+     * @param sourceExtent The extent of `source`; it must equal extent().
      * @param queue The queue that copies (default: the graphics queue; see
      *        VulkanContext::submitImmediate()).
      * @throws std::invalid_argument If the extents differ.

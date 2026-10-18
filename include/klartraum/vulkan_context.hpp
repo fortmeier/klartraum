@@ -254,6 +254,7 @@ public:
      * @brief Records commands into a one-time command buffer, submits it to
      *        `queue` and waits for it to finish. Safe to call from several
      *        threads.
+     * @param record Records the commands into the command buffer it is given.
      * @param queue The graphics queue (the default) or the background queue.
      *        Work on a worker thread passes the background queue, so that it
      *        does not wait behind the frames.
