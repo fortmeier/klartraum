@@ -70,6 +70,23 @@ Gaussians can be changed on the GPU every frame before they are rendered:
 {cpp:class}`klartraum::GaussianTransform` applies a transform from a
 {cpp:class}`klartraum::TransformBuffer`, and
 {cpp:class}`klartraum::GaussianMerge` combines two sets into one.
+{cpp:class}`klartraum::GaussianMorph` blends one set into another of the
+same size along one of several paths (straight, swirl, scatter, wave,
+explosions), driven by {cpp:struct}`klartraum::MorphParams` in a host-updated
+buffer. {cpp:class}`klartraum::GaussianLighting` relights a scene with point
+lights, using materials baked once on the CPU with `bakeSplatMaterials()`
+(normal, roughness and a coarse visibility per Gaussian).
+
+## Text as Gaussians
+
+`rasterizeTitle()` lays out lines of text with FreeType, from any
+{cpp:class}`klartraum::Font` (variable fonts at any weight), into a coverage
+mask, and `sampleTextGaussians()` places Gaussians inside the letters, kept
+slightly inside the outline so the soft splat edges do not embolden the font.
+It can produce exactly as many Gaussians as a scene has, so that
+`prepareTextMorph()` and a GaussianMorph turn the text into the scene, as
+`title_morph_example` does. The build downloads a few OFL fonts into
+`build/fonts/` (`-DKLARTRAUM_DOWNLOAD_FONTS=OFF` skips that).
 
 ## Current limitations
 
