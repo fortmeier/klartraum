@@ -192,7 +192,7 @@ Klartraum is a Vulkan 1.3 compute/rendering framework for real-time neural rende
 
 5. **Neural rendering components**
    - Gaussian splatting with two interchangeable backends, created through `createGaussianSplatting()` (`gaussian_splatting_factory.hpp`): `VulkanGaussianSplatting` (compute: projection → binning → radix sort → prefix sum → bounds → splatting) and `VulkanGaussianSplattingRaster` (sort once, hardware rasterization). Scenes are `.spz` files loaded via the `spz` submodule; tests use `data/lantern.spz` through `tests/test_scene.hpp`.
-   - `OnnxNetwork` (`src/onnx_network.cpp`) — ONNX model loader that turns a model into compute graph elements; supports Conv, ConvTranspose, Relu, Reshape, Transpose and Constant.
+   - `OnnxNetwork` (`src/onnx_network.cpp`) — ONNX model loader that turns a model into compute graph elements; the operators are listed in `onnx_operations.hpp` and built from the layer factories in `layers.hpp`. `TensorMemoryPlanner` reuses tensor storage across non-overlapping lifetimes.
 
 ### Data flow for a rendered frame
 `Frontend::loop()` → `KlartraumEngine::step()` → `ComputeGraph::submitTo()` → pre-recorded Vulkan command buffers → swapchain present / readback.

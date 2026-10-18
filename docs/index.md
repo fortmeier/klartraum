@@ -24,8 +24,9 @@ inference engine built on top of Vulkan.
 ## Status
 
 Klartraum is at an early stage of development. The compute graph is
-implemented, Gaussian splatting runs on the GPU and a first set of ONNX
-operators is supported.
+implemented, Gaussian splatting runs on the GPU with two backends, and ONNX
+models with about 30 operators run as compute graph elements, with tensor
+memory planning and fused attention kernels.
 
 ```{toctree}
 :hidden:
