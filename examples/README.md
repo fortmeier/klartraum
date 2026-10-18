@@ -36,7 +36,7 @@ relative to the working directory.
 | `openpose_skeleton_example` | A 3D skeleton drawn as ControlNet OpenPose pose maps from a camera circling it | no |
 | `pose_to_video_example` | Neural character animation turned into a photorealistic video with ControlNet-OpenPose and SD1.5 | no |
 | `lantern_walk_example` | A neural animated character walking around the lantern scene, as an OpenPose skeleton with inpainting masks | no |
-| `techdemo000_example` | "klartraum tech demo 000": the promo video in one continuous shot around the lantern, chapter by chapter with captions | no |
+| `techdemo000_example` | "klartraum tech demo 000": the promo video in one continuous shot around the lantern, chapter by chapter with captions (needs `KLARTRAUM_WITH_FREETYPE`) | no |
 
 ### Camera controls
 
@@ -393,7 +393,7 @@ ffmpeg -framerate 15 -i build/TestingOutput/lantern_generate/generated_%04d.ppm 
 
 ### `techdemo000_example`
 
-Renders the promo video "klartraum tech demo 000" without a window: one
+Built only with `-DKLARTRAUM_WITH_FREETYPE=ON`. Renders the promo video "klartraum tech demo 000" without a window: one
 continuous shot that circles the lantern, in chapters that each add a feature.
 So far: (1) the title made of the lantern's Gaussians holds still and morphs
 into the scene (`MorphVariant::SwirlScatter`), (2) the captured scene with a
