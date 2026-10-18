@@ -34,8 +34,11 @@ Early development. What works today:
   Gaussians with FreeType (optional, `-DKLARTRAUM_WITH_FREETYPE=ON`);
 - buffers in device-local or host-visible memory, with staged uploads, and
   per-frame updates of Gaussians from the CPU before a frame is submitted;
-- ONNX models with the operators `Conv`, `ConvTranspose`, `Relu`, `Reshape`,
-  `Transpose` and `Constant`;
+- ONNX models with about 30 operators (convolutions, matrix products,
+  normalizations, attention building blocks, elementwise and shape operators),
+  run as compute graph elements with tensors in device-local memory, tensor
+  storage reused across non-overlapping lifetimes and fused kernels for
+  attention, normalization and matrix-product epilogues;
 - windowed (GLFW) and headless frontends, several viewports in one window,
   resizable windows and a debug text overlay.
 
