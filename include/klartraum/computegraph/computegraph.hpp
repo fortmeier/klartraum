@@ -295,6 +295,8 @@ private:
     float profilingTimestampPeriodNs = 1.0f;
     // Per ordered_element: {accumulated nanoseconds, sample count}
     std::vector<std::pair<double, uint64_t>> profilingAccum;
+    // From the first element's start to the last element's end, per submission: {sum in ns, count}.
+    std::pair<double, uint64_t> profilingSpanAccum{0.0, 0ULL};
 
     // ---- Performance counter profiling -----------------------------------
     // Tries VK_KHR_performance_query first; falls back to pipeline statistics
@@ -452,6 +454,14 @@ public:
     void resetProfiling() {
         std::fill(profilingAccum.begin(), profilingAccum.end(), std::pair<double, uint64_t>{0.0, 0ULL});
         std::fill(perfAccum.begin(), perfAccum.end(), std::pair<double, uint64_t>{0.0, 0ULL});
+        profilingSpanAccum = {0.0, 0ULL};
+    }
+
+    // The mean GPU time from the first element's start to the last element's end in milliseconds (profiling
+    // enabled): the elements' times and the time between them, e.g. their barriers.
+    double getGpuSpanMs() const {
+        const auto& [totalNs, count] = profilingSpanAccum;
+        return count > 0 ? totalNs / double(count) * 1e-6 : 0.0;
     }
 
     // The mean GPU time of each element in milliseconds, in the order of getElements() (profiling enabled).
@@ -510,11 +520,20 @@ public:
             if (r != VK_SUCCESS && r != VK_NOT_READY)
                 return;
         }
+        uint64_t first = UINT64_MAX, last = 0;
         for (uint32_t i = 0; i < n; ++i) {
             if (ts[2 * i + 1] >= ts[2 * i]) {
                 profilingAccum[i].first += double(ts[2 * i + 1] - ts[2 * i]) * profilingTimestampPeriodNs;
                 profilingAccum[i].second += 1;
+                if (ts[2 * i] > 0) {
+                    first = std::min(first, ts[2 * i]);
+                    last = std::max(last, ts[2 * i + 1]);
+                }
             }
+        }
+        if (last > first) {
+            profilingSpanAccum.first += double(last - first) * profilingTimestampPeriodNs;
+            profilingSpanAccum.second += 1;
         }
     }
 

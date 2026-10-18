@@ -14,6 +14,8 @@
  * time for every dispatch
  * - elementTimesAndGraphJson: getElementTimesMs() gives a time per compiled element in getElements() order, is zero
  * after resetProfiling(), and writeGraphJson() writes every element, edge and group with these times
+ * - profilingGpuSpanCoversElements: the GPU span of a profiled graph is at least the sum of its elements' times, and
+ * reset with resetProfiling()
  * - longDependencyChainCompletes: a chain of thousands of dependent dispatches (larger than the SD1.5 UNet graph)
  * finishes and applies every dispatch in order
  * - submitChecksQueueFamily: a graph compiled for a queue family runs on a queue of that family, and submitting it
@@ -345,6 +347,47 @@ TEST(ComputeGraph, elementTimesAndGraphJson) {
     for (double ms : graph.getElementTimesMs()) {
         EXPECT_EQ(ms, 0.0);
     }
+}
+
+TEST(ComputeGraph, profilingGpuSpanCoversElements) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 1 << 16;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+    auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto first = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    std::shared_ptr<GeneralComputation<>> last;
+    for (int i = 0; i < 20; ++i) {
+        auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+        if (last) {
+            op->setInput(last, 0, 2);
+        } else {
+            op->setInput(first, 0);
+        }
+        op->setInput(factors, 1);
+        op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+        op->setGroupCountX(kLength);
+        last = op;
+    }
+    auto graph = ComputeGraph(vc, 1);
+    graph.enableProfiling();
+    graph.compileFrom(last);
+    EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
+
+    for (int frame = 0; frame < 3; ++frame) {
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    }
+    double elements = 0.0;
+    for (double ms : graph.getElementTimesMs()) {
+        elements += ms;
+    }
+    EXPECT_GT(elements, 0.0);
+    EXPECT_GE(graph.getGpuSpanMs(), elements * 0.999);
+
+    graph.resetProfiling();
+    EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
 }
 
 // ----------------------------------------------------------------
