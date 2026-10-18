@@ -66,24 +66,27 @@ target_link_libraries(turntable_example
 
 add_dependencies(turntable_example Shaders)
 
-# The promo title as Gaussians, rendered once per candidate font
-add_executable(title_font_example
-    title_font_example.cpp
-)
+# The title examples set text with FreeType (KLARTRAUM_WITH_FREETYPE).
+if(KLARTRAUM_WITH_FREETYPE)
+  # The promo title as Gaussians, rendered once per candidate font
+  add_executable(title_font_example
+      title_font_example.cpp
+  )
 
-target_link_libraries(title_font_example
-    klartraum_lib
-)
+  target_link_libraries(title_font_example
+      klartraum_lib
+  )
 
-add_dependencies(title_font_example Shaders)
+  add_dependencies(title_font_example Shaders)
 
-# The opening shot of the promo video: the title morphs into the rotating lantern
-add_executable(title_morph_example
-    title_morph_example.cpp
-)
+  # The opening shot of the promo video: the title morphs into the rotating lantern
+  add_executable(title_morph_example
+      title_morph_example.cpp
+  )
 
-target_link_libraries(title_morph_example
-    klartraum_lib
-)
+  target_link_libraries(title_morph_example
+      klartraum_lib
+  )
 
-add_dependencies(title_morph_example Shaders)
+  add_dependencies(title_morph_example Shaders)
+endif()

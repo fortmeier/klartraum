@@ -29,8 +29,8 @@ relative to the working directory.
 | `draw_basics_example` | Coordinate axes drawn with `DrawBasics` in a render pass | yes |
 | `onnx_example` | Loading an ONNX model, printing its structure and compiling it into a compute graph | opens one, exits right away |
 | `turntable_example` | Headless rendering: one image per frame from a camera circling the scene | no |
-| `title_font_example` | The promo title set in several fonts and turned into Gaussians, rendered front-on for comparison | no |
-| `title_morph_example` | The promo opening shot: the title, made of the scene's Gaussians, morphs into the turning lantern | no |
+| `title_font_example` | The promo title set in several fonts and turned into Gaussians, rendered front-on for comparison (needs `KLARTRAUM_WITH_FREETYPE`) | no |
+| `title_morph_example` | The promo opening shot: the title, made of the scene's Gaussians, morphs into the turning lantern (needs `KLARTRAUM_WITH_FREETYPE`) | no |
 
 ### Camera controls
 
@@ -151,9 +151,9 @@ Sets the promo title ("klartraum" over "tech demo 000") in each of several
 fonts with FreeType, places white Gaussians inside the letters
 (`text_gaussians.hpp`) and renders them front-on, white on black. Writes one
 image per font to `frames/<Font>.ppm` and all of them, half size and labelled,
-to `contact_sheet.ppm`. The fonts are downloaded by the build to `build/fonts/`
-(see `cmake/KlartraumFonts.cmake`); configure with
-`-DKLARTRAUM_DOWNLOAD_FONTS=OFF` to skip that.
+to `contact_sheet.ppm`. Built only with `-DKLARTRAUM_WITH_FREETYPE=ON`; the
+fonts are then downloaded by the build to `build/fonts/` (see
+`cmake/KlartraumFonts.cmake`).
 
 | Option | Meaning |
 |---|---|
@@ -181,7 +181,7 @@ ffmpeg -i build/TestingOutput/title_fonts/contact_sheet.ppm title_fonts.png
 
 ### `title_morph_example`
 
-Renders the opening shot of the promo video without a window. The title
+Built only with `-DKLARTRAUM_WITH_FREETYPE=ON`. Renders the opening shot of the promo video without a window. The title
 ("klartraum" in Unbounded over "tech demo 000" in JetBrains Mono) is sampled
 with exactly as many splats as the scene has Gaussians and placed facing the
 camera at the scene centre. After `--title-seconds` it morphs into the scene
