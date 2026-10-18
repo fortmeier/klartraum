@@ -29,6 +29,9 @@ Early development. What works today:
   images;
 - Gaussian splatting with a compute and a raster backend (`.spz` scenes),
   optionally writing a depth buffer for compositing other geometry;
+- operations on Gaussians on the GPU every frame: transforming, merging,
+  morphing one set into another and relighting with point lights; text set as
+  Gaussians with FreeType (optional, `-DKLARTRAUM_WITH_FREETYPE=ON`);
 - buffers in device-local or host-visible memory, with staged uploads, and
   per-frame updates of Gaussians from the CPU before a frame is submitted;
 - ONNX models with the operators `Conv`, `ConvTranspose`, `Relu`, `Reshape`,
@@ -45,7 +48,9 @@ Ray tracing is not implemented yet.
 - tested on Windows (Visual Studio 2022) and macOS on Apple Silicon (MoltenVK
   or KosmicKrisp); Linux is not tested yet
 
-All other dependencies are git submodules or are downloaded by CMake.
+All other dependencies are git submodules or are downloaded by CMake. Optional
+features and their downloads are switched on with CMake options, listed in the
+[build documentation](https://klartraum.ai/docs/getting-started/building.html#build-options).
 
 ## Quick start
 
