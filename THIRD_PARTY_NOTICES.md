@@ -14,11 +14,11 @@ distributes a build has to pass these notices on with it.
 | Abseil (part of Protocol Buffers) | as bundled with Protocol Buffers 25.1 | Apache-2.0 |
 | utf8_range (part of Protocol Buffers) | as bundled with Protocol Buffers 25.1 | MIT |
 | GLM | 1.0.1 | MIT |
-| FreeType | 2.14.3 | FTL (FreeType License; dual-licensed FTL OR GPL-2.0-or-later) |
+| FreeType (only with `KLARTRAUM_WITH_FREETYPE`) | 2.14.3 | FTL (FreeType License; dual-licensed FTL OR GPL-2.0-or-later) |
 | Zstandard | 1.5.6 | BSD-3-Clause |
 | ONNX (`onnx.proto`) | 1.20.1 | Apache-2.0 |
 | Vulkan headers | from the Vulkan SDK used for the build | MIT (dual-licensed Apache-2.0 OR MIT) |
-| Fonts in `build/fonts/` (Space Grotesk, Geist, Unbounded, Syne, IBM Plex Sans, Fraunces, JetBrains Mono) | google/fonts at commit 47d54ca | OFL-1.1 |
+| Fonts in `build/fonts/` (only with `KLARTRAUM_WITH_FREETYPE`; Space Grotesk, Geist, Unbounded, Syne, IBM Plex Sans, Fraunces, JetBrains Mono) | google/fonts at commit 47d54ca | OFL-1.1 |
 
 Not included in builds, but used by them or by the tests:
 
@@ -764,7 +764,7 @@ SOFTWARE.
 ## Fonts
 
 The fonts the title text is set in (`text_gaussians`, `title_font_example`) are
-downloaded by the build (`cmake/KlartraumFonts.cmake`) from the google/fonts
+downloaded by builds with `KLARTRAUM_WITH_FREETYPE` (`cmake/KlartraumFonts.cmake`) from the google/fonts
 repository at commit 47d54ca1ebb14fd864695f1d39dc734f39017c33 into
 `build/fonts/`, each with its `OFL.txt`; they are not part of the repository.
 License: SIL Open Font License 1.1.
