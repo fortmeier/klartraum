@@ -441,6 +441,29 @@ public:
         perfUsingHwCounters = true;
     }
 
+    // Reads the timestamps of the last submission into the means of getProfilingResults(), as submitAndWait()
+    // does; for submissions the graph does not wait for itself (GraphChain), after they finished.
+    void readProfiling() {
+        readAndAccumulateTimestamps();
+        readAndAccumulatePerformanceCounters();
+    }
+
+    // Starts the means of getProfilingResults() anew, e.g. after warm-up frames.
+    void resetProfiling() {
+        std::fill(profilingAccum.begin(), profilingAccum.end(), std::pair<double, uint64_t>{0.0, 0ULL});
+        std::fill(perfAccum.begin(), perfAccum.end(), std::pair<double, uint64_t>{0.0, 0ULL});
+    }
+
+    // The mean GPU time of each element in milliseconds, in the order of getElements() (profiling enabled).
+    std::vector<double> getElementTimesMs() const {
+        std::vector<double> times(ordered_elements.size(), 0.0);
+        for (size_t i = 0; i < times.size() && i < profilingAccum.size(); ++i) {
+            const auto& [totalNs, count] = profilingAccum[i];
+            times[i] = count > 0 ? totalNs / double(count) * 1e-6 : 0.0;
+        }
+        return times;
+    }
+
     // Returns {elementName, meanTimeMs} for timestamp entries, followed by
     // {elementName " [" counterName "]", meanValue} for performance counter entries.
     std::vector<std::pair<std::string, float>> getProfilingResults() const {

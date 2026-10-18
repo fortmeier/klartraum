@@ -12,6 +12,8 @@
  * - executionOnlyDependenciesAreUnique: resource-order dependencies remain separate from shader inputs
  * - profilingSpansMultipleQueryPools: a graph with more elements than one timestamp pool holds reports a nonzero GPU
  * time for every dispatch
+ * - elementTimesAndGraphJson: getElementTimesMs() gives a time per compiled element in getElements() order, is zero
+ * after resetProfiling(), and writeGraphJson() writes every element, edge and group with these times
  * - longDependencyChainCompletes: a chain of thousands of dependent dispatches (larger than the SD1.5 UNet graph)
  * finishes and applies every dispatch in order
  * - submitChecksQueueFamily: a graph compiled for a queue family runs on a queue of that family, and submitting it
@@ -24,7 +26,11 @@
  * run on the background queue when given it
  **/
 
+#include <algorithm>
 #include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <map>
 #include <thread>
 #include <vector>
@@ -33,6 +39,7 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/computegraph/graph_export.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/draw_basics.hpp"
@@ -272,6 +279,72 @@ TEST(ComputeGraph, profilingSpansMultipleQueryPools) {
         EXPECT_GT(ms, 0.0f) << name;
     }
     EXPECT_EQ(timedDispatches, kDispatches);
+}
+
+TEST(ComputeGraph, elementTimesAndGraphJson) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 1 << 16;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+    auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto input = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    std::vector<std::shared_ptr<GeneralComputation<>>> ops;
+    for (int i = 0; i < 3; ++i) {
+        auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+        op->setName("op_" + std::to_string(i));
+        if (ops.empty()) {
+            op->setInput(input, 0);
+        } else {
+            op->setInput(ops.back(), 0, 2);
+        }
+        op->setInput(factors, 1);
+        op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+        op->setGroupCountX(kLength);
+        ops.push_back(op);
+    }
+    auto graph = ComputeGraph(vc, 1);
+    graph.enableProfiling();
+    graph.compileFrom(ops.back());
+
+    const auto& elements = graph.getElements();
+    EXPECT_EQ(graph.getElementTimesMs().size(), elements.size());
+    for (int frame = 0; frame < 3; ++frame) {
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    }
+    const std::vector<double> times = graph.getElementTimesMs();
+    ASSERT_EQ(times.size(), elements.size());
+    for (const auto& op : ops) {
+        const auto it = std::find(elements.begin(), elements.end(), op);
+        ASSERT_NE(it, elements.end());
+        EXPECT_GT(times[it - elements.begin()], 0.0) << op->getName();
+    }
+
+    std::filesystem::create_directories("build/TestingOutput");
+    const std::filesystem::path path = "build/TestingOutput/compute_graph_export.json";
+    writeGraphJson(path, "three ops", graph, {{"tail", ops[2], {ops[0]}}});
+    std::ifstream in(path);
+    std::stringstream json;
+    json << in.rdbuf();
+    const std::string text = json.str();
+    EXPECT_NE(text.find("\"name\": \"three ops\""), std::string::npos);
+    EXPECT_NE(text.find("\"ms\": "), std::string::npos);
+    for (const auto& op : ops) {
+        EXPECT_NE(text.find(std::string("\"name\": \"") + op->getName() + "\""), std::string::npos);
+    }
+    size_t edges = 0;
+    for (const auto& element : elements) {
+        edges += graph.getPredecessors(element).size();
+    }
+    const std::string edgeList = text.substr(text.find("\"edges\""));
+    EXPECT_EQ(size_t(std::count(edgeList.begin(), edgeList.end(), '[')) - 1, edges);
+    EXPECT_NE(text.find("\"groups\": [{\"name\": \"tail\""), std::string::npos);
+
+    graph.resetProfiling();
+    for (double ms : graph.getElementTimesMs()) {
+        EXPECT_EQ(ms, 0.0);
+    }
 }
 
 // ----------------------------------------------------------------
