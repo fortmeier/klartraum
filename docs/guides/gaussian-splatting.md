@@ -50,6 +50,17 @@ benefits from, for example the footprint multiplier used for binning, the
 radix-sort workgroup cap, the splatting tile size and the spherical-harmonics
 degree. Set them before the splatting element is created.
 
+## Depth output
+
+With `GsplatConfig::outputDepth`, either backend also writes a per-pixel depth
+buffer, read with `getGaussianSplattingDepth()`: the NDC depth of the scene's
+surface, or +inf where there is none, so other geometry can be composited into
+the scene instead of over it. The compute backend reports the median depth,
+where the transmittance first falls to 0.5, and the raster backend the nearest
+depth of a splat that alone covers the pixel with an opacity of at least 0.5.
+Both agree on opaque surfaces. The colour image is the same with and without
+depth output.
+
 ## Operating on Gaussians
 
 Gaussians can be changed on the GPU every frame before they are rendered:
@@ -59,5 +70,6 @@ Gaussians can be changed on the GPU every frame before they are rendered:
 
 ## Current limitations
 
-- Depth values are not written, so splats are not occluded by other geometry.
+- Depth is written only on request (`GsplatConfig::outputDepth`); compositing
+  other geometry with it is up to the application.
 - The compute pipeline is not fully optimized yet.
