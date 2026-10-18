@@ -11,6 +11,10 @@
  * - linksRunInChainOrder: two graphs (double, add one) give results that depend on their order in the chain
  * - chainRunsEveryFrame: the same chain submitted for several frames, with host data reset in between, gives the
  *   same result each frame
+ * - sharedBufferElementAllocatedOnce: a BufferElement in two graphs keeps the buffers of the first graph, and a graph
+ *   with another number of paths cannot share it
+ * - pathsInFlightStaySeparate: two chains over different paths of the same graphs, both submitted before waiting,
+ *   each compute on their own path's buffers
  **/
 
 #include <memory>
@@ -180,5 +184,75 @@ TEST(GraphChain, chainRunsEveryFrame) {
         fill(x, float(frame));
         chain.submitAndWait(vc.getGraphicsQueue());
         expectAll(read(x), (float(frame) * 2.0f + 1.0f) * 2.0f);
+    }
+}
+
+namespace {
+
+using PathFloats = BufferElement<VulkanBuffer<float>>;
+
+// x = x * factor, in place, on buffers with one allocation per path.
+std::shared_ptr<GeneralComputation<>> multiplyPaths(VulkanContext& vc, const std::shared_ptr<PathFloats>& x,
+                                                    const std::shared_ptr<FloatBuffer>& factor) {
+    auto op = std::make_shared<GeneralComputation<>>(vc, "shaders/operator_multiply_scalar_element_wise.comp.spv");
+    op->setInput(x, 0);
+    op->setInput(factor, 1);
+    op->setInput(x, 2);
+    op->setGroupCountX(kLength);
+    return op;
+}
+
+} // namespace
+
+TEST(GraphChain, sharedBufferElementAllocatedOnce) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto x = std::make_shared<PathFloats>(vc, kLength);
+    auto factor = makeBuffer(vc, 2.0f);
+    ComputeGraph first(vc, 2);
+    first.compileFrom(multiplyPaths(vc, x, factor));
+    const VkBuffer path0 = x->getVkBuffer(0);
+    const VkBuffer path1 = x->getVkBuffer(1);
+    EXPECT_NE(path0, path1);
+
+    ComputeGraph second(vc, 2);
+    second.compileFrom(multiplyPaths(vc, x, factor));
+    EXPECT_EQ(x->getVkBuffer(0), path0);
+    EXPECT_EQ(x->getVkBuffer(1), path1);
+
+    ComputeGraph otherPaths(vc, 3);
+    EXPECT_THROW(otherPaths.compileFrom(multiplyPaths(vc, x, factor)), std::runtime_error);
+}
+
+TEST(GraphChain, pathsInFlightStaySeparate) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto x = std::make_shared<PathFloats>(vc, kLength);
+    auto two = makeBuffer(vc, 2.0f);
+    auto three = makeBuffer(vc, 3.0f);
+    ComputeGraph doubling(vc, 2);
+    doubling.enableSimultaneousUse();
+    doubling.compileFrom(multiplyPaths(vc, x, two));
+    ComputeGraph tripling(vc, 2);
+    tripling.compileFrom(multiplyPaths(vc, x, three));
+
+    GraphChain frame0(vc), frame1(vc);
+    for (auto [chain, path] : {std::pair{&frame0, 0u}, std::pair{&frame1, 1u}}) {
+        chain->add(doubling, path);
+        chain->add(tripling, path);
+        chain->add(doubling, path);
+    }
+    for (int round = 0; round < 3; ++round) {
+        x->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 1.0f));
+        x->getBuffer(1).memcopyFrom(std::vector<float>(kLength, 10.0f));
+        frame0.submit(vc.getGraphicsQueue());
+        frame1.submit(vc.getGraphicsQueue());
+        frame0.wait();
+        frame1.wait();
+        std::vector<float> values(kLength);
+        x->getBuffer(0).memcopyTo(values);
+        expectAll(values, 12.0f);
+        x->getBuffer(1).memcopyTo(values);
+        expectAll(values, 120.0f);
     }
 }
