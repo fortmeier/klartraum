@@ -53,9 +53,11 @@ as on macOS are expected to work.
 |---|---|---|
 | `KLARTRAUM_BUILD_TESTS` | `ON` when built as the top-level project | Build the GoogleTest suite `klartraum_tests` |
 | `KLARTRAUM_BUILD_EXAMPLES` | `ON` when built as the top-level project | Build the example applications |
+| `KLARTRAUM_WITH_FREETYPE` | `OFF` | Build text as Gaussians (`text_gaussians.hpp`), its tests and the title examples; downloads FreeType and a few OFL fonts |
+| `KLARTRAUM_DOWNLOAD_FONTS` | `ON` | With `KLARTRAUM_WITH_FREETYPE`: download the fonts into `build/fonts/` |
 
 When Klartraum is consumed through `add_subdirectory()` or `FetchContent`,
-both default to `OFF`; link against the `klartraum_lib` target to get the
+the first two default to `OFF`; link against the `klartraum_lib` target to get the
 library and its headers.
 
 ## Shaders

@@ -82,8 +82,9 @@ mask, and `sampleTextGaussians()` places Gaussians inside the letters, kept
 slightly inside the outline so the soft splat edges do not embolden the font.
 It can produce exactly as many Gaussians as a scene has, so that
 `prepareTextMorph()` and a GaussianMorph turn the text into the scene, as
-`title_morph_example` does. The build downloads a few OFL fonts into
-`build/fonts/` (`-DKLARTRAUM_DOWNLOAD_FONTS=OFF` skips that).
+`title_morph_example` does. Text as Gaussians needs FreeType and is built only
+with `-DKLARTRAUM_WITH_FREETYPE=ON`; such a build also downloads a few OFL
+fonts into `build/fonts/` (`-DKLARTRAUM_DOWNLOAD_FONTS=OFF` skips that).
 
 ## Current limitations
 
