@@ -40,7 +40,7 @@ struct BonsaiRenderConfig {
     float lightVoxel = 0.035f;          ///< voxel size of the light volume (shadows and sky occlusion)
     uint32_t supersample = 2;           ///< the classical renderer draws at this times the resolution
     uint32_t numberPaths = 1;           ///< of the graph the renderer is compiled into
-    uint32_t mossPatches = 250;         ///< patches of the captured moss laid on the soil
+    uint32_t mossPatches = 1500;        ///< patches of the captured moss laid on the soil
 };
 
 /**
