@@ -12,6 +12,8 @@
  *   their control point; flattening moves control points onto the chord
  * - loopBlinnSidesOfTheCurve: the implicit form is zero on the curve, negative on the chord side, positive
  *   on the control side
+ * - leafColoursVaryAroundTheBase: treeLeafAlbedo varies per leaf in hue and brightness, a little per tree, and
+ *   averages near the base colour; undersides are paler and greyer
  * - leafLodIsContinuous: flatten goes from 0 to 1 between leafLod.x and .y, distant leaves are kept with the
  *   kept fraction and grow by 1/sqrt of it, and leaves near the threshold shrink smoothly
  * - singleLeafMatchesOutline: a rendered leaf facing the camera covers the pixels of its analytic outline
@@ -161,6 +163,31 @@ TEST(TreeLeafShape, loopBlinnSidesOfTheCurve) {
     }
     EXPECT_LT(treeLoopBlinn(glm::vec2(0.5f, 0.5f)), 0.0f); // middle of the chord
     EXPECT_GT(treeLoopBlinn(glm::vec2(0.5f, 0.0f)), 0.0f); // the control point
+}
+
+TEST(TreeLeafShape, leafColoursVaryAroundTheBase) {
+    const glm::vec3 base(0.08f, 0.15f, 0.035f);
+    glm::vec3 sum(0.0f);
+    float minLuma = 1.0f, maxLuma = 0.0f, minRatio = 10.0f, maxRatio = 0.0f;
+    const int n = 4000;
+    for (int i = 0; i < n; ++i) {
+        const glm::vec3 c = treeLeafAlbedo(base, uint32_t(i), 7u);
+        sum += c;
+        const float luma = glm::dot(c, glm::vec3(0.3f, 0.59f, 0.11f));
+        minLuma = std::min(minLuma, luma);
+        maxLuma = std::max(maxLuma, luma);
+        minRatio = std::min(minRatio, c.r / c.b);
+        maxRatio = std::max(maxRatio, c.r / c.b);
+    }
+    const glm::vec3 mean = sum / float(n);
+    EXPECT_NEAR(mean.g / base.g, 1.0f, 0.1f);
+    EXPECT_GT(maxLuma / minLuma, 1.6f);   // brightness +-25 %
+    EXPECT_GT(maxRatio / minRatio, 2.0f); // from yellower to bluer
+    // Trees differ a little.
+    EXPECT_NE(treeLeafAlbedo(base, 1u, 7u), treeLeafAlbedo(base, 1u, 8u));
+    const glm::vec3 under = treeLeafUnderside(base);
+    EXPECT_GT(glm::dot(under, glm::vec3(0.3f, 0.59f, 0.11f)), glm::dot(base, glm::vec3(0.3f, 0.59f, 0.11f)));
+    EXPECT_LT(under.g / under.b, base.g / base.b);
 }
 
 TEST(TreeLeafShape, leafLodIsContinuous) {

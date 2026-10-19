@@ -112,9 +112,7 @@ void main() {
     vec3 z = qforward(leaf.rot);
     vec3 worldPos = leaf.posScale.xyz + size * (q.x * x + q.y * z);
 
-    // A little colour variation per leaf.
-    float variation = treeRand(leaf.ids.y, 0x78u) - 0.5f;
-    outColor = p.leafColor.rgb * (1.0f + 0.35f * variation) + vec3(0.04f, 0.03f, 0.0f) * variation;
+    outColor = treeLeafAlbedo(p.leafColor.rgb, leaf.ids.y, treeHash(leaf.ids.z));
     outWorldPos = worldPos;
     outNormal = qrot(leaf.rot, vec3(0.0f, 1.0f, 0.0f));
     outCurveUv = uv;
