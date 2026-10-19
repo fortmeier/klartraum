@@ -227,12 +227,13 @@ namespace tree_presets {
 TreeTypeParams bonsaiBroadleaf() {
     TreeTypeParams p = quakingAspen();
     p.shapeBase = glm::vec4(2.0f, 0.25f, 13.0f, 2.0f);
-    p.ratios = glm::vec4(3.0f, 0.022f, 1.25f, 0.8f);
+    p.ratios = glm::vec4(3.0f, 0.022f, 1.25f, 0.4f);
     p.leafCount = glm::vec4(28.0f, 0.15f, 0.7f, 0.4f);
     p.leafShape = glm::vec4(55.0f, 0.0f, 35.0f, 0.42f);
     p.leafLobes = glm::vec4(1.0f, 0.0f, 1.0f, 0.02f);
     p.leafColor = glm::vec4(0.08f, 0.15f, 0.035f, 0.0f);
-    p.barkColor = glm::vec4(0.36f, 0.31f, 0.27f, 0.0f);
+    p.barkColor = glm::vec4(0.17f, 0.14f, 0.11f, 0.0f);
+    p.trunk = glm::vec4(5.0f, 0.45f, 30.0f, 0.0f);
     p.nCurveRes = glm::vec4(6.0f, 5.0f, 3.0f, 1.0f);
     p.nCurveV = glm::vec4(25.0f, 50.0f, 75.0f, 0.0f);
     p.nSegSplits = glm::vec4(0.0f, 0.15f, 0.0f, 0.0f);
@@ -246,6 +247,8 @@ TreeTypeParams bonsaiPine() {
     p.ratios = glm::vec4(3.0f, 0.02f, 1.4f, 0.5f);
     p.leafCount = glm::vec4(70.0f, 0.14f, 0.07f, 0.2f);
     p.leafColor = glm::vec4(0.04f, 0.085f, 0.04f, 0.0f);
+    p.barkColor = glm::vec4(0.2f, 0.11f, 0.07f, 0.0f);
+    p.trunk = glm::vec4(4.0f, 0.3f, 20.0f, 0.0f);
     p.nBranches = glm::vec4(1.0f, 45.0f, 16.0f, 0.0f);
     return p;
 }

@@ -126,8 +126,11 @@ void stemGaussian(uint i, uint segment, uint local) {
     float around = TREE_PI * radius / float(STEM_AROUND);
     float along = 0.35f * segmentLength / float(STEM_ALONG);
     vec3 scale = vec3(0.3f * around, 1.2f * around, max(along, around));
-    vec3 albedo = params[treeType(d.ids)].barkColor.rgb;
-    vec3 pos = center + 0.85f * radius * radial;
+    TreeTypeParams p = params[treeType(d.ids)];
+    // The mean of the classical renderer's bark relief.
+    vec3 albedo = 0.9f * p.barkColor.rgb;
+    float z = d.shape.z + w * segmentLength / d.shape.w;
+    vec3 pos = center + 0.85f * radius * treeTrunkLobes(p, treeLevel(d.ids), z, phi) * radial;
     writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, radial), 0.95f);
 }
 
