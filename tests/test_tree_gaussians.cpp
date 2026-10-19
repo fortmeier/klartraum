@@ -126,9 +126,10 @@ TEST_F(TreeGaussiansTest, stemGaussiansLieOnTheTube) {
         EXPECT_GT(pos[i].y, 0.0f);
         EXPECT_LT(pos[i].y, 2.0f);
     }
-    // Two rows per segment, at a quarter and three quarters of its length.
-    EXPECT_NEAR(pos[0].y, 0.125f, 1e-4f);
-    EXPECT_NEAR(pos[8].y, 0.375f, 1e-4f);
+    // Three rows per segment of length 0.5, at a sixth, a half and five sixths of it.
+    EXPECT_NEAR(pos[0].y, 0.5f / 6.0f, 1e-4f);
+    EXPECT_NEAR(pos[12].y, 0.25f, 1e-4f);
+    EXPECT_NEAR(pos[24].y, 2.5f / 6.0f, 1e-4f);
 }
 
 TEST_F(TreeGaussiansTest, leafGaussiansLieOnTheLeaf) {

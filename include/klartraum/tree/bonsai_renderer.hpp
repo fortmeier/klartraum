@@ -9,10 +9,12 @@
 #include <string>
 
 #include "klartraum/computegraph/hostvalues.hpp"
+#include "klartraum/computegraph/imageresample.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/offscreen_target.hpp"
 #include "klartraum/tree/bonsai_scene.hpp"
 #include "klartraum/tree/scene_mesh_renderer.hpp"
 #include "klartraum/tree/tree_gaussians.hpp"
@@ -35,6 +37,8 @@ struct BonsaiRenderConfig {
     std::string lanternPath = "data/lantern.spz";
     float meshGaussianSpacing = 0.008f; ///< of the pot and soil Gaussians
     float lightVoxel = 0.035f;          ///< voxel size of the light volume (shadows and sky occlusion)
+    uint32_t supersample = 2;           ///< the classical renderer draws at this times the resolution
+    uint32_t numberPaths = 1;           ///< of the graph the renderer is compiled into
 };
 
 /**

@@ -9,7 +9,7 @@
 // uploaded once; then come pc.surfelCount surfels, surface samples of the
 // static meshes that are lit anew every frame, so the trees' shadows fall on
 // them; then the trees. Of the tree slots, [0, segmentCapacity * 16) belong to stem
-// segments: 8 around times 2 along the tube, flat Gaussians on its surface;
+// segments: 12 around times 3 along the tube, flat Gaussians on its surface;
 // segments thinner than the classical renderer draws (settings.viewport.w
 // pixels) are left out, as there.
 // The leaf slots follow, 8 per leaf, along the axes of its lobes. Slots of
@@ -70,8 +70,8 @@ layout(push_constant) uniform Push {
 }
 pc;
 
-const uint STEM_AROUND = 8u;
-const uint STEM_ALONG = 2u;
+const uint STEM_AROUND = 12u;
+const uint STEM_ALONG = 3u;
 const uint STEM_GAUSSIANS = STEM_AROUND * STEM_ALONG;
 const uint LEAF_GAUSSIANS = 8u;
 const float SH_C0 = 0.28209479f;
@@ -189,7 +189,7 @@ void surfelGaussian(uint slot, uint index) {
     float spacing = v.pos.w;
     // Finer than the surfels' spacing, the structure is averaged.
     vec3 albedo = treeSceneAlbedoDetail(v.color, v.pos.xyz, 0.0f);
-    writeGaussian(slot, v.pos.xyz, rot, vec3(spacing, spacing, 0.08f * spacing),
+    writeGaussian(slot, v.pos.xyz, rot, vec3(0.9f * spacing, 0.9f * spacing, 0.08f * spacing),
                   displayColor(albedo, v.pos.xyz, normal), 0.95f);
 }
 
