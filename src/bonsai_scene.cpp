@@ -64,6 +64,33 @@ float hashUnit(uint32_t seed, uint32_t key) { return tree::treeRand(seed, key); 
 
 } // namespace
 
+float BonsaiScale::regionMeters() const { return kSmallestRegion * std::pow(kLargestRegion / kSmallestRegion, s); }
+
+float BonsaiScale::lanternMeters() const {
+    const float t = std::clamp(s / kForest, 0.0f, 1.0f);
+    return 0.35f * std::pow(1.8f / 0.35f, t);
+}
+
+float BonsaiScale::treeHeightUnits() const {
+    const float atForest = 10.7f / BonsaiScale{kForest}.metersPerUnit();
+    if (s <= kForest) {
+        // From the bonsai filling its pot to the young trees of a planting.
+        return 2.0f + (atForest - 2.0f) * std::max(s, 0.0f) / kForest;
+    }
+    const float t = std::clamp((s - kForest) / (0.4f - kForest), 0.0f, 1.0f);
+    return (10.7f + (25.0f - 10.7f) * t * t * (3.0f - 2.0f * t)) / metersPerUnit();
+}
+
+float BonsaiScale::bonsaiStyle() const {
+    const float t = std::clamp(s / kForest, 0.0f, 1.0f);
+    return 1.0f - t * t * (3.0f - 2.0f * t);
+}
+
+uint32_t BonsaiScale::treeCount(float soilArea) const {
+    const float squareMeters = soilArea * metersPerUnit() * metersPerUnit();
+    return std::max(1u, uint32_t(std::lround(kTreesPerHectare * squareMeters / 1e4f)));
+}
+
 float BonsaiScene::potMeasure(float x, float z, float scale) const {
     const BonsaiPot& pot = config.pot;
     return std::pow(std::abs(x / (pot.halfLength * scale)), pot.exponent) +
@@ -78,13 +105,21 @@ float BonsaiScene::soilHeight(float x, float z) const {
 }
 
 BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
-    if (config.treeCount < 1 || config.treeCount > 20) {
-        throw std::invalid_argument("makeBonsaiScene: treeCount must be in [1, 20]");
-    }
     BonsaiScene scene;
     scene.config = config;
     const BonsaiPot& pot = config.pot;
     const float inner = innerScale(pot);
+    const BonsaiScale& scale = config.scale;
+    // Area of the superellipse |x/a|^e + |z/b|^e <= 1: 4ab Gamma(1 + 1/e)^2 / Gamma(1 + 2/e).
+    const float e = pot.exponent;
+    scene.soilArea = 4.0f * pot.halfLength * inner * pot.halfWidth * inner *
+                     std::pow(std::tgamma(1.0f + 1.0f / e), 2.0f) / std::tgamma(1.0f + 2.0f / e);
+    const uint32_t treeCount = config.treeCount > 0 ? config.treeCount : scale.treeCount(scene.soilArea);
+    // Placement up to some tens of trees; larger scales need the tile placement and levels of detail to come.
+    if (treeCount > 60) {
+        throw std::invalid_argument("makeBonsaiScene: more than 60 trees (scale too large for a planting)");
+    }
+    scene.lanternScale = scale.lanternUnits() / 0.28f;
     const glm::vec4 glaze(pot.glaze, TREE_MATERIAL_GLAZE);
     const int around = 160;
 
@@ -139,21 +174,28 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     // Sunk a little, so that the edge of the captured moss disappears in the soil.
     scene.lanternTranslation = glm::vec3(lantern.x, scene.soilHeight(lantern.x, lantern.z) - 0.008f, lantern.z);
     // The fire box is about 0.15 above the lantern's ground.
-    scene.lanternFlame = scene.lanternTranslation + glm::vec3(0.0f, 0.15f * config.lanternScale, 0.0f);
+    scene.lanternFlame = scene.lanternTranslation + glm::vec3(0.0f, 0.15f * scene.lanternScale, 0.0f);
 
     // Trees: a tall main tree off-centre at the back, the others around it,
     // smaller and leaning slightly outwards the farther away they stand.
-    scene.types = {tree_presets::bonsaiBroadleaf(), tree_presets::bonsaiPine()};
-    const glm::vec2 main(-0.4f, -0.15f);
-    const float minDistance = 0.3f;
+    const float style = scale.bonsaiStyle();
+    scene.types = {
+        mixTreeTypes(tree_presets::bonsaiBroadleaf(), tree_presets::bonsaiStyled(tree_presets::bonsaiBroadleaf()),
+                     style),
+        mixTreeTypes(tree_presets::bonsaiPine(), tree_presets::bonsaiStyled(tree_presets::bonsaiPine()), style)};
+    // A single tree stands near the middle; in a planting the main tree is off-centre at the back.
+    const float planting = std::clamp(float(treeCount - 1) / 12.0f, 0.0f, 1.0f);
+    const glm::vec2 main = glm::mix(glm::vec2(-0.2f, -0.05f), glm::vec2(-0.4f, -0.15f), planting);
+    // Trees about 1.9 m apart at least.
+    const float minDistance = 1.9f / scale.metersPerUnit();
     std::vector<glm::vec2> positions = {main};
-    for (uint32_t key = 0; positions.size() < config.treeCount && key < 20000; ++key) {
+    for (uint32_t key = 0; positions.size() < treeCount && key < 20000; ++key) {
         const glm::vec2 p((2.0f * hashUnit(config.seed, 2 * key) - 1.0f) * pot.halfLength,
                           (2.0f * hashUnit(config.seed, 2 * key + 1) - 1.0f) * pot.halfWidth);
         if (scene.potMeasure(p.x, p.y, inner * 0.82f) > 1.0f) {
             continue;
         }
-        if (glm::length(p - glm::vec2(lantern.x, lantern.z)) < 0.38f) {
+        if (glm::length(p - glm::vec2(lantern.x, lantern.z)) < 0.1f + 1.0f * scale.lanternUnits()) {
             continue;
         }
         bool free = true;
@@ -170,11 +212,13 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         const glm::vec2 p = positions[i];
         const float distance = glm::length(p - main) / (2.0f * pot.halfLength);
         const float frontFactor = 1.0f - 0.25f * std::max(p.y / pot.halfWidth, 0.0f);
-        float scale =
-            0.13f * (1.0f - 0.55f * distance) * frontFactor * (0.85f + 0.3f * hashUnit(config.seed, 9000 + i));
+        // The tallest tree at the scale's height; 0.13 is that at kForest, where the bonsai presets are 13 m.
+        const float tallest = 0.13f * scale.treeHeightUnits() / BonsaiScale{BonsaiScale::kForest}.treeHeightUnits();
+        float treeScale =
+            tallest * (1.0f - 0.55f * distance) * frontFactor * (0.85f + 0.3f * hashUnit(config.seed, 9000 + i));
         const uint32_t type = (i % 4 == 3) ? 1u : 0u;
         if (type == 1u) {
-            scale *= 0.9f;
+            treeScale *= 0.9f;
         }
         const float yaw = 2.0f * kPi * hashUnit(config.seed, 9100 + i);
         glm::quat rotation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f)) * upRotation;
@@ -185,7 +229,7 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
             rotation = glm::angleAxis(lean, glm::vec3(d.y, 0.0f, -d.x)) * rotation;
         }
         TreeInstance inst{};
-        inst.posScale = glm::vec4(p.x, scene.soilHeight(p.x, p.y) - 0.01f, p.y, scale);
+        inst.posScale = glm::vec4(p.x, scene.soilHeight(p.x, p.y) - 0.01f, p.y, treeScale);
         inst.rot = glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
         inst.ids = glm::uvec4(type, config.seed * 977u + i, 0u, 0u);
         scene.trees.push_back(inst);
@@ -335,7 +379,45 @@ std::vector<Gaussian3D> scatterMossPatches(const std::vector<MossPatch>& patches
     return result;
 }
 
+TreeTypeParams mixTreeTypes(const TreeTypeParams& a, const TreeTypeParams& b, float t) {
+    // The parameters are vec4s only.
+    constexpr size_t kCount = sizeof(TreeTypeParams) / sizeof(glm::vec4);
+    TreeTypeParams result;
+    const glm::vec4* pa = reinterpret_cast<const glm::vec4*>(&a);
+    const glm::vec4* pb = reinterpret_cast<const glm::vec4*>(&b);
+    glm::vec4* pr = reinterpret_cast<glm::vec4*>(&result);
+    for (size_t i = 0; i < kCount; ++i) {
+        pr[i] = glm::mix(pa[i], pb[i], t);
+    }
+    return result;
+}
+
 namespace tree_presets {
+
+TreeTypeParams bonsaiStyled(const TreeTypeParams& natural) {
+    TreeTypeParams p = natural;
+    p.shapeBase.x = 2.0f;  // hemispherical crown
+    p.shapeBase.y = 0.35f; // branches start a third up
+    p.shapeBase.w = 0.0f;  // no random height
+    p.ratios.y *= 2.6f;    // a thick trunk
+    p.ratios.w = 1.2f;     // flaring base
+    p.trunk.x = 6.0f;      // spreading surface roots (nebari)
+    p.trunk.y = 0.8f;
+    p.nCurveRes.x = 8.0f; // an S-curved trunk (moyogi)
+    p.nCurve.x = 35.0f;
+    p.nCurveBack.x = -45.0f;
+    p.nCurveV.x = 10.0f;
+    p.nTaper.x = 0.85f;
+    p.nLength.y *= 1.7f; // long, nearly horizontal branches: a wide, flat crown
+    p.nDownAngle.y = 80.0f;
+    p.nDownAngleV.y = -25.0f;
+    p.nBranches.y *= 0.7f;
+    p.nCurve.y = 15.0f;    // branch tips turning up
+    p.nBranches.z *= 1.4f; // dense foliage pads
+    p.leafCount.x *= 1.5f;
+    p.leafCount.y *= 1.4f; // leaves large for the tree's size
+    return p;
+}
 
 TreeTypeParams bonsaiBroadleaf() {
     TreeTypeParams p = quakingAspen();

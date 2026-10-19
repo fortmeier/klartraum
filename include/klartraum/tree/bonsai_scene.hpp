@@ -28,13 +28,47 @@ struct BonsaiPot {
     glm::vec3 glaze{0.17f, 0.21f, 0.26f};
 };
 
+/**
+ * @brief How much of the world the pot holds, from one bonsai (s = 0) to a region of 8 x 8 km (s = 1).
+ *
+ * The pot's soil stands for regionMeters() metres, 3.6 m at s = 0 (the
+ * lantern, 0.28 units tall, is a 35 cm ornament there) growing
+ * logarithmically to 8 km. The lantern grows from 35 cm to its real 1.8 m by
+ * s = kForest, so in the pot it keeps its size up to there and shrinks beyond.
+ * The tree at s = 0 is a bonsai sized to fill its pot (2 units tall) rather
+ * than to the lantern; up to kForest the trees keep about that size in the
+ * pot (10.7 m young trees at kForest) while their number grows at a forest
+ * density of 650 per hectare (at least one tree) and their style blends from
+ * bonsai to natural; beyond, they grow to 25 m mature trees by s = 0.4.
+ */
+struct BonsaiScale {
+    float s = 0.21f;
+
+    static constexpr float kSmallestRegion = 3.6f; ///< metres the soil spans at s = 0
+    static constexpr float kLargestRegion = 8000.0f;
+    static constexpr float kForest = 0.21f;    ///< from here on trees and lantern have their real sizes
+    static constexpr float kSoilUnits = 2.88f; ///< length of the soil in scene units
+    static constexpr float kTreesPerHectare = 650.0f;
+
+    float regionMeters() const;
+    float metersPerUnit() const { return regionMeters() / kSoilUnits; }
+    float lanternMeters() const;
+    float lanternUnits() const { return lanternMeters() / metersPerUnit(); }
+    float treeHeightUnits() const;
+    float treeHeightMeters() const { return treeHeightUnits() * metersPerUnit(); }
+    /// 1 for bonsai-styled trees, 0 for natural ones.
+    float bonsaiStyle() const;
+    /// Trees on `soilArea` square units of soil.
+    uint32_t treeCount(float soilArea) const;
+};
+
 struct BonsaiSceneConfig {
-    uint32_t treeCount = 13; ///< 8 to 20
+    BonsaiScale scale;
+    uint32_t treeCount = 0; ///< 0: from the scale; otherwise this many
     uint32_t seed = 7;
     BonsaiPot pot;
     glm::vec3 lanternPosition{0.72f, 0.0f, 0.36f}; ///< y is taken from the soil
     float lanternYaw = 0.6f;                       ///< radians about +y
-    float lanternScale = 1.0f;
 };
 
 /**
@@ -54,6 +88,8 @@ struct BonsaiScene {
     glm::vec3 lanternTranslation{0.0f};
     glm::vec3 focus{0.0f};        ///< where a camera looks
     glm::vec3 lanternFlame{0.0f}; ///< where the lantern's flame burns, in its fire box
+    float lanternScale = 1.0f;    ///< of the lantern capture (0.28 units tall at 1)
+    float soilArea = 0.0f;        ///< square units
 
     /// Height of the soil surface at (x, z) inside the pot.
     float soilHeight(float x, float z) const;
@@ -111,7 +147,13 @@ std::vector<Gaussian3D> scatterMossPatches(const std::vector<MossPatch>& patches
 namespace tree_presets {
 TreeTypeParams bonsaiBroadleaf();
 TreeTypeParams bonsaiPine();
+/// A tree type styled as a bonsai: a short, thick, curved trunk with spreading roots and a compact crown of
+/// more horizontal branches.
+TreeTypeParams bonsaiStyled(const TreeTypeParams& natural);
 } // namespace tree_presets
+
+/// Every parameter of a and b mixed by t (0: a, 1: b).
+TreeTypeParams mixTreeTypes(const TreeTypeParams& a, const TreeTypeParams& b, float t);
 
 } // namespace klartraum
 

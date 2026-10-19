@@ -227,7 +227,7 @@ ffmpeg -i straight/straight.mp4 -i swirl/swirl.mp4 -i scatter/scatter.mp4 -i wav
 
 ### `tree_bonsai_example`
 
-Renders a bonsai forest planting without a window: 8 to 20 trees in an oval pot,
+Renders a bonsai forest planting without a window: by default 12 trees in an oval pot,
 with the captured stone lantern standing on the moss among them.
 The trees follow Kuth et al., *Real-Time GPU Tree Generation* (HPG 2025): a
 compute graph recorded once generates them on the GPU every frame from a few
@@ -243,7 +243,8 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--renderer classical\|gaussian\|both` | How the scene is drawn (default `both`) |
 | `--backend raster\|compute` | Gaussian splatting backend (default `raster`) |
 | `--views N` | Number of views around the pot (default 4) |
-| `--trees N` | Number of trees, 8 to 20 (default 13) |
+| `--scale S` | How much of the world the pot holds, from 0 (one bonsai, the lantern a 35 cm ornament) to 1 (8 x 8 km); for now up to about 0.3 (default 0.21, a planting of 12 trees with a real lantern) |
+| `--trees N` | Number of trees instead of the scale's (at most 60) |
 | `--seed S` | Seed of the tree placement and the trees (default 7) |
 | `--width W`, `--height H` | Image size in pixels (default 1280×720) |
 | `--distance D` | Distance of the camera from the scene's focus (default 4.2) |
