@@ -173,8 +173,7 @@ void leafGaussian(uint i, uint leafIndex, uint local) {
     if (dot(normal, settings[0].sun.xyz) < 0.0f) {
         normal = -normal;
     }
-    float variation = treeRand(leaf.ids.y, 0x78u) - 0.5f;
-    vec3 albedo = p.leafColor.rgb * (1.0f + 0.35f * variation) + vec3(0.04f, 0.03f, 0.0f) * variation;
+    vec3 albedo = treeLeafAlbedo(p.leafColor.rgb, leaf.ids.y, treeHash(leaf.ids.z));
     writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal), 0.9f);
 }
 

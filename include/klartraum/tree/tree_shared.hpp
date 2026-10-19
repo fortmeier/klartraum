@@ -274,6 +274,25 @@ TREE_FN vec3 treeShade(vec3 albedo, vec3 normal, TreeRenderSettings s) {
     return treeShadeLit(albedo, normal, s, vec2(1.0f, 1.0f));
 }
 
+// The albedo of one leaf: the type's colour, tinted per tree (treeSeed) a
+// little and per leaf (leafSeed) more, between yellower and bluer green, and
+// lighter or darker. The mean over many leaves stays near `base`.
+TREE_FN vec3 treeLeafAlbedo(vec3 base, uint leafSeed, uint treeSeed) {
+    float treeTint = treeRand(treeSeed, 0x80u) - 0.5f;
+    float hue = treeRand(leafSeed, 0x78u) - 0.5f;
+    float value = treeRand(leafSeed, 0x7au) - 0.5f;
+    vec3 yellower = vec3(1.25f, 1.08f, 0.6f);
+    vec3 bluer = vec3(0.8f, 0.97f, 1.3f);
+    vec3 tint = mix(bluer, yellower, clamp(0.5f + 0.9f * hue + 0.5f * treeTint, 0.0f, 1.0f));
+    return base * tint * (1.0f + 0.5f * value);
+}
+
+// The underside of a leaf: paler and greyer than its top.
+TREE_FN vec3 treeLeafUnderside(vec3 top) {
+    float luma = dot(top, vec3(0.3f, 0.59f, 0.11f));
+    return 1.3f * mix(top, vec3(luma, luma, luma), 0.35f);
+}
+
 // Index of voxel (x, y, z) in the light volume.
 TREE_FN uint treeLightIndex(uint x, uint y, uint z, uvec4 size) { return (z * size.y + y) * size.x + x; }
 

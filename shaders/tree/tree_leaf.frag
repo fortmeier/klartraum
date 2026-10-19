@@ -37,16 +37,22 @@ void main() {
         discard;
     }
     vec3 normal = normalize(inNormal);
-    vec3 toCamera = camera.cameraWorldPos.xyz - inWorldPos;
-    if (dot(normal, toCamera) < 0.0f) {
+    vec3 toCamera = normalize(camera.cameraWorldPos.xyz - inWorldPos);
+    bool underside = dot(normal, toCamera) < 0.0f;
+    if (underside) {
         normal = -normal;
     }
     // The midrib, a little lighter.
     float midrib = 1.0f - smoothstep(0.004f, 0.012f, abs(inLeafPos.x));
-    vec3 albedo = inColor * (1.0f + 0.35f * midrib);
+    vec3 albedo = (underside ? treeLeafUnderside(inColor) : inColor) * (1.0f + 0.35f * midrib);
     vec2 light = treeLightAt(s, inWorldPos);
     vec3 color = treeShadeLit(albedo, normal, s, light);
     // Light shining through the leaf from behind.
     color += 0.4f * albedo * max(dot(-normal, s.sun.xyz), 0.0f) * s.sun.w * light.x;
+    // The waxy top's faint highlight.
+    if (!underside) {
+        vec3 halfway = normalize(toCamera + s.sun.xyz);
+        color += vec3(0.05f) * pow(max(dot(normal, halfway), 0.0f), 40.0f) * s.sun.w * light.x;
+    }
     outColor = treeOutputColor(color);
 }
