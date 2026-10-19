@@ -127,6 +127,12 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
   # Shaders #include the .glsl files next to them; recompile when those change.
   get_filename_component(GLSL_DIRECTORY ${GLSL} DIRECTORY)
   file(GLOB GLSL_INCLUDES "${GLSL_DIRECTORY}/*.glsl")
+  # The tree shaders include the model they share with the C++ code from include/.
+  if(FILE_NAME MATCHES "^tree/")
+    list(APPEND GLSLC_OPTIONS -I ${PROJECT_SOURCE_DIR}/include)
+    file(GLOB TREE_SHARED_HEADERS "${PROJECT_SOURCE_DIR}/include/klartraum/tree/tree_*.hpp")
+    list(APPEND GLSL_INCLUDES ${TREE_SHARED_HEADERS})
+  endif()
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
@@ -324,6 +330,7 @@ add_executable(
   tests/test_text_rendering.cpp
   tests/test_gaussian_morph.cpp
   tests/test_gaussian_lighting.cpp
+  tests/test_tree_model.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -353,6 +360,7 @@ set(KLARTRAUM_LIB_SRC
   src/text_draw_component.cpp
   src/gaussian_morph.cpp
   src/gaussian_lighting.cpp
+  src/tree_model.cpp
   ${SPZ_SRC}
   )
 
