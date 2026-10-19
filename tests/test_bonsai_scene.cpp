@@ -7,6 +7,8 @@
  * - treesStandInThePot: 8, 13 and 20 trees stand on the soil inside the pot, apart from each other and from the
  *   lantern
  * - treesAreFourToNineLanternsTall: the generated trees are 4 to 9 times as tall as the lantern
+ * - mossCoversPartOfTheSoil: moss grows on 30 to 80 % of the soil in patches a few centimetres wide, greener
+ *   than the bare soil, and fading the fine detail keeps the mean colour but smooths it
  * - soilLiesInThePot: the soil rises from below the rim at the pot's edge towards the middle
  * - potWallsFaceOutwards: the mesh is a triangle list; outer wall normals point away from the middle, the
  *   bottom's down, the soil's up
@@ -86,6 +88,48 @@ TEST(BonsaiScene, treesAreFourToNineLanternsTall) {
         EXPECT_GE(height / kLanternHeight, 4.0f) << i;
         EXPECT_LE(height / kLanternHeight, 9.0f) << i;
     }
+}
+
+TEST(BonsaiScene, mossCoversPartOfTheSoil) {
+    const glm::vec3 base(0.075f, 0.11f, 0.025f);
+    int moss = 0, samples = 0;
+    glm::vec3 meanFine(0.0f), meanSmooth(0.0f), mossColour(0.0f), soilColour(0.0f);
+    for (float x = -1.0f; x < 1.0f; x += 0.01f) {
+        for (float z = -0.6f; z < 0.6f; z += 0.01f) {
+            const glm::vec3 p(x, 0.3f, z);
+            const float coverage = tree::treeMossCoverage(p);
+            moss += coverage > 0.5f ? 1 : 0;
+            ++samples;
+            const glm::vec3 a = tree::treeMossAlbedo(base, p, 1.0f);
+            meanFine += a;
+            meanSmooth += tree::treeMossAlbedo(base, p, 0.0f);
+            mossColour += coverage > 0.95f ? a : glm::vec3(0.0f);
+            soilColour += coverage < 0.05f ? a : glm::vec3(0.0f);
+        }
+    }
+    const float fraction = float(moss) / float(samples);
+    EXPECT_GT(fraction, 0.3f);
+    EXPECT_LT(fraction, 0.8f);
+    EXPECT_NEAR(meanFine.g / meanSmooth.g, 1.0f, 0.05f);
+    // Moss is greener than bare soil.
+    EXPECT_GT(mossColour.g / mossColour.r, 1.2f * soilColour.g / soilColour.r);
+
+    // Along a densely sampled line the fine structure (cushions, grit) changes the colour between neighbouring
+    // samples; without detail it is smooth.
+    double fine = 0.0, smooth = 0.0;
+    glm::vec3 previousFine(0.0f), previousSmooth(0.0f);
+    for (int i = 0; i <= 4000; ++i) {
+        const glm::vec3 p(-1.0f + 0.0005f * float(i), 0.3f, 0.1f);
+        const glm::vec3 a = tree::treeMossAlbedo(base, p, 1.0f);
+        const glm::vec3 b = tree::treeMossAlbedo(base, p, 0.0f);
+        if (i > 0) {
+            fine += glm::length(a - previousFine);
+            smooth += glm::length(b - previousSmooth);
+        }
+        previousFine = a;
+        previousSmooth = b;
+    }
+    EXPECT_LT(smooth, 0.7 * fine);
 }
 
 TEST(BonsaiScene, soilLiesInThePot) {

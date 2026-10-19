@@ -334,16 +334,43 @@ TREE_FN float treeFbm(vec3 p) {
 #define TREE_MATERIAL_WOOD 2.0f
 #define TREE_MATERIAL_GLAZE 3.0f
 
+// Where moss grows on the soil: patches a few centimetres wide at the
+// lantern's scale (it is 0.28 tall), 0 bare soil, 1 moss.
+TREE_FN float treeMossCoverage(vec3 pos) {
+    float large = treeFbm(pos * 4.0f + vec3(3.0f, 0.0f, 1.0f)) - 0.5f;
+    return smoothstep(0.4f, 0.56f, treeFbm(pos * 22.0f) + 0.35f * large);
+}
+
+// Fine moss cushions in [0, 1], about 7 mm wide at the lantern's scale.
+TREE_FN float treeMossCushions(vec3 pos) { return treeValueNoise(pos * 140.0f); }
+
+// Height of the moss relief, in units, for the normal of the classical renderer.
+TREE_FN float treeMossHeight(vec3 pos) {
+    return 0.004f * treeMossCoverage(pos) * (0.4f + 0.6f * treeMossCushions(pos));
+}
+
+// The albedo of mossy soil: bare soil with grit and a few pebbles, moss in
+// patches with lighter cushion tops. `detail` in [0, 1] fades the finest
+// structure (cushions, grit) to its mean where it cannot be resolved.
+TREE_FN vec3 treeMossAlbedo(vec3 base, vec3 pos, float detail) {
+    float coverage = treeMossCoverage(pos);
+    float tint = treeFbm(pos * 60.0f + vec3(7.0f, 0.0f, 3.0f));
+    float cushions = mix(0.5f, treeMossCushions(pos), detail);
+    vec3 moss = base * (0.7f + 0.6f * tint) * (0.6f + 0.8f * cushions);
+    float grit = mix(0.5f, treeValueNoise(pos * 260.0f), detail);
+    vec3 soil = vec3(0.055f, 0.04f, 0.028f) * (0.75f + 0.5f * grit);
+    float pebble = smoothstep(0.8f, 0.86f, treeValueNoise(pos * 90.0f + vec3(11.0f, 0.0f, 5.0f)));
+    soil = mix(soil, vec3(0.2f, 0.19f, 0.17f) * (0.8f + 0.4f * tint), pebble);
+    return mix(soil, moss, coverage);
+}
+
 // The albedo of a scene surface at world position pos: plain colour, moss
-// over soil, wood grain along x, or a glaze with fine mottling.
-TREE_FN vec3 treeSceneAlbedo(vec4 color, vec3 pos) {
+// over soil, wood grain along x, or a glaze with fine mottling. `detail` as
+// for treeMossAlbedo().
+TREE_FN vec3 treeSceneAlbedoDetail(vec4 color, vec3 pos, float detail) {
     vec3 base = vec3(color.x, color.y, color.z);
     if (color.w == TREE_MATERIAL_MOSS) {
-        float coverage = smoothstep(0.35f, 0.6f, treeFbm(pos * 9.0f));
-        float tint = treeFbm(pos * 31.0f + vec3(7.0f, 0.0f, 3.0f));
-        vec3 soil = vec3(0.16f, 0.11f, 0.07f) * (0.7f + 0.6f * tint);
-        vec3 moss = base * (0.75f + 0.5f * tint);
-        return mix(soil, moss, coverage);
+        return treeMossAlbedo(base, pos, detail);
     }
     if (color.w == TREE_MATERIAL_WOOD) {
         float grain = treeFbm(vec3(pos.x * 1.5f, pos.y * 40.0f, pos.z * 40.0f));
@@ -355,6 +382,8 @@ TREE_FN vec3 treeSceneAlbedo(vec4 color, vec3 pos) {
     }
     return base;
 }
+
+TREE_FN vec3 treeSceneAlbedo(vec4 color, vec3 pos) { return treeSceneAlbedoDetail(color, pos, 1.0f); }
 
 // Factor on the radius of a stem of `level` at z in [0, 1] along it and angle
 // phi around it: root buttresses at the trunk's base, Weber and Penn's lobes,

@@ -122,7 +122,7 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
             const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, inner * v);
             return glm::vec3(p.x, s.soilHeight(p.x, p.y), p.y);
         },
-        around, 24, glm::vec4(0.2f, 0.33f, 0.1f, TREE_MATERIAL_MOSS),
+        around, 24, glm::vec4(0.075f, 0.11f, 0.025f, TREE_MATERIAL_MOSS),
         [](glm::vec3) { return glm::vec3(0.0f, 1.0f, 0.0f); });
     // The bottom, closing the pot for views from below.
     addSurface(
