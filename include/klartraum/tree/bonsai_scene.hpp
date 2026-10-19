@@ -35,11 +35,10 @@ struct BonsaiSceneConfig {
     glm::vec3 lanternPosition{0.72f, 0.0f, 0.36f}; ///< y is taken from the soil
     float lanternYaw = 0.6f;                       ///< radians about +y
     float lanternScale = 1.0f;
-    float tableHalfSize = 4.0f;
 };
 
 /**
- * @brief A bonsai forest planting (yose-ue): 8 to 20 trees in an oval pot on a table, and the lantern on the moss.
+ * @brief A bonsai forest planting (yose-ue): 8 to 20 trees in an oval pot, and the lantern on the moss.
  *
  * The trees are 4 to 9 times as tall as the lantern, so it stands among them
  * like a real stone lantern in the woods. Everything is described on the CPU
@@ -49,7 +48,7 @@ struct BonsaiScene {
     BonsaiSceneConfig config;
     std::vector<TreeTypeParams> types;
     std::vector<TreeInstance> trees;
-    std::vector<TreeSceneVertex> mesh; ///< pot, soil and table, a triangle list
+    std::vector<TreeSceneVertex> mesh; ///< pot and soil, a triangle list
     /// Puts the lantern capture (Y up, its ground at y = 0) on the soil.
     glm::quat lanternRotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 lanternTranslation{0.0f};

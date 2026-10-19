@@ -23,7 +23,7 @@
 namespace klartraum {
 
 enum class BonsaiRenderMode {
-    Classical, ///< rasterized trees, pot and table; the lantern splatted, the two composited by depth
+    Classical, ///< rasterized trees and pot; the lantern splatted, the two composited by depth
     Gaussian,  ///< everything as Gaussians, sorted and splatted together
 };
 
@@ -32,7 +32,7 @@ struct BonsaiRenderConfig {
     BonsaiRenderMode mode = BonsaiRenderMode::Classical;
     GsplatBackend backend = GsplatBackend::Raster;
     std::string lanternPath = "data/lantern.spz";
-    float meshGaussianSpacing = 0.012f; ///< of the pot and soil Gaussians; the table's are twice as far apart
+    float meshGaussianSpacing = 0.012f; ///< of the pot and soil Gaussians
 };
 
 /**

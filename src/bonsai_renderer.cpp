@@ -67,15 +67,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         pass->addDrawComponent(leaves->getDrawComponent());
         output = pass;
     } else {
-        std::vector<Gaussian3D> statics;
-        std::vector<TreeSceneVertex> potAndSoil, table;
-        // The table is the last two triangles of the mesh.
-        potAndSoil.assign(scene.mesh.begin(), scene.mesh.end() - 6);
-        table.assign(scene.mesh.end() - 6, scene.mesh.end());
-        statics = sampleMeshGaussians(potAndSoil, config.meshGaussianSpacing, values, 1);
-        const std::vector<Gaussian3D> tableGaussians =
-            sampleMeshGaussians(table, 2.0f * config.meshGaussianSpacing, values, 2);
-        statics.insert(statics.end(), tableGaussians.begin(), tableGaussians.end());
+        std::vector<Gaussian3D> statics = sampleMeshGaussians(scene.mesh, config.meshGaussianSpacing, values, 1);
         statics.insert(statics.end(), lanternGaussians.begin(), lanternGaussians.end());
 
         gaussians = std::make_unique<TreeGaussians>(vulkanContext, *generator, camera, settings, std::move(statics));

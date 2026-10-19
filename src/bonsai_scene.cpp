@@ -124,12 +124,14 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         },
         around, 24, glm::vec4(0.2f, 0.33f, 0.1f, TREE_MATERIAL_MOSS),
         [](glm::vec3) { return glm::vec3(0.0f, 1.0f, 0.0f); });
-    // The table.
-    const float t = config.tableHalfSize;
+    // The bottom, closing the pot for views from below.
     addSurface(
         scene.mesh,
-        [&](float u, float v) { return glm::vec3((2.0f * u - 1.0f) * t, 0.0f, (2.0f * v - 1.0f) * t * 0.6f); }, 1, 1,
-        glm::vec4(0.23f, 0.15f, 0.09f, TREE_MATERIAL_WOOD), [](glm::vec3) { return glm::vec3(0.0f, 1.0f, 0.0f); });
+        [&](float u, float v) {
+            const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, 0.9f * v);
+            return glm::vec3(p.x, 0.0f, p.y);
+        },
+        around, 4, glaze, [](glm::vec3) { return glm::vec3(0.0f, -1.0f, 0.0f); });
 
     // The lantern on the moss.
     scene.lanternRotation = glm::angleAxis(config.lanternYaw, glm::vec3(0.0f, 1.0f, 0.0f));
