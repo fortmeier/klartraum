@@ -177,7 +177,7 @@ TEST_F(TreeGaussiansTest, silhouetteMatchesClassical) {
         auto splatting = createGaussianSplatting(*vc, backend, target, camera, gaussians.getGaussians(), config);
         ComputeGraph graph(*vc, 1);
         graph.compileFrom(splatting);
-        gaussians.zeroHigherBands(1);
+        gaussians.initializeBuffers(1);
         setCamera(camera->ubo, eye, lookAt, 40.0f, 1.0f);
         camera->update(0);
         graph.submitAndWait(vc->getGraphicsQueue(), 0);

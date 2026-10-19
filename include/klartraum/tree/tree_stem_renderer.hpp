@@ -30,12 +30,14 @@ enum TreeStemStat : uint32_t {
  * indirect draw per bucket; the draw component (`tree_stem.vert`) builds each
  * segment's grid from its record. Add getClassify() as a compute dependency
  * and getDrawComponent() as a draw component of a RenderPass with a depth
- * attachment.
+ * attachment. With a `sceneDepth` buffer (see tree_occlusion.glsl) and
+ * TreeRenderSettings::occlusion.x = 1, fragments behind it are hidden.
  */
 class TreeStemRenderer {
 public:
     TreeStemRenderer(VulkanContext& vulkanContext, TreeGenerator& generator, std::shared_ptr<CameraUboType> camera,
-                     std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent);
+                     std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent,
+                     BufferRef sceneDepth = {});
 
     ComputeGraphElementPtr getClassify() const { return classify; }
     std::shared_ptr<StorageDrawComponent> getDrawComponent() const { return draw; }

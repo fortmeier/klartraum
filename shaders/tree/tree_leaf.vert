@@ -95,6 +95,13 @@ void main() {
     }
     outLeafPos = q;
 
+    // Flattening takes away the area between chords and curves; growing the leaf keeps its area.
+    float areaScale = sqrt(treeLeafHalfArea(o, 0.0f) / max(treeLeafHalfArea(o, flatten), 1e-6f));
+    float size = leaf.posScale.w * lod.y * areaScale;
+    // Needles and other narrow leaves stay at least a pixel wide, as they do as Gaussians.
+    float widthPixels = treeLeafPixels(leaf, s) * lod.y * areaScale * p.leafCount.z;
+    q.x *= max(1.0f / max(widthPixels, 1e-3f), 1.0f);
+
     // Lobes fan out around the leaf base; with distance they turn into one.
     float offset = float(lobe) - 0.5f * float(lobes - 1u);
     float angle = radians(offset * p.leafLobes.y) * (1.0f - flatten);
@@ -103,9 +110,6 @@ void main() {
 
     vec3 x = qrot(leaf.rot, vec3(1.0f, 0.0f, 0.0f));
     vec3 z = qforward(leaf.rot);
-    // Flattening takes away the area between chords and curves; growing the leaf keeps its area.
-    float areaScale = sqrt(treeLeafHalfArea(o, 0.0f) / max(treeLeafHalfArea(o, flatten), 1e-6f));
-    float size = leaf.posScale.w * lod.y * areaScale;
     vec3 worldPos = leaf.posScale.xyz + size * (q.x * x + q.y * z);
 
     // A little colour variation per leaf.

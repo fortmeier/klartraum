@@ -8,6 +8,8 @@
 #define TREE_CAMERA_BINDING 0
 #include "tree_render_common.glsl"
 #include "tree_shading.glsl"
+#define TREE_OCCLUSION_BINDING 4
+#include "tree_occlusion.glsl"
 
 layout(std430, set = 1, binding = 3) readonly buffer Settings {
     TreeRenderSettings settings[];
@@ -21,6 +23,9 @@ layout(location = 3) in vec2 inBark;
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    if (treeBehindScene(settings[0])) {
+        discard;
+    }
     vec3 normal = normalize(inNormal);
     outColor = treeOutputColor(treeShade(inColor, normal, settings[0]));
 }

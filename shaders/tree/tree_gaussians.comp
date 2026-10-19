@@ -5,7 +5,8 @@
 #version 450
 
 // Turns the generated trees into 3D Gaussians for the splatting backends: one
-// thread per Gaussian slot. Slots [0, segmentCapacity * 16) belong to stem
+// thread per Gaussian slot, written after pc.offset static Gaussians (uploaded
+// once). Slots [0, segmentCapacity * 16) belong to stem
 // segments: 8 around times 2 along the tube, flat Gaussians on its surface;
 // segments thinner than the classical renderer draws (settings.viewport.w
 // pixels) are left out, as there.
@@ -54,6 +55,7 @@ layout(scalar, binding = 8) writeonly buffer OutColAlpha {
 layout(push_constant) uniform Push {
     uint segmentCapacity;
     uint leafCapacity;
+    uint offset;
 }
 pc;
 
@@ -72,14 +74,16 @@ vec3 displayColor(vec3 albedo, vec3 normal) {
     return treeOutputColor(treeShade(albedo, normal, settings[0])).rgb;
 }
 
-void writeGaussian(uint i, vec3 pos, vec4 rot, vec3 scale, vec3 color, float alpha) {
+void writeGaussian(uint slot, vec3 pos, vec4 rot, vec3 scale, vec3 color, float alpha) {
+    uint i = pc.offset + slot;
     outPos[i] = pos;
     outRot[i] = rot;
     outScale[i] = scale;
     outColAlpha[i] = vec4(colorToSh0(color), alpha);
 }
 
-void hide(uint i) {
+void hide(uint slot) {
+    uint i = pc.offset + slot;
     outPos[i] = vec3(0.0f);
     outRot[i] = vec4(0.0f, 0.0f, 0.0f, 1.0f);
     outScale[i] = vec3(1e-6f);

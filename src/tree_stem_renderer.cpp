@@ -17,7 +17,8 @@ struct StemDrawPush {
 
 TreeStemRenderer::TreeStemRenderer(VulkanContext& vulkanContext, TreeGenerator& generator,
                                    std::shared_ptr<CameraUboType> camera,
-                                   std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent) {
+                                   std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent,
+                                   BufferRef sceneDepth) {
     const uint32_t capacity = generator.getCapacity().segments;
 
     lists = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, capacity * TREE_STEM_BUCKETS,
@@ -54,7 +55,11 @@ TreeStemRenderer::TreeStemRenderer(VulkanContext& vulkanContext, TreeGenerator& 
     config.extent = extent;
     config.pushConstantSize = sizeof(StemDrawPush);
     draw = std::make_shared<StorageDrawComponent>(
-        config, std::vector<BufferRef>{{classify, 0}, {classify, 4}, {classify, 7}, {classify, 3}});
+        config, std::vector<BufferRef>{{classify, 0},
+                                       {classify, 4},
+                                       {classify, 7},
+                                       {classify, 3},
+                                       bufferOrPlaceholder(vulkanContext, sceneDepth)});
     for (uint32_t bucket = 0; bucket < TREE_STEM_BUCKETS; ++bucket) {
         StorageDrawComponent::Draw d;
         d.indirect = {classify, 5};

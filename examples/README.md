@@ -330,4 +330,33 @@ by common splat viewers.
 ```bash
 uv run scripts/mesh_fitting/prepare_data.py SCENE_DIR build/TestingOutput/real_data/SCENE
 ./build/examples/splat_training_example --scene build/TestingOutput/real_data/SCENE
+
+### `tree_bonsai_example`
+
+Renders a bonsai forest planting without a window: 8 to 20 trees in an oval pot
+on a table, with the captured stone lantern standing on the moss among them.
+The trees follow Kuth et al., *Real-Time GPU Tree Generation* (HPG 2025): a
+compute graph recorded once generates them on the GPU every frame from a few
+hundred bytes of parameters per tree type. They are drawn either classically
+(tessellated spline stems and Bézier leaves, with the lantern splatted and
+composited by depth) or entirely as Gaussians, sorted and splatted together
+with the pot and the lantern. The camera circles the pot; view *i* is seen from
+the start azimuth plus 2π·*i*/*views*. Images go to
+`<out-dir>/frames/<renderer>_<view>.ppm`.
+
+| Option | Meaning |
+|---|---|
+| `--renderer classical\|gaussian\|both` | How the scene is drawn (default `both`) |
+| `--backend raster\|compute` | Gaussian splatting backend (default `raster`) |
+| `--views N` | Number of views around the pot (default 4) |
+| `--trees N` | Number of trees, 8 to 20 (default 13) |
+| `--seed S` | Seed of the tree placement and the trees (default 7) |
+| `--width W`, `--height H` | Image size in pixels (default 1280×720) |
+| `--distance D` | Distance of the camera from the scene's focus (default 4.2) |
+| `--elevation E` | Elevation of the camera in radians (default 0.32) |
+| `--azimuth A` | Azimuth of the first view in radians (default 0.35) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
+
+```bash
+./build/examples/tree_bonsai_example --views 8 --width 1920 --height 1080
 ```

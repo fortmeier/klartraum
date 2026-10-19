@@ -88,6 +88,13 @@ struct LeafRecord {
     uvec4 ids;     // x type, y seed, z instance, w unused
 };
 
+// A vertex of the static scene meshes (pot, soil, table).
+struct TreeSceneVertex {
+    vec4 pos;    // xyz, w unused
+    vec4 normal; // xyz, w unused
+    vec4 color;  // rgb albedo, w material (TREE_MATERIAL_*)
+};
+
 // Values the whole generation reads.
 struct TreeFrame {
     vec4 worldUp;    // xyz unit vector up, w unused
@@ -106,6 +113,9 @@ struct TreeRenderSettings {
     // their lobes to merge, y where they are fully simplified, z below which leaves thin out, w the fraction
     // of leaves kept at the farthest distance.
     vec4 leafLod;
+    // x: 1 to hide fragments behind the scene depth buffer (Gaussians drawn before, e.g. the lantern),
+    // 0 to ignore it; yzw unused.
+    vec4 occlusion;
 };
 
 const float TREE_PI = 3.14159265f;
@@ -232,6 +242,76 @@ TREE_FN float treeStemRadiusSlope(TreeTypeParams p, StemRecord s, float z) {
     float z0 = max(z - e, 0.0f);
     float z1 = min(z + e, 1.0f);
     return (treeStemRadius(p, s, z1) - treeStemRadius(p, s, z0)) / ((z1 - z0) * s.posLength.w);
+}
+
+// --- shading -----------------------------------------------------------------
+
+// Lighting of the classical renderer, also baked into the Gaussians: a sun and
+// an ambient term from the sky above and the ground below.
+TREE_FN vec3 treeShade(vec3 albedo, vec3 normal, TreeRenderSettings s) {
+    float sun = max(dot(normal, vec3(s.sun.x, s.sun.y, s.sun.z)), 0.0f) * s.sun.w;
+    float hemisphere = 0.5f + 0.5f * normal.y;
+    vec3 ambient = mix(vec3(s.ground.x, s.ground.y, s.ground.z), vec3(s.sky.x, s.sky.y, s.sky.z), hemisphere);
+    return albedo * (ambient + vec3(sun, sun, sun));
+}
+
+// The colour as the render targets store it: as displayed, with gamma 2.2.
+TREE_FN vec3 treeDisplayColor(vec3 linearColor) {
+    float g = 1.0f / 2.2f;
+    return pow(clamp(linearColor, vec3(0.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 1.0f)), vec3(g, g, g));
+}
+
+// Value noise in [0, 1] on the integer lattice, smoothly interpolated.
+TREE_FN float treeValueNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = p - i;
+    vec3 w = f * f * (vec3(3.0f, 3.0f, 3.0f) - 2.0f * f);
+    uint x = uint(int(i.x));
+    uint y = uint(int(i.y));
+    uint z = uint(int(i.z));
+    float n000 = treeRand(treeHash2(x, y), z);
+    float n100 = treeRand(treeHash2(x + 1u, y), z);
+    float n010 = treeRand(treeHash2(x, y + 1u), z);
+    float n110 = treeRand(treeHash2(x + 1u, y + 1u), z);
+    float n001 = treeRand(treeHash2(x, y), z + 1u);
+    float n101 = treeRand(treeHash2(x + 1u, y), z + 1u);
+    float n011 = treeRand(treeHash2(x, y + 1u), z + 1u);
+    float n111 = treeRand(treeHash2(x + 1u, y + 1u), z + 1u);
+    return mix(mix(mix(n000, n100, w.x), mix(n010, n110, w.x), w.y),
+               mix(mix(n001, n101, w.x), mix(n011, n111, w.x), w.y), w.z);
+}
+
+// Three octaves of value noise.
+TREE_FN float treeFbm(vec3 p) {
+    return 0.5f * treeValueNoise(p) + 0.3f * treeValueNoise(2.03f * p) + 0.2f * treeValueNoise(4.11f * p);
+}
+
+// Scene materials, by the w of a vertex colour.
+#define TREE_MATERIAL_PLAIN 0.0f
+#define TREE_MATERIAL_MOSS 1.0f
+#define TREE_MATERIAL_WOOD 2.0f
+#define TREE_MATERIAL_GLAZE 3.0f
+
+// The albedo of a scene surface at world position pos: plain colour, moss
+// over soil, wood grain along x, or a glaze with fine mottling.
+TREE_FN vec3 treeSceneAlbedo(vec4 color, vec3 pos) {
+    vec3 base = vec3(color.x, color.y, color.z);
+    if (color.w == TREE_MATERIAL_MOSS) {
+        float coverage = smoothstep(0.35f, 0.6f, treeFbm(pos * 9.0f));
+        float tint = treeFbm(pos * 31.0f + vec3(7.0f, 0.0f, 3.0f));
+        vec3 soil = vec3(0.16f, 0.11f, 0.07f) * (0.7f + 0.6f * tint);
+        vec3 moss = base * (0.75f + 0.5f * tint);
+        return mix(soil, moss, coverage);
+    }
+    if (color.w == TREE_MATERIAL_WOOD) {
+        float grain = treeFbm(vec3(pos.x * 1.5f, pos.y * 40.0f, pos.z * 40.0f));
+        float rings = 0.5f + 0.5f * sin(40.0f * pos.z + 8.0f * grain);
+        return base * (0.75f + 0.25f * rings + 0.2f * grain);
+    }
+    if (color.w == TREE_MATERIAL_GLAZE) {
+        return base * (0.85f + 0.3f * treeFbm(pos * 14.0f));
+    }
+    return base;
 }
 
 // --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------
