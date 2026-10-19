@@ -69,6 +69,15 @@ TreeFrame defaultTreeFrame() {
     return frame;
 }
 
+TreeRenderSettings defaultTreeRenderSettings(VkExtent2D extent) {
+    TreeRenderSettings settings{};
+    settings.viewport = glm::vec4(float(extent.width), float(extent.height), 4.0f, 0.5f);
+    settings.sun = glm::vec4(glm::normalize(glm::vec3(-0.4f, 0.8f, 0.45f)), 1.6f);
+    settings.sky = glm::vec4(0.32f, 0.36f, 0.42f, 0.0f);
+    settings.ground = glm::vec4(0.16f, 0.13f, 0.1f, 0.0f);
+    return settings;
+}
+
 glm::vec4 treeUpRotation(const glm::vec3& up) {
     const glm::vec3 from(0.0f, 0.0f, 1.0f);
     const glm::vec3 to = glm::normalize(up);

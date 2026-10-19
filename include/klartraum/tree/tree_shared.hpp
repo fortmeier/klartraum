@@ -96,7 +96,19 @@ struct TreeFrame {
     vec4 reserved;
 };
 
+// Per-frame values of the tree renderers.
+struct TreeRenderSettings {
+    vec4 viewport; // x width, y height in pixels, z pixels per triangle edge (Delta), w minimum stem radius in pixels
+    vec4 sun;      // xyz unit vector towards the sun, w intensity
+    vec4 sky;      // rgb ambient light from above, w unused
+    vec4 ground;   // rgb ambient light from below, w unused
+};
+
 const float TREE_PI = 3.14159265f;
+
+// Stem draw buckets: bucket b holds segments that need at most
+// treeStemBucketAround(b) x treeStemBucketAlong(b) quads.
+#define TREE_STEM_BUCKETS 5u
 
 // Random keys, one range per purpose so that the decisions are independent.
 const uint TREE_KEY_SCALE = 1u;
@@ -216,6 +228,44 @@ TREE_FN float treeStemRadiusSlope(TreeTypeParams p, StemRecord s, float z) {
     float z0 = max(z - e, 0.0f);
     float z1 = min(z + e, 1.0f);
     return (treeStemRadius(p, s, z1) - treeStemRadius(p, s, z0)) / ((z1 - z0) * s.posLength.w);
+}
+
+// --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------
+
+TREE_FN uint treeStemBucketAround(uint b) { return b == 0u ? 1u : 2u << b; }
+
+TREE_FN uint treeStemBucketAlong(uint b) { return 1u << b; }
+
+// Half the angle of the arc of a ring that faces the camera. drdz is the
+// change of the radius along the growth direction, x the cosine between the
+// growth direction and the direction to the camera.
+TREE_FN float treeOpeningAngle(float drdz, float x) {
+    float s = sqrt(max(1.0f - x * x, 1e-12f));
+    return acos(clamp(drdz * x / s, -1.0f, 1.0f));
+}
+
+// Position in [0, 1] of vertex i of an edge with fractional tessellation
+// factor F (at most maxSegments segments), with fractional odd spacing: all
+// segments have the length 1 / F except the middle one, which shrinks to
+// nothing as F falls to the next lower integer. Vertices beyond the last one
+// coincide with it.
+TREE_FN float treeTessSpacing(uint i, float factor, uint maxSegments) {
+    float f = clamp(factor, 1.0f, float(maxSegments));
+    uint n = uint(ceil(f));
+    uint k = min(i, n);
+    uint h = n / 2u;
+    float s = k <= h ? float(k) / f : 1.0f - float(n - k) / f;
+    return clamp(s, 0.0f, 1.0f);
+}
+
+// The smallest bucket with at least `around` x `along` quads, or the largest.
+TREE_FN uint treeStemBucket(float around, float along) {
+    for (uint b = 0u; b < TREE_STEM_BUCKETS; ++b) {
+        if (float(treeStemBucketAround(b)) >= ceil(around) && float(treeStemBucketAlong(b)) >= ceil(along)) {
+            return b;
+        }
+    }
+    return TREE_STEM_BUCKETS - 1u;
 }
 
 #endif // KLARTRAUM_TREE_TREE_SHARED_HPP
