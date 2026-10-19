@@ -1,0 +1,17 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Dispatch arguments of the level pass pc.level: one workgroup per stem in its queue.
+
+#include "tree_generate_common.glsl"
+
+layout(local_size_x = 1) in;
+
+void main() {
+    treeArgs[0] = min(treeCounters[pc.level], pc.stemCapacity[pc.level]);
+    treeArgs[1] = 1u;
+    treeArgs[2] = 1u;
+}

@@ -1,0 +1,19 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// One thread per tree instance: writes the trunk's stem record to the level 0 queue.
+
+#include "tree_generate_common.glsl"
+
+layout(local_size_x = 64) in;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= pc.instanceCount) {
+        return;
+    }
+    treeEmitStem(treeRootStem(treeInstances[index], index));
+}

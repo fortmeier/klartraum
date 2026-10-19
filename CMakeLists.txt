@@ -313,6 +313,7 @@ add_executable(
   tests/test_gaussian_morph.cpp
   tests/test_gaussian_lighting.cpp
   tests/test_tree_model.cpp
+  tests/test_tree_generation.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -351,6 +352,7 @@ set(KLARTRAUM_LIB_SRC
   src/rendering/gaussian_morph.cpp
   src/rendering/gaussian_lighting.cpp
   src/tree_model.cpp
+  src/tree_generator.cpp
   ${SPZ_SRC}
   )
 
