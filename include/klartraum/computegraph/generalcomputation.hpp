@@ -518,7 +518,7 @@ private:
         if (dynamicGroupDispatchParams == nullptr) {
             vkCmdDispatch(commandBuffer, groupCountX, groupCountY, groupCountZ);
         } else {
-            vkCmdDispatchIndirect(commandBuffer, dynamicGroupDispatchParams->getVkBuffer(0), 0);
+            vkCmdDispatchIndirect(commandBuffer, dynamicGroupDispatchParams->getVkBuffer(pathId), 0);
         }
         VkMemoryBarrier memoryBarrier{};
         memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
