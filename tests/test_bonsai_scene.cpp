@@ -8,7 +8,8 @@
  *   lantern
  * - treesAreFourToNineLanternsTall: the generated trees are 4 to 9 times as tall as the lantern
  * - soilLiesInThePot: the soil rises from below the rim at the pot's edge towards the middle
- * - potWallsFaceOutwards: the mesh is a triangle list; outer wall normals point away from the middle, the soil's up
+ * - potWallsFaceOutwards: the mesh is a triangle list; outer wall normals point away from the middle, the
+ *   bottom's down, the soil's up
  * - meshGaussiansCoverTheMesh: sampleMeshGaussians places about area / spacing^2 Gaussians on the triangles
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
  * - classicalGeometryIsHiddenBehindSplats: a quad behind an opaque block of splats is hidden by it, a quad in
@@ -102,7 +103,9 @@ TEST(BonsaiScene, potWallsFaceOutwards) {
     for (const TreeSceneVertex& v : scene.mesh) {
         const glm::vec3 p(v.pos), n(v.normal);
         EXPECT_NEAR(glm::length(n), 1.0f, 1e-4f);
-        if (v.color.w == TREE_MATERIAL_GLAZE && p.y < 0.5f * scene.config.pot.height) {
+        if (v.color.w == TREE_MATERIAL_GLAZE && p.y == 0.0f && std::abs(n.y) > 0.5f) {
+            EXPECT_LT(n.y, -0.99f); // the bottom
+        } else if (v.color.w == TREE_MATERIAL_GLAZE && p.y < 0.5f * scene.config.pot.height) {
             EXPECT_GT(glm::dot(n, glm::vec3(p.x, 0.0f, p.z)), 0.0f);
             ++outerWall;
         }
@@ -259,8 +262,10 @@ TEST_F(BonsaiRenderingTest, bonsaiRendersBothWays) {
         graph.submitAndWait(vc->getGraphicsQueue(), 0);
         const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
         writePpm(std::string("bonsai_") + name, image, extent);
-        // Trees, pot and table fill most of the frame; the sky above stays black.
-        EXPECT_GT(coveredCount(image, extent), extent.width * extent.height / 2);
+        // Trees and pot fill a good part of the frame; the background stays black.
+        const size_t coverage = coveredCount(image, extent);
+        EXPECT_GT(coverage, extent.width * extent.height / 5);
+        EXPECT_LT(coverage, extent.width * extent.height * 4 / 5);
         EXPECT_EQ(bonsai.getGenerator().readCounters()[kTreeCounterOverflow], 0u);
     }
 }

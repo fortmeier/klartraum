@@ -333,8 +333,8 @@ uv run scripts/mesh_fitting/prepare_data.py SCENE_DIR build/TestingOutput/real_d
 
 ### `tree_bonsai_example`
 
-Renders a bonsai forest planting without a window: 8 to 20 trees in an oval pot
-on a table, with the captured stone lantern standing on the moss among them.
+Renders a bonsai forest planting without a window: 8 to 20 trees in an oval pot,
+with the captured stone lantern standing on the moss among them.
 The trees follow Kuth et al., *Real-Time GPU Tree Generation* (HPG 2025): a
 compute graph recorded once generates them on the GPU every frame from a few
 hundred bytes of parameters per tree type. They are drawn either classically
