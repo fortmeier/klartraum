@@ -363,6 +363,7 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--wind W` | Strength of the wind (default 0.5) |
 | `--turns T` | Turns of the camera around the pot during the video (default 0.5) |
 | `--from N`, `--to M` | Render only the video frames N to M - 1 |
+| `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
 
 ```bash

@@ -10,7 +10,7 @@
 //                       [--views 4] [--trees 13] [--seed 7] [--width 1280] [--height 720]
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
-//                       [--turns 0.5] [--from 0] [--to N]
+//                       [--turns 0.5] [--from 0] [--to N] [--moss-patches 250]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
 //
 // The trees are generated on the GPU every frame; per frame the CPU only sets
@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
     float fps = 30.0f;
     float windStrength = 0.5f;
     float turns = 0.5f;
+    uint32_t mossPatches = BonsaiRenderConfig{}.mossPatches;
     uint32_t fromFrame = 0;
     uint32_t toFrame = UINT32_MAX;
     std::filesystem::path outDir = "build/TestingOutput/tree_bonsai";
@@ -140,6 +141,8 @@ int main(int argc, char** argv) {
             windStrength = std::stof(argv[++i]);
         } else if (arg == "--turns" && hasValue) {
             turns = std::stof(argv[++i]);
+        } else if (arg == "--moss-patches" && hasValue) {
+            mossPatches = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--from" && hasValue) {
             fromFrame = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--to" && hasValue) {
@@ -179,6 +182,7 @@ int main(int argc, char** argv) {
         config.extent = extent;
         config.mode = mode;
         config.backend = backendName == "raster" ? GsplatBackend::Raster : GsplatBackend::Compute;
+        config.mossPatches = mossPatches;
 
         auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderer bonsai(vc, scene, target, config);
