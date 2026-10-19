@@ -340,6 +340,7 @@ add_executable(
   tests/test_tree_seasons.cpp
   tests/test_tree_sky.cpp
   tests/test_bonsai_scene.cpp
+  tests/test_gaussian_lod.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -369,6 +370,7 @@ set(KLARTRAUM_LIB_SRC
   src/text_draw_component.cpp
   src/gaussian_morph.cpp
   src/gaussian_lighting.cpp
+  src/gaussian_lod.cpp
   src/tree_model.cpp
   src/tree_generator.cpp
   src/tree_stem_renderer.cpp
