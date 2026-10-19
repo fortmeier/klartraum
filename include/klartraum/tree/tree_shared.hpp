@@ -309,6 +309,16 @@ TREE_FN vec3 treeLeafUnderside(vec3 top) {
     return 1.3f * mix(top, vec3(luma, luma, luma), 0.35f);
 }
 
+// How much of the light reaches a captured Gaussian, whose colours already
+// contain the light of the capture: the share of the current sky and sun
+// (weighted by their brightness) that the light volume lets through.
+TREE_FN float treeCapturedShade(TreeRenderSettings s, vec2 light) {
+    vec3 luma = vec3(0.3f, 0.59f, 0.11f);
+    float ambient = dot(vec3(s.sky.x, s.sky.y, s.sky.z), luma);
+    float sun = 0.5f * s.sun.w * dot(vec3(s.lightColor.x, s.lightColor.y, s.lightColor.z), luma);
+    return (ambient * light.y + sun * light.x) / max(ambient + sun, 1e-4f);
+}
+
 // Index of voxel (x, y, z) in the light volume.
 TREE_FN uint treeLightIndex(uint x, uint y, uint z, uvec4 size) { return (z * size.y + y) * size.x + x; }
 

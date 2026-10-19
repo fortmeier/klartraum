@@ -49,8 +49,18 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     configureTreeLightGrid(values, glm::vec3(-pot.halfLength - 0.15f, -0.05f, -pot.halfWidth - 0.15f),
                            glm::vec3(pot.halfLength + 0.15f, 2.7f, pot.halfWidth + 0.15f), config.lightVoxel);
     settings = std::make_shared<HostValues<TreeRenderSettings>>(vulkanContext, std::vector<TreeRenderSettings>{values});
-    lightVolume = std::make_unique<TreeLightVolume>(vulkanContext, *generator, settings);
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
+    // The pot and the lantern cast shadows; the soil's gentle mound is left out, which would shadow itself
+    // in voxels this coarse.
+    std::vector<TreeSceneVertex> potMesh;
+    for (const TreeSceneVertex& v : scene.mesh) {
+        if (v.color.w == TREE_MATERIAL_GLAZE) {
+            potMesh.push_back(v);
+        }
+    }
+    lightVolume = std::make_unique<TreeLightVolume>(
+        vulkanContext, *generator, settings,
+        treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians));
 
     if (classical) {
         std::shared_ptr<ImageViewSrc> renderTarget = target;
@@ -59,7 +69,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         }
         lantern = std::make_shared<GaussianDataStandard>(vulkanContext, std::move(lanternGaussians));
         const GaussianSoABuffers tinted =
-            tintCapturedGaussians(vulkanContext, lantern->buffers(), settings, lanternTint);
+            tintCapturedGaussians(vulkanContext, lantern->buffers(), settings, lanternTint, lightVolume->getLight());
         GsplatConfig splatConfig;
         splatConfig.outputDepth = true;
         auto splatting =

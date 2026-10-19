@@ -29,7 +29,8 @@ namespace klartraum {
  * the `light` volume (TreeLightVolume) if given, as degree 0 spherical
  * harmonics; the higher bands are zero. `staticGaussians` (e.g. captured
  * objects) come first in the buffers, their colours tinted every frame by
- * TreeRenderSettings::capturedTint; `surfels`
+ * TreeRenderSettings::capturedTint and darkened in the light volume's
+ * shadows (treeCapturedShade()); `surfels`
  * (samples of static surfaces, see sampleMeshSurfels()) follow and are lit
  * every frame like the trees, so the trees' shadows fall on them. One backend
  * then sorts everything together without merging every frame. Call
@@ -62,14 +63,14 @@ private:
 };
 
 /**
- * @brief Tints the colours of captured Gaussians every frame by TreeRenderSettings::capturedTint.
+ * @brief Tints the colours of captured Gaussians every frame for the current light and the `light` volume's shadows.
  *
  * Returns `gaussians` with the colours replaced by per-path buffers that
  * `tint_gaussians.comp` writes; `element` is set to the tinting element.
  */
 GaussianSoABuffers tintCapturedGaussians(VulkanContext& vulkanContext, const GaussianSoABuffers& gaussians,
                                          std::shared_ptr<HostValues<TreeRenderSettings>> settings,
-                                         ComputeGraphElementPtr& element);
+                                         ComputeGraphElementPtr& element, BufferRef light = {});
 
 } // namespace klartraum
 

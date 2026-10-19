@@ -12,6 +12,10 @@
  *   ground beside it all; above the tree everything is lit
  * - shadowFollowsTheSun: with the sun low in the +x direction, the shadow falls towards -x
  * - crownInsideSeesLessSky: voxels in the middle of the crown see less sky than voxels beside it
+ * - staticOccludersCastShadows: an opaque static plate (treeStaticOcclusion()) shadows what is below it but not
+ *   itself, and the trees-only channel ignores it
+ * - capturedShadeWeighsSunAndSky: treeCapturedShade is 1 in full light, the sky's share in the sun's shadow, and
+ *   0 without light
  * - groundIsDarkerInTheShadow: a ground plane drawn with the light volume is darker under the tree than beside it
  **/
 
@@ -39,7 +43,8 @@ std::vector<TreeTypeParams> crownTypes() {
 }
 
 struct LightScene {
-    LightScene(VulkanContext& vc, glm::vec3 sun, glm::vec3 treePosition = glm::vec3(0.0f)) {
+    LightScene(VulkanContext& vc, glm::vec3 sun, glm::vec3 treePosition = glm::vec3(0.0f),
+               const std::vector<TreeSceneVertex>& occluders = {}) {
         const std::vector<TreeTypeParams> types = crownTypes();
         const std::vector<TreeInstance> instances = {makeInstance(0, 4, treePosition, 0.08f)};
         const TreeFrame frame = defaultTreeFrame();
@@ -49,15 +54,20 @@ struct LightScene {
         values.sun = glm::vec4(glm::normalize(sun), 1.0f);
         configureTreeLightGrid(values, glm::vec3(-1.0f, 0.0f, -1.0f), glm::vec3(1.0f, 1.6f, 1.0f), 0.05f);
         settings = std::make_shared<HostValues<TreeRenderSettings>>(vc, std::vector<TreeRenderSettings>{values});
-        volume = std::make_unique<TreeLightVolume>(vc, *generator, settings);
+        volume = std::make_unique<TreeLightVolume>(vc, *generator, settings,
+                                                   occluders.empty() ? std::vector<float>{}
+                                                                     : treeStaticOcclusion(values, occluders, {}));
         graph = std::make_unique<ComputeGraph>(vc, 1);
         graph->compileFrom(volume->getElement());
         graph->submitAndWait(vc.getGraphicsQueue(), 0);
         light = volume->readLight();
     }
 
-    // The light of the voxel around p.
-    glm::vec2 at(glm::vec3 p) const {
+    // The light of the voxel around p, through everything.
+    glm::vec2 at(glm::vec3 p) const { return glm::vec2(all(p)); }
+
+    // xy through everything, zw through the trees only.
+    glm::vec4 all(glm::vec3 p) const {
         const glm::ivec3 c = glm::ivec3(glm::floor((p - glm::vec3(values.lightGridMin)) / values.lightGridMin.w));
         return light[treeLightIndex(c.x, c.y, c.z, values.lightGridSize)];
     }
@@ -67,7 +77,7 @@ struct LightScene {
     std::shared_ptr<HostValues<TreeRenderSettings>> settings;
     std::unique_ptr<TreeLightVolume> volume;
     std::unique_ptr<ComputeGraph> graph;
-    std::vector<glm::vec2> light;
+    std::vector<glm::vec4> light;
 };
 
 } // namespace
@@ -107,8 +117,8 @@ protected:
 
 TEST_F(TreeLightTest, emptyGridIsFullyLit) {
     const LightScene scene(*vc, glm::vec3(0.3f, 1.0f, 0.2f), glm::vec3(10.0f, 0.0f, 0.0f));
-    for (const glm::vec2& l : scene.light) {
-        ASSERT_EQ(l, glm::vec2(1.0f));
+    for (const glm::vec4& l : scene.light) {
+        ASSERT_EQ(l, glm::vec4(1.0f));
     }
 }
 
@@ -143,6 +153,33 @@ TEST_F(TreeLightTest, crownInsideSeesLessSky) {
     std::cout << "sky inside " << inside << ", outside " << outside << std::endl;
     EXPECT_LT(inside, 0.6f);
     EXPECT_GT(outside, 0.9f);
+}
+
+TEST_F(TreeLightTest, staticOccludersCastShadows) {
+    // A plate 0.6 wide at height 1.4 over x in [0.2, 0.8], the tree far away.
+    std::vector<TreeSceneVertex> plate;
+    for (float x = 0.2f; x < 0.8f; x += 0.01f) {
+        for (float z = -0.3f; z < 0.3f; z += 0.01f) {
+            TreeSceneVertex v{};
+            v.pos = glm::vec4(x, 1.4f, z, 0.01f);
+            v.normal = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+            plate.push_back(v);
+        }
+    }
+    const LightScene scene(*vc, glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(10.0f, 0.0f, 0.0f), plate);
+    EXPECT_LT(scene.at(glm::vec3(0.5f, 0.5f, 0.0f)).x, 0.1f);   // under the plate
+    EXPECT_GT(scene.at(glm::vec3(-0.5f, 0.5f, 0.0f)).x, 0.99f); // beside it
+    EXPECT_GT(scene.at(glm::vec3(0.5f, 1.41f, 0.0f)).x, 0.99f); // the plate itself
+    EXPECT_GT(scene.all(glm::vec3(0.5f, 0.5f, 0.0f)).z, 0.99f); // the trees-only channel ignores it
+}
+
+TEST(TreeLight, capturedShadeWeighsSunAndSky) {
+    const TreeRenderSettings s = defaultTreeRenderSettings({64, 64});
+    EXPECT_NEAR(treeCapturedShade(s, glm::vec2(1.0f, 1.0f)), 1.0f, 1e-6f);
+    EXPECT_EQ(treeCapturedShade(s, glm::vec2(0.0f, 0.0f)), 0.0f);
+    const float shadow = treeCapturedShade(s, glm::vec2(0.0f, 1.0f));
+    EXPECT_GT(shadow, 0.1f);
+    EXPECT_LT(shadow, 0.6f);
 }
 
 TEST_F(TreeLightTest, groundIsDarkerInTheShadow) {
