@@ -69,6 +69,9 @@ layout(scalar, binding = 15) readonly buffer StaticColors {
 layout(scalar, binding = 16) readonly buffer StaticPositions {
     vec3 staticPositions[];
 };
+layout(scalar, binding = 17) readonly buffer StaticNormals {
+    vec3 staticNormals[];
+};
 
 layout(push_constant) uniform Push {
     uint segmentCapacity;
@@ -88,10 +91,12 @@ vec3 colorToSh0(vec3 c) {
     return (c - vec3(0.5f)) / SH_C0;
 }
 
-// The colour as the classical renderer outputs it, for a surface at pos with this normal.
-vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal) {
+// The colour as the classical renderer outputs it, for a surface at pos with
+// this normal; the pot (glaze) takes the light through the trees only, as there.
+vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal, bool glaze) {
     TreeRenderSettings s = settings[0];
-    vec2 light = treeLightAt(s, pos + 0.5f * s.lightGridMin.w * normal);
+    vec3 at = pos + 0.5f * s.lightGridMin.w * normal;
+    vec2 light = glaze ? treeLightOfTreesAt(s, at) : treeLightAt(s, at);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
     return treeOutputColor(color, s).rgb;
 }
@@ -141,7 +146,7 @@ void stemGaussian(uint i, uint segment, uint local) {
     float z = d.shape.z + w * segmentLength / d.shape.w;
     vec3 pos = center + 0.85f * radius * treeTrunkLobes(p, treeLevel(d.ids), z, phi) * radial;
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(radial, pos, settings[0].season.y));
-    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, radial), 0.95f);
+    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, radial, false), 0.95f);
 }
 
 // Half width of a lobe at height y, along the polygon of its curve ends.
@@ -188,7 +193,7 @@ void leafGaussian(uint i, uint leafIndex, uint local) {
     }
     vec3 albedo = treeLeafSeasonAlbedo(p, leaf.ids.y, treeHash(leaf.ids.z), leaf.ids.w);
     albedo = mix(albedo, vec3(0.8f), 0.7f * treeSnowOn(normal, pos, settings[0].season.y));
-    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal), 0.9f);
+    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal, false), 0.9f);
 }
 
 // A flat Gaussian on a static surface, its thin axis along the normal.
@@ -202,7 +207,7 @@ void surfelGaussian(uint slot, uint index) {
     vec3 albedo = treeSceneAlbedoDetail(v.color, v.pos.xyz, 0.0f);
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normal, v.pos.xyz, settings[0].season.y));
     writeGaussian(slot, v.pos.xyz, rot, vec3(0.9f * spacing, 0.9f * spacing, 0.08f * spacing),
-                  displayColor(albedo, v.pos.xyz, normal), 0.95f);
+                  displayColor(albedo, v.pos.xyz, normal, v.color.w == TREE_MATERIAL_GLAZE), 0.95f);
 }
 
 void main() {
@@ -211,7 +216,7 @@ void main() {
         vec4 c = staticColors[g];
         TreeRenderSettings s = settings[0];
         float shade = treeCapturedShade(s, treeLightOfTreesAt(s, staticPositions[g]));
-        vec3 displayed = (vec3(0.5f) + SH_C0 * c.rgb) * s.capturedTint.rgb * shade;
+        vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * c.rgb, staticNormals[g], staticPositions[g], shade, s);
         outColAlpha[g] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);
         return;
     }

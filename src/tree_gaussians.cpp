@@ -27,15 +27,24 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
     surfelBuffer->getBuffer().memcopyFrom(surfels);
     std::vector<glm::vec4> staticColors;
     std::vector<glm::vec3> staticPositions;
+    std::vector<glm::vec3> staticNormals;
     for (const Gaussian3D& g : staticGaussians) {
         staticColors.emplace_back(g.color[0], g.color[1], g.color[2], g.alpha);
         staticPositions.emplace_back(g.position[0], g.position[1], g.position[2]);
+        staticNormals.push_back(
+            tree::treeGaussianNormal(glm::vec4(g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3]),
+                                     glm::vec3(g.scale[0], g.scale[1], g.scale[2])));
     }
     if (staticColors.empty()) {
         // The bindings need buffers.
         staticColors.emplace_back(0.0f);
         staticPositions.emplace_back(0.0f);
+        staticNormals.emplace_back(0.0f, 1.0f, 0.0f);
     }
+    auto staticNormalBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(
+        vulkanContext, uint32_t(staticNormals.size()));
+    staticNormalBuffer->setName("TreeStaticNormals");
+    staticNormalBuffer->getBuffer().memcopyFrom(staticNormals);
     auto staticPositionBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec3>>>(
         vulkanContext, uint32_t(staticPositions.size()));
     staticPositionBuffer->setName("TreeStaticPositions");
@@ -59,6 +68,7 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
     element->setInput(surfelBuffer, 14);
     element->setInput(staticColorBuffer, 15);
     element->setInput(staticPositionBuffer, 16);
+    element->setInput(staticNormalBuffer, 17);
     element->setGroupCountX((offset + surfelCount + treeSlots + 255) / 256);
     element->setPushConstants({glm::uvec4(capacity.segments, capacity.leaves, offset, surfelCount)});
 }
@@ -112,6 +122,8 @@ GaussianSoABuffers tintCapturedGaussians(VulkanContext& vulkanContext, const Gau
     gaussians.pos.connectTo(*tint, 3);
     const BufferRef lightRef = bufferOrPlaceholder(vulkanContext, light);
     tint->setInput(lightRef.element, 4, lightRef.slot);
+    gaussians.rot.connectTo(*tint, 5);
+    gaussians.scale.connectTo(*tint, 6);
     tint->setGroupCountX((gaussians.count + 255) / 256);
     tint->setPushConstants({gaussians.count});
     element = tint;

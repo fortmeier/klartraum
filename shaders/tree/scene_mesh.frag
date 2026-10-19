@@ -42,7 +42,9 @@ void main() {
         normal = normalize(normal - detail * vec3(dx, 0.0f, dz));
     }
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normalize(inNormal), inWorldPos, s.season.y));
-    vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
+    // The pot is one of the static occluders, which would shadow its own walls at grazing light.
+    vec2 light = inColor.w == TREE_MATERIAL_GLAZE ? treeLightOfTreesAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal)
+                                                 : treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
     if (inColor.w == TREE_MATERIAL_GLAZE) {
         // The glaze's highlight.

@@ -5,9 +5,9 @@
 #version 450
 
 // Tints the colours of captured Gaussians for the current light
-// (TreeRenderSettings::capturedTint) and the shadows of the light volume
-// (treeCapturedShade()): the displayed colour 0.5 + C0 * sh0 is multiplied
-// and turned back into the degree 0 coefficient.
+// (TreeRenderSettings::capturedTint), the shadows of the light volume
+// (treeCapturedShade()) and snow (treeCapturedColor()): the displayed colour
+// 0.5 + C0 * sh0 is changed and turned back into the degree 0 coefficient.
 
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_GOOGLE_include_directive : require
@@ -32,6 +32,12 @@ layout(scalar, binding = 2) writeonly buffer Tinted {
 layout(scalar, binding = 3) readonly buffer Positions {
     vec3 positions[];
 };
+layout(scalar, binding = 5) readonly buffer Rotations {
+    vec4 rotations[];
+};
+layout(scalar, binding = 6) readonly buffer Scales {
+    vec3 scales[];
+};
 
 layout(push_constant) uniform Push {
     uint count;
@@ -48,6 +54,7 @@ void main() {
     vec4 c = original[i];
     TreeRenderSettings s = settings[0];
     float shade = treeCapturedShade(s, treeLightOfTreesAt(s, positions[i]));
-    vec3 displayed = (vec3(0.5f) + SH_C0 * c.rgb) * s.capturedTint.rgb * shade;
+    vec3 normal = treeGaussianNormal(rotations[i], scales[i]);
+    vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * c.rgb, normal, positions[i], shade, s);
     tinted[i] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);
 }

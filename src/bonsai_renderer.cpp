@@ -26,6 +26,14 @@ std::vector<Gaussian3D> BonsaiRenderer::loadLantern(const BonsaiScene& scene, co
     return kept;
 }
 
+std::vector<Gaussian3D> BonsaiRenderer::loadMoss(const BonsaiScene& scene, const std::string& path, uint32_t patches) {
+    if (patches == 0) {
+        return {};
+    }
+    return scatterMossPatches(scene, extractMossPatches(loadGaussiansSpz(path, true)), patches, scene.config.seed,
+                              1.3f);
+}
+
 BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& scene,
                                std::shared_ptr<ImageViewSrc> target, const BonsaiRenderConfig& config)
     : config(config),
@@ -61,6 +69,9 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     lightVolume = std::make_unique<TreeLightVolume>(
         vulkanContext, *generator, settings,
         treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians));
+    // The captured moss joins the lantern; it is too flat to cast shadows.
+    const std::vector<Gaussian3D> moss = loadMoss(scene, config.lanternPath, config.mossPatches);
+    lanternGaussians.insert(lanternGaussians.end(), moss.begin(), moss.end());
 
     if (classical) {
         std::shared_ptr<ImageViewSrc> renderTarget = target;
