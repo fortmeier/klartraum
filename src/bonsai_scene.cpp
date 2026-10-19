@@ -138,6 +138,8 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     const glm::vec3 lantern = config.lanternPosition;
     // Sunk a little, so that the edge of the captured moss disappears in the soil.
     scene.lanternTranslation = glm::vec3(lantern.x, scene.soilHeight(lantern.x, lantern.z) - 0.008f, lantern.z);
+    // The fire box is about 0.15 above the lantern's ground.
+    scene.lanternFlame = scene.lanternTranslation + glm::vec3(0.0f, 0.15f * config.lanternScale, 0.0f);
 
     // Trees: a tall main tree off-centre at the back, the others around it,
     // smaller and leaning slightly outwards the farther away they stand.

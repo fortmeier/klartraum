@@ -123,6 +123,10 @@ struct TreeRenderSettings {
     uvec4 lightGridSize;  // xyz voxels per axis, w 1 when the grid is used, 0 for no shadows
     vec4 lightGridParams; // x optical depth of a voxel per leaf area / voxel face area, yzw unused
     vec4 season;          // x season S as in TreeFrame, y snow cover in [0, 1] (treeSnowCover()), zw unused
+    vec4 lightColor;      // rgb colour of the directional light (sun or moon), w unused
+    vec4 pointLight;      // xyz position of a point light without shadows (the lantern's flame), w unused
+    vec4 pointColor;      // rgb radiance of the point light at distance 1, w unused
+    vec4 capturedTint;    // rgb factor on the colours of captured Gaussians (the lantern) for the current light
 };
 
 const float TREE_PI = 3.14159265f;
@@ -270,7 +274,16 @@ TREE_FN vec3 treeShadeLit(vec3 albedo, vec3 normal, TreeRenderSettings s, vec2 l
     float sun = max(dot(normal, vec3(s.sun.x, s.sun.y, s.sun.z)), 0.0f) * s.sun.w * light.x;
     float hemisphere = 0.5f + 0.5f * normal.y;
     vec3 ambient = mix(vec3(s.ground.x, s.ground.y, s.ground.z), vec3(s.sky.x, s.sky.y, s.sky.z), hemisphere);
-    return albedo * (ambient * light.y + vec3(sun, sun, sun));
+    return albedo * (ambient * light.y + sun * vec3(s.lightColor.x, s.lightColor.y, s.lightColor.z));
+}
+
+// The light of the point light (TreeRenderSettings::pointLight) on a surface
+// at pos, falling off with the squared distance.
+TREE_FN vec3 treePointLight(vec3 albedo, vec3 normal, vec3 pos, TreeRenderSettings s) {
+    vec3 toLight = vec3(s.pointLight.x, s.pointLight.y, s.pointLight.z) - pos;
+    float d2 = dot(toLight, toLight);
+    float lambert = max(dot(normal, toLight * inversesqrt(max(d2, 1e-8f))), 0.0f);
+    return albedo * vec3(s.pointColor.x, s.pointColor.y, s.pointColor.z) * (lambert / (d2 + 0.01f));
 }
 
 TREE_FN vec3 treeShade(vec3 albedo, vec3 normal, TreeRenderSettings s) {

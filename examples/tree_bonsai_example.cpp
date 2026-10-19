@@ -9,11 +9,18 @@
 //   tree_bonsai_example [--renderer classical|gaussian|both] [--backend raster|compute]
 //                       [--views 4] [--trees 13] [--seed 7] [--width 1280] [--height 720]
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
+//                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
+//                       [--turns 0.5] [--from 0] [--to N]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
 //
-// The trees are generated on the GPU every frame; per view the CPU only sets
-// the camera. View i is seen from azimuth start + 2*pi*i/views. Images go to
-// <out-dir>/frames/<renderer>_<view>.ppm.
+// The trees are generated on the GPU every frame; per frame the CPU only sets
+// the camera, the time, the season and the wind. Without --video, view i is
+// seen from azimuth start + 2*pi*i/views at noon of the season, and images go
+// to <out-dir>/frames/<renderer>_<view>.ppm. With --video, the frames of the
+// days of BonsaiDays (one season per day, changing in the night, sun and moon
+// moving with the season) go to <out-dir>/frames/<renderer>_<frame>.ppm while
+// the camera turns --turns times around the pot; --from and --to select a
+// range of frames.
 
 #include <chrono>
 #include <cmath>
@@ -87,6 +94,13 @@ int main(int argc, char** argv) {
     float elevation = 0.32f;
     float azimuth = 0.35f;
     float season = 2.0f;
+    bool video = false;
+    BonsaiDays days;
+    float fps = 30.0f;
+    float windStrength = 0.5f;
+    float turns = 0.5f;
+    uint32_t fromFrame = 0;
+    uint32_t toFrame = UINT32_MAX;
     std::filesystem::path outDir = "build/TestingOutput/tree_bonsai";
 
     for (int i = 1; i < argc; ++i) {
@@ -114,6 +128,22 @@ int main(int argc, char** argv) {
             azimuth = std::stof(argv[++i]);
         } else if (arg == "--season" && hasValue) {
             season = std::stof(argv[++i]);
+        } else if (arg == "--video") {
+            video = true;
+        } else if (arg == "--days" && hasValue) {
+            days.days = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--seconds-per-day" && hasValue) {
+            days.secondsPerDay = std::stof(argv[++i]);
+        } else if (arg == "--fps" && hasValue) {
+            fps = std::stof(argv[++i]);
+        } else if (arg == "--wind" && hasValue) {
+            windStrength = std::stof(argv[++i]);
+        } else if (arg == "--turns" && hasValue) {
+            turns = std::stof(argv[++i]);
+        } else if (arg == "--from" && hasValue) {
+            fromFrame = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--to" && hasValue) {
+            toFrame = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--out-dir" && hasValue) {
             outDir = argv[++i];
         } else {
@@ -156,6 +186,30 @@ int main(int argc, char** argv) {
         graph.compileFrom(bonsai.getOutput());
         bonsai.initialize(1);
         bonsai.setSeason(season);
+
+        if (video) {
+            const uint32_t frames = uint32_t(std::lround(days.duration() * fps));
+            const float aspect = float(extent.width) / float(extent.height);
+            for (uint32_t frame = fromFrame; frame < std::min(frames, toFrame); ++frame) {
+                const float seconds = float(frame) / fps;
+                const float angle = azimuth + 2.0f * 3.14159265f * turns * seconds / days.duration();
+                const glm::vec3 eye =
+                    scene.focus + distance * glm::vec3(std::sin(angle) * std::cos(elevation), std::sin(elevation),
+                                                       std::cos(angle) * std::cos(elevation));
+                setCamera(bonsai.getCamera()->ubo, eye, scene.focus, aspect);
+                bonsai.getCamera()->update(0);
+                bonsai.setTime(seconds, days.timeOfDayAt(seconds), days.seasonAt(seconds),
+                               glm::vec4(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength));
+                graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                char name[64];
+                std::snprintf(name, sizeof(name), "%s_%04u.ppm", modeName, frame);
+                writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+                if (frame % 30 == 0) {
+                    std::cout << modeName << " frame " << frame << " / " << frames << std::endl;
+                }
+            }
+            continue;
+        }
 
         for (uint32_t view = 0; view < views; ++view) {
             const float angle = azimuth + 2.0f * 3.14159265f * float(view) / float(views);

@@ -28,7 +28,8 @@ std::vector<Gaussian3D> BonsaiRenderer::loadLantern(const BonsaiScene& scene, co
 
 BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& scene,
                                std::shared_ptr<ImageViewSrc> target, const BonsaiRenderConfig& config)
-    : config(config) {
+    : config(config),
+      lanternFlame(scene.lanternFlame) {
     const TreeFrame frame = defaultTreeFrame();
     generator = std::make_shared<TreeGenerator>(vulkanContext, scene.types, scene.trees,
                                                 TreeCapacity::fromReference(scene.types, scene.trees, frame), frame);
@@ -57,10 +58,12 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             renderTarget = std::make_shared<OffscreenTarget>(vulkanContext, renderExtent, config.numberPaths);
         }
         lantern = std::make_shared<GaussianDataStandard>(vulkanContext, std::move(lanternGaussians));
+        const GaussianSoABuffers tinted =
+            tintCapturedGaussians(vulkanContext, lantern->buffers(), settings, lanternTint);
         GsplatConfig splatConfig;
         splatConfig.outputDepth = true;
         auto splatting =
-            createGaussianSplatting(vulkanContext, config.backend, renderTarget, camera, lantern, splatConfig);
+            createGaussianSplatting(vulkanContext, config.backend, renderTarget, camera, tinted, splatConfig);
         const TreeRenderInputs inputs{BufferRef{getGaussianSplattingDepth(splatting), -1}, lightVolume->getLight()};
 
         auto toGeneral = std::make_shared<ImageToGeneral>();
@@ -109,6 +112,17 @@ void BonsaiRenderer::setSeason(float season) {
     frame.timeSeason.y = season;
     generator->getFrame().set(0, frame);
     TreeRenderSettings values = settings->values().at(0);
+    values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
+    settings->set(0, values);
+}
+
+void BonsaiRenderer::setTime(float seconds, float timeOfDay, float season, glm::vec4 wind) {
+    TreeFrame frame = generator->getFrame().values().at(0);
+    frame.timeSeason = glm::vec4(seconds, season, 0.0f, 0.0f);
+    frame.wind = wind;
+    generator->getFrame().set(0, frame);
+    TreeRenderSettings values = settings->values().at(0);
+    applyTreeSky(values, treeSkyAt(timeOfDay, season), lanternFlame, seconds);
     values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
     settings->set(0, values);
 }

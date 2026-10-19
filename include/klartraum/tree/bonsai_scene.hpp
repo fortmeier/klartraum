@@ -52,7 +52,8 @@ struct BonsaiScene {
     /// Puts the lantern capture (Y up, its ground at y = 0) on the soil.
     glm::quat lanternRotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 lanternTranslation{0.0f};
-    glm::vec3 focus{0.0f}; ///< where a camera looks
+    glm::vec3 focus{0.0f};        ///< where a camera looks
+    glm::vec3 lanternFlame{0.0f}; ///< where the lantern's flame burns, in its fire box
 
     /// Height of the soil surface at (x, z) inside the pot.
     float soilHeight(float x, float z) const;

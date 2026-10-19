@@ -356,8 +356,16 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--elevation E` | Elevation of the camera in radians (default 0.32) |
 | `--azimuth A` | Azimuth of the first view in radians (default 0.35) |
 | `--season S` | Season from 0 (winter) over 1 (spring), 2 (summer) to 3 (fall) (default 2) |
+| `--video` | Render the days of a video instead of views: one season per day, changing in the night, with sun, moon and wind |
+| `--days N` | Number of days of the video (default 4: spring, summer, fall, winter) |
+| `--seconds-per-day S` | Length of a day in the video (default 10) |
+| `--fps F` | Frames per second of the video (default 30) |
+| `--wind W` | Strength of the wind (default 0.5) |
+| `--turns T` | Turns of the camera around the pot during the video (default 0.5) |
+| `--from N`, `--to M` | Render only the video frames N to M - 1 |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
 
 ```bash
 ./build/examples/tree_bonsai_example --views 8 --width 1920 --height 1080
+scripts/tree/make_bonsai_video.sh   # both renderers' videos in build/TestingOutput/tree_bonsai_video/
 ```

@@ -59,5 +59,6 @@ void main() {
     // Snow on the upper side of the branches.
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normalize(inNormal), inWorldPos, s.season.y));
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
-    outColor = treeOutputColor(treeShadeLit(albedo, normal, s, light), s);
+    vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
+    outColor = treeOutputColor(color, s);
 }

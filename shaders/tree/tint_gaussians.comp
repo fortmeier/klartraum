@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Tints the colours of captured Gaussians for the current light
+// (TreeRenderSettings::capturedTint): the displayed colour 0.5 + C0 * sh0 is
+// multiplied by the tint and turned back into the degree 0 coefficient.
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_FN
+#include "klartraum/tree/tree_shared.hpp"
+
+layout(local_size_x = 256) in;
+
+layout(scalar, binding = 0) readonly buffer Original {
+    vec4 original[];
+};
+layout(std430, binding = 1) readonly buffer Settings {
+    TreeRenderSettings settings[];
+};
+layout(scalar, binding = 2) writeonly buffer Tinted {
+    vec4 tinted[];
+};
+
+layout(push_constant) uniform Push {
+    uint count;
+}
+pc;
+
+const float SH_C0 = 0.28209479f;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) {
+        return;
+    }
+    vec4 c = original[i];
+    vec3 displayed = (vec3(0.5f) + SH_C0 * c.rgb) * settings[0].capturedTint.rgb;
+    tinted[i] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);
+}

@@ -48,13 +48,13 @@ void main() {
     // Snow on needles and evergreen leaves that face upwards.
     albedo = mix(albedo, vec3(0.8f), 0.7f * treeSnowOn(normal, inWorldPos, s.season.y));
     vec2 light = treeLightAt(s, inWorldPos);
-    vec3 color = treeShadeLit(albedo, normal, s, light);
+    vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
     // Light shining through the leaf from behind.
-    color += 0.4f * albedo * max(dot(-normal, s.sun.xyz), 0.0f) * s.sun.w * light.x;
+    color += 0.4f * albedo * max(dot(-normal, s.sun.xyz), 0.0f) * s.sun.w * light.x * s.lightColor.rgb;
     // The waxy top's faint highlight.
     if (!underside) {
         vec3 halfway = normalize(toCamera + s.sun.xyz);
-        color += vec3(0.05f) * pow(max(dot(normal, halfway), 0.0f), 40.0f) * s.sun.w * light.x;
+        color += vec3(0.05f) * pow(max(dot(normal, halfway), 0.0f), 40.0f) * s.sun.w * light.x * s.lightColor.rgb;
     }
     outColor = treeOutputColor(color, s);
 }

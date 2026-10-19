@@ -43,12 +43,12 @@ void main() {
     }
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normalize(inNormal), inWorldPos, s.season.y));
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
-    vec3 color = treeShadeLit(albedo, normal, s, light);
+    vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
     if (inColor.w == TREE_MATERIAL_GLAZE) {
         // The glaze's highlight.
         vec3 toCamera = normalize(camera.cameraWorldPos.xyz - inWorldPos);
         vec3 halfway = normalize(toCamera + s.sun.xyz);
-        color += vec3(0.35f) * pow(max(dot(normal, halfway), 0.0f), 60.0f) * s.sun.w * light.x;
+        color += vec3(0.35f) * pow(max(dot(normal, halfway), 0.0f), 60.0f) * s.sun.w * light.x * s.lightColor.rgb;
     }
     outColor = treeOutputColor(color, s);
 }
