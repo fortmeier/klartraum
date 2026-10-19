@@ -102,6 +102,10 @@ struct TreeRenderSettings {
     vec4 sun;      // xyz unit vector towards the sun, w intensity
     vec4 sky;      // rgb ambient light from above, w unused
     vec4 ground;   // rgb ambient light from below, w unused
+    // Continuous leaf level of detail, by the leaf's length in pixels: x where leaves start to flatten and
+    // their lobes to merge, y where they are fully simplified, z below which leaves thin out, w the fraction
+    // of leaves kept at the farthest distance.
+    vec4 leafLod;
 };
 
 const float TREE_PI = 3.14159265f;
@@ -266,6 +270,123 @@ TREE_FN uint treeStemBucket(float around, float along) {
         }
     }
     return TREE_STEM_BUCKETS - 1u;
+}
+
+// --- leaves (Kuth et al., Sec. 3.3) ----------------------------------------
+
+// The right half of a lobe outline, in units of the leaf length, from the base
+// v0 = (0, 0) over the widest point v4 = (halfWidth, offset) to the tip
+// v8 = (0, 1): four quadratic Bezier curves (v0, v1, v2), (v2, v3, v4),
+// (v4, v5, v6), (v6, v7, v8). alpha is the angle at which the outline leaves
+// the base, beta its tilt at the widest point and gamma the angle at which it
+// arrives at the tip, all against the leaf axis. v2 and v6 lie halfway
+// between their neighbouring control points, so the outline is smooth.
+struct TreeLeafOutline {
+    vec2 v[9];
+};
+
+// Control points (xy, zw) of two joined quadratic curves from a, leaving in
+// direction da, to b, arriving in direction db: 60 % of the way to where the
+// two tangents meet, which keeps the outline convex; where they do not meet
+// ahead of both points, half the chord length along the tangents, which
+// makes the outline concave.
+TREE_FN vec4 treeLeafControls(vec2 a, vec2 da, vec2 b, vec2 db) {
+    vec2 ab = b - a;
+    float denominator = da.x * db.y - da.y * db.x;
+    if (abs(denominator) > 1e-4f) {
+        float s = (ab.x * db.y - ab.y * db.x) / denominator;
+        float t = (ab.y * da.x - ab.x * da.y) / denominator;
+        if (s > 0.0f && t > 0.0f) {
+            vec2 c0 = a + 0.6f * s * da;
+            vec2 c1 = b - 0.6f * t * db;
+            return vec4(c0.x, c0.y, c1.x, c1.y);
+        }
+    }
+    float l = 0.5f * length(ab);
+    vec2 c0 = a + l * da;
+    vec2 c1 = b - l * db;
+    return vec4(c0.x, c0.y, c1.x, c1.y);
+}
+
+TREE_FN TreeLeafOutline treeLeafOutline(vec4 shape, float halfWidth) {
+    vec2 dAlpha = vec2(sin(radians(shape.x)), cos(radians(shape.x)));
+    vec2 dBeta = vec2(sin(radians(shape.y)), cos(radians(shape.y)));
+    vec2 dGamma = vec2(-sin(radians(shape.z)), cos(radians(shape.z)));
+    TreeLeafOutline o;
+    o.v[0] = vec2(0.0f, 0.0f);
+    o.v[4] = vec2(halfWidth, shape.w);
+    o.v[8] = vec2(0.0f, 1.0f);
+    vec4 lower = treeLeafControls(o.v[0], dAlpha, o.v[4], dBeta);
+    vec4 upper = treeLeafControls(o.v[4], dBeta, o.v[8], dGamma);
+    o.v[1] = vec2(lower.x, lower.y);
+    o.v[3] = vec2(lower.z, lower.w);
+    o.v[5] = vec2(upper.x, upper.y);
+    o.v[7] = vec2(upper.z, upper.w);
+    o.v[2] = 0.5f * (o.v[1] + o.v[3]);
+    o.v[6] = 0.5f * (o.v[5] + o.v[7]);
+    return o;
+}
+
+// Whether the curve (a, b, c), running from the base towards the tip on the
+// right half, bulges outwards: its control point lies right of the chord.
+TREE_FN bool treeLeafCurveConvex(vec2 a, vec2 b, vec2 c) {
+    vec2 chord = c - a;
+    vec2 toControl = b - a;
+    return chord.x * toControl.y - chord.y * toControl.x < 0.0f;
+}
+
+// Control point i (odd) of an outline flattened by `flatten` in [0, 1]: moved
+// towards the middle of its chord, which turns the curve into a straight line
+// at 1 (the low level of detail).
+TREE_FN vec2 treeLeafControl(TreeLeafOutline o, int i, float flatten) {
+    return mix(o.v[i], 0.5f * (o.v[i - 1] + o.v[i + 1]), flatten);
+}
+
+// Point i (0..8) of the polyline that bounds the inner triangles of a half
+// lobe: the curve ends, and for each curve its control point if the curve is
+// concave (it then cuts into the inner area) or its chord's middle if convex
+// (it then adds to it).
+TREE_FN vec2 treeLeafPolyline(TreeLeafOutline o, int i, float flatten) {
+    if (i % 2 == 0) {
+        return o.v[i];
+    }
+    vec2 control = treeLeafControl(o, i, flatten);
+    vec2 middle = 0.5f * (o.v[i - 1] + o.v[i + 1]);
+    return treeLeafCurveConvex(o.v[i - 1], control, o.v[i + 1]) ? middle : control;
+}
+
+// Area of a half lobe flattened by `flatten`: the polygon of the curve ends
+// and the axis, plus for each curve the 2/3 of its control triangle that lies
+// between chord and curve, which flattening shrinks linearly.
+TREE_FN float treeLeafHalfArea(TreeLeafOutline o, float flatten) {
+    float area = 0.0f;
+    for (int c = 0; c < 4; ++c) {
+        vec2 a = o.v[2 * c];
+        vec2 b = o.v[2 * c + 1];
+        vec2 e = o.v[2 * c + 2];
+        area += 0.5f * (a.x + e.x) * (e.y - a.y);
+        vec2 chord = e - a;
+        vec2 toControl = b - a;
+        area -= (1.0f - flatten) * (2.0f / 3.0f) * 0.5f * (chord.x * toControl.y - chord.y * toControl.x);
+    }
+    return area;
+}
+
+// Loop and Blinn's implicit form of a quadratic Bezier curve with the texture
+// coordinates (0, 0), (0.5, 0), (1, 1) at its points: negative on the side of
+// the chord, positive on the side of the control point.
+TREE_FN float treeLoopBlinn(vec2 uv) { return uv.x * uv.x - uv.y; }
+
+// Level of detail of a leaf `pixels` long on screen: x how far its outline is
+// flattened and its lobes merged (0 full detail, 1 simplest), y the factor its
+// size is scaled by (0: not drawn), given its random number r in [0, 1).
+// Distant leaves are thinned out and the remaining ones grow so that the
+// foliage keeps its coverage; leaves near the threshold shrink away smoothly.
+TREE_FN vec2 treeLeafLod(float pixels, vec4 lod, float r) {
+    float flatten = clamp((lod.x - pixels) / max(lod.x - lod.y, 1e-3f), 0.0f, 1.0f);
+    float keep = clamp(pixels / max(lod.z, 1e-3f), lod.w, 1.0f);
+    float fade = clamp((keep - r) / 0.1f, 0.0f, 1.0f);
+    return vec2(flatten, fade / sqrt(keep));
 }
 
 #endif // KLARTRAUM_TREE_TREE_SHARED_HPP

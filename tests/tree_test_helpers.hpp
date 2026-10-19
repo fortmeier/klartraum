@@ -14,8 +14,13 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/draw_component.hpp"
+#include "klartraum/offscreen_target.hpp"
+#include "klartraum/tree/tree_leaf_renderer.hpp"
 #include "klartraum/tree/tree_model.hpp"
+#include "klartraum/tree/tree_stem_renderer.hpp"
 #include "klartraum/vulkan_context.hpp"
 
 namespace klartraum {
@@ -87,6 +92,56 @@ inline size_t coveredCount(const std::vector<uint8_t>& bgra, VkExtent2D extent) 
     }
     return count;
 }
+
+// Generator, stem and leaf renderers and a render pass with depth into an offscreen target.
+struct TreeScene {
+    TreeScene(VulkanContext& vc, std::vector<TreeTypeParams> types, std::vector<TreeInstance> instances,
+              VkExtent2D extent, bool withStems = true, bool withLeaves = false)
+        : vc(vc),
+          extent(extent) {
+        const TreeFrame frame = defaultTreeFrame();
+        generator = std::make_shared<TreeGenerator>(vc, types, instances,
+                                                    TreeCapacity::fromReference(types, instances, frame), frame);
+        camera = std::make_shared<CameraUboType>();
+        settings = std::make_shared<HostValues<TreeRenderSettings>>(
+            vc, std::vector<TreeRenderSettings>{defaultTreeRenderSettings(extent)});
+        target = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        pass = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), extent);
+        pass->setInput(target, 0);
+        pass->setInput(camera, 1);
+        pass->setDepthAttachment(true);
+        if (withStems) {
+            stems = std::make_unique<TreeStemRenderer>(vc, *generator, camera, settings, extent);
+            pass->addComputeDependency(stems->getClassify());
+            pass->addDrawComponent(stems->getDrawComponent());
+        }
+        if (withLeaves) {
+            leaves = std::make_unique<TreeLeafRenderer>(vc, *generator, types, camera, settings, extent);
+            pass->addComputeDependency(leaves->getClassify());
+            pass->addDrawComponent(leaves->getDrawComponent());
+        }
+        graph = std::make_unique<ComputeGraph>(vc, 1);
+        graph->compileFrom(pass);
+    }
+
+    std::vector<uint8_t> render(glm::vec3 eye, glm::vec3 lookAt, float fov = 40.0f) {
+        setCamera(camera->ubo, eye, lookAt, fov, float(extent.width) / float(extent.height));
+        camera->update(0);
+        graph->submitAndWait(vc.getGraphicsQueue(), 0);
+        return readImage(vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    }
+
+    VulkanContext& vc;
+    VkExtent2D extent;
+    std::shared_ptr<TreeGenerator> generator;
+    std::shared_ptr<CameraUboType> camera;
+    std::shared_ptr<HostValues<TreeRenderSettings>> settings;
+    std::unique_ptr<TreeStemRenderer> stems;
+    std::unique_ptr<TreeLeafRenderer> leaves;
+    std::shared_ptr<OffscreenTarget> target;
+    std::shared_ptr<RenderPass> pass;
+    std::unique_ptr<ComputeGraph> graph;
+};
 
 } // namespace tree_test
 } // namespace klartraum

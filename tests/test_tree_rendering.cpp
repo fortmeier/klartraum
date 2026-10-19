@@ -24,11 +24,7 @@
 #include <cmath>
 #include <memory>
 
-#include "klartraum/computegraph/computegraph.hpp"
-#include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/headless_frontend.hpp"
-#include "klartraum/offscreen_target.hpp"
-#include "klartraum/tree/tree_stem_renderer.hpp"
 
 #include "tree_test_helpers.hpp"
 
@@ -54,47 +50,7 @@ TreeTypeParams trunkOnly(float length, float radius) {
     return p;
 }
 
-// Generator, stem renderer and a render pass with depth into an offscreen target.
-struct StemScene {
-    StemScene(VulkanContext& vc, std::vector<TreeTypeParams> types, std::vector<TreeInstance> instances,
-              VkExtent2D extent)
-        : vc(vc),
-          extent(extent) {
-        const TreeFrame frame = defaultTreeFrame();
-        generator = std::make_shared<TreeGenerator>(vc, types, instances,
-                                                    TreeCapacity::fromReference(types, instances, frame), frame);
-        camera = std::make_shared<CameraUboType>();
-        settings = std::make_shared<HostValues<TreeRenderSettings>>(
-            vc, std::vector<TreeRenderSettings>{defaultTreeRenderSettings(extent)});
-        stems = std::make_unique<TreeStemRenderer>(vc, *generator, camera, settings, extent);
-        target = std::make_shared<OffscreenTarget>(vc, extent, 1);
-        pass = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), extent);
-        pass->setInput(target, 0);
-        pass->setInput(camera, 1);
-        pass->setDepthAttachment(true);
-        pass->addComputeDependency(stems->getClassify());
-        pass->addDrawComponent(stems->getDrawComponent());
-        graph = std::make_unique<ComputeGraph>(vc, 1);
-        graph->compileFrom(pass);
-    }
-
-    std::vector<uint8_t> render(glm::vec3 eye, glm::vec3 target, float fov = 40.0f) {
-        setCamera(camera->ubo, eye, target, fov, float(extent.width) / float(extent.height));
-        camera->update(0);
-        graph->submitAndWait(vc.getGraphicsQueue(), 0);
-        return readImage(vc, this->target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
-    }
-
-    VulkanContext& vc;
-    VkExtent2D extent;
-    std::shared_ptr<TreeGenerator> generator;
-    std::shared_ptr<CameraUboType> camera;
-    std::shared_ptr<HostValues<TreeRenderSettings>> settings;
-    std::unique_ptr<TreeStemRenderer> stems;
-    std::shared_ptr<OffscreenTarget> target;
-    std::shared_ptr<RenderPass> pass;
-    std::unique_ptr<ComputeGraph> graph;
-};
+using StemScene = TreeScene;
 
 // Covered pixels in row y: their number, and whether they form one span.
 struct RowSpan {
