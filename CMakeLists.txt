@@ -318,6 +318,7 @@ add_executable(
   tests/test_tree_leaves.cpp
   tests/test_tree_gaussians.cpp
   tests/test_tree_light.cpp
+  tests/test_tree_wind.cpp
   tests/test_bonsai_scene.cpp
 )
 

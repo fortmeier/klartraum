@@ -60,6 +60,33 @@ TREE_FN vec4 treeCurveRing(TreeTypeParams p, int level, vec4 rot, int i, int seg
     return q;
 }
 
+// A ring's orientation bent by the wind of frame f (Kuth et al. Sec. 3.5):
+// turned towards the wind's direction by gusts that travel downwind, plus a
+// sway at a frequency that falls with the inverse square root of the stem's
+// length. Thin stems (radius in the units of the tree type, before the
+// instance's scale) bend more. Every ring of a stem bends, and the rings and
+// children after it start from the bent orientation, so the whole tree moves
+// as a skeleton with one bone per segment.
+TREE_FN vec4 treeWind(TreeFrame f, vec4 q, vec3 pos, float radius, float stemLength, uint seed, int segments) {
+    float strength = f.wind.w;
+    if (strength == 0.0f) {
+        return q;
+    }
+    vec3 direction = vec3(f.wind.x, f.wind.y, f.wind.z);
+    vec3 axis = cross(qforward(q), direction);
+    float axisLength = length(axis);
+    if (axisLength < 1e-5f) {
+        return q;
+    }
+    float t = f.timeSeason.x;
+    float gust = treeValueNoise(vec3(0.35f * t - 0.8f * dot(pos, direction), 0.0f, 0.0f));
+    float frequency = 0.6f / sqrt(max(stemLength, 0.05f));
+    float sway = sin(2.0f * TREE_PI * (frequency * t + treeRand(seed, 0x90u)));
+    float flex = 0.04f / (radius + 0.01f);
+    float angle = strength * flex * (0.6f * gust + 0.25f * sway * (0.5f + gust)) / float(segments);
+    return normalize(qmul(qaxis(axis / axisLength, angle), q));
+}
+
 TREE_FN float treeBranchCount(TreeTypeParams p, StemRecord s, int level) {
     float branches = p.nBranches[level + 1];
     if (level == 0) {
@@ -129,6 +156,13 @@ TREE_FN LeafRecord treeLeaf(TreeTypeParams p, StemRecord s, int k, uint cloneSee
     float down = p.leafAngles.x + p.leafAngles.y * treeRandSigned(seed, TREE_KEY_DOWN_V);
     vec4 q = normalize(
         qmul(rot, qmul(qaxis(vec3(0.0f, 0.0f, 1.0f), radians(phi)), qaxis(vec3(1.0f, 0.0f, 0.0f), radians(down)))));
+    TreeFrame frame = TREE_FRAME;
+    if (frame.wind.w != 0.0f) {
+        // Leaves flutter about their stalk.
+        float t = frame.timeSeason.x;
+        float flutter = sin(2.0f * TREE_PI * (2.5f * t + treeRand(seed, 0x91u)));
+        q = normalize(qmul(q, qaxis(vec3(1.0f, 0.0f, 0.0f), 0.5f * frame.wind.w * flutter)));
+    }
     TreeInstance inst = TREE_INSTANCE(s.ids.z);
     float scale = inst.posScale.w;
     float leafLength = p.leafCount.y * scale;
@@ -168,13 +202,23 @@ TREE_FN void treeGenerateStem(StemRecord s, uint t TREE_CTX_PARAM) {
     float cloneShare = 1.0f;
     float splitError = 0.0f;
 
+    TreeFrame frame = TREE_FRAME;
+    float scale = TREE_INSTANCE(s.ids.z).posScale.w;
+    float typeLength = stemLength / scale;
+
     vec3 pos = vec3(s.posLength);
     vec4 rot = treeCurveRing(p, level, s.rot, 0, segments, cloneSeed, up);
+    rot = treeWind(frame, rot, pos, treeStemRadius(p, s, 0.0f) / scale, typeLength, s.ids.y, segments);
     for (int i = 0; i < segments; ++i) {
         vec3 nextPos = pos + qforward(rot) * segmentLength;
-        vec4 nextRot = i + 1 < segments ? treeCurveRing(p, level, rot, i + 1, segments, cloneSeed, up) : rot;
         float z0 = float(i) / float(segments);
         float z1 = float(i + 1) / float(segments);
+        vec4 nextRot = rot;
+        if (i + 1 < segments) {
+            nextRot = treeCurveRing(p, level, rot, i + 1, segments, cloneSeed, up);
+            nextRot =
+                treeWind(frame, nextRot, nextPos, treeStemRadius(p, s, z1) / scale, typeLength, s.ids.y, segments);
+        }
         float r0 = treeStemRadius(p, s, z0);
         float r1 = treeStemRadius(p, s, z1);
 
