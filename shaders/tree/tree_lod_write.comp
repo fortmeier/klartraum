@@ -1,0 +1,96 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Third pass of TreeMossLod: one workgroup per placed patch writes the
+// Gaussians it reserved: its level's, and while crossfading the next coarser
+// level's, with opacities that sum to the level's. They are turned and
+// scaled with the patch, laid on its ground plane and coloured like captured
+// Gaussians (treeCapturedColor(): tint, the trees' shadows, snow).
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_FN
+#include "klartraum/tree/tree_shared.hpp"
+#define TREE_LIGHT_SET 0
+#define TREE_LIGHT_BINDING 9
+#include "tree_light.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(scalar, binding = 0) writeonly buffer OutPos {
+    vec3 outPos[];
+};
+layout(scalar, binding = 1) writeonly buffer OutRot {
+    vec4 outRot[];
+};
+layout(scalar, binding = 2) writeonly buffer OutScale {
+    vec3 outScale[];
+};
+layout(scalar, binding = 3) writeonly buffer OutColAlpha {
+    vec4 outColAlpha[];
+};
+layout(std430, binding = 4) readonly buffer Library {
+    TreeLodSplat library[];
+};
+layout(std430, binding = 5) readonly buffer Patches {
+    TreeLodPatch patches[];
+};
+layout(std430, binding = 6) readonly buffer Instances {
+    TreeLodInstance instances[];
+};
+layout(std430, binding = 7) readonly buffer Records {
+    uvec4 records[];
+};
+layout(std430, binding = 8) readonly buffer Settings {
+    TreeRenderSettings settings[];
+};
+
+layout(push_constant) uniform Push {
+    uint offset; // of the pool in the output buffers
+}
+pc;
+
+const float SH_C0 = 0.28209479f;
+
+void main() {
+    uint i = gl_WorkGroupID.x;
+    uvec4 record = records[i];
+    if (record.y == 0u) {
+        return;
+    }
+    TreeLodInstance inst = instances[i];
+    TreeLodPatch source = patches[inst.ids.x];
+    TreeRenderSettings s = settings[0];
+    uint level = record.z;
+    float fade = uintBitsToFloat(record.w);
+    vec4 turn = qaxis(vec3(0.0f, 1.0f, 0.0f), inst.posYaw.w);
+    float scale = inst.plane.z;
+
+    for (uint k = gl_LocalInvocationID.x; k < record.y; k += 64u) {
+        bool coarser = k >= source.count[level];
+        uint lodLevel = coarser ? level + 1u : level;
+        TreeLodSplat g = library[source.offset[lodLevel] + (coarser ? k - source.count[level] : k)];
+        float weight = coarser ? fade : 1.0f - fade;
+
+        // Turned about +y and scaled; the height above the patch's ground stays and follows the ground plane.
+        vec3 local = qrot(turn, scale * vec3(g.pos.x, 0.0f, g.pos.z));
+        vec3 pos = inst.posYaw.xyz + local;
+        pos.y += inst.plane.x * local.x + inst.plane.y * local.z + scale * g.pos.y;
+        vec4 rot = normalize(qmul(turn, g.rot));
+        vec3 size = scale * g.scale.xyz;
+
+        vec3 normal = treeGaussianNormal(rot, size);
+        float shade = treeCapturedShade(s, treeLightOfTreesAt(s, pos));
+        vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * g.color.rgb, normal, pos, shade, s);
+
+        uint slot = pc.offset + record.x + k;
+        outPos[slot] = pos;
+        outRot[slot] = rot;
+        outScale[slot] = size;
+        outColAlpha[slot] = vec4((displayed - vec3(0.5f)) / SH_C0, g.color.a * weight);
+    }
+}

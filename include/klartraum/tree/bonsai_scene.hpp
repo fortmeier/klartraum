@@ -91,14 +91,21 @@ std::vector<MossPatch> extractMossPatches(const std::vector<Gaussian3D>& capture
                                           float minGreen = 0.6f);
 
 /**
- * @brief Lays `count` copies of the patches on the soil of `scene`, turned at random, away from the lantern.
+ * @brief Places `count` copies of the `patchCount` patches on the soil of `scene`, turned at random, away from the
+ *        lantern.
  *
- * The patches are enlarged by `scale`. Each Gaussian keeps its height above
- * the ground and follows the soil surface at its new position. Deterministic
- * for a `seed`.
+ * Each copy is enlarged by `scale` and lies on the plane that touches the
+ * soil at its centre (TreeLodInstance). Deterministic for a `seed`.
  */
-std::vector<Gaussian3D> scatterMossPatches(const BonsaiScene& scene, const std::vector<MossPatch>& patches,
-                                           uint32_t count, uint32_t seed = 1, float scale = 1.0f);
+std::vector<TreeLodInstance> placeMossPatches(const BonsaiScene& scene, uint32_t patchCount, uint32_t count,
+                                              uint32_t seed = 1, float scale = 1.0f);
+
+/**
+ * @brief The placed copies of the patches at full detail: what `tree_lod_write.comp` writes at level 0, without the
+ *        changes of colour.
+ */
+std::vector<Gaussian3D> scatterMossPatches(const std::vector<MossPatch>& patches,
+                                           const std::vector<TreeLodInstance>& instances);
 
 /// Broadleaf and pine types for a bonsai forest: fine twigs, small leaves.
 namespace tree_presets {
