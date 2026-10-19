@@ -41,6 +41,7 @@ void main() {
         float dz = (treeMossHeight(inWorldPos + vec3(0.0f, 0.0f, e)) - h) / e;
         normal = normalize(normal - detail * vec3(dx, 0.0f, dz));
     }
+    albedo = mix(albedo, vec3(0.8f), treeSnowOn(normalize(inNormal), inWorldPos, s.season.y));
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
     vec3 color = treeShadeLit(albedo, normal, s, light);
     if (inColor.w == TREE_MATERIAL_GLAZE) {
@@ -49,5 +50,5 @@ void main() {
         vec3 halfway = normalize(toCamera + s.sun.xyz);
         color += vec3(0.35f) * pow(max(dot(normal, halfway), 0.0f), 60.0f) * s.sun.w * light.x;
     }
-    outColor = treeOutputColor(color);
+    outColor = treeOutputColor(color, s);
 }

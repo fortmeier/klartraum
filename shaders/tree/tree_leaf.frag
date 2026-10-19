@@ -45,6 +45,8 @@ void main() {
     // The midrib, a little lighter.
     float midrib = 1.0f - smoothstep(0.004f, 0.012f, abs(inLeafPos.x));
     vec3 albedo = (underside ? treeLeafUnderside(inColor) : inColor) * (1.0f + 0.35f * midrib);
+    // Snow on needles and evergreen leaves that face upwards.
+    albedo = mix(albedo, vec3(0.8f), 0.7f * treeSnowOn(normal, inWorldPos, s.season.y));
     vec2 light = treeLightAt(s, inWorldPos);
     vec3 color = treeShadeLit(albedo, normal, s, light);
     // Light shining through the leaf from behind.
@@ -54,5 +56,5 @@ void main() {
         vec3 halfway = normalize(toCamera + s.sun.xyz);
         color += vec3(0.05f) * pow(max(dot(normal, halfway), 0.0f), 40.0f) * s.sun.w * light.x;
     }
-    outColor = treeOutputColor(color);
+    outColor = treeOutputColor(color, s);
 }

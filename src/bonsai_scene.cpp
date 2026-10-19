@@ -233,7 +233,8 @@ TreeTypeParams bonsaiBroadleaf() {
     p.leafLobes = glm::vec4(1.0f, 0.0f, 1.0f, 0.02f);
     p.leafColor = glm::vec4(0.08f, 0.15f, 0.035f, 0.0f);
     p.barkColor = glm::vec4(0.17f, 0.14f, 0.11f, 0.0f);
-    p.trunk = glm::vec4(5.0f, 0.45f, 30.0f, 0.0f);
+    p.leafColorFall = glm::vec4(0.3f, 0.11f, 0.02f, 0.0f);
+    p.trunk = glm::vec4(5.0f, 0.45f, 30.0f, 1.0f);
     p.nCurveRes = glm::vec4(6.0f, 5.0f, 3.0f, 1.0f);
     p.nCurveV = glm::vec4(25.0f, 50.0f, 75.0f, 0.0f);
     p.nSegSplits = glm::vec4(0.0f, 0.15f, 0.0f, 0.0f);

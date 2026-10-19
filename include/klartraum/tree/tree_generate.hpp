@@ -165,12 +165,13 @@ TREE_FN LeafRecord treeLeaf(TreeTypeParams p, StemRecord s, int k, uint cloneSee
     }
     TreeInstance inst = TREE_INSTANCE(s.ids.z);
     float scale = inst.posScale.w;
-    float leafLength = p.leafCount.y * scale;
+    vec3 state = treeLeafSeason(frame.timeSeason.y, treeRand(seed, 0x92u), p.leafColorFall.w, p.trunk.w > 0.5f);
+    float leafLength = p.leafCount.y * scale * state.x;
     vec3 base = pos + qforward(q) * (p.leafLobes.w * scale);
     LeafRecord leaf;
     leaf.posScale = vec4(base.x, base.y, base.z, leafLength);
     leaf.rot = q;
-    leaf.ids = uvec4(treeType(s.ids), seed, s.ids.z, 0u);
+    leaf.ids = uvec4(treeType(s.ids), seed, s.ids.z, treeLeafSeasonPack(state));
     return leaf;
 }
 
@@ -249,7 +250,11 @@ TREE_FN void treeGenerateStem(StemRecord s, uint t TREE_CTX_PARAM) {
             vec3 cp = treeHermite(pos, nextPos, m0, m1, f);
             vec4 cq = qnlerp(rot, nextRot, f);
             if (lastLevel) {
-                treeEmitLeaf(treeLeaf(p, s, k, cloneSeed, cp, cq TREE_CTX_ARG) TREE_CTX_ARG);
+                LeafRecord leaf = treeLeaf(p, s, k, cloneSeed, cp, cq TREE_CTX_ARG);
+                // Leaves of the season that are not there (yet or any more), or too small to see, are left out.
+                if (leaf.posScale.w > 1e-3f * p.leafCount.y * TREE_INSTANCE(s.ids.z).posScale.w) {
+                    treeEmitLeaf(leaf TREE_CTX_ARG);
+                }
             } else {
                 float parentRadius = treeStemRadius(p, s, offset / stemLength);
                 treeEmitStem(treeChildStem(p, s, k, cloneSeed, offset, base, cp, cq, parentRadius) TREE_CTX_ARG);
