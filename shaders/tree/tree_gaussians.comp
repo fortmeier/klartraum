@@ -187,7 +187,8 @@ void surfelGaussian(uint slot, uint index) {
     float spin = 2.0f * TREE_PI * treeRand(index, 0x79u);
     vec4 rot = normalize(qmul(qfromZ(normal), qaxis(vec3(0.0f, 0.0f, 1.0f), spin)));
     float spacing = v.pos.w;
-    vec3 albedo = treeSceneAlbedo(v.color, v.pos.xyz);
+    // Finer than the surfels' spacing, the structure is averaged.
+    vec3 albedo = treeSceneAlbedoDetail(v.color, v.pos.xyz, 0.0f);
     writeGaussian(slot, v.pos.xyz, rot, vec3(spacing, spacing, 0.08f * spacing),
                   displayColor(albedo, v.pos.xyz, normal), 0.95f);
 }

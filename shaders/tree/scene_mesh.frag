@@ -30,7 +30,17 @@ void main() {
         discard;
     }
     vec3 normal = normalize(inNormal);
-    vec3 albedo = treeSceneAlbedo(inColor, inWorldPos);
+    // Fine structure fades out where it would be finer than about two pixels.
+    float detail = clamp(1.5f - 140.0f * length(fwidth(inWorldPos)), 0.0f, 1.0f);
+    vec3 albedo = treeSceneAlbedoDetail(inColor, inWorldPos, detail);
+    if (inColor.w == TREE_MATERIAL_MOSS && detail > 0.0f) {
+        // The relief of the moss cushions tilts the normal.
+        float e = 0.002f;
+        float h = treeMossHeight(inWorldPos);
+        float dx = (treeMossHeight(inWorldPos + vec3(e, 0.0f, 0.0f)) - h) / e;
+        float dz = (treeMossHeight(inWorldPos + vec3(0.0f, 0.0f, e)) - h) / e;
+        normal = normalize(normal - detail * vec3(dx, 0.0f, dz));
+    }
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
     vec3 color = treeShadeLit(albedo, normal, s, light);
     if (inColor.w == TREE_MATERIAL_GLAZE) {

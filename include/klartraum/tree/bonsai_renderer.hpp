@@ -33,7 +33,7 @@ struct BonsaiRenderConfig {
     BonsaiRenderMode mode = BonsaiRenderMode::Classical;
     GsplatBackend backend = GsplatBackend::Raster;
     std::string lanternPath = "data/lantern.spz";
-    float meshGaussianSpacing = 0.012f; ///< of the pot and soil Gaussians
+    float meshGaussianSpacing = 0.008f; ///< of the pot and soil Gaussians
     float lightVoxel = 0.035f;          ///< voxel size of the light volume (shadows and sky occlusion)
 };
 
