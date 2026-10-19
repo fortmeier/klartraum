@@ -1,0 +1,86 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#ifndef KLARTRAUM_TREE_TREE_MODEL_HPP
+#define KLARTRAUM_TREE_TREE_MODEL_HPP
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include <glm/glm.hpp>
+
+namespace klartraum {
+
+/**
+ * @brief The procedural tree model of Kuth et al., "Real-Time GPU Tree Generation" (HPG 2025).
+ *
+ * The structs and functions in this namespace are compiled from
+ * `tree_shared.hpp`, which the tree shaders include as GLSL, so the CPU and the
+ * GPU share one definition of the model.
+ */
+namespace tree {
+
+using glm::uvec4;
+using glm::vec2;
+using glm::vec3;
+using glm::vec4;
+using uint = uint32_t;
+using namespace glm;
+
+#define TREE_FN inline
+#include "klartraum/tree/tree_shared.hpp"
+#undef TREE_FN
+
+} // namespace tree
+
+using tree::LeafRecord;
+using tree::SegmentRecord;
+using tree::StemRecord;
+using tree::TreeFrame;
+using tree::TreeInstance;
+using tree::TreeTypeParams;
+
+static_assert(sizeof(TreeTypeParams) == 24 * 16, "TreeTypeParams must match its std430 layout");
+static_assert(sizeof(TreeInstance) == 48, "TreeInstance must match its std430 layout");
+static_assert(sizeof(StemRecord) == 64, "StemRecord must match its std430 layout");
+static_assert(sizeof(SegmentRecord) == 96, "SegmentRecord must match its std430 layout");
+static_assert(sizeof(LeafRecord) == 48, "LeafRecord must match its std430 layout");
+static_assert(sizeof(TreeFrame) == 64, "TreeFrame must match its std430 layout");
+
+/// The records the generation writes for a set of trees.
+struct TreeRecords {
+    std::vector<StemRecord> stems[TREE_MAX_LEVELS]; ///< per stem level
+    std::vector<SegmentRecord> segments;
+    std::vector<LeafRecord> leaves;
+};
+
+/**
+ * @brief Generates the trees on the CPU with the same code the GPU runs.
+ *
+ * The reference for testing the GPU generation; the order of the records
+ * within each list differs from the GPU's, where threads append concurrently.
+ */
+TreeRecords generateTreesReference(const std::vector<TreeTypeParams>& types, const std::vector<TreeInstance>& instances,
+                                   const TreeFrame& frame);
+
+/// A TreeFrame with +y up, no wind, summer.
+TreeFrame defaultTreeFrame();
+
+/// Rotation (x, y, z, w) that turns the tree's +z growth direction to `up`.
+glm::vec4 treeUpRotation(const glm::vec3& up);
+
+/// Tree types with the parameters of Weber and Penn (1995), and leaf outlines after Kuth et al.
+namespace tree_presets {
+TreeTypeParams quakingAspen();
+TreeTypeParams blackTupelo();
+/// Three-lobed leaves, as of the sassafras in Kuth et al.
+TreeTypeParams sassafras();
+/// A conifer with needle-like leaves.
+TreeTypeParams pine();
+} // namespace tree_presets
+
+} // namespace klartraum
+
+#endif // KLARTRAUM_TREE_TREE_MODEL_HPP
