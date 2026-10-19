@@ -4,6 +4,11 @@
 
 /**
  * TESTS:
+ * - scaleAnchors: the pot holds 3.6 m at scale 0 and 8 km at 1, growing steadily; the lantern keeps its size in
+ *   the pot up to kForest and shrinks beyond; one tree at 0, a planting at kForest; tree size and style continuous
+ * - smallestScaleIsOneBonsai: at scale 0 the scene has one bonsai-styled tree filling the pot and the lantern as
+ *   captured
+ * - scaleKeepsTheForestDensity: at larger scales the tree count follows 650 trees per hectare of soil
  * - treesStandInThePot: 8, 13 and 20 trees stand on the soil inside the pot, apart from each other and from the
  *   lantern
  * - treesAreFourToNineLanternsTall: the generated trees are 4 to 9 times as tall as the lantern
@@ -66,6 +71,74 @@ void addQuad(std::vector<TreeSceneVertex>& mesh, float x0, float x1, float y0, f
 }
 
 } // namespace
+
+TEST(BonsaiScene, scaleAnchors) {
+    EXPECT_NEAR(BonsaiScale{0.0f}.regionMeters(), 3.6f, 1e-4f);
+    EXPECT_NEAR(BonsaiScale{1.0f}.regionMeters(), 8000.0f, 1.0f);
+    float region = 0.0f, previousHeight = BonsaiScale{0.0f}.treeHeightUnits();
+    uint32_t trees = 0;
+    const float lanternAtForest = BonsaiScale{BonsaiScale::kForest}.lanternUnits();
+    for (int i = 0; i <= 100; ++i) {
+        const float s = float(i) / 100.0f;
+        const BonsaiScale scale{s};
+        EXPECT_GT(scale.regionMeters(), region);
+        region = scale.regionMeters();
+        if (s <= BonsaiScale::kForest) {
+            EXPECT_NEAR(scale.lanternUnits(), 0.28f, 0.01f) << s;
+        } else {
+            EXPECT_LT(scale.lanternUnits(), lanternAtForest) << s;
+        }
+        const uint32_t count = scale.treeCount(4.47f);
+        EXPECT_GE(count, trees) << s;
+        trees = count;
+        // Steady in steps of 0.01 (faster just after kForest, where the trees grow to their full height).
+        EXPECT_LT(std::abs(scale.treeHeightUnits() - previousHeight), 0.15f) << s;
+        previousHeight = scale.treeHeightUnits();
+    }
+    // Continuous at kForest.
+    const float atForest = BonsaiScale{BonsaiScale::kForest}.treeHeightUnits();
+    EXPECT_NEAR(BonsaiScale{BonsaiScale::kForest + 1e-4f}.treeHeightUnits(), atForest, 2e-3f);
+    EXPECT_NEAR(BonsaiScale{BonsaiScale::kForest - 1e-4f}.treeHeightUnits(), atForest, 2e-3f);
+    EXPECT_LT(BonsaiScale{1.0f}.lanternUnits(), 0.001f);
+    EXPECT_EQ(BonsaiScale{0.0f}.treeCount(4.47f), 1u);
+    EXPECT_NEAR(float(BonsaiScale{BonsaiScale::kForest}.treeCount(4.47f)), 12.0f, 1.0f);
+    EXPECT_EQ(BonsaiScale{0.0f}.bonsaiStyle(), 1.0f);
+    EXPECT_EQ(BonsaiScale{BonsaiScale::kForest}.bonsaiStyle(), 0.0f);
+    EXPECT_NEAR(BonsaiScale{0.0f}.treeHeightUnits(), 2.0f, 1e-5f);
+    EXPECT_NEAR(BonsaiScale{1.0f}.treeHeightMeters(), 25.0f, 1e-3f);
+}
+
+TEST(BonsaiScene, smallestScaleIsOneBonsai) {
+    BonsaiSceneConfig config;
+    config.scale.s = 0.0f;
+    const BonsaiScene scene = makeBonsaiScene(config);
+    ASSERT_EQ(scene.trees.size(), 1u);
+    EXPECT_NEAR(scene.lanternScale, 1.0f, 0.01f);
+    const TreeTypeParams natural = tree_presets::bonsaiBroadleaf();
+    const TreeTypeParams& bonsai = scene.types[0];
+    EXPECT_GT(bonsai.ratios.y, 2.0f * natural.ratios.y);  // a thick trunk
+    EXPECT_GT(bonsai.trunk.y, natural.trunk.y);           // spreading roots
+    EXPECT_GT(bonsai.nDownAngle.y, natural.nDownAngle.y); // flatter branches
+    // It fills the pot: about 2 units tall.
+    const TreeRecords records = generateTreesReference(scene.types, scene.trees, defaultTreeFrame());
+    float top = 0.0f;
+    for (const SegmentRecord& d : records.segments) {
+        top = std::max(top, d.toPosRadius.y);
+    }
+    EXPECT_GT(top - scene.trees[0].posScale.y, 1.4f);
+    EXPECT_LT(top - scene.trees[0].posScale.y, 2.6f);
+}
+
+TEST(BonsaiScene, scaleKeepsTheForestDensity) {
+    BonsaiSceneConfig config;
+    config.scale.s = 0.3f;
+    const BonsaiScene scene = makeBonsaiScene(config);
+    const float squareMeters = scene.soilArea * std::pow(config.scale.metersPerUnit(), 2.0f);
+    const float expected = BonsaiScale::kTreesPerHectare * squareMeters / 1e4f;
+    // The placement keeps trees apart and away from the lantern; nearly all fit.
+    EXPECT_GT(float(scene.trees.size()), 0.9f * expected);
+    EXPECT_LE(float(scene.trees.size()), expected + 1.0f);
+}
 
 TEST(BonsaiScene, treesStandInThePot) {
     for (uint32_t count : {8u, 13u, 20u}) {

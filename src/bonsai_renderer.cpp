@@ -22,7 +22,7 @@ std::vector<Gaussian3D> BonsaiRenderer::loadLantern(const BonsaiScene& scene, co
             kept.push_back(g);
         }
     }
-    transformGaussians(kept, scene.lanternRotation, scene.config.lanternScale, scene.lanternTranslation);
+    transformGaussians(kept, scene.lanternRotation, scene.lanternScale, scene.lanternTranslation);
     return kept;
 }
 
@@ -47,7 +47,10 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     // The light volume spans the pot and the tallest trees.
     const BonsaiPot& pot = scene.config.pot;
     configureTreeLightGrid(values, glm::vec3(-pot.halfLength - 0.15f, -0.05f, -pot.halfWidth - 0.15f),
-                           glm::vec3(pot.halfLength + 0.15f, 2.7f, pot.halfWidth + 0.15f), config.lightVoxel);
+                           glm::vec3(pot.halfLength + 0.15f,
+                                     std::max(1.0f, 1.6f * scene.config.scale.treeHeightUnits() + 0.4f),
+                                     pot.halfWidth + 0.15f),
+                           config.lightVoxel);
     settings = std::make_shared<HostValues<TreeRenderSettings>>(vulkanContext, std::vector<TreeRenderSettings>{values});
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
     // The pot and the lantern cast shadows; the soil's gentle mound is left out, which would shadow itself
@@ -64,7 +67,11 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     // Patches of the captured moss, placed over the soil with a level of detail each; too flat to cast shadows.
     const std::vector<MossPatch> mossPatches = extractMossPatches(loadGaussiansSpz(config.lanternPath, true));
     const std::vector<TreeLodInstance> mossCopies =
-        placeMossPatches(scene, uint32_t(mossPatches.size()), config.mossPatches, scene.config.seed, 1.3f);
+        // As many copies as cover the soil at the lantern's scale, the moss scaled with the lantern.
+        placeMossPatches(
+            scene, uint32_t(mossPatches.size()),
+            uint32_t(std::min(float(config.mossPatches) / (scene.lanternScale * scene.lanternScale), 20000.0f)),
+            scene.config.seed, 1.3f * scene.lanternScale);
     TreeGaussianSources sources;
     sources.captured = std::move(lanternGaussians);
     sources.light = lightVolume->getLight();
