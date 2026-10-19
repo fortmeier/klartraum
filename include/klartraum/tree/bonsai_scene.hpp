@@ -72,6 +72,34 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config = BonsaiSceneConfig{
 std::vector<TreeSceneVertex> sampleMeshSurfels(const std::vector<TreeSceneVertex>& mesh, float spacing,
                                                uint32_t seed = 1);
 
+/// A piece of captured ground: Gaussians around the origin, their ground at y = 0.
+using MossPatch = std::vector<Gaussian3D>;
+
+/**
+ * @brief Cuts the mossy ground around the lantern of a capture into `sectors` patches.
+ *
+ * The capture stands on y = 0 with the lantern at the origin (loadGaussiansSpz
+ * with flipY). The ground in the ring from `inner` to `outer` around it, below
+ * `maxHeight`, is cut into sectors, and the sectors where at least
+ * `minGreen` of the Gaussians are green (moss rather than the dry grass on
+ * the capture's east side) become patches. Each patch is moved so that its
+ * centre is at the origin and its ground at y = 0, and its Gaussians fade out
+ * (opacity) towards the cuts, so patches blend into the soil.
+ */
+std::vector<MossPatch> extractMossPatches(const std::vector<Gaussian3D>& capture, uint32_t sectors = 12,
+                                          float inner = 0.14f, float outer = 0.23f, float maxHeight = 0.05f,
+                                          float minGreen = 0.6f);
+
+/**
+ * @brief Lays `count` copies of the patches on the soil of `scene`, turned at random, away from the lantern.
+ *
+ * The patches are enlarged by `scale`. Each Gaussian keeps its height above
+ * the ground and follows the soil surface at its new position. Deterministic
+ * for a `seed`.
+ */
+std::vector<Gaussian3D> scatterMossPatches(const BonsaiScene& scene, const std::vector<MossPatch>& patches,
+                                           uint32_t count, uint32_t seed = 1, float scale = 1.0f);
+
 /// Broadleaf and pine types for a bonsai forest: fine twigs, small leaves.
 namespace tree_presets {
 TreeTypeParams bonsaiBroadleaf();

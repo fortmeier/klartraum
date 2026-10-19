@@ -40,6 +40,7 @@ struct BonsaiRenderConfig {
     float lightVoxel = 0.035f;          ///< voxel size of the light volume (shadows and sky occlusion)
     uint32_t supersample = 2;           ///< the classical renderer draws at this times the resolution
     uint32_t numberPaths = 1;           ///< of the graph the renderer is compiled into
+    uint32_t mossPatches = 250;         ///< patches of the captured moss laid on the soil
 };
 
 /**
@@ -80,6 +81,9 @@ public:
 
     /// The lantern capture, cropped to the lantern and its moss and placed on the soil.
     static std::vector<Gaussian3D> loadLantern(const BonsaiScene& scene, const std::string& path);
+
+    /// Patches of the captured moss around the lantern, laid on the soil of `scene` (scatterMossPatches()).
+    static std::vector<Gaussian3D> loadMoss(const BonsaiScene& scene, const std::string& path, uint32_t patches);
 
 private:
     BonsaiRenderConfig config;

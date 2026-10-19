@@ -9,6 +9,8 @@
 #include <functional>
 #include <stdexcept>
 
+#include "klartraum/gaussian_transform.hpp"
+
 namespace klartraum {
 
 namespace {
@@ -222,6 +224,95 @@ std::vector<TreeSceneVertex> sampleMeshSurfels(const std::vector<TreeSceneVertex
         }
     }
     return surfels;
+}
+
+std::vector<MossPatch> extractMossPatches(const std::vector<Gaussian3D>& capture, uint32_t sectors, float inner,
+                                          float outer, float maxHeight, float minGreen) {
+    std::vector<MossPatch> patches(sectors);
+    std::vector<uint32_t> green(sectors, 0);
+    const float sector = 2.0f * kPi / float(sectors);
+    const float fade = 0.02f; // width of the fade at the cuts
+    for (const Gaussian3D& g : capture) {
+        const glm::vec2 p(g.position[0], g.position[2]);
+        const float r = glm::length(p);
+        if (r < inner || r > outer || g.position[1] > maxHeight || g.position[1] < -maxHeight) {
+            continue;
+        }
+        float angle = std::atan2(p.y, p.x);
+        if (angle < 0.0f) {
+            angle += 2.0f * kPi;
+        }
+        const uint32_t s = std::min(uint32_t(angle / sector), sectors - 1);
+        // Distance to the nearest cut, radially and around.
+        const float around = std::min(angle - float(s) * sector, float(s + 1) * sector - angle) * r;
+        const float radial = std::min(r - inner, outer - r);
+        const float weight = std::clamp(std::min(around, radial) / fade, 0.0f, 1.0f);
+        if (weight <= 0.0f) {
+            continue;
+        }
+        Gaussian3D h = g;
+        h.alpha *= weight * weight * (3.0f - 2.0f * weight);
+        patches[s].push_back(h);
+        // The degree 0 colour coefficients order like the colours.
+        green[s] += g.color[1] > g.color[0] && g.color[1] > g.color[2] ? 1 : 0;
+    }
+    for (uint32_t s = 0; s < sectors; ++s) {
+        if (float(green[s]) < minGreen * float(patches[s].size())) {
+            patches[s].clear();
+        }
+    }
+    for (MossPatch& patch : patches) {
+        if (patch.empty()) {
+            continue;
+        }
+        // Centre on the patch's middle; the ground is the median height.
+        glm::vec2 centre(0.0f);
+        std::vector<float> heights;
+        for (const Gaussian3D& g : patch) {
+            centre += glm::vec2(g.position[0], g.position[2]);
+            heights.push_back(g.position[1]);
+        }
+        centre /= float(patch.size());
+        std::nth_element(heights.begin(), heights.begin() + heights.size() / 2, heights.end());
+        const float ground = heights[heights.size() / 2];
+        for (Gaussian3D& g : patch) {
+            g.position[0] -= centre.x;
+            g.position[1] -= ground;
+            g.position[2] -= centre.y;
+        }
+    }
+    patches.erase(std::remove_if(patches.begin(), patches.end(), [](const MossPatch& p) { return p.empty(); }),
+                  patches.end());
+    return patches;
+}
+
+std::vector<Gaussian3D> scatterMossPatches(const BonsaiScene& scene, const std::vector<MossPatch>& patches,
+                                           uint32_t count, uint32_t seed, float scale) {
+    std::vector<Gaussian3D> result;
+    if (patches.empty()) {
+        return result;
+    }
+    const BonsaiPot& pot = scene.config.pot;
+    const float inner = innerScale(pot);
+    const glm::vec2 lantern(scene.lanternTranslation.x, scene.lanternTranslation.z);
+    uint32_t placed = 0;
+    for (uint32_t key = 0; placed < count && key < 100 * count; ++key) {
+        const glm::vec2 p((2.0f * hashUnit(seed, 3 * key) - 1.0f) * pot.halfLength,
+                          (2.0f * hashUnit(seed, 3 * key + 1) - 1.0f) * pot.halfWidth);
+        if (scene.potMeasure(p.x, p.y, inner * 0.88f) > 1.0f || glm::length(p - lantern) < 0.3f) {
+            continue;
+        }
+        MossPatch copy = patches[tree::treeHash2(seed, key) % patches.size()];
+        const glm::quat turn = glm::angleAxis(2.0f * kPi * hashUnit(seed, 3 * key + 2), glm::vec3(0.0f, 1.0f, 0.0f));
+        transformGaussians(copy, turn, scale, glm::vec3(p.x, 0.0f, p.y));
+        for (Gaussian3D& g : copy) {
+            // Turning about y keeps the height above the patch's ground; lay it on the soil.
+            g.position[1] += scene.soilHeight(g.position[0], g.position[2]) + 0.002f;
+            result.push_back(g);
+        }
+        ++placed;
+    }
+    return result;
 }
 
 namespace tree_presets {

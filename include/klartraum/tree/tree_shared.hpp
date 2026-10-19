@@ -496,6 +496,24 @@ TREE_FN float treeSnowOn(vec3 normal, vec3 pos, float cover) {
     return cover * upwards * mix(patches, 1.0f, upwards * cover);
 }
 
+// The normal of a flat Gaussian: its thinnest axis, turned up.
+TREE_FN vec3 treeGaussianNormal(vec4 rot, vec3 scale) {
+    vec3 axis = scale.x <= scale.y && scale.x <= scale.z
+                    ? vec3(1.0f, 0.0f, 0.0f)
+                    : (scale.y <= scale.z ? vec3(0.0f, 1.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f));
+    vec3 n = qrot(rot, axis);
+    return n.y < 0.0f ? -n : n;
+}
+
+// The displayed colour of a captured Gaussian under the current light: its
+// captured colour tinted and shaded, covered with snow where it faces up in
+// winter.
+TREE_FN vec3 treeCapturedColor(vec3 displayed, vec3 normal, vec3 pos, float shade, TreeRenderSettings s) {
+    vec3 tint = vec3(s.capturedTint.x, s.capturedTint.y, s.capturedTint.z) * shade;
+    float snow = treeSnowOn(normal, pos, s.season.y);
+    return mix(displayed, vec3(0.85f, 0.87f, 0.9f), snow) * tint;
+}
+
 // --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------
 
 TREE_FN uint treeStemBucketAround(uint b) { return b == 0u ? 1u : 2u << b; }

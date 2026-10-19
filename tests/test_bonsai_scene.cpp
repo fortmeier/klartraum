@@ -14,6 +14,13 @@
  *   bottom's down, the soil's up
  * - meshSurfelsCoverTheMesh: sampleMeshSurfels places about area / spacing^2 samples on the triangles, with
  *   their normal and spacing
+ * - mossPatchesAreGreenSectors: a synthetic ring of green and brown ground gives patches only of its green
+ *   sectors, centred at the origin with their ground at 0 and faded towards the cuts
+ * - mossPatchesFromTheCapture: the lantern capture gives several mostly green patches
+ * - scatteredMossLiesOnTheSoil: scattered patches lie inside the pot, away from the lantern, at their height above
+ *   the soil
+ * - capturedGaussiansTakeSnow: treeGaussianNormal is the thinnest axis turned up; treeCapturedColor covers what
+ *   faces up with snow in winter only and scales by tint and shade
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
  * - classicalGeometryIsHiddenBehindSplats: a quad behind an opaque block of splats is hidden by it, a quad in
  *   front covers it, with the splats' depth output
@@ -182,6 +189,101 @@ TEST(BonsaiScene, meshSurfelsCoverTheMesh) {
         ASSERT_EQ(v.pos.w, spacing);
         ASSERT_NEAR(v.normal.z, 1.0f, 1e-5f);
     }
+}
+
+namespace {
+
+// A flat Gaussian of the given colour (degree 0 coefficients) at (x, y, z).
+Gaussian3D groundGaussian(float x, float y, float z, glm::vec3 color) {
+    Gaussian3D g{};
+    g.position = {x, y, z};
+    g.rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+    g.scale = {0.004f, 0.0005f, 0.004f};
+    g.color = {color.x, color.y, color.z};
+    g.alpha = 1.0f;
+    return g;
+}
+
+} // namespace
+
+TEST(BonsaiScene, mossPatchesAreGreenSectors) {
+    // Ground at y = 0.01 around the origin: green for x < 0, brown for x > 0.
+    std::vector<Gaussian3D> capture;
+    for (float x = -0.25f; x <= 0.25f; x += 0.004f) {
+        for (float z = -0.25f; z <= 0.25f; z += 0.004f) {
+            const glm::vec3 color = x < 0.0f ? glm::vec3(-0.5f, 0.5f, -0.8f) : glm::vec3(0.4f, 0.0f, -0.6f);
+            capture.push_back(groundGaussian(x, 0.01f, z, color));
+        }
+    }
+    capture.push_back(groundGaussian(0.18f, 0.2f, 0.0f, glm::vec3(1.0f))); // too high: the lantern
+    const std::vector<MossPatch> patches = extractMossPatches(capture, 12);
+    // Of the 12 sectors of 30 degrees, those within 90 to 270 degrees are green.
+    ASSERT_GE(patches.size(), 4u);
+    ASSERT_LE(patches.size(), 6u);
+    for (const MossPatch& patch : patches) {
+        glm::vec3 mean(0.0f);
+        float minAlpha = 1.0f, maxAlpha = 0.0f;
+        for (const Gaussian3D& g : patch) {
+            mean += glm::vec3(g.position[0], g.position[1], g.position[2]);
+            EXPECT_GT(g.color[1], g.color[0]);
+            minAlpha = std::min(minAlpha, g.alpha);
+            maxAlpha = std::max(maxAlpha, g.alpha);
+        }
+        mean /= float(patch.size());
+        EXPECT_NEAR(mean.x, 0.0f, 1e-3f);
+        EXPECT_NEAR(mean.z, 0.0f, 1e-3f);
+        EXPECT_NEAR(mean.y, 0.0f, 1e-5f);
+        EXPECT_EQ(maxAlpha, 1.0f);
+        EXPECT_LT(minAlpha, 0.3f); // faded at the cuts
+    }
+}
+
+TEST(BonsaiScene, mossPatchesFromTheCapture) {
+    const std::vector<MossPatch> patches = extractMossPatches(loadGaussiansSpz("data/lantern.spz", true));
+    EXPECT_GE(patches.size(), 3u);
+    for (const MossPatch& patch : patches) {
+        EXPECT_GT(patch.size(), 500u);
+        size_t green = 0;
+        for (const Gaussian3D& g : patch) {
+            green += g.color[1] > g.color[0] && g.color[1] > g.color[2] ? 1 : 0;
+        }
+        EXPECT_GE(float(green), 0.6f * float(patch.size()));
+    }
+}
+
+TEST(BonsaiScene, scatteredMossLiesOnTheSoil) {
+    const BonsaiScene scene = makeBonsaiScene();
+    MossPatch patch;
+    for (float x = -0.04f; x <= 0.04f; x += 0.01f) {
+        patch.push_back(groundGaussian(x, 0.003f, 0.0f, glm::vec3(0.0f, 0.5f, 0.0f)));
+    }
+    const std::vector<Gaussian3D> moss = scatterMossPatches(scene, {patch}, 50, 3, 1.0f);
+    EXPECT_EQ(moss.size(), 50u * patch.size());
+    const glm::vec2 lantern(scene.lanternTranslation.x, scene.lanternTranslation.z);
+    for (const Gaussian3D& g : moss) {
+        const glm::vec3 p(g.position[0], g.position[1], g.position[2]);
+        EXPECT_LT(scene.potMeasure(p.x, p.z, 0.95f), 1.0f);
+        EXPECT_GT(glm::length(glm::vec2(p.x, p.z) - lantern), 0.25f);
+        EXPECT_NEAR(p.y - scene.soilHeight(p.x, p.z), 0.003f + 0.002f, 1e-4f);
+    }
+}
+
+TEST(BonsaiScene, capturedGaussiansTakeSnow) {
+    // Thinnest axis y, turned upside down: the normal points up again.
+    const glm::vec3 n = tree::treeGaussianNormal(glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(0.1f, 0.01f, 0.1f));
+    EXPECT_NEAR(n.y, 1.0f, 1e-6f);
+    EXPECT_NEAR(tree::treeGaussianNormal(glm::vec4(0, 0, 0, 1), glm::vec3(0.01f, 0.1f, 0.1f)).x, 1.0f, 1e-6f);
+
+    TreeRenderSettings s = defaultTreeRenderSettings({64, 64});
+    const glm::vec3 green(0.2f, 0.6f, 0.2f);
+    const glm::vec3 up(0.0f, 1.0f, 0.0f), p(0.1f, 0.3f, 0.2f);
+    s.season.y = 0.0f;
+    EXPECT_NEAR(glm::length(tree::treeCapturedColor(green, up, p, 0.5f, s) - 0.5f * green), 0.0f, 1e-6f);
+    s.season.y = 1.0f;
+    const glm::vec3 snowy = tree::treeCapturedColor(green, up, p, 1.0f, s);
+    EXPECT_GT(snowy.r, 0.8f);
+    const glm::vec3 side = tree::treeCapturedColor(green, glm::vec3(1.0f, 0.0f, 0.0f), p, 1.0f, s);
+    EXPECT_NEAR(glm::length(side - green), 0.0f, 1e-6f);
 }
 
 TEST(BonsaiScene, lanternStandsOnTheSoil) {
