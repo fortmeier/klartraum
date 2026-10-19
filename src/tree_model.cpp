@@ -75,6 +75,7 @@ TreeRenderSettings defaultTreeRenderSettings(VkExtent2D extent) {
     settings.sun = glm::vec4(glm::normalize(glm::vec3(-0.4f, 0.8f, 0.45f)), 1.6f);
     settings.sky = glm::vec4(0.32f, 0.36f, 0.42f, 0.0f);
     settings.ground = glm::vec4(0.16f, 0.13f, 0.1f, 0.0f);
+    settings.leafLod = glm::vec4(24.0f, 8.0f, 4.0f, 0.25f);
     return settings;
 }
 
@@ -189,7 +190,7 @@ TreeTypeParams pine() {
     TreeTypeParams p{};
     p.shapeBase = glm::vec4(0.0f, 0.2f, 15.0f, 3.0f);
     p.ratios = glm::vec4(3.0f, 0.015f, 1.5f, 0.3f);
-    p.leafCount = glm::vec4(40.0f, 0.08f, 0.08f, 0.2f);
+    p.leafCount = glm::vec4(100.0f, 0.12f, 0.06f, 0.2f);
     p.leafAngles = glm::vec4(40.0f, 10.0f, 137.0f, 0.0f);
     p.leafShape = glm::vec4(5.0f, 0.0f, 5.0f, 0.5f);
     p.leafLobes = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
