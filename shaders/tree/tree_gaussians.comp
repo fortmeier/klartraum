@@ -61,9 +61,13 @@ layout(scalar, binding = 8) writeonly buffer OutColAlpha {
 layout(std430, binding = 14) readonly buffer Surfels {
     TreeSceneVertex surfels[]; // pos.w: the spacing of the samples
 };
-// The captured colours of the static Gaussians, tinted every frame by settings.capturedTint.
+// The captured colours and positions of the static Gaussians, tinted every
+// frame by settings.capturedTint and their shadows.
 layout(scalar, binding = 15) readonly buffer StaticColors {
     vec4 staticColors[];
+};
+layout(scalar, binding = 16) readonly buffer StaticPositions {
+    vec3 staticPositions[];
 };
 
 layout(push_constant) uniform Push {
@@ -205,7 +209,9 @@ void main() {
     uint g = gl_GlobalInvocationID.x;
     if (g < pc.staticCount) {
         vec4 c = staticColors[g];
-        vec3 displayed = (vec3(0.5f) + SH_C0 * c.rgb) * settings[0].capturedTint.rgb;
+        TreeRenderSettings s = settings[0];
+        float shade = treeCapturedShade(s, treeLightOfTreesAt(s, staticPositions[g]));
+        vec3 displayed = (vec3(0.5f) + SH_C0 * c.rgb) * s.capturedTint.rgb * shade;
         outColAlpha[g] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);
         return;
     }

@@ -8,8 +8,11 @@
 // the sun and the visibility of the sky (the mean transmittance towards the
 // zenith and four directions 50 degrees above the horizon), through the leaf
 // and stem area the first pass collected. A voxel's optical depth is
-// lightGridParams.x times its area over the voxel's face area; a ray starts in
-// the middle of its voxel, so leaves are half shadowed by their own voxel.
+// lightGridParams.x times its area over the voxel's face area, plus the
+// optical depth of static occluders (pot, lantern), computed once on the CPU
+// (treeStaticOcclusion()). A ray starts in the middle of its voxel, so leaves
+// are half shadowed by their own voxel; static occluders in it are skipped,
+// so solid surfaces do not shadow themselves.
 
 #extension GL_GOOGLE_include_directive : require
 
@@ -25,20 +28,29 @@ layout(std430, binding = 1) readonly buffer Density {
     uint density[];
 };
 layout(std430, binding = 2) writeonly buffer Light {
-    vec2 light[];
+    vec4 light[]; // xy through all occluders, zw through the trees only
+};
+layout(std430, binding = 3) readonly buffer StaticDepth {
+    float staticDepth[];
 };
 
 const float AREA_SCALE = 1e7f;
 
-float opticalDepth(ivec3 c, TreeRenderSettings s) {
+float treeOpticalDepth(ivec3 c, TreeRenderSettings s) {
     float area = float(density[treeLightIndex(c.x, c.y, c.z, s.lightGridSize)]) / AREA_SCALE;
     return s.lightGridParams.x * area / (s.lightGridMin.w * s.lightGridMin.w);
 }
 
-// Transmittance from the centre of voxel c along direction d to the grid's border.
-float march(ivec3 c, vec3 d, TreeRenderSettings s) {
+float opticalDepth(ivec3 c, TreeRenderSettings s) {
+    return treeOpticalDepth(c, s) + staticDepth[treeLightIndex(c.x, c.y, c.z, s.lightGridSize)];
+}
+
+// Transmittance from the centre of voxel c along direction d to the grid's
+// border: x through all occluders, y through the trees only.
+vec2 march(ivec3 c, vec3 d, TreeRenderSettings s) {
     ivec3 size = ivec3(s.lightGridSize.xyz);
-    float depth = 0.5f * opticalDepth(c, s);
+    float trees = 0.5f * treeOpticalDepth(c, s);
+    float statics = 0.0f;
     vec3 p = vec3(c) + 0.5f;
     for (int k = 0; k < 512; ++k) {
         p += d;
@@ -46,9 +58,10 @@ float march(ivec3 c, vec3 d, TreeRenderSettings s) {
         if (any(lessThan(q, ivec3(0))) || any(greaterThanEqual(q, size))) {
             break;
         }
-        depth += opticalDepth(q, s);
+        trees += treeOpticalDepth(q, s);
+        statics += staticDepth[treeLightIndex(q.x, q.y, q.z, s.lightGridSize)];
     }
-    return exp(-depth);
+    return vec2(exp(-trees - statics), exp(-trees));
 }
 
 void main() {
@@ -59,12 +72,12 @@ void main() {
         return;
     }
     ivec3 c = ivec3(i % n.x, (i / n.x) % n.y, i / (n.x * n.y));
-    float sun = march(c, normalize(s.sun.xyz), s);
+    vec2 sun = march(c, normalize(s.sun.xyz), s);
     float e = radians(50.0f);
-    float sky = march(c, vec3(0.0f, 1.0f, 0.0f), s);
+    vec2 sky = march(c, vec3(0.0f, 1.0f, 0.0f), s);
     sky += march(c, vec3(cos(e), sin(e), 0.0f), s);
     sky += march(c, vec3(-cos(e), sin(e), 0.0f), s);
     sky += march(c, vec3(0.0f, sin(e), cos(e)), s);
     sky += march(c, vec3(0.0f, sin(e), -cos(e)), s);
-    light[i] = vec2(sun, sky / 5.0f);
+    light[i] = vec4(sun.x, sky.x / 5.0f, sun.y, sky.y / 5.0f);
 }
