@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <vulkan/vulkan.h>
 
 namespace klartraum {
 
@@ -40,6 +41,7 @@ using tree::SegmentRecord;
 using tree::StemRecord;
 using tree::TreeFrame;
 using tree::TreeInstance;
+using tree::TreeRenderSettings;
 using tree::TreeTypeParams;
 
 static_assert(sizeof(TreeTypeParams) == 24 * 16, "TreeTypeParams must match its std430 layout");
@@ -48,6 +50,7 @@ static_assert(sizeof(StemRecord) == 64, "StemRecord must match its std430 layout
 static_assert(sizeof(SegmentRecord) == 96, "SegmentRecord must match its std430 layout");
 static_assert(sizeof(LeafRecord) == 48, "LeafRecord must match its std430 layout");
 static_assert(sizeof(TreeFrame) == 64, "TreeFrame must match its std430 layout");
+static_assert(sizeof(TreeRenderSettings) == 64, "TreeRenderSettings must match its std430 layout");
 
 /// The records the generation writes for a set of trees.
 struct TreeRecords {
@@ -67,6 +70,10 @@ TreeRecords generateTreesReference(const std::vector<TreeTypeParams>& types, con
 
 /// A TreeFrame with +y up, no wind, summer.
 TreeFrame defaultTreeFrame();
+
+/// Render settings for a target of `extent` pixels: 4 pixels per triangle edge, stems thinner than half a pixel
+/// culled, a sun from the upper left, a bluish sky and a brownish ground.
+TreeRenderSettings defaultTreeRenderSettings(VkExtent2D extent);
 
 /// Rotation (x, y, z, w) that turns the tree's +z growth direction to `up`.
 glm::vec4 treeUpRotation(const glm::vec3& up);
