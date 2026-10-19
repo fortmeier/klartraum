@@ -335,6 +335,7 @@ add_executable(
   tests/test_tree_rendering.cpp
   tests/test_tree_leaves.cpp
   tests/test_tree_gaussians.cpp
+  tests/test_bonsai_scene.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -369,6 +370,9 @@ set(KLARTRAUM_LIB_SRC
   src/tree_stem_renderer.cpp
   src/tree_leaf_renderer.cpp
   src/tree_gaussians.cpp
+  src/scene_mesh_renderer.cpp
+  src/bonsai_scene.cpp
+  src/bonsai_renderer.cpp
   src/storage_draw_component.cpp
   ${SPZ_SRC}
   )

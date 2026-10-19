@@ -22,7 +22,8 @@ struct LeafDrawPush {
 
 TreeLeafRenderer::TreeLeafRenderer(VulkanContext& vulkanContext, TreeGenerator& generator,
                                    const std::vector<TreeTypeParams>& types, std::shared_ptr<CameraUboType> camera,
-                                   std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent) {
+                                   std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent,
+                                   BufferRef sceneDepth) {
     const uint32_t capacity = generator.getCapacity().leaves;
     // Every leaf is drawn with as many lobes as the type with the most; the others collapse.
     uint32_t lobes = 1;
@@ -64,7 +65,11 @@ TreeLeafRenderer::TreeLeafRenderer(VulkanContext& vulkanContext, TreeGenerator& 
     config.extent = extent;
     config.pushConstantSize = sizeof(LeafDrawPush);
     draw = std::make_shared<StorageDrawComponent>(
-        config, std::vector<BufferRef>{{classify, 0}, {classify, 4}, {classify, 7}, {classify, 3}});
+        config, std::vector<BufferRef>{{classify, 0},
+                                       {classify, 4},
+                                       {classify, 7},
+                                       {classify, 3},
+                                       bufferOrPlaceholder(vulkanContext, sceneDepth)});
     for (uint32_t bucket = 0; bucket < kLeafBuckets; ++bucket) {
         StorageDrawComponent::Draw d;
         d.indirect = {classify, 5};

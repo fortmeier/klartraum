@@ -8,6 +8,8 @@
 #define TREE_CAMERA_BINDING 0
 #include "tree_render_common.glsl"
 #include "tree_shading.glsl"
+#define TREE_OCCLUSION_BINDING 4
+#include "tree_occlusion.glsl"
 
 layout(std430, set = 1, binding = 3) readonly buffer Settings {
     TreeRenderSettings settings[];
@@ -28,6 +30,9 @@ void main() {
         discard;
     }
     TreeRenderSettings s = settings[0];
+    if (treeBehindScene(s)) {
+        discard;
+    }
     vec3 normal = normalize(inNormal);
     vec3 toCamera = camera.cameraWorldPos.xyz - inWorldPos;
     if (dot(normal, toCamera) < 0.0f) {

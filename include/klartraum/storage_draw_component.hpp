@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/draw_component.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
 
@@ -77,6 +78,14 @@ private:
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
 };
+
+/// `buffer`, or a buffer of one float for a binding that is not used.
+inline BufferRef bufferOrPlaceholder(VulkanContext& vulkanContext, const BufferRef& buffer) {
+    if (buffer.element) {
+        return buffer;
+    }
+    return {std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, 1u), -1};
+}
 
 } // namespace klartraum
 

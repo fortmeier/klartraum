@@ -90,3 +90,14 @@ if(KLARTRAUM_WITH_FREETYPE)
 
   add_dependencies(title_morph_example Shaders)
 endif()
+
+# Bonsai forest of GPU-generated trees, rendered classically and as Gaussians
+add_executable(tree_bonsai_example
+    tree_bonsai_example.cpp
+)
+
+target_link_libraries(tree_bonsai_example
+    klartraum_lib
+)
+
+add_dependencies(tree_bonsai_example Shaders)
