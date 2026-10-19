@@ -10,7 +10,8 @@
  * - soilLiesInThePot: the soil rises from below the rim at the pot's edge towards the middle
  * - potWallsFaceOutwards: the mesh is a triangle list; outer wall normals point away from the middle, the
  *   bottom's down, the soil's up
- * - meshGaussiansCoverTheMesh: sampleMeshGaussians places about area / spacing^2 Gaussians on the triangles
+ * - meshSurfelsCoverTheMesh: sampleMeshSurfels places about area / spacing^2 samples on the triangles, with
+ *   their normal and spacing
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
  * - classicalGeometryIsHiddenBehindSplats: a quad behind an opaque block of splats is hidden by it, a quad in
  *   front covers it, with the splats' depth output
@@ -118,21 +119,20 @@ TEST(BonsaiScene, potWallsFaceOutwards) {
     EXPECT_GT(soil, 100u);
 }
 
-TEST(BonsaiScene, meshGaussiansCoverTheMesh) {
+TEST(BonsaiScene, meshSurfelsCoverTheMesh) {
     std::vector<TreeSceneVertex> mesh;
     addQuad(mesh, 0.0f, 2.0f, 0.0f, 1.0f, 0.5f, glm::vec3(0.5f));
     const float spacing = 0.02f;
-    const auto gaussians = sampleMeshGaussians(mesh, spacing, defaultTreeRenderSettings({64, 64}), 3);
-    EXPECT_NEAR(double(gaussians.size()), 2.0 / (spacing * spacing), 0.02 * 2.0 / (spacing * spacing));
-    for (const Gaussian3D& g : gaussians) {
-        ASSERT_NEAR(g.position[2], 0.5f, 1e-5f);
-        ASSERT_GE(g.position[0], 0.0f);
-        ASSERT_LE(g.position[0], 2.0f);
-        ASSERT_GE(g.position[1], 0.0f);
-        ASSERT_LE(g.position[1], 1.0f);
-        // The thin axis along the normal: the rotated z axis is +-z.
-        const glm::quat q(g.rotation[3], g.rotation[0], g.rotation[1], g.rotation[2]);
-        ASSERT_NEAR(std::abs((q * glm::vec3(0.0f, 0.0f, 1.0f)).z), 1.0f, 1e-4f);
+    const auto surfels = sampleMeshSurfels(mesh, spacing, 3);
+    EXPECT_NEAR(double(surfels.size()), 2.0 / (spacing * spacing), 0.02 * 2.0 / (spacing * spacing));
+    for (const TreeSceneVertex& v : surfels) {
+        ASSERT_NEAR(v.pos.z, 0.5f, 1e-5f);
+        ASSERT_GE(v.pos.x, 0.0f);
+        ASSERT_LE(v.pos.x, 2.0f);
+        ASSERT_GE(v.pos.y, 0.0f);
+        ASSERT_LE(v.pos.y, 1.0f);
+        ASSERT_EQ(v.pos.w, spacing);
+        ASSERT_NEAR(v.normal.z, 1.0f, 1e-5f);
     }
 }
 
@@ -204,7 +204,8 @@ TEST_F(BonsaiRenderingTest, classicalGeometryIsHiddenBehindSplats) {
         values.sun.w = 0.0f;
         values.sky = values.ground = glm::vec4(1.0f);
         auto settings = std::make_shared<HostValues<TreeRenderSettings>>(*vc, std::vector<TreeRenderSettings>{values});
-        SceneMeshRenderer meshes(*vc, mesh, settings, extent, {getGaussianSplattingDepth(splatting), -1});
+        SceneMeshRenderer meshes(*vc, mesh, settings, extent,
+                                 TreeRenderInputs{BufferRef{getGaussianSplattingDepth(splatting), -1}, {}});
         auto pass = std::make_shared<RenderPass>(vc->getSwapChainImageFormat(), extent);
         pass->setInput(toGeneral, 0);
         pass->setInput(camera, 1);

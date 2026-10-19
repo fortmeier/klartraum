@@ -10,6 +10,9 @@
 #include "tree_shading.glsl"
 #define TREE_OCCLUSION_BINDING 4
 #include "tree_occlusion.glsl"
+#define TREE_LIGHT_SET 1
+#define TREE_LIGHT_BINDING 5
+#include "tree_light.glsl"
 
 layout(std430, set = 1, binding = 3) readonly buffer Settings {
     TreeRenderSettings settings[];
@@ -26,6 +29,8 @@ void main() {
     if (treeBehindScene(settings[0])) {
         discard;
     }
+    TreeRenderSettings s = settings[0];
     vec3 normal = normalize(inNormal);
-    outColor = treeOutputColor(treeShade(inColor, normal, settings[0]));
+    vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
+    outColor = treeOutputColor(treeShadeLit(inColor, normal, s, light));
 }

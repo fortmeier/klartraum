@@ -11,20 +11,21 @@
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/storage_draw_component.hpp"
 #include "klartraum/tree/tree_model.hpp"
+#include "klartraum/tree/tree_render_inputs.hpp"
 
 namespace klartraum {
 
 /**
  * @brief Draws a static triangle list of TreeSceneVertex with the lighting and materials of the tree renderers.
  *
- * The vertices are uploaded once into a buffer all paths share. Hides
- * fragments behind `sceneDepth` like TreeStemRenderer.
+ * The vertices are uploaded once into a buffer all paths share. Reads its
+ * `inputs` like TreeStemRenderer.
  */
 class SceneMeshRenderer {
 public:
     SceneMeshRenderer(VulkanContext& vulkanContext, const std::vector<TreeSceneVertex>& vertices,
                       std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent,
-                      BufferRef sceneDepth = {});
+                      TreeRenderInputs inputs = {});
 
     std::shared_ptr<StorageDrawComponent> getDrawComponent() const { return draw; }
 

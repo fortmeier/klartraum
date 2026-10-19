@@ -10,7 +10,7 @@ namespace klartraum {
 
 SceneMeshRenderer::SceneMeshRenderer(VulkanContext& vulkanContext, const std::vector<TreeSceneVertex>& vertices,
                                      std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent,
-                                     BufferRef sceneDepth) {
+                                     TreeRenderInputs inputs) {
     if (vertices.empty() || vertices.size() % 3 != 0) {
         throw std::invalid_argument("SceneMeshRenderer: needs a non-empty triangle list");
     }
@@ -24,7 +24,10 @@ SceneMeshRenderer::SceneMeshRenderer(VulkanContext& vulkanContext, const std::ve
     config.fragmentShader = "shaders/tree/scene_mesh.frag.spv";
     config.extent = extent;
     draw = std::make_shared<StorageDrawComponent>(
-        config, std::vector<BufferRef>{{buffer, -1}, {settings, -1}, bufferOrPlaceholder(vulkanContext, sceneDepth)});
+        config, std::vector<BufferRef>{{buffer, -1},
+                                       {settings, -1},
+                                       bufferOrPlaceholder(vulkanContext, inputs.sceneDepth),
+                                       bufferOrPlaceholder(vulkanContext, inputs.light)});
     StorageDrawComponent::Draw d;
     d.vertexCount = uint32_t(vertices.size());
     draw->addDraw(std::move(d));

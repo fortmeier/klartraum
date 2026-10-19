@@ -5,14 +5,17 @@
 #version 450
 
 // Turns the generated trees into 3D Gaussians for the splatting backends: one
-// thread per Gaussian slot, written after pc.offset static Gaussians (uploaded
-// once). Slots [0, segmentCapacity * 16) belong to stem
+// thread per Gaussian slot. The buffers start with pc.staticCount Gaussians
+// uploaded once; then come pc.surfelCount surfels, surface samples of the
+// static meshes that are lit anew every frame, so the trees' shadows fall on
+// them; then the trees. Of the tree slots, [0, segmentCapacity * 16) belong to stem
 // segments: 8 around times 2 along the tube, flat Gaussians on its surface;
 // segments thinner than the classical renderer draws (settings.viewport.w
 // pixels) are left out, as there.
 // The leaf slots follow, 8 per leaf, along the axes of its lobes. Slots of
 // records that were not generated get opacity 0. The colours carry the
-// lighting of the classical renderer (tree_shading.glsl), as degree 0 SH.
+// lighting of the classical renderer (treeShadeLit() with the light volume),
+// as degree 0 SH.
 
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_GOOGLE_include_directive : require
@@ -21,6 +24,9 @@
 #define TREE_CAMERA_BINDING 12
 #include "tree_render_common.glsl"
 #include "tree_shading.glsl"
+#define TREE_LIGHT_SET 0
+#define TREE_LIGHT_BINDING 13
+#include "tree_light.glsl"
 
 layout(local_size_x = 256) in;
 
@@ -52,10 +58,15 @@ layout(scalar, binding = 8) writeonly buffer OutColAlpha {
     vec4 outColAlpha[];
 };
 
+layout(std430, binding = 14) readonly buffer Surfels {
+    TreeSceneVertex surfels[]; // pos.w: the spacing of the samples
+};
+
 layout(push_constant) uniform Push {
     uint segmentCapacity;
     uint leafCapacity;
-    uint offset;
+    uint staticCount;
+    uint surfelCount;
 }
 pc;
 
@@ -69,13 +80,16 @@ vec3 colorToSh0(vec3 c) {
     return (c - vec3(0.5f)) / SH_C0;
 }
 
-// The colour as the classical renderer outputs it, for a surface with this normal.
-vec3 displayColor(vec3 albedo, vec3 normal) {
-    return treeOutputColor(treeShade(albedo, normal, settings[0])).rgb;
+// The colour as the classical renderer outputs it, for a surface at pos with this normal.
+vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal) {
+    TreeRenderSettings s = settings[0];
+    vec2 light = treeLightAt(s, pos + 0.5f * s.lightGridMin.w * normal);
+    return treeOutputColor(treeShadeLit(albedo, normal, s, light)).rgb;
 }
 
+// Slots count from the first Gaussian after the static ones.
 void writeGaussian(uint slot, vec3 pos, vec4 rot, vec3 scale, vec3 color, float alpha) {
-    uint i = pc.offset + slot;
+    uint i = pc.staticCount + slot;
     outPos[i] = pos;
     outRot[i] = rot;
     outScale[i] = scale;
@@ -83,7 +97,7 @@ void writeGaussian(uint slot, vec3 pos, vec4 rot, vec3 scale, vec3 color, float 
 }
 
 void hide(uint slot) {
-    uint i = pc.offset + slot;
+    uint i = pc.staticCount + slot;
     outPos[i] = vec3(0.0f);
     outRot[i] = vec4(0.0f, 0.0f, 0.0f, 1.0f);
     outScale[i] = vec3(1e-6f);
@@ -113,7 +127,8 @@ void stemGaussian(uint i, uint segment, uint local) {
     float along = 0.35f * segmentLength / float(STEM_ALONG);
     vec3 scale = vec3(0.3f * around, 1.2f * around, max(along, around));
     vec3 albedo = params[treeType(d.ids)].barkColor.rgb;
-    writeGaussian(i, center + 0.85f * radius * radial, rot, scale, displayColor(albedo, radial), 0.95f);
+    vec3 pos = center + 0.85f * radius * radial;
+    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, radial), 0.95f);
 }
 
 // Half width of a lobe at height y, along the polygon of its curve ends.
@@ -160,11 +175,28 @@ void leafGaussian(uint i, uint leafIndex, uint local) {
     }
     float variation = treeRand(leaf.ids.y, 0x78u) - 0.5f;
     vec3 albedo = p.leafColor.rgb * (1.0f + 0.35f * variation) + vec3(0.04f, 0.03f, 0.0f) * variation;
-    writeGaussian(i, pos, rot, scale, displayColor(albedo, normal), 0.9f);
+    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal), 0.9f);
+}
+
+// A flat Gaussian on a static surface, its thin axis along the normal.
+void surfelGaussian(uint slot, uint index) {
+    TreeSceneVertex v = surfels[index];
+    vec3 normal = normalize(v.normal.xyz);
+    float spin = 2.0f * TREE_PI * treeRand(index, 0x79u);
+    vec4 rot = normalize(qmul(qfromZ(normal), qaxis(vec3(0.0f, 0.0f, 1.0f), spin)));
+    float spacing = v.pos.w;
+    vec3 albedo = treeSceneAlbedo(v.color, v.pos.xyz);
+    writeGaussian(slot, v.pos.xyz, rot, vec3(spacing, spacing, 0.08f * spacing),
+                  displayColor(albedo, v.pos.xyz, normal), 0.95f);
 }
 
 void main() {
-    uint i = gl_GlobalInvocationID.x;
+    uint slot = gl_GlobalInvocationID.x;
+    if (slot < pc.surfelCount) {
+        surfelGaussian(slot, slot);
+        return;
+    }
+    uint i = slot - pc.surfelCount;
     uint stemSlots = pc.segmentCapacity * STEM_GAUSSIANS;
     uint total = stemSlots + pc.leafCapacity * LEAF_GAUSSIANS;
     if (i >= total) {
@@ -173,17 +205,17 @@ void main() {
     if (i < stemSlots) {
         uint segment = i / STEM_GAUSSIANS;
         if (segment < min(counters[4], pc.segmentCapacity)) {
-            stemGaussian(i, segment, i % STEM_GAUSSIANS);
+            stemGaussian(slot, segment, i % STEM_GAUSSIANS);
         } else {
-            hide(i);
+            hide(slot);
         }
     } else {
         uint j = i - stemSlots;
         uint leaf = j / LEAF_GAUSSIANS;
         if (leaf < min(counters[5], pc.leafCapacity)) {
-            leafGaussian(i, leaf, j % LEAF_GAUSSIANS);
+            leafGaussian(slot, leaf, j % LEAF_GAUSSIANS);
         } else {
-            hide(i);
+            hide(slot);
         }
     }
 }

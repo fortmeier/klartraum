@@ -10,6 +10,9 @@
 #include "tree_shading.glsl"
 #define TREE_OCCLUSION_BINDING 4
 #include "tree_occlusion.glsl"
+#define TREE_LIGHT_SET 1
+#define TREE_LIGHT_BINDING 5
+#include "tree_light.glsl"
 
 layout(std430, set = 1, binding = 3) readonly buffer Settings {
     TreeRenderSettings settings[];
@@ -41,8 +44,9 @@ void main() {
     // The midrib, a little lighter.
     float midrib = 1.0f - smoothstep(0.004f, 0.012f, abs(inLeafPos.x));
     vec3 albedo = inColor * (1.0f + 0.35f * midrib);
-    vec3 color = treeShade(albedo, normal, s);
+    vec2 light = treeLightAt(s, inWorldPos);
+    vec3 color = treeShadeLit(albedo, normal, s, light);
     // Light shining through the leaf from behind.
-    color += 0.4f * albedo * max(dot(-normal, s.sun.xyz), 0.0f) * s.sun.w;
+    color += 0.4f * albedo * max(dot(-normal, s.sun.xyz), 0.0f) * s.sun.w * light.x;
     outColor = treeOutputColor(color);
 }

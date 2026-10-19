@@ -116,6 +116,10 @@ struct TreeRenderSettings {
     // x: 1 to hide fragments behind the scene depth buffer (Gaussians drawn before, e.g. the lantern),
     // 0 to ignore it; yzw unused.
     vec4 occlusion;
+    // The light volume (TreeLightVolume): a grid of sun transmittance and sky visibility over the scene.
+    vec4 lightGridMin;    // xyz the grid's lower corner, w the voxel size
+    uvec4 lightGridSize;  // xyz voxels per axis, w 1 when the grid is used, 0 for no shadows
+    vec4 lightGridParams; // x optical depth of a voxel per leaf area / voxel face area, yzw unused
 };
 
 const float TREE_PI = 3.14159265f;
@@ -173,6 +177,15 @@ TREE_FN vec3 qrot(vec4 q, vec3 v) {
 }
 
 TREE_FN vec3 qforward(vec4 q) { return qrot(q, vec3(0.0f, 0.0f, 1.0f)); }
+
+// The rotation that turns +z to the unit vector `to`.
+TREE_FN vec4 qfromZ(vec3 to) {
+    float d = to.z;
+    if (d < -0.999999f) {
+        return vec4(1.0f, 0.0f, 0.0f, 0.0f);
+    }
+    return normalize(vec4(-to.y, to.x, 0.0f, 1.0f + d));
+}
 
 // Normalized linear interpolation along the shorter arc.
 TREE_FN vec4 qnlerp(vec4 a, vec4 b, float t) {
@@ -247,13 +260,22 @@ TREE_FN float treeStemRadiusSlope(TreeTypeParams p, StemRecord s, float z) {
 // --- shading -----------------------------------------------------------------
 
 // Lighting of the classical renderer, also baked into the Gaussians: a sun and
-// an ambient term from the sky above and the ground below.
-TREE_FN vec3 treeShade(vec3 albedo, vec3 normal, TreeRenderSettings s) {
-    float sun = max(dot(normal, vec3(s.sun.x, s.sun.y, s.sun.z)), 0.0f) * s.sun.w;
+// an ambient term from the sky above and the ground below. light.x is the
+// fraction of the sunlight that reaches the point, light.y the fraction of
+// the sky it sees (both 1 without a light volume).
+TREE_FN vec3 treeShadeLit(vec3 albedo, vec3 normal, TreeRenderSettings s, vec2 light) {
+    float sun = max(dot(normal, vec3(s.sun.x, s.sun.y, s.sun.z)), 0.0f) * s.sun.w * light.x;
     float hemisphere = 0.5f + 0.5f * normal.y;
     vec3 ambient = mix(vec3(s.ground.x, s.ground.y, s.ground.z), vec3(s.sky.x, s.sky.y, s.sky.z), hemisphere);
-    return albedo * (ambient + vec3(sun, sun, sun));
+    return albedo * (ambient * light.y + vec3(sun, sun, sun));
 }
+
+TREE_FN vec3 treeShade(vec3 albedo, vec3 normal, TreeRenderSettings s) {
+    return treeShadeLit(albedo, normal, s, vec2(1.0f, 1.0f));
+}
+
+// Index of voxel (x, y, z) in the light volume.
+TREE_FN uint treeLightIndex(uint x, uint y, uint z, uvec4 size) { return (z * size.y + y) * size.x + x; }
 
 // The colour as the render targets store it: as displayed, with gamma 2.2.
 TREE_FN vec3 treeDisplayColor(vec3 linearColor) {

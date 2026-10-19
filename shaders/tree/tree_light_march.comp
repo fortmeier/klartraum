@@ -1,0 +1,70 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Second pass of the light volume: for every voxel, the transmittance towards
+// the sun and the visibility of the sky (the mean transmittance towards the
+// zenith and four directions 50 degrees above the horizon), through the leaf
+// and stem area the first pass collected. A voxel's optical depth is
+// lightGridParams.x times its area over the voxel's face area; a ray starts in
+// the middle of its voxel, so leaves are half shadowed by their own voxel.
+
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_FN
+#include "klartraum/tree/tree_shared.hpp"
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Settings {
+    TreeRenderSettings settings[];
+};
+layout(std430, binding = 1) readonly buffer Density {
+    uint density[];
+};
+layout(std430, binding = 2) writeonly buffer Light {
+    vec2 light[];
+};
+
+const float AREA_SCALE = 1e7f;
+
+float opticalDepth(ivec3 c, TreeRenderSettings s) {
+    float area = float(density[treeLightIndex(c.x, c.y, c.z, s.lightGridSize)]) / AREA_SCALE;
+    return s.lightGridParams.x * area / (s.lightGridMin.w * s.lightGridMin.w);
+}
+
+// Transmittance from the centre of voxel c along direction d to the grid's border.
+float march(ivec3 c, vec3 d, TreeRenderSettings s) {
+    ivec3 size = ivec3(s.lightGridSize.xyz);
+    float depth = 0.5f * opticalDepth(c, s);
+    vec3 p = vec3(c) + 0.5f;
+    for (int k = 0; k < 512; ++k) {
+        p += d;
+        ivec3 q = ivec3(floor(p));
+        if (any(lessThan(q, ivec3(0))) || any(greaterThanEqual(q, size))) {
+            break;
+        }
+        depth += opticalDepth(q, s);
+    }
+    return exp(-depth);
+}
+
+void main() {
+    TreeRenderSettings s = settings[0];
+    uvec4 n = s.lightGridSize;
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= n.x * n.y * n.z) {
+        return;
+    }
+    ivec3 c = ivec3(i % n.x, (i / n.x) % n.y, i / (n.x * n.y));
+    float sun = march(c, normalize(s.sun.xyz), s);
+    float e = radians(50.0f);
+    float sky = march(c, vec3(0.0f, 1.0f, 0.0f), s);
+    sky += march(c, vec3(cos(e), sin(e), 0.0f), s);
+    sky += march(c, vec3(-cos(e), sin(e), 0.0f), s);
+    sky += march(c, vec3(0.0f, sin(e), cos(e)), s);
+    sky += march(c, vec3(0.0f, sin(e), -cos(e)), s);
+    light[i] = vec2(sun, sky / 5.0f);
+}
