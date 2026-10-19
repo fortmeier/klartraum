@@ -9,12 +9,22 @@ namespace klartraum {
 TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& generator,
                              std::shared_ptr<CameraUboType> camera,
                              std::shared_ptr<HostValues<TreeRenderSettings>> settings,
-                             std::vector<Gaussian3D> staticGaussiansIn)
-    : staticGaussians(std::move(staticGaussiansIn)) {
+                             std::vector<Gaussian3D> staticGaussiansIn, std::vector<TreeSceneVertex> surfels,
+                             BufferRef light)
+    : staticGaussians(std::move(staticGaussiansIn)),
+      surfelCount(uint32_t(surfels.size())) {
     const TreeCapacity& capacity = generator.getCapacity();
     const uint32_t treeSlots = capacity.segments * kStemGaussians + capacity.leaves * kLeafGaussians;
     const uint32_t offset = uint32_t(staticGaussians.size());
-    const uint32_t count = offset + treeSlots;
+    const uint32_t count = offset + surfelCount + treeSlots;
+
+    if (surfels.empty()) {
+        surfels.push_back(TreeSceneVertex{}); // the binding needs a buffer
+    }
+    auto surfelBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<TreeSceneVertex>>>(
+        vulkanContext, uint32_t(surfels.size()));
+    surfelBuffer->setName("TreeSurfels");
+    surfelBuffer->getBuffer().memcopyFrom(surfels);
 
     element = std::make_shared<GeneralComputation<glm::uvec4>>(vulkanContext, "shaders/tree/tree_gaussians.comp.spv");
     element->setName("TreeGaussians");
@@ -25,8 +35,11 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
     element->setInput(settings, 4);
     gaussians = addGaussianOutputs(vulkanContext, element, count, 5);
     element->setInput(camera, 12);
-    element->setGroupCountX((treeSlots + 255) / 256);
-    element->setPushConstants({glm::uvec4(capacity.segments, capacity.leaves, offset, 0u)});
+    const BufferRef lightRef = bufferOrPlaceholder(vulkanContext, light);
+    element->setInput(lightRef.element, 13, lightRef.slot);
+    element->setInput(surfelBuffer, 14);
+    element->setGroupCountX((surfelCount + treeSlots + 255) / 256);
+    element->setPushConstants({glm::uvec4(capacity.segments, capacity.leaves, offset, surfelCount)});
 }
 
 void TreeGaussians::initializeBuffers(uint32_t numberPaths) {

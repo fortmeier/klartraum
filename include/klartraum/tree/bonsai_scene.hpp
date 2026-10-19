@@ -63,13 +63,13 @@ struct BonsaiScene {
 BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config = BonsaiSceneConfig{});
 
 /**
- * @brief Covers a triangle list with flat Gaussians about `spacing` apart, coloured as SceneMeshRenderer shades it.
+ * @brief Samples a triangle list at random points about `spacing` apart, for TreeGaussians' surfels.
  *
- * Deterministic for a `seed`. Each Gaussian lies in its triangle's plane with
- * its thin axis along the interpolated normal.
+ * Deterministic for a `seed`. Each sample has the interpolated normal, the
+ * triangle's colour and material, and `spacing` in pos.w.
  */
-std::vector<Gaussian3D> sampleMeshGaussians(const std::vector<TreeSceneVertex>& mesh, float spacing,
-                                            const TreeRenderSettings& lighting, uint32_t seed = 1);
+std::vector<TreeSceneVertex> sampleMeshSurfels(const std::vector<TreeSceneVertex>& mesh, float spacing,
+                                               uint32_t seed = 1);
 
 /// Broadleaf and pine types for a bonsai forest: fine twigs, small leaves.
 namespace tree_presets {

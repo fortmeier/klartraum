@@ -35,7 +35,12 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     camera = std::make_shared<CameraUboType>();
     TreeRenderSettings values = defaultTreeRenderSettings(config.extent);
     values.occlusion.x = config.mode == BonsaiRenderMode::Classical ? 1.0f : 0.0f;
+    // The light volume spans the pot and the tallest trees.
+    const BonsaiPot& pot = scene.config.pot;
+    configureTreeLightGrid(values, glm::vec3(-pot.halfLength - 0.15f, -0.05f, -pot.halfWidth - 0.15f),
+                           glm::vec3(pot.halfLength + 0.15f, 2.7f, pot.halfWidth + 0.15f), config.lightVoxel);
     settings = std::make_shared<HostValues<TreeRenderSettings>>(vulkanContext, std::vector<TreeRenderSettings>{values});
+    lightVolume = std::make_unique<TreeLightVolume>(vulkanContext, *generator, settings);
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
 
     if (config.mode == BonsaiRenderMode::Classical) {
@@ -43,16 +48,16 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         GsplatConfig splatConfig;
         splatConfig.outputDepth = true;
         auto splatting = createGaussianSplatting(vulkanContext, config.backend, target, camera, lantern, splatConfig);
-        const BufferRef depth{getGaussianSplattingDepth(splatting), -1};
+        const TreeRenderInputs inputs{BufferRef{getGaussianSplattingDepth(splatting), -1}, lightVolume->getLight()};
 
         auto toGeneral = std::make_shared<ImageToGeneral>();
         toGeneral->setInput(target, 0);
         toGeneral->addDependency(splatting);
 
-        stems = std::make_unique<TreeStemRenderer>(vulkanContext, *generator, camera, settings, config.extent, depth);
+        stems = std::make_unique<TreeStemRenderer>(vulkanContext, *generator, camera, settings, config.extent, inputs);
         leaves = std::make_unique<TreeLeafRenderer>(vulkanContext, *generator, scene.types, camera, settings,
-                                                    config.extent, depth);
-        meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, scene.mesh, settings, config.extent, depth);
+                                                    config.extent, inputs);
+        meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, scene.mesh, settings, config.extent, inputs);
 
         pass = std::make_shared<RenderPass>(vulkanContext.getSwapChainImageFormat(), config.extent);
         pass->setInput(toGeneral, 0);
@@ -62,15 +67,15 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         pass->addComputeDependency(stems->getClassify());
         pass->addComputeDependency(leaves->getClassify());
         pass->addComputeDependency(settings);
+        pass->addComputeDependency(lightVolume->getElement());
         pass->addDrawComponent(meshes->getDrawComponent());
         pass->addDrawComponent(stems->getDrawComponent());
         pass->addDrawComponent(leaves->getDrawComponent());
         output = pass;
     } else {
-        std::vector<Gaussian3D> statics = sampleMeshGaussians(scene.mesh, config.meshGaussianSpacing, values, 1);
-        statics.insert(statics.end(), lanternGaussians.begin(), lanternGaussians.end());
-
-        gaussians = std::make_unique<TreeGaussians>(vulkanContext, *generator, camera, settings, std::move(statics));
+        gaussians = std::make_unique<TreeGaussians>(
+            vulkanContext, *generator, camera, settings, std::move(lanternGaussians),
+            sampleMeshSurfels(scene.mesh, config.meshGaussianSpacing, 1), lightVolume->getLight());
         output = createGaussianSplatting(vulkanContext, config.backend, target, camera, gaussians->getGaussians());
     }
 }

@@ -18,6 +18,7 @@
 #include "klartraum/tree/tree_gaussians.hpp"
 #include "klartraum/tree/tree_generator.hpp"
 #include "klartraum/tree/tree_leaf_renderer.hpp"
+#include "klartraum/tree/tree_light_volume.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
 
 namespace klartraum {
@@ -33,14 +34,16 @@ struct BonsaiRenderConfig {
     GsplatBackend backend = GsplatBackend::Raster;
     std::string lanternPath = "data/lantern.spz";
     float meshGaussianSpacing = 0.012f; ///< of the pot and soil Gaussians
+    float lightVoxel = 0.035f;          ///< voxel size of the light volume (shadows and sky occlusion)
 };
 
 /**
  * @brief The compute graph that draws a BonsaiScene into a target, either way.
  *
  * Per frame only the camera, the TreeRenderSettings and the TreeFrame come
- * from the CPU; the trees are generated, culled, tessellated or turned into
- * Gaussians, and drawn on the GPU. Compile a graph from getOutput(), then call
+ * from the CPU; the trees are generated, their shadows computed in a
+ * TreeLightVolume, culled, tessellated or turned into Gaussians, and drawn on
+ * the GPU. Compile a graph from getOutput(), then call
  * initialize() once before the first submission.
  */
 class BonsaiRenderer {
@@ -56,6 +59,7 @@ public:
     TreeGenerator& getGenerator() { return *generator; }
     TreeStemRenderer* getStems() { return stems.get(); }
     TreeLeafRenderer* getLeaves() { return leaves.get(); }
+    TreeLightVolume& getLightVolume() { return *lightVolume; }
 
     /// The lantern capture, cropped to the lantern and its moss and placed on the soil.
     static std::vector<Gaussian3D> loadLantern(const BonsaiScene& scene, const std::string& path);
@@ -65,6 +69,7 @@ private:
     std::shared_ptr<CameraUboType> camera;
     std::shared_ptr<HostValues<TreeRenderSettings>> settings;
     std::shared_ptr<TreeGenerator> generator;
+    std::unique_ptr<TreeLightVolume> lightVolume;
 
     // Classical
     std::shared_ptr<GaussianDataStandard> lantern;

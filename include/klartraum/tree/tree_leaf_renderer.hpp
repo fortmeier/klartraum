@@ -12,6 +12,7 @@
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/storage_draw_component.hpp"
 #include "klartraum/tree/tree_generator.hpp"
+#include "klartraum/tree/tree_render_inputs.hpp"
 
 namespace klartraum {
 
@@ -28,13 +29,13 @@ enum TreeLeafStat : uint32_t {
  * `tree_leaf_classify.comp` culls the leaves and sorts them into a full and a
  * simplified draw bucket (see TreeRenderSettings::leafLod); `tree_leaf.vert`
  * builds the lobes and `tree_leaf.frag` cuts their curved edges. Use it like
- * TreeStemRenderer, also for the `sceneDepth` buffer.
+ * TreeStemRenderer, also for its `inputs`.
  */
 class TreeLeafRenderer {
 public:
     TreeLeafRenderer(VulkanContext& vulkanContext, TreeGenerator& generator, const std::vector<TreeTypeParams>& types,
                      std::shared_ptr<CameraUboType> camera, std::shared_ptr<HostValues<TreeRenderSettings>> settings,
-                     VkExtent2D extent, BufferRef sceneDepth = {});
+                     VkExtent2D extent, TreeRenderInputs inputs = {});
 
     ComputeGraphElementPtr getClassify() const { return classify; }
     std::shared_ptr<StorageDrawComponent> getDrawComponent() const { return draw; }

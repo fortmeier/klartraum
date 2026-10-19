@@ -192,10 +192,8 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     return scene;
 }
 
-std::vector<Gaussian3D> sampleMeshGaussians(const std::vector<TreeSceneVertex>& mesh, float spacing,
-                                            const TreeRenderSettings& lighting, uint32_t seed) {
-    const float shC0 = 0.28209479f;
-    std::vector<Gaussian3D> gaussians;
+std::vector<TreeSceneVertex> sampleMeshSurfels(const std::vector<TreeSceneVertex>& mesh, float spacing, uint32_t seed) {
+    std::vector<TreeSceneVertex> surfels;
     for (size_t t = 0; t + 2 < mesh.size(); t += 3) {
         const TreeSceneVertex& a = mesh[t];
         const TreeSceneVertex& b = mesh[t + 1];
@@ -213,29 +211,15 @@ std::vector<Gaussian3D> sampleMeshGaussians(const std::vector<TreeSceneVertex>& 
                 r2 = 1.0f - r2;
             }
             const float r0 = 1.0f - r1 - r2;
-            const glm::vec3 pos = r0 * pa + r1 * pb + r2 * pc;
-            const glm::vec3 normal =
-                glm::normalize(r0 * glm::vec3(a.normal) + r1 * glm::vec3(b.normal) + r2 * glm::vec3(c.normal));
-            const glm::vec4 color = a.color;
-            const glm::vec3 shaded =
-                tree::treeDisplayColor(tree::treeShade(tree::treeSceneAlbedo(color, pos), normal, lighting));
-
-            // Thin axis (z) along the normal, spun randomly about it.
-            const glm::vec4 a4 = treeUpRotation(normal);
-            const glm::quat align(a4.w, a4.x, a4.y, a4.z);
-            const float spin = 2.0f * kPi * tree::treeRand(tree::treeHash2(seed, key + 3), i);
-            const glm::quat q = align * glm::angleAxis(spin, glm::vec3(0.0f, 0.0f, 1.0f));
-
-            Gaussian3D g{};
-            g.position = {pos.x, pos.y, pos.z};
-            g.rotation = {q.x, q.y, q.z, q.w};
-            g.scale = {spacing, spacing, 0.08f * spacing};
-            g.color = {(shaded.x - 0.5f) / shC0, (shaded.y - 0.5f) / shC0, (shaded.z - 0.5f) / shC0};
-            g.alpha = 0.95f;
-            gaussians.push_back(g);
+            TreeSceneVertex surfel{};
+            surfel.pos = glm::vec4(r0 * pa + r1 * pb + r2 * pc, spacing);
+            surfel.normal = glm::vec4(
+                glm::normalize(r0 * glm::vec3(a.normal) + r1 * glm::vec3(b.normal) + r2 * glm::vec3(c.normal)), 0.0f);
+            surfel.color = a.color;
+            surfels.push_back(surfel);
         }
     }
-    return gaussians;
+    return surfels;
 }
 
 namespace tree_presets {

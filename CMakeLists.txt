@@ -317,6 +317,7 @@ add_executable(
   tests/test_tree_rendering.cpp
   tests/test_tree_leaves.cpp
   tests/test_tree_gaussians.cpp
+  tests/test_tree_light.cpp
   tests/test_bonsai_scene.cpp
 )
 
@@ -360,6 +361,7 @@ set(KLARTRAUM_LIB_SRC
   src/tree_stem_renderer.cpp
   src/tree_leaf_renderer.cpp
   src/tree_gaussians.cpp
+  src/tree_light_volume.cpp
   src/scene_mesh_renderer.cpp
   src/bonsai_scene.cpp
   src/bonsai_renderer.cpp

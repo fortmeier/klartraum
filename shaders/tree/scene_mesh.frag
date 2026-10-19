@@ -10,6 +10,9 @@
 #include "tree_shading.glsl"
 #define TREE_OCCLUSION_BINDING 2
 #include "tree_occlusion.glsl"
+#define TREE_LIGHT_SET 1
+#define TREE_LIGHT_BINDING 3
+#include "tree_light.glsl"
 
 layout(std430, set = 1, binding = 1) readonly buffer Settings {
     TreeRenderSettings settings[];
@@ -28,12 +31,13 @@ void main() {
     }
     vec3 normal = normalize(inNormal);
     vec3 albedo = treeSceneAlbedo(inColor, inWorldPos);
-    vec3 color = treeShade(albedo, normal, s);
+    vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
+    vec3 color = treeShadeLit(albedo, normal, s, light);
     if (inColor.w == TREE_MATERIAL_GLAZE) {
         // The glaze's highlight.
         vec3 toCamera = normalize(camera.cameraWorldPos.xyz - inWorldPos);
         vec3 halfway = normalize(toCamera + s.sun.xyz);
-        color += vec3(0.35f) * pow(max(dot(normal, halfway), 0.0f), 60.0f) * s.sun.w;
+        color += vec3(0.35f) * pow(max(dot(normal, halfway), 0.0f), 60.0f) * s.sun.w * light.x;
     }
     outColor = treeOutputColor(color);
 }
