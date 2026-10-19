@@ -41,7 +41,7 @@ public:
                   std::vector<Gaussian3D> staticGaussians = {}, std::vector<TreeSceneVertex> surfels = {},
                   BufferRef light = {});
 
-    static constexpr uint32_t kStemGaussians = 16;
+    static constexpr uint32_t kStemGaussians = 36;
     static constexpr uint32_t kLeafGaussians = 8;
 
     const GaussianSoABuffers& getGaussians() const { return gaussians; }

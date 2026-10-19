@@ -33,8 +33,16 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     generator = std::make_shared<TreeGenerator>(vulkanContext, scene.types, scene.trees,
                                                 TreeCapacity::fromReference(scene.types, scene.trees, frame), frame);
     camera = std::make_shared<CameraUboType>();
-    TreeRenderSettings values = defaultTreeRenderSettings(config.extent);
-    values.occlusion.x = config.mode == BonsaiRenderMode::Classical ? 1.0f : 0.0f;
+    // The classical renderer draws at `supersample` times the resolution and filters down. Its level of
+    // detail is set in pixels, which are smaller then.
+    const bool classical = config.mode == BonsaiRenderMode::Classical;
+    const uint32_t supersample = classical ? std::max(config.supersample, 1u) : 1u;
+    const VkExtent2D renderExtent{config.extent.width * supersample, config.extent.height * supersample};
+    TreeRenderSettings values = defaultTreeRenderSettings(renderExtent);
+    values.viewport.z *= float(supersample);
+    values.viewport.w *= float(supersample);
+    values.leafLod *= glm::vec4(float(supersample), float(supersample), float(supersample), 1.0f);
+    values.occlusion.x = classical ? 1.0f : 0.0f;
     // The light volume spans the pot and the tallest trees.
     const BonsaiPot& pot = scene.config.pot;
     configureTreeLightGrid(values, glm::vec3(-pot.halfLength - 0.15f, -0.05f, -pot.halfWidth - 0.15f),
@@ -43,23 +51,28 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     lightVolume = std::make_unique<TreeLightVolume>(vulkanContext, *generator, settings);
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
 
-    if (config.mode == BonsaiRenderMode::Classical) {
+    if (classical) {
+        std::shared_ptr<ImageViewSrc> renderTarget = target;
+        if (supersample > 1) {
+            renderTarget = std::make_shared<OffscreenTarget>(vulkanContext, renderExtent, config.numberPaths);
+        }
         lantern = std::make_shared<GaussianDataStandard>(vulkanContext, std::move(lanternGaussians));
         GsplatConfig splatConfig;
         splatConfig.outputDepth = true;
-        auto splatting = createGaussianSplatting(vulkanContext, config.backend, target, camera, lantern, splatConfig);
+        auto splatting =
+            createGaussianSplatting(vulkanContext, config.backend, renderTarget, camera, lantern, splatConfig);
         const TreeRenderInputs inputs{BufferRef{getGaussianSplattingDepth(splatting), -1}, lightVolume->getLight()};
 
         auto toGeneral = std::make_shared<ImageToGeneral>();
-        toGeneral->setInput(target, 0);
+        toGeneral->setInput(renderTarget, 0);
         toGeneral->addDependency(splatting);
 
-        stems = std::make_unique<TreeStemRenderer>(vulkanContext, *generator, camera, settings, config.extent, inputs);
+        stems = std::make_unique<TreeStemRenderer>(vulkanContext, *generator, camera, settings, renderExtent, inputs);
         leaves = std::make_unique<TreeLeafRenderer>(vulkanContext, *generator, scene.types, camera, settings,
-                                                    config.extent, inputs);
-        meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, scene.mesh, settings, config.extent, inputs);
+                                                    renderExtent, inputs);
+        meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, scene.mesh, settings, renderExtent, inputs);
 
-        pass = std::make_shared<RenderPass>(vulkanContext.getSwapChainImageFormat(), config.extent);
+        pass = std::make_shared<RenderPass>(vulkanContext.getSwapChainImageFormat(), renderExtent);
         pass->setInput(toGeneral, 0);
         pass->setInput(camera, 1);
         pass->setLoadExisting(true);
@@ -72,6 +85,17 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         pass->addDrawComponent(stems->getDrawComponent());
         pass->addDrawComponent(leaves->getDrawComponent());
         output = pass;
+        if (supersample > 1) {
+            // Bilinear filtering at half the resolution averages 2 x 2 pixels.
+            auto resample =
+                std::make_shared<ImageResample>(vulkanContext, renderExtent, config.extent, ResampleFilter::Bilinear,
+                                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            resample->setInput(pass, 0);
+            resample->setInput(target, 1);
+            auto toFinal = std::make_shared<ImageToFinalLayout>();
+            toFinal->setInput(resample, 0, 1);
+            output = toFinal;
+        }
     } else {
         gaussians = std::make_unique<TreeGaussians>(
             vulkanContext, *generator, camera, settings, std::move(lanternGaussians),

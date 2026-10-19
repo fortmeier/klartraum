@@ -17,6 +17,8 @@
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
  * - classicalGeometryIsHiddenBehindSplats: a quad behind an opaque block of splats is hidden by it, a quad in
  *   front covers it, with the splats' depth output
+ * - supersamplingSmoothsEdges: the classical render at 2x supersampling differs less between neighbouring pixels
+ *   than without, at the same mean brightness
  * - bonsaiRendersBothWays: the scene renders classically and as Gaussians, written to build/TestingOutput/tree/
  **/
 
@@ -284,6 +286,43 @@ TEST_F(BonsaiRenderingTest, classicalGeometryIsHiddenBehindSplats) {
         const glm::ivec3 behind = pixel(-0.4f, 0.0f);
         EXPECT_GT(behind.b, 200);
     }
+}
+
+TEST_F(BonsaiRenderingTest, supersamplingSmoothsEdges) {
+    const BonsaiScene scene = makeBonsaiScene();
+    const VkExtent2D extent{480, 270};
+    std::vector<double> variation, brightness;
+    for (uint32_t supersample : {1u, 2u}) {
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig config;
+        config.extent = extent;
+        config.supersample = supersample;
+        BonsaiRenderer bonsai(*vc, scene, target, config);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(bonsai.getOutput());
+        bonsai.initialize(1);
+        setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(1.4f, 1.3f, 3.8f), scene.focus, 40.0f,
+                  float(extent.width) / float(extent.height));
+        bonsai.getCamera()->update(0);
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+        writePpm("bonsai_supersample_" + std::to_string(supersample), image, extent);
+        double v = 0.0, b = 0.0;
+        for (uint32_t y = 0; y < extent.height; ++y) {
+            for (uint32_t x = 1; x < extent.width; ++x) {
+                const size_t i = (size_t(y) * extent.width + x) * 4;
+                for (int c = 0; c < 3; ++c) {
+                    v += std::abs(int(image[i + c]) - int(image[i - 4 + c]));
+                    b += image[i + c];
+                }
+            }
+        }
+        variation.push_back(v);
+        brightness.push_back(b);
+    }
+    std::cout << "neighbour variation " << variation[0] << " -> " << variation[1] << std::endl;
+    EXPECT_LT(variation[1], 0.85 * variation[0]);
+    EXPECT_NEAR(brightness[1] / brightness[0], 1.0, 0.1);
 }
 
 TEST_F(BonsaiRenderingTest, bonsaiRendersBothWays) {
