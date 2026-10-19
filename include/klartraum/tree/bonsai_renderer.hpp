@@ -21,6 +21,7 @@
 #include "klartraum/tree/tree_generator.hpp"
 #include "klartraum/tree/tree_leaf_renderer.hpp"
 #include "klartraum/tree/tree_light_volume.hpp"
+#include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
 
 namespace klartraum {
@@ -61,6 +62,15 @@ public:
     /// Sets the season S in [0, 4) (0 winter … 3 fall) of the next frames: the leaves and the snow cover.
     void setSeason(float season);
 
+    /**
+     * @brief Sets everything that changes over time for the next frame.
+     *
+     * `seconds` drives the wind and the lantern's flicker, `timeOfDay` (0
+     * midnight, 0.5 noon) and `season` the sky (treeSkyAt()) and the trees;
+     * `wind` is the direction the wind blows to (xyz) and its strength (w).
+     */
+    void setTime(float seconds, float timeOfDay, float season, glm::vec4 wind);
+
     std::shared_ptr<CameraUboType> getCamera() const { return camera; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
     TreeGenerator& getGenerator() { return *generator; }
@@ -73,6 +83,7 @@ public:
 
 private:
     BonsaiRenderConfig config;
+    glm::vec3 lanternFlame{0.0f};
     std::shared_ptr<CameraUboType> camera;
     std::shared_ptr<HostValues<TreeRenderSettings>> settings;
     std::shared_ptr<TreeGenerator> generator;
@@ -80,6 +91,7 @@ private:
 
     // Classical
     std::shared_ptr<GaussianDataStandard> lantern;
+    ComputeGraphElementPtr lanternTint;
     std::unique_ptr<TreeStemRenderer> stems;
     std::unique_ptr<TreeLeafRenderer> leaves;
     std::unique_ptr<SceneMeshRenderer> meshes;

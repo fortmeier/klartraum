@@ -76,6 +76,8 @@ TreeRenderSettings defaultTreeRenderSettings(VkExtent2D extent) {
     settings.sky = glm::vec4(0.32f, 0.36f, 0.42f, 1.4f);
     settings.ground = glm::vec4(0.16f, 0.13f, 0.1f, 0.0f);
     settings.leafLod = glm::vec4(24.0f, 8.0f, 4.0f, 0.25f);
+    settings.lightColor = glm::vec4(1.0f);
+    settings.capturedTint = glm::vec4(1.0f);
     return settings;
 }
 

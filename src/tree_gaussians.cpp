@@ -25,6 +25,17 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
         vulkanContext, uint32_t(surfels.size()));
     surfelBuffer->setName("TreeSurfels");
     surfelBuffer->getBuffer().memcopyFrom(surfels);
+    std::vector<glm::vec4> staticColors;
+    for (const Gaussian3D& g : staticGaussians) {
+        staticColors.emplace_back(g.color[0], g.color[1], g.color[2], g.alpha);
+    }
+    if (staticColors.empty()) {
+        staticColors.emplace_back(0.0f); // the binding needs a buffer
+    }
+    auto staticColorBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
+        vulkanContext, uint32_t(staticColors.size()));
+    staticColorBuffer->setName("TreeStaticColors");
+    staticColorBuffer->getBuffer().memcopyFrom(staticColors);
 
     element = std::make_shared<GeneralComputation<glm::uvec4>>(vulkanContext, "shaders/tree/tree_gaussians.comp.spv");
     element->setName("TreeGaussians");
@@ -38,7 +49,8 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
     const BufferRef lightRef = bufferOrPlaceholder(vulkanContext, light);
     element->setInput(lightRef.element, 13, lightRef.slot);
     element->setInput(surfelBuffer, 14);
-    element->setGroupCountX((surfelCount + treeSlots + 255) / 256);
+    element->setInput(staticColorBuffer, 15);
+    element->setGroupCountX((offset + surfelCount + treeSlots + 255) / 256);
     element->setPushConstants({glm::uvec4(capacity.segments, capacity.leaves, offset, surfelCount)});
 }
 
@@ -76,6 +88,24 @@ void TreeGaussians::initializeBuffers(uint32_t numberPaths) {
     upload(gaussians.shR, shR);
     upload(gaussians.shG, shG);
     upload(gaussians.shB, shB);
+}
+
+GaussianSoABuffers tintCapturedGaussians(VulkanContext& vulkanContext, const GaussianSoABuffers& gaussians,
+                                         std::shared_ptr<HostValues<TreeRenderSettings>> settings,
+                                         ComputeGraphElementPtr& element) {
+    auto tint = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tint_gaussians.comp.spv");
+    tint->setName("TintCapturedGaussians");
+    gaussians.colAlpha.connectTo(*tint, 0);
+    tint->setInput(settings, 1);
+    auto tinted = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(vulkanContext, gaussians.count);
+    tinted->setName("TintedColAlpha");
+    tint->setInput(tinted, 2);
+    tint->setGroupCountX((gaussians.count + 255) / 256);
+    tint->setPushConstants({gaussians.count});
+    element = tint;
+    GaussianSoABuffers result = gaussians;
+    result.colAlpha = BufferRef{tint, 2};
+    return result;
 }
 
 } // namespace klartraum

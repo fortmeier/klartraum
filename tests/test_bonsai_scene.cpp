@@ -19,6 +19,8 @@
  *   front covers it, with the splats' depth output
  * - supersamplingSmoothsEdges: the classical render at 2x supersampling differs less between neighbouring pixels
  *   than without, at the same mean brightness
+ * - nightIsDarkerAndTheLanternGlows: at midnight the scene is darker than at noon, and the moss next to the
+ *   lantern is lit warmer than at noon, in both renderers
  * - bonsaiRendersBothWays: the scene renders classically and as Gaussians, written to build/TestingOutput/tree/
  **/
 
@@ -323,6 +325,57 @@ TEST_F(BonsaiRenderingTest, supersamplingSmoothsEdges) {
     std::cout << "neighbour variation " << variation[0] << " -> " << variation[1] << std::endl;
     EXPECT_LT(variation[1], 0.85 * variation[0]);
     EXPECT_NEAR(brightness[1] / brightness[0], 1.0, 0.1);
+}
+
+TEST_F(BonsaiRenderingTest, nightIsDarkerAndTheLanternGlows) {
+    const BonsaiScene scene = makeBonsaiScene();
+    const VkExtent2D extent{480, 270};
+    for (BonsaiRenderMode mode : {BonsaiRenderMode::Classical, BonsaiRenderMode::Gaussian}) {
+        const char* name = mode == BonsaiRenderMode::Classical ? "classical" : "gaussian";
+        SCOPED_TRACE(name);
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig config;
+        config.extent = extent;
+        config.mode = mode;
+        config.meshGaussianSpacing = 0.02f;
+        BonsaiRenderer bonsai(*vc, scene, target, config);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(bonsai.getOutput());
+        bonsai.initialize(1);
+        setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(1.4f, 1.3f, 3.8f), scene.focus, 40.0f,
+                  float(extent.width) / float(extent.height));
+        bonsai.getCamera()->update(0);
+        // The moss just in front of the lantern, in pixels.
+        const glm::vec3 moss = scene.lanternTranslation + glm::vec3(0.0f, 0.0f, 0.2f);
+        const glm::vec4 clip = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view * glm::vec4(moss, 1.0f);
+        const int px = int((clip.x / clip.w * 0.5f + 0.5f) * extent.width);
+        const int py = int((clip.y / clip.w * 0.5f + 0.5f) * extent.height);
+        auto render = [&](float timeOfDay) {
+            bonsai.setTime(1.0f, timeOfDay, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+            graph.submitAndWait(vc->getGraphicsQueue(), 0);
+            const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+            writePpm(std::string("bonsai_") + name + (timeOfDay < 0.25f ? "_night" : "_noon"), image, extent);
+            glm::dvec3 total(0.0), near(0.0);
+            for (uint32_t y = 0; y < extent.height; ++y) {
+                for (uint32_t x = 0; x < extent.width; ++x) {
+                    const size_t i = (size_t(y) * extent.width + x) * 4;
+                    const glm::dvec3 rgb(image[i + 2], image[i + 1], image[i]);
+                    total += rgb;
+                    if (std::abs(int(x) - px) <= 3 && std::abs(int(y) - py) <= 3) {
+                        near += rgb;
+                    }
+                }
+            }
+            return std::make_pair(total, near);
+        };
+        const auto noon = render(0.5f);
+        const auto night = render(0.0f);
+        const double noonBrightness = noon.first.r + noon.first.g + noon.first.b;
+        const double nightBrightness = night.first.r + night.first.g + night.first.b;
+        EXPECT_LT(nightBrightness, 0.6 * noonBrightness);
+        // Warmer: more red than blue next to the lantern at night, compared with noon.
+        EXPECT_GT(night.second.r / std::max(night.second.b, 1.0), noon.second.r / std::max(noon.second.b, 1.0));
+    }
 }
 
 TEST_F(BonsaiRenderingTest, bonsaiRendersBothWays) {
