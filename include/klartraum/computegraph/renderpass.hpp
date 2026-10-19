@@ -33,6 +33,11 @@ public:
         for (auto framebuffer : framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
+        for (size_t i = 0; i < depthImages.size(); i++) {
+            vkDestroyImageView(device, depthViews[i], nullptr);
+            vkDestroyImage(device, depthImages[i], nullptr);
+            vkFreeMemory(device, depthMemories[i], nullptr);
+        }
         vkDestroyRenderPass(device, renderPass, nullptr);
     };
 
@@ -97,23 +102,27 @@ public:
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
 
+        // An external depth attachment (setDepthAttachment(attachment)) is loaded and stored, so depth composes
+        // across passes; a transient one (setDepthAttachment(true)) lives only during the pass: cleared at its
+        // start, not stored.
         VkAttachmentDescription depthDescription{};
-        depthDescription.format = DepthAttachment::format();
+        depthDescription.format = depthAttachment ? DepthAttachment::format() : kDepthFormat;
         depthDescription.samples = VK_SAMPLE_COUNT_1_BIT;
-        depthDescription.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-        depthDescription.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depthDescription.loadOp = depthAttachment ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthDescription.storeOp = depthAttachment ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depthDescription.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depthDescription.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depthDescription.initialLayout = depthDescription.finalLayout =
-            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthDescription.initialLayout =
+            depthAttachment ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+        depthDescription.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         VkAttachmentReference depthReference{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-        if (depthAttachment)
+        if (hasDepthAttachment())
             subpass.pDepthStencilAttachment = &depthReference;
         std::array<VkAttachmentDescription, 2> attachments{colorAttachment, depthDescription};
 
         VkRenderPassCreateInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = depthAttachment ? 2u : 1u;
+        renderPassInfo.attachmentCount = hasDepthAttachment() ? 2u : 1u;
         renderPassInfo.pAttachments = attachments.data();
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
@@ -136,6 +145,12 @@ public:
                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
             dependency.dstAccessMask |=
                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        } else if (useDepth) {
+            // The transient depth buffer is cleared and reused by every submission of the path.
+            dependency.srcStageMask |= VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+            dependency.srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         }
 
         renderPassInfo.dependencyCount = 1;
@@ -146,11 +161,15 @@ public:
         }
 
         framebuffers.resize(numberPaths);
+        if (useDepth) {
+            createDepthImages(numberPaths);
+        }
 
         for (uint32_t i = 0; i < framebuffers.size(); i++) {
             VkImageView imageView = this->getImageView(i);
-            VkImageView attachments[] = {imageView,
-                                         depthAttachment ? depthAttachment->getImageView(i) : VK_NULL_HANDLE};
+            VkImageView attachments[] = {imageView, depthAttachment ? depthAttachment->getImageView(i)
+                                                    : useDepth      ? depthViews[i]
+                                                                    : VK_NULL_HANDLE};
 
             // TODO: create the framebuffers in a compute graph element of their own that takes
             // an ImageViewSrc.
@@ -158,7 +177,7 @@ public:
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass = renderPass;
-            framebufferInfo.attachmentCount = depthAttachment ? 2u : 1u;
+            framebufferInfo.attachmentCount = hasDepthAttachment() ? 2u : 1u;
             framebufferInfo.pAttachments = attachments;
             framebufferInfo.width = swapChainExtent.width;
             framebufferInfo.height = swapChainExtent.height;
@@ -172,7 +191,7 @@ public:
         auto cameraUBO = getCameraUBO();
         for (auto& drawComponent : drawComponents) {
             drawComponent->setNumberPaths(numberPaths);
-            drawComponent->setDepthState(depthAttachment != nullptr, depthState);
+            drawComponent->setDepthState(hasDepthAttachment(), depthState);
             drawComponent->initialize(vulkanContext, renderPass, cameraUBO);
         }
     };
@@ -216,9 +235,11 @@ public:
         renderPassInfo.renderArea.offset = {0, 0};
         renderPassInfo.renderArea.extent = swapChainExtent;
 
-        VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearColor;
+        VkClearValue clearValues[2];
+        clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+        clearValues[1].depthStencil = {1.0f, 0};
+        renderPassInfo.clearValueCount = useDepth ? 2 : 1;
+        renderPassInfo.pClearValues = clearValues;
 
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
         for (auto& drawComponent : drawComponents) {
@@ -255,6 +276,18 @@ public:
             std::dynamic_pointer_cast<ImageViewSrcInterface>(const_cast<RenderPass*>(this)->getInputElement(0));
         return source ? source->getFinalLayoutOverride() : std::nullopt;
     }
+
+    /**
+     * @brief Gives the pass a transient depth buffer (kDepthFormat), cleared to 1 at the start of the pass and not
+     * stored.
+     *
+     * Draw components then create their pipelines with depth testing. Call before the pass is compiled.
+     */
+    void setDepthAttachment(bool depth) { useDepth = depth; }
+    /** @brief Whether the pass has a depth buffer, external or transient. */
+    bool hasDepthAttachment() const { return depthAttachment != nullptr || useDepth; }
+
+    static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
     void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) { drawComponents.push_back(drawComponent); }
 
@@ -326,6 +359,55 @@ private:
     std::shared_ptr<DepthAttachment> depthAttachment;
     DepthState depthState{};
     VkImageLayout outputLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    bool useDepth = false;
+    std::vector<VkImage> depthImages;
+    std::vector<VkDeviceMemory> depthMemories;
+    std::vector<VkImageView> depthViews;
+
+    void createDepthImages(uint32_t numberPaths) {
+        auto& device = vulkanContext->getDevice();
+        depthImages.resize(numberPaths);
+        depthMemories.resize(numberPaths);
+        depthViews.resize(numberPaths);
+        for (uint32_t i = 0; i < numberPaths; i++) {
+            VkImageCreateInfo imageInfo{};
+            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.extent = {swapChainExtent.width, swapChainExtent.height, 1};
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.format = kDepthFormat;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            if (vkCreateImage(device, &imageInfo, nullptr, &depthImages[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create depth image!");
+            }
+            VkMemoryRequirements requirements;
+            vkGetImageMemoryRequirements(device, depthImages[i], &requirements);
+            VkMemoryAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocInfo.allocationSize = requirements.size;
+            allocInfo.memoryTypeIndex =
+                vulkanContext->findMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (vkAllocateMemory(device, &allocInfo, nullptr, &depthMemories[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate depth image memory!");
+            }
+            vkBindImageMemory(device, depthImages[i], depthMemories[i], 0);
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = depthImages[i];
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = kDepthFormat;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+            if (vkCreateImageView(device, &viewInfo, nullptr, &depthViews[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create depth image view!");
+            }
+        }
+    }
 };
 
 typedef std::shared_ptr<RenderPass> RenderPassPtr;
