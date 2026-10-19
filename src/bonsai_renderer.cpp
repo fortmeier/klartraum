@@ -26,14 +26,6 @@ std::vector<Gaussian3D> BonsaiRenderer::loadLantern(const BonsaiScene& scene, co
     return kept;
 }
 
-std::vector<Gaussian3D> BonsaiRenderer::loadMoss(const BonsaiScene& scene, const std::string& path, uint32_t patches) {
-    if (patches == 0) {
-        return {};
-    }
-    return scatterMossPatches(scene, extractMossPatches(loadGaussiansSpz(path, true)), patches, scene.config.seed,
-                              1.3f);
-}
-
 BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& scene,
                                std::shared_ptr<ImageViewSrc> target, const BonsaiRenderConfig& config)
     : config(config),
@@ -69,22 +61,36 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     lightVolume = std::make_unique<TreeLightVolume>(
         vulkanContext, *generator, settings,
         treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians));
-    // The captured moss joins the lantern; it is too flat to cast shadows.
-    const std::vector<Gaussian3D> moss = loadMoss(scene, config.lanternPath, config.mossPatches);
-    lanternGaussians.insert(lanternGaussians.end(), moss.begin(), moss.end());
+    // Patches of the captured moss, placed over the soil with a level of detail each; too flat to cast shadows.
+    const std::vector<MossPatch> mossPatches = extractMossPatches(loadGaussiansSpz(config.lanternPath, true));
+    const std::vector<TreeLodInstance> mossCopies =
+        placeMossPatches(scene, uint32_t(mossPatches.size()), config.mossPatches, scene.config.seed, 1.3f);
+    TreeGaussianSources sources;
+    sources.captured = std::move(lanternGaussians);
+    sources.light = lightVolume->getLight();
+    sources.extraSlots = mossCopies.empty() ? 0u : config.mossPool;
+    // The classical renderer draws only the captured lantern and moss as Gaussians.
+    sources.trees = !classical;
+    if (!classical) {
+        sources.surfels = sampleMeshSurfels(scene.mesh, config.meshGaussianSpacing, 1);
+    }
+    gaussians = std::make_unique<TreeGaussians>(vulkanContext, *generator, camera, settings, std::move(sources));
+    GaussianSoABuffers splats = gaussians->getGaussians();
+    if (!mossCopies.empty()) {
+        moss = std::make_unique<TreeMossLod>(vulkanContext, *gaussians, mossPatches, mossCopies, camera, settings,
+                                             lightVolume->getLight(), config.mossLod);
+        splats = moss->getGaussians();
+    }
 
     if (classical) {
         std::shared_ptr<ImageViewSrc> renderTarget = target;
         if (supersample > 1) {
             renderTarget = std::make_shared<OffscreenTarget>(vulkanContext, renderExtent, config.numberPaths);
         }
-        lantern = std::make_shared<GaussianDataStandard>(vulkanContext, std::move(lanternGaussians));
-        const GaussianSoABuffers tinted =
-            tintCapturedGaussians(vulkanContext, lantern->buffers(), settings, lanternTint, lightVolume->getLight());
         GsplatConfig splatConfig;
         splatConfig.outputDepth = true;
         auto splatting =
-            createGaussianSplatting(vulkanContext, config.backend, renderTarget, camera, tinted, splatConfig);
+            createGaussianSplatting(vulkanContext, config.backend, renderTarget, camera, splats, splatConfig);
         const TreeRenderInputs inputs{BufferRef{getGaussianSplattingDepth(splatting), -1}, lightVolume->getLight()};
 
         auto toGeneral = std::make_shared<ImageToGeneral>();
@@ -121,10 +127,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             output = toFinal;
         }
     } else {
-        gaussians = std::make_unique<TreeGaussians>(
-            vulkanContext, *generator, camera, settings, std::move(lanternGaussians),
-            sampleMeshSurfels(scene.mesh, config.meshGaussianSpacing, 1), lightVolume->getLight());
-        output = createGaussianSplatting(vulkanContext, config.backend, target, camera, gaussians->getGaussians());
+        output = createGaussianSplatting(vulkanContext, config.backend, target, camera, splats);
     }
 }
 
@@ -148,10 +151,6 @@ void BonsaiRenderer::setTime(float seconds, float timeOfDay, float season, glm::
     settings->set(0, values);
 }
 
-void BonsaiRenderer::initialize(uint32_t numberPaths) {
-    if (gaussians) {
-        gaussians->initializeBuffers(numberPaths);
-    }
-}
+void BonsaiRenderer::initialize(uint32_t numberPaths) { gaussians->initializeBuffers(numberPaths); }
 
 } // namespace klartraum

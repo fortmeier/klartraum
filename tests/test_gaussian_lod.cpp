@@ -13,6 +13,9 @@
  *   as the broad axes grow at most 3 times
  * - levelsShrinkByQuarters: buildGaussianLods gives the full set and 1/4, 1/16, 1/64 of it, at least the minimum
  * - mossPatchLevels: the captured moss patches reduce to their levels with their coverage
+ * - pixelDiameterOfASphere: treePixelDiameter is twice the focal length times the radius over the distance
+ * - levelsBlendAroundBoundaries: treeLodBlend gives level 0 above the first boundary's band, the coarser levels
+ *   below each boundary, fades linearly within the bands and is continuous in the diameter
  **/
 
 #include <gtest/gtest.h>
@@ -24,6 +27,7 @@
 #include "klartraum/gaussian_data_standard.hpp"
 #include "klartraum/gaussian_lod.hpp"
 #include "klartraum/tree/bonsai_scene.hpp"
+#include "klartraum/tree/tree_model.hpp"
 
 using namespace klartraum;
 
@@ -148,5 +152,31 @@ TEST(GaussianLod, mossPatchLevels) {
             // The coverage changes little; the clamp of the growth to 3x lets the coarsest level lose some.
             EXPECT_GT(visibleArea(lods.levels[level]) / visibleArea(lods.levels[0]), 0.7) << level;
         }
+    }
+}
+
+TEST(GaussianLod, pixelDiameterOfASphere) {
+    const float pixels = tree::treePixelDiameter(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, -10.0f), 1.0f, 1000.0f);
+    EXPECT_NEAR(pixels, 2.0f * 1000.0f * 1.0f / std::sqrt(99.0f), 1e-3f);
+    // Inside the sphere: large, not infinite.
+    EXPECT_GT(tree::treePixelDiameter(glm::vec3(0.0f), glm::vec3(0.0f), 1.0f, 1000.0f), 1e5f);
+}
+
+TEST(GaussianLod, levelsBlendAroundBoundaries) {
+    const glm::vec3 b(160.0f, 48.0f, 12.0f);
+    const float band = 0.15f;
+    EXPECT_EQ(tree::treeLodBlend(400.0f, b, band), glm::vec2(0.0f, 0.0f));
+    EXPECT_EQ(tree::treeLodBlend(100.0f, b, band), glm::vec2(1.0f, 0.0f));
+    EXPECT_EQ(tree::treeLodBlend(20.0f, b, band), glm::vec2(2.0f, 0.0f));
+    EXPECT_EQ(tree::treeLodBlend(5.0f, b, band), glm::vec2(3.0f, 0.0f));
+    EXPECT_NEAR(tree::treeLodBlend(160.0f, b, band).y, 0.5f, 1e-6f); // half way at the boundary
+    // Continuous: the effective level (level + fade) changes smoothly with the diameter.
+    float previous = 0.0f;
+    for (float pixels = 400.0f; pixels > 1.0f; pixels -= 0.05f) {
+        const glm::vec2 lod = tree::treeLodBlend(pixels, b, band);
+        const float effective = lod.x + lod.y;
+        EXPECT_GE(effective, previous - 1e-5f) << pixels;
+        EXPECT_LT(effective - previous, 0.02f) << pixels;
+        previous = effective;
     }
 }

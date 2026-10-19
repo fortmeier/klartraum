@@ -97,6 +97,28 @@ struct TreeSceneVertex {
     vec4 color;  // rgb albedo, w material (TREE_MATERIAL_*)
 };
 
+// A Gaussian of a level-of-detail library (TreeMossLod), in its patch's frame.
+struct TreeLodSplat {
+    vec4 pos;   // xyz, w unused
+    vec4 rot;   // quaternion (x, y, z, w)
+    vec4 scale; // xyz, w unused
+    vec4 color; // degree 0 SH coefficients rgb, w opacity
+};
+
+// One patch of a library: where its four levels start and how many Gaussians they have.
+struct TreeLodPatch {
+    uvec4 offset;
+    uvec4 count;
+    vec4 bounds; // x radius around the patch's origin, yzw unused
+};
+
+// One placed copy of a patch, lying on a plane.
+struct TreeLodInstance {
+    vec4 posYaw; // xyz the patch origin's position, w the turn about +y in radians
+    vec4 plane;  // x dy/dx and y dy/dz of the ground, z scale, w unused
+    uvec4 ids;   // x patch, yzw unused
+};
+
 // Values the whole generation reads.
 struct TreeFrame {
     vec4 worldUp;    // xyz unit vector up, w unused
@@ -512,6 +534,33 @@ TREE_FN vec3 treeCapturedColor(vec3 displayed, vec3 normal, vec3 pos, float shad
     vec3 tint = vec3(s.capturedTint.x, s.capturedTint.y, s.capturedTint.z) * shade;
     float snow = treeSnowOn(normal, pos, s.season.y);
     return mix(displayed, vec3(0.85f, 0.87f, 0.9f), snow) * tint;
+}
+
+// --- Gaussian level of detail (after klartraum-spacegame) -----------------
+
+// Diameter in pixels of a sphere of `radius` at `center`, seen from `eye` with
+// `focalPixels` pixels per unit at distance 1.
+TREE_FN float treePixelDiameter(vec3 eye, vec3 center, float radius, float focalPixels) {
+    vec3 d = center - eye;
+    return 2.0f * focalPixels * radius / sqrt(max(dot(d, d) - radius * radius, 1e-6f));
+}
+
+// The level of detail (x, 0 = full) for a projected diameter in pixels, and
+// how far (y in [0, 1]) it has faded to the next coarser level. Level k is
+// used above boundaries[k]; within +-band of a boundary the two levels
+// crossfade, so changes in distance never switch detail at once.
+TREE_FN vec2 treeLodBlend(float pixels, vec3 boundaries, float band) {
+    for (int k = 0; k < 3; ++k) {
+        float upper = boundaries[k] * (1.0f + band);
+        float lower = boundaries[k] * (1.0f - band);
+        if (pixels >= upper) {
+            return vec2(float(k), 0.0f);
+        }
+        if (pixels > lower) {
+            return vec2(float(k), (upper - pixels) / (upper - lower));
+        }
+    }
+    return vec2(3.0f, 0.0f);
 }
 
 // --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------

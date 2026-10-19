@@ -26,22 +26,29 @@ namespace klartraum {
  * as do the Gaussians of stems thinner than TreeRenderSettings::viewport.w
  * pixels for `camera`, which the classical renderer leaves out as well.
  * The colours carry the lighting of TreeRenderSettings, with the shadows of
- * the `light` volume (TreeLightVolume) if given, as degree 0 spherical
- * harmonics; the higher bands are zero. `staticGaussians` (e.g. captured
- * objects) come first in the buffers, their colours tinted every frame by
+ * the light volume (TreeLightVolume) if given, as degree 0 spherical
+ * harmonics; the higher bands are zero. Captured Gaussians (TreeGaussianSources)
+ * come first in the buffers, their colours tinted every frame by
  * TreeRenderSettings::capturedTint and darkened in the light volume's
- * shadows (treeCapturedShade()); `surfels`
- * (samples of static surfaces, see sampleMeshSurfels()) follow and are lit
- * every frame like the trees, so the trees' shadows fall on them. One backend
- * then sorts everything together without merging every frame. Call
+ * shadows (treeCapturedShade()); surfels (samples of static surfaces, see
+ * sampleMeshSurfels()) follow and are lit every frame like the trees, so the
+ * trees' shadows fall on them; extra slots for other writers come last. One
+ * backend then sorts everything together without merging every frame. Call
  * initializeBuffers() once after the graph is compiled.
  */
+/// What TreeGaussians puts into its buffers besides (or instead of) the trees.
+struct TreeGaussianSources {
+    std::vector<Gaussian3D> captured;     ///< first; colours tinted and shaded every frame
+    std::vector<TreeSceneVertex> surfels; ///< next; lit every frame
+    BufferRef light;                      ///< the light volume (TreeLightVolume::getLight()), or none
+    bool trees = true;                    ///< whether the trees' Gaussians follow
+    uint32_t extraSlots = 0;              ///< transparent slots at the end, for other elements to write (TreeMossLod)
+};
+
 class TreeGaussians {
 public:
     TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& generator, std::shared_ptr<CameraUboType> camera,
-                  std::shared_ptr<HostValues<TreeRenderSettings>> settings,
-                  std::vector<Gaussian3D> staticGaussians = {}, std::vector<TreeSceneVertex> surfels = {},
-                  BufferRef light = {});
+                  std::shared_ptr<HostValues<TreeRenderSettings>> settings, TreeGaussianSources sources = {});
 
     static constexpr uint32_t kStemGaussians = 36;
     static constexpr uint32_t kLeafGaussians = 8;
@@ -54,12 +61,16 @@ public:
 
     /// Index of the first tree Gaussian.
     uint32_t getTreeOffset() const { return uint32_t(staticGaussians.size()) + surfelCount; }
+    /// Index of the first extra slot (TreeGaussianSources::extraSlots), and their number.
+    uint32_t getExtraOffset() const { return gaussians.count - extraSlots; }
+    uint32_t getExtraSlots() const { return extraSlots; }
 
 private:
     std::shared_ptr<GeneralComputation<glm::uvec4>> element;
     GaussianSoABuffers gaussians;
     std::vector<Gaussian3D> staticGaussians;
     uint32_t surfelCount = 0;
+    uint32_t extraSlots = 0;
 };
 
 /**

@@ -8,15 +8,18 @@ namespace klartraum {
 
 TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& generator,
                              std::shared_ptr<CameraUboType> camera,
-                             std::shared_ptr<HostValues<TreeRenderSettings>> settings,
-                             std::vector<Gaussian3D> staticGaussiansIn, std::vector<TreeSceneVertex> surfels,
-                             BufferRef light)
-    : staticGaussians(std::move(staticGaussiansIn)),
-      surfelCount(uint32_t(surfels.size())) {
+                             std::shared_ptr<HostValues<TreeRenderSettings>> settings, TreeGaussianSources sources)
+    : staticGaussians(std::move(sources.captured)),
+      surfelCount(uint32_t(sources.surfels.size())),
+      extraSlots(sources.extraSlots) {
+    std::vector<TreeSceneVertex>& surfels = sources.surfels;
+    const BufferRef& light = sources.light;
     const TreeCapacity& capacity = generator.getCapacity();
-    const uint32_t treeSlots = capacity.segments * kStemGaussians + capacity.leaves * kLeafGaussians;
+    const uint32_t segmentSlots = sources.trees ? capacity.segments : 0u;
+    const uint32_t leafSlots = sources.trees ? capacity.leaves : 0u;
+    const uint32_t treeSlots = segmentSlots * kStemGaussians + leafSlots * kLeafGaussians;
     const uint32_t offset = uint32_t(staticGaussians.size());
-    const uint32_t count = offset + surfelCount + treeSlots;
+    const uint32_t count = offset + surfelCount + treeSlots + extraSlots;
 
     if (surfels.empty()) {
         surfels.push_back(TreeSceneVertex{}); // the binding needs a buffer
@@ -70,7 +73,7 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
     element->setInput(staticPositionBuffer, 16);
     element->setInput(staticNormalBuffer, 17);
     element->setGroupCountX((offset + surfelCount + treeSlots + 255) / 256);
-    element->setPushConstants({glm::uvec4(capacity.segments, capacity.leaves, offset, surfelCount)});
+    element->setPushConstants({glm::uvec4(segmentSlots, leafSlots, offset, surfelCount)});
 }
 
 void TreeGaussians::initializeBuffers(uint32_t numberPaths) {

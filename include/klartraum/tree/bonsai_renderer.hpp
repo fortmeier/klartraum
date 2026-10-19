@@ -21,6 +21,7 @@
 #include "klartraum/tree/tree_generator.hpp"
 #include "klartraum/tree/tree_leaf_renderer.hpp"
 #include "klartraum/tree/tree_light_volume.hpp"
+#include "klartraum/tree/tree_moss_lod.hpp"
 #include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
 
@@ -41,6 +42,10 @@ struct BonsaiRenderConfig {
     uint32_t supersample = 2;           ///< the classical renderer draws at this times the resolution
     uint32_t numberPaths = 1;           ///< of the graph the renderer is compiled into
     uint32_t mossPatches = 1500;        ///< patches of the captured moss laid on the soil
+    uint32_t mossPool = 1500000;        ///< Gaussians of the moss patches' levels of detail per frame, at most
+    /// Pixel diameters below which a moss patch uses its levels 1, 2 and 3, and the crossfade band (TreeMossLod);
+    /// twice those of klartraum-spacegame, as ground cover is seen close up and shows its texture.
+    glm::vec4 mossLod{320.0f, 96.0f, 24.0f, 0.15f};
 };
 
 /**
@@ -82,8 +87,8 @@ public:
     /// The lantern capture, cropped to the lantern and its moss and placed on the soil.
     static std::vector<Gaussian3D> loadLantern(const BonsaiScene& scene, const std::string& path);
 
-    /// Patches of the captured moss around the lantern, laid on the soil of `scene` (scatterMossPatches()).
-    static std::vector<Gaussian3D> loadMoss(const BonsaiScene& scene, const std::string& path, uint32_t patches);
+    /// The level of detail of the moss, or nullptr without moss.
+    TreeMossLod* getMoss() { return moss.get(); }
 
 private:
     BonsaiRenderConfig config;
@@ -93,16 +98,15 @@ private:
     std::shared_ptr<TreeGenerator> generator;
     std::unique_ptr<TreeLightVolume> lightVolume;
 
+    // Captured lantern and moss (classical) or everything (Gaussian) as Gaussians
+    std::unique_ptr<TreeGaussians> gaussians;
+    std::unique_ptr<TreeMossLod> moss;
+
     // Classical
-    std::shared_ptr<GaussianDataStandard> lantern;
-    ComputeGraphElementPtr lanternTint;
     std::unique_ptr<TreeStemRenderer> stems;
     std::unique_ptr<TreeLeafRenderer> leaves;
     std::unique_ptr<SceneMeshRenderer> meshes;
     std::shared_ptr<RenderPass> pass;
-
-    // Gaussian
-    std::unique_ptr<TreeGaussians> gaussians;
 
     ComputeGraphElementPtr output;
 };

@@ -17,8 +17,8 @@
  * - mossPatchesAreGreenSectors: a synthetic ring of green and brown ground gives patches only of its green
  *   sectors, centred at the origin with their ground at 0 and faded towards the cuts
  * - mossPatchesFromTheCapture: the lantern capture gives several mostly green patches
- * - scatteredMossLiesOnTheSoil: scattered patches lie inside the pot, away from the lantern, at their height above
- *   the soil
+ * - scatteredMossLiesOnTheSoil: placed copies of patches lie inside the pot, away from the lantern, on the plane
+ *   touching the soil, at their height above it
  * - capturedGaussiansTakeSnow: treeGaussianNormal is the thinnest axis turned up; treeCapturedColor covers what
  *   faces up with snow in winter only and scales by tint and shade
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
@@ -257,14 +257,18 @@ TEST(BonsaiScene, scatteredMossLiesOnTheSoil) {
     for (float x = -0.04f; x <= 0.04f; x += 0.01f) {
         patch.push_back(groundGaussian(x, 0.003f, 0.0f, glm::vec3(0.0f, 0.5f, 0.0f)));
     }
-    const std::vector<Gaussian3D> moss = scatterMossPatches(scene, {patch}, 50, 3, 1.0f);
+    const std::vector<TreeLodInstance> copies = placeMossPatches(scene, 1, 50, 3, 1.0f);
+    ASSERT_EQ(copies.size(), 50u);
+    const std::vector<Gaussian3D> moss = scatterMossPatches({patch}, copies);
     EXPECT_EQ(moss.size(), 50u * patch.size());
     const glm::vec2 lantern(scene.lanternTranslation.x, scene.lanternTranslation.z);
     for (const Gaussian3D& g : moss) {
         const glm::vec3 p(g.position[0], g.position[1], g.position[2]);
         EXPECT_LT(scene.potMeasure(p.x, p.z, 0.95f), 1.0f);
         EXPECT_GT(glm::length(glm::vec2(p.x, p.z) - lantern), 0.25f);
-        EXPECT_NEAR(p.y - scene.soilHeight(p.x, p.z), 0.003f + 0.002f, 1e-4f);
+        // On the plane that touches the soil at the copy's centre: as high above the soil as above the patch's
+        // ground, within the soil's curvature over the patch.
+        EXPECT_NEAR(p.y - scene.soilHeight(p.x, p.z), 0.003f + 0.002f, 1e-3f);
     }
 }
 

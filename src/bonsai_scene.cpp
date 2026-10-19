@@ -9,8 +9,6 @@
 #include <functional>
 #include <stdexcept>
 
-#include "klartraum/gaussian_transform.hpp"
-
 namespace klartraum {
 
 namespace {
@@ -286,31 +284,53 @@ std::vector<MossPatch> extractMossPatches(const std::vector<Gaussian3D>& capture
     return patches;
 }
 
-std::vector<Gaussian3D> scatterMossPatches(const BonsaiScene& scene, const std::vector<MossPatch>& patches,
-                                           uint32_t count, uint32_t seed, float scale) {
-    std::vector<Gaussian3D> result;
-    if (patches.empty()) {
-        return result;
+std::vector<TreeLodInstance> placeMossPatches(const BonsaiScene& scene, uint32_t patchCount, uint32_t count,
+                                              uint32_t seed, float scale) {
+    std::vector<TreeLodInstance> instances;
+    if (patchCount == 0) {
+        return instances;
     }
     const BonsaiPot& pot = scene.config.pot;
     const float inner = innerScale(pot);
     const glm::vec2 lantern(scene.lanternTranslation.x, scene.lanternTranslation.z);
-    uint32_t placed = 0;
-    for (uint32_t key = 0; placed < count && key < 100 * count; ++key) {
+    for (uint32_t key = 0; instances.size() < count && key < 100 * count; ++key) {
         const glm::vec2 p((2.0f * hashUnit(seed, 3 * key) - 1.0f) * pot.halfLength,
                           (2.0f * hashUnit(seed, 3 * key + 1) - 1.0f) * pot.halfWidth);
         if (scene.potMeasure(p.x, p.y, inner * 0.88f) > 1.0f || glm::length(p - lantern) < 0.3f) {
             continue;
         }
-        MossPatch copy = patches[tree::treeHash2(seed, key) % patches.size()];
-        const glm::quat turn = glm::angleAxis(2.0f * kPi * hashUnit(seed, 3 * key + 2), glm::vec3(0.0f, 1.0f, 0.0f));
-        transformGaussians(copy, turn, scale, glm::vec3(p.x, 0.0f, p.y));
-        for (Gaussian3D& g : copy) {
-            // Turning about y keeps the height above the patch's ground; lay it on the soil.
-            g.position[1] += scene.soilHeight(g.position[0], g.position[2]) + 0.002f;
-            result.push_back(g);
+        // The plane that touches the soil at the patch's centre, a little above it.
+        const float e = 0.02f;
+        TreeLodInstance instance{};
+        instance.posYaw =
+            glm::vec4(p.x, scene.soilHeight(p.x, p.y) + 0.002f, p.y, 2.0f * kPi * hashUnit(seed, 3 * key + 2));
+        instance.plane =
+            glm::vec4((scene.soilHeight(p.x + e, p.y) - scene.soilHeight(p.x - e, p.y)) / (2.0f * e),
+                      (scene.soilHeight(p.x, p.y + e) - scene.soilHeight(p.x, p.y - e)) / (2.0f * e), scale, 0.0f);
+        instance.ids = glm::uvec4(tree::treeHash2(seed, key) % patchCount, 0u, 0u, 0u);
+        instances.push_back(instance);
+    }
+    return instances;
+}
+
+std::vector<Gaussian3D> scatterMossPatches(const std::vector<MossPatch>& patches,
+                                           const std::vector<TreeLodInstance>& instances) {
+    std::vector<Gaussian3D> result;
+    for (const TreeLodInstance& inst : instances) {
+        const glm::vec4 turn = tree::qaxis(glm::vec3(0.0f, 1.0f, 0.0f), inst.posYaw.w);
+        const float scale = inst.plane.z;
+        for (const Gaussian3D& g : patches.at(inst.ids.x)) {
+            const glm::vec3 local = tree::qrot(turn, scale * glm::vec3(g.position[0], 0.0f, g.position[2]));
+            glm::vec3 pos = glm::vec3(inst.posYaw) + local;
+            pos.y += inst.plane.x * local.x + inst.plane.y * local.z + scale * g.position[1];
+            const glm::vec4 rot =
+                glm::normalize(tree::qmul(turn, glm::vec4(g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3])));
+            Gaussian3D h = g;
+            h.position = {pos.x, pos.y, pos.z};
+            h.rotation = {rot.x, rot.y, rot.z, rot.w};
+            h.scale = {scale * g.scale[0], scale * g.scale[1], scale * g.scale[2]};
+            result.push_back(h);
         }
-        ++placed;
     }
     return result;
 }
