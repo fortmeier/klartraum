@@ -51,7 +51,7 @@ static_assert(sizeof(StemRecord) == 64, "StemRecord must match its std430 layout
 static_assert(sizeof(SegmentRecord) == 96, "SegmentRecord must match its std430 layout");
 static_assert(sizeof(LeafRecord) == 48, "LeafRecord must match its std430 layout");
 static_assert(sizeof(TreeFrame) == 64, "TreeFrame must match its std430 layout");
-static_assert(sizeof(TreeRenderSettings) == 144, "TreeRenderSettings must match its std430 layout");
+static_assert(sizeof(TreeRenderSettings) == 160, "TreeRenderSettings must match its std430 layout");
 
 /// The records the generation writes for a set of trees.
 struct TreeRecords {

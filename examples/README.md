@@ -355,6 +355,7 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--distance D` | Distance of the camera from the scene's focus (default 4.2) |
 | `--elevation E` | Elevation of the camera in radians (default 0.32) |
 | `--azimuth A` | Azimuth of the first view in radians (default 0.35) |
+| `--season S` | Season from 0 (winter) over 1 (spring), 2 (summer) to 3 (fall) (default 2) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
 
 ```bash

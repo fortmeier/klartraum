@@ -73,7 +73,7 @@ TreeRenderSettings defaultTreeRenderSettings(VkExtent2D extent) {
     TreeRenderSettings settings{};
     settings.viewport = glm::vec4(float(extent.width), float(extent.height), 4.0f, 0.5f);
     settings.sun = glm::vec4(glm::normalize(glm::vec3(-0.4f, 0.8f, 0.45f)), 1.6f);
-    settings.sky = glm::vec4(0.32f, 0.36f, 0.42f, 0.0f);
+    settings.sky = glm::vec4(0.32f, 0.36f, 0.42f, 1.4f);
     settings.ground = glm::vec4(0.16f, 0.13f, 0.1f, 0.0f);
     settings.leafLod = glm::vec4(24.0f, 8.0f, 4.0f, 0.25f);
     return settings;

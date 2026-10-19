@@ -58,6 +58,9 @@ public:
     ComputeGraphElementPtr getOutput() const { return output; }
     void initialize(uint32_t numberPaths);
 
+    /// Sets the season S in [0, 4) (0 winter … 3 fall) of the next frames: the leaves and the snow cover.
+    void setSeason(float season);
+
     std::shared_ptr<CameraUboType> getCamera() const { return camera; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
     TreeGenerator& getGenerator() { return *generator; }

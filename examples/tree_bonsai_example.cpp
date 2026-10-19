@@ -8,7 +8,7 @@
 //
 //   tree_bonsai_example [--renderer classical|gaussian|both] [--backend raster|compute]
 //                       [--views 4] [--trees 13] [--seed 7] [--width 1280] [--height 720]
-//                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35]
+//                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
 //
 // The trees are generated on the GPU every frame; per view the CPU only sets
@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
     float distance = 4.2f;
     float elevation = 0.32f;
     float azimuth = 0.35f;
+    float season = 2.0f;
     std::filesystem::path outDir = "build/TestingOutput/tree_bonsai";
 
     for (int i = 1; i < argc; ++i) {
@@ -111,6 +112,8 @@ int main(int argc, char** argv) {
             elevation = std::stof(argv[++i]);
         } else if (arg == "--azimuth" && hasValue) {
             azimuth = std::stof(argv[++i]);
+        } else if (arg == "--season" && hasValue) {
+            season = std::stof(argv[++i]);
         } else if (arg == "--out-dir" && hasValue) {
             outDir = argv[++i];
         } else {
@@ -152,6 +155,7 @@ int main(int argc, char** argv) {
         ComputeGraph graph(vc, 1);
         graph.compileFrom(bonsai.getOutput());
         bonsai.initialize(1);
+        bonsai.setSeason(season);
 
         for (uint32_t view = 0; view < views; ++view) {
             const float angle = azimuth + 2.0f * 3.14159265f * float(view) / float(views);

@@ -54,7 +54,8 @@ struct TreeTypeParams {
     vec4 nRotate;
     vec4 nRotateV;
     vec4 nBranches;
-    vec4 trunk; // x lobes and y lobe depth of the trunk's base (Weber and Penn), z bark furrows per unit length
+    vec4 trunk; // x lobes and y lobe depth of the trunk's base (Weber and Penn), z bark furrows per unit length,
+                // w 1 for deciduous leaves (they follow the seasons), 0 for evergreen ones
 };
 
 // One tree in the scene.
@@ -86,7 +87,7 @@ struct SegmentRecord {
 struct LeafRecord {
     vec4 posScale; // xyz leaf base, w length of the leaf
     vec4 rot;      // quaternion; the leaf points along +z, its blade lies in the xz plane
-    uvec4 ids;     // x type, y seed, z instance, w unused
+    uvec4 ids;     // x type, y seed, z instance, w seasonal colour: bits 0-7 freshness, 8-15 fall colouring
 };
 
 // A vertex of the static scene meshes (pot, soil, table).
@@ -108,7 +109,7 @@ struct TreeFrame {
 struct TreeRenderSettings {
     vec4 viewport; // x width, y height in pixels, z pixels per triangle edge (Delta), w minimum stem radius in pixels
     vec4 sun;      // xyz unit vector towards the sun, w intensity
-    vec4 sky;      // rgb ambient light from above, w unused
+    vec4 sky;      // rgb ambient light from above, w exposure of the tone curve (treeDisplayColor())
     vec4 ground;   // rgb ambient light from below, w unused
     // Continuous leaf level of detail, by the leaf's length in pixels: x where leaves start to flatten and
     // their lobes to merge, y where they are fully simplified, z below which leaves thin out, w the fraction
@@ -121,6 +122,7 @@ struct TreeRenderSettings {
     vec4 lightGridMin;    // xyz the grid's lower corner, w the voxel size
     uvec4 lightGridSize;  // xyz voxels per axis, w 1 when the grid is used, 0 for no shadows
     vec4 lightGridParams; // x optical depth of a voxel per leaf area / voxel face area, yzw unused
+    vec4 season;          // x season S as in TreeFrame, y snow cover in [0, 1] (treeSnowCover()), zw unused
 };
 
 const float TREE_PI = 3.14159265f;
@@ -297,10 +299,14 @@ TREE_FN vec3 treeLeafUnderside(vec3 top) {
 // Index of voxel (x, y, z) in the light volume.
 TREE_FN uint treeLightIndex(uint x, uint y, uint z, uvec4 size) { return (z * size.y + y) * size.x + x; }
 
-// The colour as the render targets store it: as displayed, with gamma 2.2.
-TREE_FN vec3 treeDisplayColor(vec3 linearColor) {
+// The colour as the render targets store it: exposed with an exponential
+// tone curve, so bright light (snow in the sun) keeps its shading instead of
+// clipping, and with gamma 2.2.
+TREE_FN vec3 treeDisplayColor(vec3 linearColor, float exposure) {
+    vec3 c = max(linearColor, vec3(0.0f, 0.0f, 0.0f)) * exposure;
+    vec3 mapped = vec3(1.0f, 1.0f, 1.0f) - exp(-c);
     float g = 1.0f / 2.2f;
-    return pow(clamp(linearColor, vec3(0.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 1.0f)), vec3(g, g, g));
+    return pow(mapped, vec3(g, g, g));
 }
 
 // Value noise in [0, 1] on the integer lattice, smoothly interpolated.
@@ -402,6 +408,69 @@ TREE_FN float treeBarkHeight(vec2 uv) {
     float n = treeFbm(vec3(uv.x, 0.15f * uv.y, 0.0f));
     float ridge = 1.0f - abs(2.0f * n - 1.0f);
     return ridge * ridge;
+}
+
+// --- seasons (Kuth et al., Sec. 3.4) --------------------------------------
+
+// The season S in [0, 4): 0 winter, 1 spring, 2 summer, 3 fall, continuous in
+// between; 4 is winter again.
+TREE_FN float treeSeasonWrap(float s) { return s - 4.0f * floor(s / 4.0f); }
+
+// State of a deciduous leaf in season S: x its size (0: not there), y its
+// freshness (young spring leaves are lighter), z its fall colouring. r in
+// [0, 1) is the leaf's own random number, so leaves bud, colour and drop at
+// their own times; `offset` shifts the type's seasons. Evergreen leaves stay
+// fully grown and green.
+TREE_FN vec3 treeLeafSeason(float season, float r, float offset, bool deciduous) {
+    if (!deciduous) {
+        return vec3(1.0f, 0.0f, 0.0f);
+    }
+    float s = treeSeasonWrap(season - offset);
+    float size = smoothstep(0.6f + 0.3f * r, 1.3f + 0.3f * r, s);
+    size *= 1.0f - smoothstep(3.2f + 0.6f * r, 3.3f + 0.6f * r, s);
+    float fresh = 1.0f - smoothstep(1.2f, 2.0f, s);
+    float fall = smoothstep(2.5f + 0.4f * r, 3.1f + 0.4f * r, s);
+    return vec3(size, fresh, fall);
+}
+
+// Snow cover in season S: in deep winter.
+TREE_FN float treeSnowCover(float season) {
+    float s = treeSeasonWrap(season);
+    return max(1.0f - smoothstep(0.1f, 0.5f, s), smoothstep(3.7f, 3.95f, s));
+}
+
+TREE_FN uint treeLeafSeasonPack(vec3 state) {
+    return uint(clamp(state.y, 0.0f, 1.0f) * 255.0f + 0.5f) | (uint(clamp(state.z, 0.0f, 1.0f) * 255.0f + 0.5f) << 8u);
+}
+
+// Freshness (x) and fall colouring (y) of a leaf record.
+TREE_FN vec2 treeLeafSeasonUnpack(uint packed) {
+    return vec2(float(packed & 255u), float((packed >> 8u) & 255u)) / 255.0f;
+}
+
+// The albedo of a leaf in its season: treeLeafAlbedo() of the type's colour,
+// lighter and yellower while fresh, turning to the fall colour, which each
+// leaf shifts towards yellow or red.
+TREE_FN vec3 treeLeafSeasonAlbedo(TreeTypeParams p, uint leafSeed, uint treeSeed, uint packedSeason) {
+    vec2 state = treeLeafSeasonUnpack(packedSeason);
+    vec3 green = treeLeafAlbedo(vec3(p.leafColor.x, p.leafColor.y, p.leafColor.z), leafSeed, treeSeed);
+    green = mix(green, green * vec3(1.9f, 1.6f, 0.8f), state.x);
+    float hue = treeRand(leafSeed, 0x7bu);
+    vec3 fallBase = vec3(p.leafColorFall.x, p.leafColorFall.y, p.leafColorFall.z);
+    vec3 fall = fallBase * mix(vec3(1.25f, 0.45f, 0.6f), vec3(0.95f, 1.35f, 0.8f), hue) *
+                (0.75f + 0.5f * treeRand(leafSeed, 0x7cu));
+    return mix(green, fall, state.y);
+}
+
+// Snow lying on a surface with this normal, by the snow cover: on what faces
+// upwards, patchy where it is steep.
+TREE_FN float treeSnowOn(vec3 normal, vec3 pos, float cover) {
+    if (cover <= 0.0f) {
+        return 0.0f;
+    }
+    float upwards = smoothstep(0.15f, 0.75f, normal.y);
+    float patches = smoothstep(0.3f, 0.6f, treeValueNoise(pos * 60.0f) + 0.6f * cover - 0.3f);
+    return cover * upwards * mix(patches, 1.0f, upwards * cover);
 }
 
 // --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------

@@ -104,6 +104,15 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     }
 }
 
+void BonsaiRenderer::setSeason(float season) {
+    TreeFrame frame = generator->getFrame().values().at(0);
+    frame.timeSeason.y = season;
+    generator->getFrame().set(0, frame);
+    TreeRenderSettings values = settings->values().at(0);
+    values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
+    settings->set(0, values);
+}
+
 void BonsaiRenderer::initialize(uint32_t numberPaths) {
     if (gaussians) {
         gaussians->initializeBuffers(numberPaths);
