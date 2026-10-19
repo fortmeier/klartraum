@@ -11,6 +11,8 @@
  * - hermiteMatchesEndpointsAndTangents: treeHermite passes through its ends with the given tangents
  * - shapeRatioMatchesWeberPenn: the eight shape ratios at characteristic points
  * - stemRadiusTapersAndFlares: linear taper to the tip, flare only at the trunk base, slope = derivative
+ * - trunkLobesAndBark: trunk lobes widen only the trunk's lowest sixth, by up to the lobe depth, and the bark
+ *   relief stays in [0, 1] with furrows and ridges
  * - trunkOnlyTree: one level, no leaves: curveRes connected segments of the trunk's length and radius
  * - splitsCreateClones: segSplits = 1 doubles the clones at every ring, up to the 32 threads of a stem
  * - childCountsFollowWeberPenn: level 1 gets nBranches children, evenly spaced from the base size up
@@ -65,6 +67,7 @@ TEST(TreeModel, recordLayoutsMatchStd430) {
     EXPECT_EQ(offsetof(TreeTypeParams, leafColorFall), 8u * 16u);
     EXPECT_EQ(offsetof(TreeTypeParams, nLength), 9u * 16u);
     EXPECT_EQ(offsetof(TreeTypeParams, nBranches), 23u * 16u);
+    EXPECT_EQ(offsetof(TreeTypeParams, trunk), 24u * 16u);
     EXPECT_EQ(offsetof(StemRecord, ids), 48u);
     EXPECT_EQ(offsetof(SegmentRecord, toPosRadius), 32u);
     EXPECT_EQ(offsetof(SegmentRecord, ids), 80u);
@@ -159,6 +162,35 @@ TEST(TreeModel, stemRadiusTapersAndFlares) {
     EXPECT_NEAR(treeStemRadius(p, s, 0.5f), 0.25f, 1e-6f);
     s.ids.x = 1u << 16u; // level 1
     EXPECT_NEAR(treeStemRadius(p, s, 0.0f), 0.5f, 1e-6f);
+}
+
+TEST(TreeModel, trunkLobesAndBark) {
+    TreeTypeParams p = trunkOnly();
+    p.trunk = glm::vec4(5.0f, 0.4f, 20.0f, 0.0f);
+    float lowest = 10.0f, highest = 0.0f;
+    for (int i = 0; i < 100; ++i) {
+        const float phi = 2.0f * TREE_PI * float(i) / 100.0f;
+        const float f = treeTrunkLobes(p, 0, 0.0f, phi);
+        lowest = std::min(lowest, f);
+        highest = std::max(highest, f);
+        EXPECT_EQ(treeTrunkLobes(p, 0, 0.2f, phi), 1.0f);
+        EXPECT_EQ(treeTrunkLobes(p, 1, 0.0f, phi), 1.0f);
+    }
+    EXPECT_NEAR(lowest, 1.0f, 1e-3f);
+    EXPECT_NEAR(highest, 1.4f, 1e-3f);
+    p.trunk.y = 0.0f;
+    EXPECT_EQ(treeTrunkLobes(p, 0, 0.0f, 1.0f), 1.0f);
+
+    float minHeight = 1.0f, maxHeight = 0.0f;
+    for (int i = 0; i < 400; ++i) {
+        const float h = treeBarkHeight(glm::vec2(0.37f * float(i), 0.11f * float(i)));
+        minHeight = std::min(minHeight, h);
+        maxHeight = std::max(maxHeight, h);
+    }
+    EXPECT_GE(minHeight, 0.0f);
+    EXPECT_LE(maxHeight, 1.0f);
+    EXPECT_LT(minHeight, 0.2f);
+    EXPECT_GT(maxHeight, 0.8f);
 }
 
 TEST(TreeModel, trunkOnlyTree) {

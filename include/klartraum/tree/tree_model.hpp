@@ -45,7 +45,7 @@ using tree::TreeRenderSettings;
 using tree::TreeSceneVertex;
 using tree::TreeTypeParams;
 
-static_assert(sizeof(TreeTypeParams) == 24 * 16, "TreeTypeParams must match its std430 layout");
+static_assert(sizeof(TreeTypeParams) == 25 * 16, "TreeTypeParams must match its std430 layout");
 static_assert(sizeof(TreeInstance) == 48, "TreeInstance must match its std430 layout");
 static_assert(sizeof(StemRecord) == 64, "StemRecord must match its std430 layout");
 static_assert(sizeof(SegmentRecord) == 96, "SegmentRecord must match its std430 layout");

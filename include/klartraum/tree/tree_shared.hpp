@@ -54,6 +54,7 @@ struct TreeTypeParams {
     vec4 nRotate;
     vec4 nRotateV;
     vec4 nBranches;
+    vec4 trunk; // x lobes and y lobe depth of the trunk's base (Weber and Penn), z bark furrows per unit length
 };
 
 // One tree in the scene.
@@ -353,6 +354,25 @@ TREE_FN vec3 treeSceneAlbedo(vec4 color, vec3 pos) {
         return base * (0.85f + 0.3f * treeFbm(pos * 14.0f));
     }
     return base;
+}
+
+// Factor on the radius of a stem of `level` at z in [0, 1] along it and angle
+// phi around it: root buttresses at the trunk's base, Weber and Penn's lobes,
+// that fade out over the lowest sixth of the trunk.
+TREE_FN float treeTrunkLobes(TreeTypeParams p, int level, float z, float phi) {
+    if (level != 0 || p.trunk.y == 0.0f) {
+        return 1.0f;
+    }
+    float w = max(0.0f, 1.0f - 6.0f * z);
+    return 1.0f + p.trunk.y * w * w * (0.5f + 0.5f * sin(p.trunk.x * phi));
+}
+
+// Bark relief in [0, 1] at uv (around, along the stem, in furrows): ridges
+// that run along the stem, separated by furrows (0).
+TREE_FN float treeBarkHeight(vec2 uv) {
+    float n = treeFbm(vec3(uv.x, 0.15f * uv.y, 0.0f));
+    float ridge = 1.0f - abs(2.0f * n - 1.0f);
+    return ridge * ridge;
 }
 
 // --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------

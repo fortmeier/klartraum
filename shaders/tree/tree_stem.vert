@@ -36,7 +36,9 @@ pc;
 layout(location = 0) out vec3 outWorldPos;
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec3 outColor;
-layout(location = 3) out vec2 outBark; // x around in [0, 1], y along the stem in world units
+layout(location = 3) out vec3 outBark; // x angle around, y along the stem in world units, z radius
+layout(location = 4) out vec3 outTangent; // around the stem
+layout(location = 5) flat out uint outType;
 
 void main() {
     uint around = treeStemBucketAround(pc.bucket);
@@ -85,10 +87,19 @@ void main() {
     float phi = phiCenter - theta + 2.0f * theta * treeTessSpacing(column, factor, around);
 
     vec3 radial = cos(phi) * x + sin(phi) * y;
-    vec3 worldPos = ring.pos + ring.radius * radial;
+    // The ring's own z along the stem, so that a ring's lobes are the same in both its segments.
+    float z = row == 0u ? d.shape.z : d.shape.z + w * segmentLength / d.shape.w;
+    if (w >= 1.0f) {
+        z = d.shape.z + segmentLength / d.shape.w;
+    }
+    TreeTypeParams p = params[treeType(d.ids)];
+    float radius = ring.radius * treeTrunkLobes(p, treeLevel(d.ids), z, phi);
+    vec3 worldPos = ring.pos + radius * radial;
     outWorldPos = worldPos;
     outNormal = normalize(radial - ring.drdz * qforward(ring.rot));
-    outColor = params[treeType(d.ids)].barkColor.rgb;
-    outBark = vec2(phi / (2.0f * TREE_PI), d.shape.w * d.shape.z + w * segmentLength);
+    outColor = p.barkColor.rgb;
+    outBark = vec3(phi, d.shape.w * z, ring.radius);
+    outTangent = -sin(phi) * x + cos(phi) * y;
+    outType = treeType(d.ids);
     gl_Position = camera.proj * camera.view * vec4(worldPos, 1.0f);
 }
