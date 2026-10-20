@@ -115,14 +115,17 @@ private:
     bool rebuildForSwapChain();
 
     GraphBuilder graphBuilder;
-    // Application callback for per-path data uploads between acquisition and submission.
-    FrameUpdate frameUpdate;
 
     bool profilingEnabled = false;
     bool perfProfilingEnabled = false;
     std::vector<std::string> perfProfilingNameFilter;
 
+    // Owns the engine's Vulkan instance, device, and rendering resources.
+    // Must outlive the engine's GPU resources.
     VulkanContext vulkanContext;
+
+    // Application callback for per-path data uploads between acquisition and submission.
+    FrameUpdate frameUpdate;
 
     std::shared_ptr<InterfaceCamera> interfaceCamera;
     std::shared_ptr<CameraUboType> cameraUBO;

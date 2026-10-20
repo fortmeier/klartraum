@@ -15,7 +15,11 @@ namespace klartraum {
 
 KlartraumEngine::KlartraumEngine() {}
 
-KlartraumEngine::~KlartraumEngine() {}
+KlartraumEngine::~KlartraumEngine() {
+    vulkanContext.stopRender();
+    frameUpdate = nullptr;
+    graphBuilder = nullptr;
+}
 
 void KlartraumEngine::step() {
 

@@ -1226,15 +1226,17 @@ void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSe
 }
 
 void VulkanContext::stopRender() {
-    // Wait for all frames to finish before shutting down
-    for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
-        vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);
-    }
+    if (state == State::SWAPCHAIN_READY) {
+        // Wait for all frames to finish before shutting down
+        for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
+            vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);
+        }
 
-    // make sure all activity has been finalized
-    // so that subsequent destroys on vulkan objects
-    // are successful
-    vkDeviceWaitIdle(device);
+        // make sure all activity has been finalized
+        // so that subsequent destroys on vulkan objects
+        // are successful
+        vkDeviceWaitIdle(device);
+    }
 }
 
 void VulkanContext::createCommandPool() {
