@@ -1150,6 +1150,10 @@ void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSe
 }
 
 void VulkanContext::stopRender() {
+    // Only a context with a swapchain owns frame synchronization objects.
+    if (state != State::SWAPCHAIN_READY) {
+        return;
+    }
     // Wait for all frames to finish before shutting down
     for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
         vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);

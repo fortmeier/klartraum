@@ -15,7 +15,12 @@ namespace klartraum {
 
 KlartraumEngine::KlartraumEngine() {}
 
-KlartraumEngine::~KlartraumEngine() {}
+KlartraumEngine::~KlartraumEngine() {
+    // Callback captures and graph resources are released only after their GPU work finishes.
+    vulkanContext.stopRender();
+    frameUpdate = nullptr;
+    graphBuilder = nullptr;
+}
 
 void KlartraumEngine::step() {
 

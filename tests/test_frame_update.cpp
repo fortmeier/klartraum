@@ -15,7 +15,9 @@
  * - windowedReleasesCapturedBuffersBeforeDeviceShutdown: destroying a GLFW frontend
  *   releases callback-owned GPU allocations before destroying the Vulkan device
  * - standaloneEngineReleasesCapturedBuffersBeforeContext: callback-owned allocations
- *   are released before the standalone engine's Vulkan context
+ *   used by an active frame are released before the standalone engine's Vulkan context
+ * - uninitializedEngineCanReleaseCallbackCaptures: callback captures can be released
+ *   without initializing a Vulkan device or frame synchronization objects
  **/
 #include <gtest/gtest.h>
 
@@ -218,13 +220,45 @@ TEST(FrameUpdateLifetimeDeathTest, windowedReleasesCapturedBuffersBeforeDeviceSh
 TEST(FrameUpdateLifetimeDeathTest, standaloneEngineReleasesCapturedBuffersBeforeContext) {
     EXPECT_EXIT(
         {
-            std::weak_ptr<VulkanBuffer<float>> captured;
+            using Source = BufferElementSinglePath<VulkanBuffer<float>>;
+            std::weak_ptr<Source> captured;
             {
                 KlartraumEngine engine;
-                engine.getVulkanContext().initialize();
-                auto buffer = std::make_shared<VulkanBuffer<float>>(engine.getVulkanContext(), 4);
+                auto& vc = engine.getVulkanContext();
+                vc.initialize();
+                auto buffer = std::make_shared<Source>(vc, 4);
                 captured = buffer;
-                engine.setFrameUpdate([buffer](uint32_t) { buffer->zero(); });
+                engine.setGraphBuilder([buffer](KlartraumEngine&) {});
+                auto factor = std::make_shared<Source>(vc, 4);
+                factor->getBuffer().memcopyFrom(std::vector<float>(4, 2.0f));
+                auto output = std::make_shared<BufferElement<VulkanBuffer<float>>>(vc, 4);
+                auto multiply = std::make_shared<GeneralComputation<>>(
+                    vc, "shaders/operator_multiply_scalar_element_wise.comp.spv");
+                multiply->setInput(buffer, 0);
+                multiply->setInput(factor, 1);
+                multiply->setInput(output, 2);
+                multiply->setGroupCountX(4);
+                auto renderPass = engine.createRenderPass();
+                renderPass->addComputeDependency(multiply);
+                engine.add(renderPass);
+                engine.setFrameUpdate(
+                    [buffer](uint32_t) { buffer->getBuffer().memcopyFrom(std::vector<float>(4, 2.0f)); });
+                engine.step();
+            }
+            std::exit(captured.expired() ? 0 : 1);
+        },
+        ::testing::ExitedWithCode(0), "");
+}
+
+TEST(FrameUpdateLifetimeDeathTest, uninitializedEngineCanReleaseCallbackCaptures) {
+    EXPECT_EXIT(
+        {
+            std::weak_ptr<int> captured;
+            {
+                KlartraumEngine engine;
+                auto value = std::make_shared<int>(7);
+                captured = value;
+                engine.setFrameUpdate([value](uint32_t) {});
             }
             std::exit(captured.expired() ? 0 : 1);
         },
