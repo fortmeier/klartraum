@@ -1,6 +1,5 @@
-# Builds the klartraum.ai landing page and the engine documentation, checks
-# them, and deploys them to GitHub Pages. Every push and pull request builds
-# and checks the site; only pushes to main deploy it.
+# Builds and checks the site on every push and pull request.
+# Successful main and develop pushes trigger the Publish documentation workflow.
 name: Site and documentation
 
 on:
@@ -80,17 +79,3 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y doxygen
       - run: pip install -r docs/requirements.txt
       - run: sphinx-build -b linkcheck -q docs docs/_build/linkcheck
-
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
