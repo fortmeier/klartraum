@@ -120,7 +120,8 @@ private:
     bool perfProfilingEnabled = false;
     std::vector<std::string> perfProfilingNameFilter;
 
-    // Device-owned members below must be destroyed before the context.
+    // Members are destroyed in reverse declaration order.
+    // Keep the context before members whose destructors use its Vulkan device.
     VulkanContext vulkanContext;
 
     // Application callback for per-path data uploads between acquisition and submission.

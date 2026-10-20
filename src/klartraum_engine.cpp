@@ -16,7 +16,6 @@ namespace klartraum {
 KlartraumEngine::KlartraumEngine() {}
 
 KlartraumEngine::~KlartraumEngine() {
-    // GPU work must finish before device-owned resources are released.
     vulkanContext.stopRender();
     frameUpdate = nullptr;
     graphBuilder = nullptr;
