@@ -143,6 +143,7 @@ void GlfwFrontend::shutdown() {
 
     vulkanContext.stopRender();
     klartraumEngine->setFrameUpdate(nullptr);
+    // The graph builder may hold GPU resources (e.g. a captured model).
     klartraumEngine->setGraphBuilder(nullptr);
     klartraumEngine->clearComputeGraphs();
 

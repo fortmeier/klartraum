@@ -29,6 +29,7 @@ void HeadlessFrontend::shutdown() {
 
     vulkanContext.stopRender();
     klartraumEngine->setFrameUpdate(nullptr);
+    // The graph builder may hold GPU resources (e.g. a captured model).
     klartraumEngine->setGraphBuilder(nullptr);
     klartraumEngine->clearComputeGraphs();
     // Engine-held buffers (camera UBO, interface camera) must be released

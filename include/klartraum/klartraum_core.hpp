@@ -123,6 +123,7 @@ private:
     // Device-owned members below must be destroyed before the context.
     VulkanContext vulkanContext;
 
+    // Application callback for per-path data uploads between acquisition and submission.
     FrameUpdate frameUpdate;
 
     std::shared_ptr<InterfaceCamera> interfaceCamera;
