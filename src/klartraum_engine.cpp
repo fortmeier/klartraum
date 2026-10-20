@@ -44,8 +44,14 @@ void KlartraumEngine::step() {
     const uint32_t frameIndex = vulkanContext.currentFrame;
     // The acquired path is available for CPU updates. Upload application data here so
     // the pre-recorded graph reads this frame's values when it is submitted.
-    if (frameUpdate)
-        frameUpdate(imageIndex);
+    try {
+        if (frameUpdate) {
+            frameUpdate(imageIndex);
+        }
+    } catch (...) {
+        vulkanContext.cancelRender(imageIndex);
+        throw;
+    }
 
     // process event queue,
     // this currently only updates the camera

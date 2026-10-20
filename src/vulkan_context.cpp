@@ -1105,6 +1105,82 @@ bool VulkanContext::tryBeginRender(uint32_t& imageIndex, VkFence*& fencePtr) {
     return true;
 }
 
+void VulkanContext::cancelRender(uint32_t imageIndex) {
+    VkSemaphore finished = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    bool submitted = false;
+    auto release = [&]() {
+        // Presentation must consume the temporary semaphore before it is destroyed.
+        const VkResult result = submitted ? vkDeviceWaitIdle(device) : VK_SUCCESS;
+        if (command != VK_NULL_HANDLE) {
+            vkFreeCommandBuffers(device, commandPool, 1, &command);
+        }
+        if (finished != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device, finished, nullptr);
+        }
+        return result;
+    };
+
+    try {
+        VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &finished) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create frame cancellation semaphore");
+        }
+
+        if (surface != VK_NULL_HANDLE) {
+            VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            allocation.commandPool = commandPool;
+            allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocation.commandBufferCount = 1;
+            if (vkAllocateCommandBuffers(device, &allocation, &command) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate frame cancellation command");
+            }
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS) {
+                throw std::runtime_error("failed to begin frame cancellation command");
+            }
+
+            // An acquired image needs a presentation layout even when no render pass runs.
+            VkImageMemoryBarrier image{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            image.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            image.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            image.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            image.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            image.image = swapChainImages[imageIndex];
+            image.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+                                 nullptr, 0, nullptr, 1, &image);
+            if (vkEndCommandBuffer(command) != VK_SUCCESS) {
+                throw std::runtime_error("failed to end frame cancellation command");
+            }
+        }
+
+        const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.waitSemaphoreCount = 1;
+        submit.pWaitSemaphores = &imageAvailableSemaphoresPerImage[imageIndex];
+        submit.pWaitDstStageMask = &waitStage;
+        submit.signalSemaphoreCount = 1;
+        submit.pSignalSemaphores = &finished;
+        if (command != VK_NULL_HANDLE) {
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &command;
+        }
+        if (vkQueueSubmit(graphicsQueue, 1, &submit, inFlightFences[currentFrame]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit frame cancellation");
+        }
+        submitted = true;
+        endRender(imageIndex, finished);
+    } catch (...) {
+        release();
+        throw;
+    }
+    if (release() != VK_SUCCESS) {
+        throw std::runtime_error("failed to wait for frame cancellation");
+    }
+}
+
 void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
     if (surface != VK_NULL_HANDLE) {
         VkPresentInfoKHR presentInfo{};
