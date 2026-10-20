@@ -28,6 +28,8 @@ void HeadlessFrontend::shutdown() {
     auto& vulkanContext = klartraumEngine->getVulkanContext();
 
     vulkanContext.stopRender();
+    // Captures may own GPU buffers, so release them while the idle device is valid.
+    klartraumEngine->setFrameUpdate(nullptr);
     // The graph builder may hold GPU resources (e.g. a captured model).
     klartraumEngine->setGraphBuilder(nullptr);
     klartraumEngine->clearComputeGraphs();
