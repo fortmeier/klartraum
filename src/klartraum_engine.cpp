@@ -45,7 +45,6 @@ void KlartraumEngine::step() {
             frameUpdate(imageIndex);
         }
     } catch (...) {
-        // Return the acquired image and complete its frame fence before propagating application errors.
         vulkanContext.cancelRender(imageIndex);
         throw;
     }
