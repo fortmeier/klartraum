@@ -38,7 +38,6 @@ public:
     // The callback receives the image/path index after GPU use of that path has completed.
     // It may update that path's resources; other paths can still be in flight.
     // An empty callback disables these application updates.
-    // Frontends release callback captures before shutting down the Vulkan device.
     using FrameUpdate = std::function<void(uint32_t)>;
     void setFrameUpdate(FrameUpdate update) { frameUpdate = std::move(update); }
 
@@ -121,9 +120,9 @@ private:
     bool perfProfilingEnabled = false;
     std::vector<std::string> perfProfilingNameFilter;
 
+    // Device-owned members below must be destroyed before the context.
     VulkanContext vulkanContext;
 
-    // The context outlives captured GPU resources during standalone engine destruction.
     FrameUpdate frameUpdate;
 
     std::shared_ptr<InterfaceCamera> interfaceCamera;

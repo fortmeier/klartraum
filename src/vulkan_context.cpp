@@ -1150,7 +1150,6 @@ void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSe
 }
 
 void VulkanContext::stopRender() {
-    // Only a context with a swapchain owns frame synchronization objects.
     if (state != State::SWAPCHAIN_READY) {
         return;
     }

@@ -16,7 +16,7 @@ namespace klartraum {
 KlartraumEngine::KlartraumEngine() {}
 
 KlartraumEngine::~KlartraumEngine() {
-    // Callback captures and graph resources are released only after their GPU work finishes.
+    // GPU work must finish before device-owned resources are released.
     vulkanContext.stopRender();
     frameUpdate = nullptr;
     graphBuilder = nullptr;
