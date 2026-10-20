@@ -19,6 +19,22 @@ errors, as in CI. Doxygen warnings fail the build too, for example an `@param`
 that names no parameter of the function; they are listed in
 `docs/_doxygen/warnings.log`.
 
+## Published documentation
+
+- [Stable documentation](https://klartraum.ai/docs/) is built from `main`.
+- [Development documentation](https://klartraum.ai/develop/docs/) is built from
+  `develop` and has `(develop)` in its page titles.
+
+After the **Site and documentation** workflow succeeds for a push to either
+branch, **Publish documentation** rebuilds both versions and publishes them
+together. The landing page and `/docs/` come from `main`; only `/develop/docs/`
+comes from `develop`. Both documentation builds must succeed before deployment.
+
+The publication workflow lives on `main` and can also be run manually there.
+Publication runs are serialized so updates from the two branches cannot
+overwrite each other's documentation. Pull requests changing the publication
+workflow build and check the combined site without deploying it.
+
 ## Documenting C++ code
 
 Document the public API in the headers under `include/klartraum/`, using
