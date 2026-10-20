@@ -222,6 +222,9 @@ public:
 
     std::tuple<uint32_t, VkFence&> beginRender();
     void endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore);
+    /// Completes an acquired frame without its graphs, restoring its fence and image availability.
+    /// Cancellation is synchronous; a windowed frame's contents are discarded before presentation.
+    void cancelRender(uint32_t imageIndex);
     void stopRender();
 
     // Frame start that tolerates an outdated swapchain. Returns false (without
