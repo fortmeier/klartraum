@@ -210,6 +210,9 @@ public:
     BackendConfig& getConfig();
 
     std::vector<VkFence> inFlightFences;
+    // For each image/path, borrow the frame-slot fence for its most recent submission.
+    // These handles are owned by inFlightFences; image-indexed uploads must wait for them.
+    std::vector<VkFence> imageFences;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerFrame;
     std::vector<VkSemaphore> imageAvailableSemaphoresPerImage;
 
@@ -219,6 +222,9 @@ public:
 
     std::tuple<uint32_t, VkFence&> beginRender();
     void endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore);
+    /// Completes an acquired frame without graph submission and waits for device completion.
+    /// Consumes image availability and signals the frame fence; windowed contents are discarded.
+    void cancelRender(uint32_t imageIndex);
     void stopRender();
 
     // Frame start that tolerates an outdated swapchain. Returns false (without

@@ -922,6 +922,8 @@ void VulkanContext::createSyncObjects() {
     imageAvailableSemaphoresPerImage.resize(swapChainImages.size());
 
     inFlightFences.resize(config.MAX_FRAMES_IN_FLIGHT);
+    // Newly created images have no prior submission to wait for, including after a resize.
+    imageFences.assign(swapChainImages.size(), VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -956,6 +958,8 @@ void VulkanContext::destroySyncObjects() {
     }
     imageAvailableSemaphoresPerFrame.clear();
     inFlightFences.clear();
+    // Discard borrowed handles; their owning frame-slot fences were destroyed above.
+    imageFences.clear();
     imageAvailableSemaphoresPerImage.clear();
 }
 
@@ -1070,6 +1074,16 @@ bool VulkanContext::tryBeginRender(uint32_t& imageIndex, VkFence*& fencePtr) {
         submitInfo.waitSemaphoreCount = 0;
     }
 
+    // Per-image mapped resources are writable only after that image's last
+    // submission has completed, regardless of which frame slot acquired it.
+    // The current frame-slot fence was already waited for earlier in this function;
+    // only a different slot's fence needs an additional wait for this acquired image.
+    if (imageFences[imageIndex] != VK_NULL_HANDLE && imageFences[imageIndex] != fence) {
+        if (vkWaitForFences(device, 1, &imageFences[imageIndex], VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+            throw std::runtime_error("failed to wait for image resources");
+    }
+    // Associate this path with the fence that the final submission of this frame signals.
+    imageFences[imageIndex] = fence;
     // Reset only once this frame is certain to submit work that signals the fence.
     if (vkResetFences(device, 1, &fence) != VK_SUCCESS) {
         throw std::runtime_error("failed to reset inFlightFence");
@@ -1089,6 +1103,82 @@ bool VulkanContext::tryBeginRender(uint32_t& imageIndex, VkFence*& fencePtr) {
 
     fencePtr = &fence;
     return true;
+}
+
+void VulkanContext::cancelRender(uint32_t imageIndex) {
+    VkSemaphore finished = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    bool submitted = false;
+    auto release = [&]() {
+        // Presentation must consume the temporary semaphore before it is destroyed.
+        const VkResult result = submitted ? vkDeviceWaitIdle(device) : VK_SUCCESS;
+        if (command != VK_NULL_HANDLE) {
+            vkFreeCommandBuffers(device, commandPool, 1, &command);
+        }
+        if (finished != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device, finished, nullptr);
+        }
+        return result;
+    };
+
+    try {
+        VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &finished) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create frame cancellation semaphore");
+        }
+
+        if (surface != VK_NULL_HANDLE) {
+            VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            allocation.commandPool = commandPool;
+            allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocation.commandBufferCount = 1;
+            if (vkAllocateCommandBuffers(device, &allocation, &command) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate frame cancellation command");
+            }
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS) {
+                throw std::runtime_error("failed to begin frame cancellation command");
+            }
+
+            // An acquired image needs a presentation layout even when no render pass runs.
+            VkImageMemoryBarrier image{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            image.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            image.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            image.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            image.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            image.image = swapChainImages[imageIndex];
+            image.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+                                 nullptr, 0, nullptr, 1, &image);
+            if (vkEndCommandBuffer(command) != VK_SUCCESS) {
+                throw std::runtime_error("failed to end frame cancellation command");
+            }
+        }
+
+        const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.waitSemaphoreCount = 1;
+        submit.pWaitSemaphores = &imageAvailableSemaphoresPerImage[imageIndex];
+        submit.pWaitDstStageMask = &waitStage;
+        submit.signalSemaphoreCount = 1;
+        submit.pSignalSemaphores = &finished;
+        if (command != VK_NULL_HANDLE) {
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &command;
+        }
+        if (vkQueueSubmit(graphicsQueue, 1, &submit, inFlightFences[currentFrame]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit frame cancellation");
+        }
+        submitted = true;
+        endRender(imageIndex, finished);
+    } catch (...) {
+        release();
+        throw;
+    }
+    if (release() != VK_SUCCESS) {
+        throw std::runtime_error("failed to wait for frame cancellation");
+    }
 }
 
 void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSemaphore) {
@@ -1136,15 +1226,17 @@ void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSe
 }
 
 void VulkanContext::stopRender() {
-    // Wait for all frames to finish before shutting down
-    for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
-        vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);
-    }
+    if (state == State::SWAPCHAIN_READY) {
+        // Wait for all frames to finish before shutting down
+        for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
+            vkWaitForFences(device, 1, &inFlightFences[i], VK_TRUE, UINT64_MAX);
+        }
 
-    // make sure all activity has been finalized
-    // so that subsequent destroys on vulkan objects
-    // are successful
-    vkDeviceWaitIdle(device);
+        // make sure all activity has been finalized
+        // so that subsequent destroys on vulkan objects
+        // are successful
+        vkDeviceWaitIdle(device);
+    }
 }
 
 void VulkanContext::createCommandPool() {

@@ -14,6 +14,16 @@ before moving on to the next step. This makes it possible to isolate which chang
 caused a regression or a visual shift.
 
 
+Member Comments
+===============
+When documenting a member, the first line must explain its purpose: what it owns,
+stores, or does. Put additional knowledge a user or maintainer needs, such as
+lifetime constraints, declaration-order dependencies, or synchronization
+requirements, on subsequent lines. Do not replace the purpose with a language
+rule or maintenance instruction. Preserve useful purpose comments when moving
+or refactoring members.
+
+
 Comments When Fixing Bugs
 =========================
 When a code change fixes a bug, comments added at the change site must describe the

@@ -15,7 +15,11 @@ namespace klartraum {
 
 KlartraumEngine::KlartraumEngine() {}
 
-KlartraumEngine::~KlartraumEngine() {}
+KlartraumEngine::~KlartraumEngine() {
+    vulkanContext.stopRender();
+    frameUpdate = nullptr;
+    graphBuilder = nullptr;
+}
 
 void KlartraumEngine::step() {
 
@@ -38,6 +42,16 @@ void KlartraumEngine::step() {
     VkFence& fence = *fencePtr;
     // endRender() advances currentFrame, so read the slot now.
     const uint32_t frameIndex = vulkanContext.currentFrame;
+    // The acquired path is available for CPU updates. Upload application data here so
+    // the pre-recorded graph reads this frame's values when it is submitted.
+    try {
+        if (frameUpdate) {
+            frameUpdate(imageIndex);
+        }
+    } catch (...) {
+        vulkanContext.cancelRender(imageIndex);
+        throw;
+    }
 
     // process event queue,
     // this currently only updates the camera

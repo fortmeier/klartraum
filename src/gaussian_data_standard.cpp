@@ -48,7 +48,10 @@ void GaussianDataStandard::uploadSoA(VulkanContext& vulkanContext, const std::ve
 
     auto upload = [&](const auto& data, uint32_t count, const char* name) {
         using T = typename std::decay_t<decltype(data)>::value_type;
-        auto element = std::make_shared<BufferElementSinglePath<VulkanBuffer<T>>>(vulkanContext, count);
+        // Upload model attributes once into device-local storage shared by all render paths.
+        // These source buffers supply the GPU transform and rendering passes.
+        auto element = std::make_shared<BufferElementSinglePath<VulkanBuffer<T>>>(
+            vulkanContext, count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         element->setName(name);
         element->getBuffer().memcopyFrom(data);
         return BufferRef{element};
