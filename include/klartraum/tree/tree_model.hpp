@@ -45,8 +45,10 @@ using tree::TreeLandCover;
 using tree::TreeLodInstance;
 using tree::TreeLodPatch;
 using tree::TreeLodSplat;
+using tree::TreePlacementParams;
 using tree::TreeRenderSettings;
 using tree::TreeSceneVertex;
+using tree::TreeSite;
 using tree::TreeTerrainConfig;
 using tree::TreeTerrainLod;
 using tree::TreeTerrainParams;
@@ -61,6 +63,8 @@ static_assert(sizeof(TreeFrame) == 64, "TreeFrame must match its std430 layout")
 static_assert(sizeof(TreeRenderSettings) == 224, "TreeRenderSettings must match its std430 layout");
 static_assert(sizeof(TreeTerrainParams) == 80, "TreeTerrainParams must match its std430 layout");
 static_assert(sizeof(TreeTerrainLod) == 64, "TreeTerrainLod must match its std430 layout");
+static_assert(sizeof(TreePlacementParams) == 64, "TreePlacementParams must match its std430 layout");
+static_assert(sizeof(TreeSite) == 32, "TreeSite must match its std430 layout");
 static_assert(sizeof(TreeTerrainConfig) == 144, "TreeTerrainConfig must match its std430 layout");
 
 /// The records the generation writes for a set of trees.
