@@ -350,7 +350,7 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--backend raster\|compute` | Gaussian splatting backend (default `raster`) |
 | `--views N` | Number of views around the pot (default 4) |
 | `--scale S` | How much of the world the pot holds, from 0 (one bonsai, the lantern a 35 cm ornament) to 1 (8 x 8 km); with `--trees`, any scale, otherwise up to about 0.3 (default 0.21, a planting of 12 trees with a real lantern) |
-| `--relief F` | Factor on the landscape's relief, which rises from scale 0.25 on: 1 for true proportions (1,500 m from valleys to peaks at scale 1), more for a more dramatic landscape (default 1) |
+| `--relief F` | Factor on the landscape's relief, which rises from scale 0.25 on: 1 for true proportions (1,500 m from valleys to peaks at scale 1), more for a more dramatic landscape (default 1.5) |
 | `--trees N` | Number of trees instead of the scale's (at most 60) |
 | `--seed S` | Seed of the tree placement and the trees (default 7) |
 | `--width W`, `--height H` | Image size in pixels (default 1280×720) |

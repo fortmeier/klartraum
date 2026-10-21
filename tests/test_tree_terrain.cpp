@@ -5,7 +5,7 @@
 /**
  * TESTS:
  * - reliefGrowsWithTheScale: BonsaiScale::reliefUnits is 0 up to kReliefStart, grows steadily to kReliefMeters
- *   in true proportion at scale 1, and scales with reliefExaggeration
+ *   in true proportion at scale 1, and scales with reliefExaggeration (1.5 by default)
  * - terrainEqualsTheSoilWithoutRelief: up to kReliefStart the ground is the mounded soil with its bumps as
  *   before the landscape existed
  * - terrainLiesInThePot: with relief, the ground stays between the soil level at the rim and the soil plus the
@@ -31,7 +31,7 @@ using namespace klartraum;
 
 namespace {
 
-BonsaiScene sceneAt(float s, uint32_t seed = 7, float exaggeration = 1.0f) {
+BonsaiScene sceneAt(float s, uint32_t seed = 7, float exaggeration = BonsaiScale{}.reliefExaggeration) {
     BonsaiSceneConfig config;
     config.scale.s = s;
     config.scale.reliefExaggeration = exaggeration;
@@ -114,10 +114,11 @@ TEST(TreeTerrain, reliefGrowsWithTheScale) {
         previous = relief;
     }
     // True proportions at scale 1: kReliefMeters over the 8 km the soil stands for.
-    const BonsaiScale largest{1.0f};
+    const BonsaiScale largest{1.0f, 1.0f};
     EXPECT_NEAR(largest.reliefUnits() * largest.metersPerUnit(), BonsaiScale::kReliefMeters, 1.0f);
     const BonsaiScale exaggerated{1.0f, 2.5f};
     EXPECT_NEAR(exaggerated.reliefUnits(), 2.5f * largest.reliefUnits(), 1e-5f);
+    EXPECT_NEAR(BonsaiScale{1.0f}.reliefUnits(), 1.5f * largest.reliefUnits(), 1e-5f);
     // Ridges come with the mountains.
     EXPECT_EQ(BonsaiScale{0.3f}.reliefRidges(), 0.0f);
     EXPECT_EQ(BonsaiScale{1.0f}.reliefRidges(), 1.0f);
