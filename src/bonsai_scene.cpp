@@ -168,7 +168,10 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     // The soil fills the pot's inner outline; the landscape's main features are about 1.7 units apart, so the pot
     // holds a few hills or mountains at every scale with relief.
     scene.terrain.outline = glm::vec4(pot.halfLength * inner, pot.halfWidth * inner, pot.exponent, 0.0f);
-    scene.terrain.soil = glm::vec4(pot.soilHeight, pot.soilMound, 0.012f, 0.0f);
+    // The moss patterns show real moss at kForest; at larger scales they keep their size in metres.
+    scene.terrain.soil =
+        glm::vec4(pot.soilHeight, pot.soilMound, 0.012f,
+                  std::max(1.0f, scale.metersPerUnit() / BonsaiScale{BonsaiScale::kForest}.metersPerUnit()));
     scene.terrain.relief = glm::vec4(scale.reliefUnits(), 0.6f, scale.reliefRidges(), 0.25f);
     scene.terrain.seed = glm::uvec4(config.seed, 0u, 0u, 0u);
     scene.terrain.cover =
@@ -396,6 +399,10 @@ std::vector<TreeLodInstance> placeMossPatches(const BonsaiScene& scene, uint32_t
         const glm::vec2 p((2.0f * hashUnit(seed, 3 * key) - 1.0f) * pot.halfLength,
                           (2.0f * hashUnit(seed, 3 * key + 1) - 1.0f) * pot.halfWidth);
         if (scene.potMeasure(p.x, p.y, inner * 0.88f) > 1.0f || glm::length(p - lantern) < 0.3f) {
+            continue;
+        }
+        // Moss covers the forest floor, not open land or rock.
+        if (tree::treeLandCover(scene.terrain, p.x, p.y).vegetation.x < 0.5f) {
             continue;
         }
         // The plane that touches the soil at the patch's centre, a little above it.

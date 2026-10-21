@@ -24,6 +24,8 @@
  * - mossPatchesFromTheCapture: the lantern capture gives several mostly green patches
  * - scatteredMossLiesOnTheSoil: placed copies of patches lie inside the pot, away from the lantern, on the plane
  *   touching the soil, at their height above it
+ * - mossGrowsOnTheForestFloor: in a landscape with open land and rock, every copy lies where the land cover is
+ *   mostly forest
  * - capturedGaussiansTakeSnow: treeGaussianNormal is the thinnest axis turned up; treeCapturedColor covers what
  *   faces up with snow in winter only and scales by tint and shade
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
@@ -342,6 +344,18 @@ TEST(BonsaiScene, scatteredMossLiesOnTheSoil) {
         // On the plane that touches the soil at the copy's centre: as high above the soil as above the patch's
         // ground, within the soil's curvature over the patch.
         EXPECT_NEAR(p.y - scene.soilHeight(p.x, p.z), 0.003f + 0.002f, 1e-3f);
+    }
+}
+
+TEST(BonsaiScene, mossGrowsOnTheForestFloor) {
+    BonsaiSceneConfig config;
+    config.scale.s = 1.0f;
+    config.treeCount = 12;
+    const BonsaiScene scene = makeBonsaiScene(config);
+    const std::vector<TreeLodInstance> copies = placeMossPatches(scene, 4, 2000, 5, 0.01f);
+    EXPECT_EQ(copies.size(), 2000u);
+    for (const TreeLodInstance& c : copies) {
+        EXPECT_GE(tree::treeLandCover(scene.terrain, c.posYaw.x, c.posYaw.z).vegetation.x, 0.5f);
     }
 }
 

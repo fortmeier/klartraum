@@ -153,8 +153,8 @@ std::vector<MossPatch> extractMossPatches(const std::vector<Gaussian3D>& capture
                                           float minGreen = 0.6f);
 
 /**
- * @brief Places `count` copies of the `patchCount` patches on the soil of `scene`, turned at random, away from the
- *        lantern.
+ * @brief Places `count` copies of the `patchCount` patches on the forest floor of `scene` (forest weight of the
+ *        land cover above 0.5), turned at random, away from the lantern.
  *
  * Each copy is enlarged by `scale` and lies on the plane that touches the
  * soil at its centre (TreeLodInstance). Deterministic for a `seed`.

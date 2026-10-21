@@ -13,6 +13,11 @@
  *   background, every column of the image is covered from the bottom up to the terrain's silhouette
  * - smallScalesRenderAsBefore: at scales 0 and 0.21 the bonsai with the terrain looks like the one with the soil
  *   mesh (PSNR above 40 dB); images are written to build/TestingOutput/tree/
+ * - materialsFollowTheLandCover: seen from straight above at scale 1 in summer, rock is grey, meadows and forest
+ *   green, fields more yellow than meadows, and rock brighter than forest
+ * - snowLiesAboveTheSnowLine: in fall only gentle ground above the snow line is white; in winter most ground
+ * - distantDetailDoesNotAlias: from outside the pot at scale 1 the image varies between neighbouring pixels about as
+ *   much as one rendered at twice the resolution and filtered down
  **/
 
 #include <gtest/gtest.h>
@@ -82,8 +87,8 @@ struct TerrainScene {
         graph->compileFrom(pass);
     }
 
-    std::vector<uint8_t> render(const Eye& e) {
-        setCamera(camera->ubo, e.eye, e.target, 40.0f, float(extent.width) / float(extent.height), 1e-5f, 100.0f);
+    std::vector<uint8_t> render(const Eye& e, float fov = 40.0f) {
+        setCamera(camera->ubo, e.eye, e.target, fov, float(extent.width) / float(extent.height), 1e-5f, 100.0f);
         camera->update(0);
         graph->submitAndWait(vc.getGraphicsQueue(), 0);
         return readImage(vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
@@ -98,6 +103,42 @@ struct TerrainScene {
     std::shared_ptr<OffscreenTarget> target;
     std::shared_ptr<RenderPass> pass;
     std::unique_ptr<ComputeGraph> graph;
+};
+
+// The colour of pixel (x, y) in [0, 1].
+glm::vec3 pixel(const std::vector<uint8_t>& bgra, VkExtent2D extent, uint32_t x, uint32_t y) {
+    const size_t i = (size_t(y) * extent.width + x) * 4;
+    return glm::vec3(bgra[i + 2], bgra[i + 1], bgra[i]) / 255.0f;
+}
+
+float saturation(glm::vec3 c) {
+    const float hi = std::max(c.x, std::max(c.y, c.z)), lo = std::min(c.x, std::min(c.y, c.z));
+    return hi > 0.0f ? (hi - lo) / hi : 0.0f;
+}
+
+// Nearly orthographic from high above: where the ray through pixel (x, y) meets the terrain.
+struct TopView {
+    Eye eye{{0.0f, 60.0f, 3.0f}, {0.0f, 0.0f, 0.0f}};
+    float fov = 2.9f;
+
+    glm::vec3 ground(const BonsaiScene& scene, VkExtent2D extent, uint32_t x, uint32_t y) const {
+        // The ray from the camera's basis (unprojecting with the tiny near plane loses precision); image rows run
+        // down.
+        const glm::vec2 ndc((x + 0.5f) / extent.width * 2.0f - 1.0f, (y + 0.5f) / extent.height * 2.0f - 1.0f);
+        const glm::vec3 forward = glm::normalize(eye.target - eye.eye);
+        const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+        const glm::vec3 up = glm::cross(right, forward);
+        const float tanY = std::tan(glm::radians(0.5f * fov));
+        const float tanX = tanY * float(extent.width) / float(extent.height);
+        const glm::vec3 from = eye.eye;
+        const glm::vec3 dir = glm::normalize(forward + ndc.x * tanX * right - ndc.y * tanY * up);
+        // March to the ground's height (the ray is nearly vertical).
+        glm::vec3 p = from + dir * ((from.y - 0.5f) / -dir.y);
+        for (int i = 0; i < 8; ++i) {
+            p = from + dir * ((scene.soilHeight(p.x, p.z) - from.y) / dir.y);
+        }
+        return p;
+    }
 };
 
 // The height of node `k`'s surface at (x, z) inside or on the edge of the node: its two triangles per quad share
@@ -341,4 +382,154 @@ TEST_F(TreeTerrainRenderingTest, smallScalesRenderAsBefore) {
         std::printf("scale %.2f: PSNR %.1f dB\n", s, psnr);
         EXPECT_GT(psnr, 40.0) << s;
     }
+}
+
+namespace {
+
+void setSeason(HostValues<TreeRenderSettings>& settings, float season) {
+    TreeRenderSettings values = settings.values().at(0);
+    values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
+    settings.set(0, values);
+}
+
+} // namespace
+
+TEST_F(TreeTerrainRenderingTest, materialsFollowTheLandCover) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    const VkExtent2D extent{800, 480};
+    TerrainScene t(*vc, scene, extent);
+    setSeason(*t.settings, 2.0f);
+    const TopView top;
+    const std::vector<uint8_t> image = t.render(top.eye, top.fov);
+    writePpm("terrain_top_summer", image, extent);
+    // Mean colour per class over pixels whose ground is dominated by one class, also a little around them.
+    glm::vec3 sum[5] = {};
+    int count[5] = {};
+    for (uint32_t y = 2; y < extent.height; y += 3) {
+        for (uint32_t x = 2; x < extent.width; x += 3) {
+            if (!tree_test::covered(image, extent, x, y)) {
+                continue;
+            }
+            const glm::vec3 p = top.ground(scene, extent, x, y);
+            int pure = -2;
+            for (int d = 0; d < 5 && pure != -1; ++d) {
+                const glm::vec2 o = d == 0 ? glm::vec2(0.0f) : 0.01f * glm::vec2(d % 2 ? 1 : -1, d < 3 ? 1 : -1);
+                const TreeLandCover c = tree::treeLandCover(scene.terrain, p.x + o.x, p.z + o.y);
+                const float w[5] = {c.vegetation.x, c.vegetation.y, c.vegetation.z, c.vegetation.w, c.bare.x};
+                const int k = int(std::max_element(w, w + 5) - w);
+                pure = (w[k] > 0.55f && (pure == -2 || pure == k)) ? k : -1;
+            }
+            if (pure >= 0) {
+                sum[pure] += pixel(image, extent, x, y);
+                ++count[pure];
+            }
+        }
+    }
+    glm::vec3 mean[5];
+    const char* names[5] = {"forest", "meadow", "field", "scrub", "rock"};
+    for (int k = 0; k < 5; ++k) {
+        ASSERT_GT(count[k], 20) << names[k];
+        mean[k] = sum[k] / float(count[k]);
+        std::printf("%s: %d pixels, mean %.3f %.3f %.3f, saturation %.2f\n", names[k], count[k], mean[k].x, mean[k].y,
+                    mean[k].z, saturation(mean[k]));
+    }
+    // Rock is grey, the vegetation green.
+    EXPECT_LT(saturation(mean[4]), 0.25f);
+    EXPECT_GT(saturation(mean[0]), saturation(mean[4]) + 0.15f);
+    EXPECT_GT(saturation(mean[1]), saturation(mean[4]) + 0.15f);
+    EXPECT_GT(mean[1].y, mean[1].x);
+    EXPECT_GT(mean[0].y, mean[0].z);
+    // Ripe fields are yellower than meadows.
+    EXPECT_GT(mean[2].x / mean[2].y, mean[1].x / mean[1].y + 0.1f);
+    // Rock is brighter than the forest floor.
+    EXPECT_GT(mean[4].x + mean[4].y + mean[4].z, 1.3f * (mean[0].x + mean[0].y + mean[0].z));
+}
+
+TEST_F(TreeTerrainRenderingTest, snowLiesAboveTheSnowLine) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    const VkExtent2D extent{800, 480};
+    TerrainScene t(*vc, scene, extent);
+    const TopView top;
+    auto whiteShare = [&](float season, bool high) {
+        setSeason(*t.settings, season);
+        const std::vector<uint8_t> image = t.render(top.eye, top.fov);
+        writePpm("terrain_top_season" + std::to_string(int(season * 10.0f)), image, extent);
+        const float line = tree::treeSnowLine(season);
+        int white = 0, total = 0;
+        for (uint32_t y = 2; y < extent.height; y += 3) {
+            for (uint32_t x = 2; x < extent.width; x += 3) {
+                if (!tree_test::covered(image, extent, x, y)) {
+                    continue;
+                }
+                const glm::vec3 p = top.ground(scene, extent, x, y);
+                const float altitude = tree::treeTerrainAltitude(scene.terrain, p);
+                const float e = 0.003f;
+                const glm::vec3 n =
+                    glm::normalize(glm::vec3(scene.soilHeight(p.x - e, p.z) - scene.soilHeight(p.x + e, p.z), 2.0f * e,
+                                             scene.soilHeight(p.x, p.z - e) - scene.soilHeight(p.x, p.z + e)));
+                // Ground clearly above the line and gentle, or clearly below it.
+                const bool isHigh = altitude > line + 160.0f && n.y > 0.8f;
+                const bool isLow = altitude < line - 150.0f;
+                if (high ? !isHigh : !isLow) {
+                    continue;
+                }
+                const glm::vec3 c = pixel(image, extent, x, y);
+                // Snow's albedo of 0.8 maps above 0.85 in sun and shade; rock's below 0.75.
+                white += (saturation(c) < 0.12f && std::min(c.x, std::min(c.y, c.z)) > 0.8f) ? 1 : 0;
+                ++total;
+            }
+        }
+        EXPECT_GT(total, 20) << season << " " << high;
+        return total > 0 ? float(white) / float(total) : 0.0f;
+    };
+    const float fallHigh = whiteShare(3.0f, true);
+    const float fallLow = whiteShare(3.0f, false);
+    std::printf("fall: white above the line %.2f, below %.2f\n", fallHigh, fallLow);
+    EXPECT_GT(fallHigh, 0.7f);
+    EXPECT_LT(fallLow, 0.05f);
+    const float winterLow = whiteShare(0.2f, false);
+    std::printf("winter: white below the fall line %.2f\n", winterLow);
+    EXPECT_GT(winterLow, 0.5f);
+}
+
+TEST_F(TreeTerrainRenderingTest, distantDetailDoesNotAlias) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    const VkExtent2D extent{480, 270};
+    const VkExtent2D large{960, 540};
+    TerrainScene native(*vc, scene, extent);
+    TerrainScene fine(*vc, scene, large);
+    // Closer than the example's view, so that more of the image is terrain.
+    const Eye e{{0.6f, 1.4f, 1.9f}, {0.0f, 0.5f, 0.0f}};
+    const std::vector<uint8_t> a = native.render(e);
+    const std::vector<uint8_t> b = fine.render(e);
+    // b filtered down: the mean of 2 x 2 pixels; terrain only where all four are.
+    auto variation = [&](auto at, auto inside) {
+        double sum = 0.0;
+        int n = 0;
+        for (uint32_t y = 0; y < extent.height; ++y) {
+            for (uint32_t x = 0; x + 1 < extent.width; ++x) {
+                if (inside(x, y) && inside(x + 1, y)) {
+                    const glm::vec3 d = at(x, y) - at(x + 1, y);
+                    sum += std::abs(d.x) + std::abs(d.y) + std::abs(d.z);
+                    ++n;
+                }
+            }
+        }
+        EXPECT_GT(n, int(extent.width * extent.height / 4));
+        return sum / n;
+    };
+    const double native1 = variation([&](uint32_t x, uint32_t y) { return pixel(a, extent, x, y); },
+                                     [&](uint32_t x, uint32_t y) { return tree_test::covered(a, extent, x, y); });
+    auto down = [&](uint32_t x, uint32_t y) {
+        return 0.25f * (pixel(b, large, 2 * x, 2 * y) + pixel(b, large, 2 * x + 1, 2 * y) +
+                        pixel(b, large, 2 * x, 2 * y + 1) + pixel(b, large, 2 * x + 1, 2 * y + 1));
+    };
+    auto downInside = [&](uint32_t x, uint32_t y) {
+        return tree_test::covered(b, large, 2 * x, 2 * y) && tree_test::covered(b, large, 2 * x + 1, 2 * y) &&
+               tree_test::covered(b, large, 2 * x, 2 * y + 1) && tree_test::covered(b, large, 2 * x + 1, 2 * y + 1);
+    };
+    const double filtered = variation(down, downInside);
+    writePpm("terrain_alias_native", a, extent);
+    std::printf("neighbour variation: native %.4f, filtered %.4f\n", native1, filtered);
+    EXPECT_LT(native1, 1.3 * filtered);
 }

@@ -51,13 +51,14 @@ using TreeTerrainNode = glm::vec4;
 
 /**
  * @brief The selection of `tree_terrain_select.comp` on the CPU: from the root down, every node is culled, drawn
- *        or split by treeTerrainNodeAction(), with the camera at `eye` and the view-projection `viewProj`.
+ *        or split by treeTerrainNodeAction(), with the camera at `eye`, the view-projection `viewProj` and
+ *        distances times `zoom` (treeTerrainZoom() of the projection).
  *
  * The nodes come in the order of the levels, coarsest first; within a level the GPU's order may differ.
  */
 std::vector<TreeTerrainNode> selectTerrainNodesReference(const TreeTerrainConfig& config,
                                                          const std::vector<glm::vec2>& bounds,
-                                                         const glm::mat4& viewProj, glm::vec3 eye);
+                                                         const glm::mat4& viewProj, glm::vec3 eye, float zoom = 1.0f);
 
 /**
  * @brief The terrain in the pot with a quadtree level of detail (CDLOD, Strugar 2009), selected on the GPU every
@@ -85,6 +86,8 @@ public:
     ComputeGraphElementPtr getElement() const { return vertices; }
     /// Per selected node (quads + 1)^2 vertices, rows along x: xyz the normal, w the height.
     BufferRef getVertices() const { return {vertices, 3}; }
+    /// The same vertices' land cover (TreeLandCover::vegetation; rock is the rest to 1).
+    BufferRef getCovers() const { return {vertices, 4}; }
     /// The selected nodes (TreeTerrainNode), the indirect draw arguments and the configuration buffer.
     BufferRef getNodes() const { return {vertices, 0}; }
     BufferRef getDrawArgs() const { return {select, 1}; }
@@ -96,6 +99,8 @@ public:
     std::vector<uint32_t> readStats(uint32_t pathId = 0);
     /// After a submission of `pathId`: the vertices of the selected nodes (see getVertices()).
     std::vector<glm::vec4> readVertices(uint32_t pathId = 0);
+    /// After a submission of `pathId`: the land cover of the selected nodes' vertices (see getCovers()).
+    std::vector<glm::vec4> readCovers(uint32_t pathId = 0);
 
 private:
     TreeTerrainConfig config{};
@@ -104,6 +109,7 @@ private:
     std::shared_ptr<GeneralComputation<uint32_t>> vertices;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> nodes;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> vertexData;
+    std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> coverData;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> stats;
 };
 

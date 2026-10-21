@@ -19,6 +19,7 @@
  * - gpuSelectionMatchesTheCpu: the nodes tree_terrain_select.comp selects are those of
  *   selectTerrainNodesReference() for views from outside the pot and at ground level, with indirect draw arguments
  *   for all of them
+ * - narrowViewsSelectFinerNodes: with a narrower field of view the same place gets finer nodes
  * - nodeCountIsBounded: at ground level at scale 1 the selection needs a few hundred nodes, without overflows
  **/
 
@@ -346,7 +347,8 @@ TEST_F(TreeTerrainGpuTest, gpuSelectionMatchesTheCpu) {
             graph.submitAndWait(vc->getGraphicsQueue(), 0);
             const std::vector<TreeTerrainNode> gpu = terrain.readNodes();
             const std::vector<TreeTerrainNode> cpu = selectTerrainNodesReference(
-                terrain.getConfig(), terrain.getBounds(), camera->ubo.proj * camera->ubo.view, view.eye);
+                terrain.getConfig(), terrain.getBounds(), camera->ubo.proj * camera->ubo.view, view.eye,
+                tree::treeTerrainZoom(camera->ubo.proj));
             EXPECT_TRUE(sameNodes(gpu, cpu)) << s << ": " << gpu.size() << " vs " << cpu.size();
             const std::vector<uint32_t> stats = terrain.readStats();
             EXPECT_EQ(stats[kTreeTerrainStatSelected], cpu.size());
@@ -378,4 +380,25 @@ TEST_F(TreeTerrainGpuTest, nodeCountIsBounded) {
         EXPECT_EQ(stats[kTreeTerrainStatQueueOverflow], 0u);
         EXPECT_EQ(stats[kTreeTerrainStatNodeOverflow], 0u);
     }
+}
+
+TEST(TreeTerrainLod, narrowViewsSelectFinerNodes) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    const TreeTerrainConfig c = configFor(scene);
+    const std::vector<glm::vec2> bounds = buildTerrainBounds(c);
+    const glm::vec3 eye(0.0f, 8.0f, 2.0f);
+    float meanLevel[2];
+    for (int narrow = 0; narrow < 2; ++narrow) {
+        CameraMVP ubo{};
+        setCamera(ubo, eye, glm::vec3(0.0f), narrow ? 10.0f : 40.0f, 16.0f / 9.0f, 1e-5f, 100.0f);
+        const std::vector<TreeTerrainNode> nodes =
+            selectTerrainNodesReference(c, bounds, ubo.proj * ubo.view, eye, tree::treeTerrainZoom(ubo.proj));
+        double sum = 0.0;
+        for (const TreeTerrainNode& n : nodes) {
+            sum += n.w;
+        }
+        meanLevel[narrow] = float(sum / nodes.size());
+    }
+    // A quarter of the field of view: about two levels finer.
+    EXPECT_NEAR(meanLevel[0] - meanLevel[1], 2.0f, 0.6f);
 }
