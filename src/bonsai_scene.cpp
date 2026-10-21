@@ -4,6 +4,8 @@
 
 #include "klartraum/tree/bonsai_scene.hpp"
 
+#include "klartraum/tree/tree_placement.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -160,10 +162,11 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     scene.soilArea = 4.0f * pot.halfLength * inner * pot.halfWidth * inner *
                      std::pow(std::tgamma(1.0f + 1.0f / e), 2.0f) / std::tgamma(1.0f + 2.0f / e);
     const uint32_t treeCount = config.treeCount > 0 ? config.treeCount : scale.treeCount(scene.soilArea);
-    // Placement up to some tens of trees; larger scales need the tile placement and levels of detail to come.
-    if (treeCount > 60) {
-        throw std::invalid_argument("makeBonsaiScene: more than 60 trees (scale too large for a planting)");
+    // A planting up to some tens of trees; beyond, the trees follow the placement (tree_placement.hpp).
+    if (treeCount > 60 && config.treeCount > 0) {
+        throw std::invalid_argument("makeBonsaiScene: a planting holds at most 60 trees");
     }
+    scene.placed = treeCount > 60;
     scene.lanternScale = scale.lanternUnits() / 0.28f;
     // The soil fills the pot's inner outline; the landscape's main features are about 1.7 units apart, so the pot
     // holds a few hills or mountains at every scale with relief.
@@ -241,6 +244,16 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         mixTreeTypes(tree_presets::bonsaiBroadleaf(), tree_presets::bonsaiStyled(tree_presets::bonsaiBroadleaf()),
                      style),
         mixTreeTypes(tree_presets::bonsaiPine(), tree_presets::bonsaiStyled(tree_presets::bonsaiPine()), style)};
+    if (scene.placed) {
+        // The trees nearest to the middle of the soil, until a camera asks for its own.
+        scene.placement = makeTreePlacement(scene, config.seed);
+        const glm::vec3 middle(0.0f, scene.soilHeight(0.0f, 0.0f), 0.0f);
+        for (const TreeSite& site : nearestTreeSites(scene.terrain, scene.placement, middle, config.nearTrees)) {
+            scene.trees.push_back(treeInstanceFor(site, scene.types, config.seed));
+        }
+        scene.focus = glm::vec3(0.0f, 0.8f, 0.0f);
+        return scene;
+    }
     // A single tree stands near the middle; in a planting the main tree is off-centre at the back.
     const float planting = std::clamp(float(treeCount - 1) / 12.0f, 0.0f, 1.0f);
     const glm::vec2 main = glm::mix(glm::vec2(-0.2f, -0.05f), glm::vec2(-0.4f, -0.15f), planting);

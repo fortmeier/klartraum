@@ -9,6 +9,8 @@
  * - lookingAwayShowsNoTrees: looking up into the sky, no tree is visible
  * - aFullListCountsTheRest: with a small capacity the list is full, the rest is counted, and the indirect draw
  *   holds the capacity
+ * - theRendererDrawsNearTreesAndProxies: at scale 0.75 the renderer generates the trees nearest to the camera in
+ *   full and draws the others as proxies, none of them within the near trees' radius
  * - proxiesRenderBothWays: looking down onto a forest edge in summer, the proxies cover nearly the same pixels
  *   classically and as Gaussians (IoU above 0.6); images and the GPU time of a view over the forest are written
  **/
@@ -21,6 +23,7 @@
 
 #include "klartraum/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/tree/bonsai_renderer.hpp"
 #include "klartraum/tree/tree_gaussians.hpp"
 #include "klartraum/tree/tree_proxies.hpp"
 
@@ -232,6 +235,47 @@ TEST_F(TreeProxiesTest, aFullListCountsTheRest) {
     EXPECT_GT(counter[0], 500u);
     EXPECT_EQ(counter[1], counter[0] - 500u);
     EXPECT_EQ(p.proxies->readVisible().size(), 500u);
+}
+
+TEST_F(TreeProxiesTest, theRendererDrawsNearTreesAndProxies) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.scale.s = 0.75f;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{480, 270};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    BonsaiRenderer renderer(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(renderer.getOutput());
+    renderer.initialize(1);
+    const glm::vec3 eye(0.9f, 1.2f, 1.6f);
+    setCamera(renderer.getCamera()->ubo, eye, glm::vec3(0.0f, 0.4f, 0.0f), 40.0f, 16.0f / 9.0f);
+    renderer.getCamera()->update(0);
+    renderer.setView(eye);
+    for (int frame = 0; frame < 8 && renderer.getPendingTiles() > 0; ++frame) {
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        renderer.setView(eye);
+    }
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    EXPECT_EQ(renderer.getPendingTiles(), 0u);
+    writePpm("bonsai_placed_s75", readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent),
+             extent);
+    // The near trees are the nearest sites.
+    const std::vector<TreeSite> near = nearestTreeSites(scene.terrain, scene.placement, eye, sceneConfig.nearTrees);
+    const std::vector<TreeInstance>& instances = renderer.getGenerator().getInstances().values();
+    ASSERT_EQ(instances.size(), near.size());
+    for (size_t i = 0; i < near.size(); ++i) {
+        EXPECT_EQ(glm::vec3(instances[i].posScale), glm::vec3(near[i].posHeight));
+    }
+    // The proxies are the others.
+    const float radius = glm::length(glm::vec3(near.back().posHeight) - eye);
+    const std::vector<TreeSite> visible = renderer.getProxies()->readVisible();
+    EXPECT_GT(visible.size(), 1000u);
+    EXPECT_EQ(renderer.getProxies()->readCounter()[1], 0u);
+    for (const TreeSite& site : visible) {
+        EXPECT_GT(glm::length(glm::vec3(site.posHeight) - eye), radius);
+    }
 }
 
 TEST_F(TreeProxiesTest, proxiesRenderBothWays) {

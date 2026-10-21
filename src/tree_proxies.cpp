@@ -29,6 +29,9 @@ TreeProxies::TreeProxies(VulkanContext& vulkanContext, TreePlacementTiles& tiles
     cull->setInput(settings, 5);
     cull->setInput(visible, 6);
     cull->setInput(counter, 7);
+    near = std::make_shared<HostValues<glm::vec4>>(vulkanContext, std::vector<glm::vec4>{glm::vec4(-1.0f)});
+    near->setName("TreeProxyNear");
+    cull->setInput(near, 8);
     cull->setGroupCountX(tiles.getTileConfig().tiles.y);
     cull->setPushConstants({TreeProxyCullPush{config.capacity, config.minPixels}});
 

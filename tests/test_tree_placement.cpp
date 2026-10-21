@@ -16,6 +16,8 @@
  *   trees get smaller towards the tree line
  * - sitesAreTheSameInAnyOrder: a cell's site does not depend on when or in which order cells are evaluated, and
  *   another seed gives other sites
+ * - nearestSitesAreTheNearest: nearestTreeSites() returns the sites nearest to a point, nearest first, and their
+ *   instances have the site's type, position and height
  * - aMillionTreesAtTheLargestScale: the region at scale 1 holds a tree per 3.9 m square of its forest (half of
  *   the soil): about 1.1 million trees
  **/
@@ -262,6 +264,28 @@ TEST(TreePlacement, sitesAreTheSameInAnyOrder) {
     const std::vector<TreeSite> again = treeSitesIn(scene.terrain, other, b.x0, b.z0, b.x1, b.z1);
     ASSERT_FALSE(again.empty());
     EXPECT_NE(again.front().posHeight, rows.front().posHeight);
+}
+
+TEST(TreePlacement, nearestSitesAreTheNearest) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    const TreePlacementParams p = makeTreePlacement(scene);
+    const glm::vec3 eye(-0.4f, scene.soilHeight(-0.4f, 0.2f) + 0.002f, 0.2f);
+    const std::vector<TreeSite> near = nearestTreeSites(scene.terrain, p, eye, 30);
+    ASSERT_EQ(near.size(), 30u);
+    // All sites of a block around the point, by distance.
+    const Block b = blockAround(p, eye.x, eye.z, 60);
+    std::vector<TreeSite> all = treeSitesIn(scene.terrain, p, b.x0, b.z0, b.x1, b.z1);
+    auto distance = [&](const TreeSite& s) { return glm::length(glm::vec3(s.posHeight) - eye); };
+    std::sort(all.begin(), all.end(), [&](const TreeSite& a, const TreeSite& c) { return distance(a) < distance(c); });
+    for (size_t i = 0; i < near.size(); ++i) {
+        EXPECT_EQ(near[i].posHeight, all[i].posHeight) << i;
+    }
+    for (const TreeSite& site : near) {
+        const TreeInstance inst = treeInstanceFor(site, scene.types, 7);
+        EXPECT_EQ(inst.ids.x, site.kind.x == TREE_SITE_CONIFER ? 1u : 0u);
+        EXPECT_EQ(glm::vec3(inst.posScale), glm::vec3(site.posHeight));
+        EXPECT_NEAR(inst.posScale.w * scene.types[inst.ids.x].shapeBase.z, site.posHeight.w, 1e-6f);
+    }
 }
 
 TEST(TreePlacement, aMillionTreesAtTheLargestScale) {

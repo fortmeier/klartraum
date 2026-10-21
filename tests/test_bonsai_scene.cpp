@@ -12,6 +12,8 @@
  * - treesStandInThePot: 8, 13 and 20 trees stand on the soil inside the pot, apart from each other and from the
  *   lantern
  * - treesAreFourToNineLanternsTall: the generated trees are 4 to 9 times as tall as the lantern
+ * - largeScalesFollowThePlacement: beyond a planting of 60 trees the scene's trees are the near trees of the
+ *   placement; a planting of more than 60 trees asked for explicitly is refused
  * - treesStandInTheForest: in a landscape with open land and rock, every tree stands where the land cover is mostly
  *   forest
  * - mossCoversPartOfTheSoil: moss grows on 30 to 80 % of the soil in patches a few centimetres wide, greener
@@ -48,6 +50,7 @@
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
+#include "klartraum/tree/tree_placement.hpp"
 
 #include "tree_test_helpers.hpp"
 
@@ -176,6 +179,23 @@ TEST(BonsaiScene, treesAreFourToNineLanternsTall) {
         EXPECT_GE(height / kLanternHeight, 4.0f) << i;
         EXPECT_LE(height / kLanternHeight, 9.0f) << i;
     }
+}
+
+TEST(BonsaiScene, largeScalesFollowThePlacement) {
+    BonsaiSceneConfig config;
+    config.scale.s = 0.75f;
+    const BonsaiScene scene = makeBonsaiScene(config);
+    EXPECT_TRUE(scene.placed);
+    ASSERT_EQ(scene.trees.size(), config.nearTrees);
+    const glm::vec3 middle(0.0f, scene.soilHeight(0.0f, 0.0f), 0.0f);
+    const std::vector<TreeSite> near = nearestTreeSites(scene.terrain, scene.placement, middle, config.nearTrees);
+    for (size_t i = 0; i < near.size(); ++i) {
+        EXPECT_EQ(glm::vec3(scene.trees[i].posScale), glm::vec3(near[i].posHeight));
+    }
+    EXPECT_FALSE(makeBonsaiScene(BonsaiSceneConfig{}).placed);
+    BonsaiSceneConfig tooMany;
+    tooMany.treeCount = 61;
+    EXPECT_THROW(makeBonsaiScene(tooMany), std::invalid_argument);
 }
 
 TEST(BonsaiScene, treesStandInTheForest) {

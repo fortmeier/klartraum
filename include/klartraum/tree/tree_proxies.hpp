@@ -50,6 +50,8 @@ public:
     BufferRef getCounter() const { return {cull, 7}; }
     std::shared_ptr<DispatchIndirectCommandBufferElement> getDispatchArgs() const { return dispatchArgs; }
     const TreeProxyConfig& getConfig() const { return config; }
+    /// Trees whose foot is at most `radius` from the camera are left out: they are generated in full.
+    void setNearRadius(float radius) { near->set(0, glm::vec4(radius, 0.0f, 0.0f, 0.0f)); }
 
     /// After a submission of `pathId`: [0] trees visible, [1] trees left out for lack of room.
     std::vector<uint32_t> readCounter(uint32_t pathId = 0);
@@ -63,6 +65,7 @@ private:
     std::shared_ptr<BufferElement<VulkanBuffer<TreeSite>>> visible;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> counter;
     std::shared_ptr<DispatchIndirectCommandBufferElement> dispatchArgs;
+    std::shared_ptr<HostValues<glm::vec4>> near;
     std::shared_ptr<StorageDrawComponent> draw;
 };
 

@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "klartraum/gaussian_transform.hpp"
+#include "klartraum/tree/tree_placement.hpp"
 
 namespace klartraum {
 
@@ -29,10 +30,32 @@ std::vector<Gaussian3D> BonsaiRenderer::loadLantern(const BonsaiScene& scene, co
 BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& scene,
                                std::shared_ptr<ImageViewSrc> target, const BonsaiRenderConfig& config)
     : config(config),
-      lanternFlame(scene.lanternFlame) {
+      lanternFlame(scene.lanternFlame),
+      terrainParams(scene.terrain),
+      placement(scene.placement),
+      types(scene.types),
+      seed(scene.config.seed),
+      nearTrees(scene.placed ? uint32_t(scene.trees.size()) : 0u) {
     const TreeFrame frame = defaultTreeFrame();
-    generator = std::make_shared<TreeGenerator>(vulkanContext, scene.types, scene.trees,
-                                                TreeCapacity::fromReference(scene.types, scene.trees, frame), frame);
+    TreeCapacity capacity = TreeCapacity::fromReference(scene.types, scene.trees, frame);
+    if (scene.placed) {
+        // Room for the near trees all of either type at the tallest height of the placement.
+        for (uint32_t type = 0; type < scene.types.size(); ++type) {
+            std::vector<TreeInstance> tallest = scene.trees;
+            for (TreeInstance& inst : tallest) {
+                inst.ids.x = type;
+                inst.posScale.w =
+                    placement.size.x * (1.0f + placement.size.y) / placement.grid.w / scene.types[type].shapeBase.z;
+            }
+            const TreeCapacity c = TreeCapacity::fromReference(scene.types, tallest, frame);
+            for (size_t level = 0; level < capacity.stems.size(); ++level) {
+                capacity.stems[level] = std::max(capacity.stems[level], c.stems[level]);
+            }
+            capacity.segments = std::max(capacity.segments, c.segments);
+            capacity.leaves = std::max(capacity.leaves, c.leaves);
+        }
+    }
+    generator = std::make_shared<TreeGenerator>(vulkanContext, scene.types, scene.trees, capacity, frame);
     camera = std::make_shared<CameraUboType>();
     // The classical renderer draws at `supersample` times the resolution and filters down. Its level of
     // detail is set in pixels, which are smaller then.
@@ -77,7 +100,8 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     sources.light = lightVolume->getLight();
     const uint32_t mossSlots = mossCopies.empty() ? 0u : config.mossPool;
     const bool terrainGaussianPool = !classical && config.terrainLod;
-    sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u);
+    const uint32_t proxySlots = scene.placed && !classical ? 4u * config.proxies.capacity : 0u;
+    sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u) + proxySlots;
     // The classical renderer draws only the captured lantern and moss as Gaussians.
     sources.trees = !classical;
     if (!classical) {
@@ -98,6 +122,22 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             vulkanContext, *terrain, splats, gaussians->getExtraOffset() + mossSlots, config.terrainPool, settings,
             camera, lightVolume->getLight());
         splats = terrainGaussians->getGaussians();
+    }
+    if (scene.placed) {
+        TreeTileLayout layout = config.tiles;
+        if (layout.range <= 0.0f) {
+            const float focal = 0.5f * float(renderExtent.height) / std::tan(glm::radians(20.0f));
+            layout.range = scene.config.scale.treeHeightUnits() * focal / config.proxies.minPixels;
+        }
+        tiles = std::make_unique<TreePlacementTiles>(vulkanContext, scene.terrain, placement, layout);
+    }
+    if (tiles && !classical) {
+        proxies = std::make_unique<TreeProxies>(vulkanContext, *tiles, camera, settings, renderExtent,
+                                                TreeRenderInputs{BufferRef{}, lightVolume->getLight()}, config.proxies);
+        proxyGaussians = std::make_unique<TreeProxyGaussians>(
+            vulkanContext, *proxies, splats, gaussians->getExtraOffset() + sources.extraSlots - proxySlots,
+            config.proxies.capacity, settings, camera, lightVolume->getLight());
+        splats = proxyGaussians->getGaussians();
     }
 
     if (classical) {
@@ -120,6 +160,10 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                                                     renderExtent, inputs);
         meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, config.terrainLod ? potMesh : scene.mesh, settings,
                                                      renderExtent, inputs);
+        if (tiles) {
+            proxies = std::make_unique<TreeProxies>(vulkanContext, *tiles, camera, settings, renderExtent, inputs,
+                                                    config.proxies);
+        }
         if (terrain) {
             terrainRenderer =
                 std::make_unique<TreeTerrainRenderer>(vulkanContext, *terrain, settings, renderExtent, inputs);
@@ -138,6 +182,10 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         if (terrain) {
             pass->addComputeDependency(terrain->getElement());
             pass->addDrawComponent(terrainRenderer->getDrawComponent());
+        }
+        if (proxies) {
+            pass->addComputeDependency(proxies->getElement());
+            pass->addDrawComponent(proxies->getDrawComponent());
         }
         pass->addDrawComponent(stems->getDrawComponent());
         pass->addDrawComponent(leaves->getDrawComponent());
@@ -176,6 +224,27 @@ void BonsaiRenderer::setTime(float seconds, float timeOfDay, float season, glm::
     applyTreeSky(values, treeSkyAt(timeOfDay, season), lanternFlame, seconds);
     values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
     settings->set(0, values);
+}
+
+void BonsaiRenderer::setView(glm::vec3 eye) {
+    if (!tiles) {
+        return;
+    }
+    tiles->update(eye);
+    const std::vector<TreeSite> sites = nearestTreeSites(terrainParams, placement, eye, nearTrees);
+    std::vector<TreeInstance> instances;
+    for (const TreeSite& site : sites) {
+        instances.push_back(treeInstanceFor(site, types, seed));
+    }
+    // Over open land fewer trees are near; the rest are tiny and far below the pot.
+    while (instances.size() < nearTrees) {
+        TreeInstance hidden{};
+        hidden.posScale = glm::vec4(0.0f, -100.0f, 0.0f, 1e-4f);
+        hidden.rot = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
+        instances.push_back(hidden);
+    }
+    generator->getInstances().set(instances);
+    proxies->setNearRadius(sites.empty() ? -1.0f : glm::length(glm::vec3(sites.back().posHeight) - eye));
 }
 
 void BonsaiRenderer::initialize(uint32_t numberPaths) { gaussians->initializeBuffers(numberPaths); }

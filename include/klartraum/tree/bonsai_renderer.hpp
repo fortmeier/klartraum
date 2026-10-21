@@ -22,6 +22,7 @@
 #include "klartraum/tree/tree_leaf_renderer.hpp"
 #include "klartraum/tree/tree_light_volume.hpp"
 #include "klartraum/tree/tree_moss_lod.hpp"
+#include "klartraum/tree/tree_proxies.hpp"
 #include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
 #include "klartraum/tree/tree_terrain.hpp"
@@ -53,6 +54,11 @@ struct BonsaiRenderConfig {
     /// BonsaiScene instead (classically, or as surfels).
     bool terrainLod = true;
     uint32_t terrainPool = 65536; ///< Gaussians of the terrain per frame, at most (256 per selected node)
+    /// When the trees follow the placement (BonsaiScene::placed): its tiles, and the proxies of the trees beyond
+    /// the near ones. A range of 0 keeps the tiles in which trees still span the proxies' minPixels at a field of
+    /// view of 40 degrees; the nearest tiles come first when the pool is too small.
+    TreeTileLayout tiles{64, 512, 64, 0.0f};
+    TreeProxyConfig proxies{131072, 3.0f};
     TreeTerrainLodConfig terrain;
 };
 
@@ -85,6 +91,15 @@ public:
      */
     void setTime(float seconds, float timeOfDay, float season, glm::vec4 wind);
 
+    /**
+     * @brief Tells the renderer where the camera is for the next frame, when the trees follow the placement:
+     *        the tiles around it, and the scene's nearTrees nearest trees generated in full (the others as
+     *        proxies). Does nothing for a planting.
+     */
+    void setView(glm::vec3 eye);
+    /// Tiles in range of the last setView() still to be generated (they come a few per frame); 0 for a planting.
+    uint32_t getPendingTiles() const { return tiles ? tiles->getCache().getMissing() : 0u; }
+
     std::shared_ptr<CameraUboType> getCamera() const { return camera; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
     TreeGenerator& getGenerator() { return *generator; }
@@ -95,6 +110,9 @@ public:
     TreeTerrain* getTerrain() { return terrain.get(); }
     /// The terrain's Gaussians of the Gaussian renderer, or nullptr.
     TreeTerrainGaussians* getTerrainGaussians() { return terrainGaussians.get(); }
+    /// The placement's tiles and proxies, or nullptr for a planting.
+    TreePlacementTiles* getTiles() { return tiles.get(); }
+    TreeProxies* getProxies() { return proxies.get(); }
 
     /// The lantern capture, cropped to the lantern and its moss and placed on the soil.
     static std::vector<Gaussian3D> loadLantern(const BonsaiScene& scene, const std::string& path);
@@ -114,6 +132,15 @@ private:
     std::unique_ptr<TreeGaussians> gaussians;
     std::unique_ptr<TreeMossLod> moss;
     std::unique_ptr<TreeTerrainGaussians> terrainGaussians;
+    std::unique_ptr<TreePlacementTiles> tiles;
+    std::unique_ptr<TreeProxies> proxies;
+    std::unique_ptr<TreeProxyGaussians> proxyGaussians;
+    // The placement, its seed and the tree types, for setView().
+    TreeTerrainParams terrainParams{};
+    TreePlacementParams placement{};
+    std::vector<TreeTypeParams> types;
+    uint32_t seed = 0;
+    uint32_t nearTrees = 0;
 
     // Classical
     std::unique_ptr<TreeStemRenderer> stems;
