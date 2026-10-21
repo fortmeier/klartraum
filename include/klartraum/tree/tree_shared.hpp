@@ -160,6 +160,16 @@ struct TreeTerrainParams {
     vec4 relief;  // x height of the relief in units (0: none), y feature frequency per unit, z ridge character in
                   // [0, 1], w width of the band at the rim in which the relief falls to the soil (in r, see below)
     uvec4 seed;   // x seed of the landscape, yzw unused
+    // Land cover (treeLandCover()): x forest threshold on the score (calibrated per scene for a forest share),
+    // y metres per unit, z tree line in metres above the valley floors, w the relief's exaggeration (slopes and
+    // altitudes are judged at true proportions).
+    vec4 cover;
+};
+
+// Weights of the land-cover classes at a place, summing to 1.
+struct TreeLandCover {
+    vec4 vegetation; // x forest, y meadow, z field, w scrub
+    vec4 bare;       // x rock, y water (reserved, always 0), zw unused
 };
 
 const float TREE_PI = 3.14159265f;
@@ -419,7 +429,7 @@ TREE_FN float treeGradientNoise(vec2 p, uint seed) {
 }
 
 // Fractal sums of gradient noise at p: x rounded hills, y ridges. Each octave is twice as fine as the one
-// before and turned by 37 degrees, which hides the noise lattice; amplitudes fall by 0.36 per octave, so the
+// before and turned by 37 degrees, which hides the noise lattice; amplitudes fall by 0.32 per octave, so the
 // fine octaves roughen the slopes without steepening them much. Ridges are finer on high ground than in the
 // valleys (ridged multifractal, Musgrave), as erosion leaves them.
 TREE_FN vec2 treeTerrainOctaves(vec2 p, uint seed) {
@@ -434,7 +444,7 @@ TREE_FN vec2 treeTerrainOctaves(vec2 p, uint seed) {
         ridge *= ridge;
         ridged += amplitude * ridge * weight;
         weight = clamp(1.5f * ridge, 0.0f, 1.0f);
-        amplitude *= 0.36f;
+        amplitude *= 0.32f;
         p = vec2(1.6f * p.x - 1.2f * p.y, 1.2f * p.x + 1.6f * p.y);
     }
     return vec2(rounded, ridged);
@@ -451,24 +461,83 @@ TREE_FN float treeTerrainShape(TreeTerrainParams t, float x, float z) {
     p = p + 0.6f * vec2(treeGradientNoise(q, seed + 101u), treeGradientNoise(q, seed + 211u));
     vec2 sums = treeTerrainOctaves(p, seed);
     // Stretched to [0, 1] from their 1st to 99th percentiles (measured over many seeds).
-    float h = mix(smoothstep(-0.37f, 0.36f, sums.x), smoothstep(0.1f, 0.71f, sums.y), t.relief.z);
+    float h = mix(smoothstep(-0.36f, 0.35f, sums.x), smoothstep(0.09f, 0.68f, sums.y), t.relief.z);
     // Valleys: along the lines where a coarse noise crosses 0, the land sinks to a flat floor.
     float v = treeGradientNoise(0.4f * p + vec2(2.3f, 4.7f), seed + 307u);
     float valley = smoothstep(0.02f, 0.55f, abs(v));
     return h * (0.15f + 0.85f * valley);
 }
 
-// Height of the ground at (x, z) inside the pot: the soil with its mound and bumps, and the landscape's relief,
-// which falls to the soil level in the band at the rim.
+// Height of the landscape above the soil at (x, z), falling to 0 in the band at the rim.
+TREE_FN float treeTerrainRelief(TreeTerrainParams t, float x, float z) {
+    if (t.relief.x <= 0.0f) {
+        return 0.0f;
+    }
+    float fade = 1.0f - smoothstep(1.0f - t.relief.w, 1.0f, treeTerrainRadius(t, x, z));
+    return t.relief.x * fade * treeTerrainShape(t, x, z);
+}
+
+// Height of the ground at (x, z) inside the pot: the soil with its mound and bumps, and the landscape's relief.
 TREE_FN float treeTerrainHeight(TreeTerrainParams t, float x, float z) {
     float r = treeTerrainRadius(t, x, z);
     float bumps = t.soil.z * (treeFbm(vec3(x * 3.0f, 0.0f, z * 3.0f)) - 0.5f);
     float soil = t.soil.x + t.soil.y * (1.0f - r * r) + bumps * (1.0f - r);
-    if (t.relief.x <= 0.0f) {
-        return soil;
-    }
-    float fade = 1.0f - smoothstep(1.0f - t.relief.w, 1.0f, r);
-    return soil + t.relief.x * fade * treeTerrainShape(t, x, z);
+    return soil + treeTerrainRelief(t, x, z);
+}
+
+// --- land cover --------------------------------------------------------------
+
+// What decides the land cover at (x, z): x the slope (rise per run, over 0.015 units: about 40 m at scale 1, so
+// the finest roughness does not count) and y the altitude in metres above the valley floors, both at true
+// proportions; z the forest score, a low-frequency noise in about [0, 1] raised on
+// steep ground (people clear the flat land, the forest stays on the slopes); w the field parcels' noise.
+TREE_FN vec4 treeLandSite(TreeTerrainParams t, float x, float z) {
+    float e = 0.0075f;
+    float hx = treeTerrainHeight(t, x + e, z) - treeTerrainHeight(t, x - e, z);
+    float hz = treeTerrainHeight(t, x, z + e) - treeTerrainHeight(t, x, z - e);
+    float slope = sqrt(hx * hx + hz * hz) / (2.0f * e * t.cover.w);
+    float altitude = treeTerrainRelief(t, x, z) / t.cover.w * t.cover.y;
+    uint seed = treeHash2(t.seed.x, 0x1a2dc0u);
+    vec2 p = vec2(x, z) * (1.6f * t.relief.y);
+    vec2 q = vec2(1.6f * p.x - 1.2f * p.y, 1.2f * p.x + 1.6f * p.y);
+    float n = 0.62f * treeGradientNoise(p, seed) + 0.26f * treeGradientNoise(q, seed + 1u) +
+              0.12f * treeGradientNoise(2.1f * q, seed + 2u);
+    float score = 0.5f + 0.5f * n + 0.35f * smoothstep(0.08f, 0.6f, slope);
+    float parcels = treeGradientNoise(4.0f * p, seed + 5u);
+    return vec4(slope, altitude, score, parcels);
+}
+
+// The land cover from what decides it (treeLandSite()). Rock on cliffs (from 48 degrees) and on the peaks well
+// above the tree line; forest where the score passes the threshold, up to the tree line; of the open land, scrub
+// just outside the forest's edge and around the tree line, fields in parcels on flat, low ground, meadows
+// elsewhere (alpine meadows above the tree line).
+TREE_FN TreeLandCover treeLandCoverFrom(TreeTerrainParams t, vec4 site) {
+    float slope = site.x;
+    float altitude = site.y;
+    float threshold = t.cover.x;
+    float treeLine = t.cover.z;
+    float rock = max(smoothstep(1.1f, 1.6f, slope), 0.85f * smoothstep(treeLine + 200.0f, treeLine + 330.0f, altitude));
+    float forested = smoothstep(threshold - 0.025f, threshold + 0.025f, site.z) *
+                     (1.0f - smoothstep(treeLine - 150.0f, treeLine, altitude));
+    float rest = 1.0f - rock;
+    float forest = rest * forested;
+    float open = rest - forest;
+    float edge = smoothstep(threshold - 0.1f, threshold - 0.03f, site.z);
+    float krummholz = smoothstep(treeLine - 250.0f, treeLine - 100.0f, altitude) *
+                      (1.0f - smoothstep(treeLine + 50.0f, treeLine + 200.0f, altitude));
+    float scrub = open * max(0.7f * edge, 0.6f * krummholz);
+    open -= scrub;
+    float fieldness = (1.0f - smoothstep(0.12f, 0.2f, slope)) * (1.0f - smoothstep(500.0f, 800.0f, altitude)) *
+                      smoothstep(-0.2f, 0.1f, site.w);
+    float field = open * fieldness;
+    TreeLandCover c;
+    c.vegetation = vec4(forest, open - field, field, scrub);
+    c.bare = vec4(rock, 0.0f, 0.0f, 0.0f);
+    return c;
+}
+
+TREE_FN TreeLandCover treeLandCover(TreeTerrainParams t, float x, float z) {
+    return treeLandCoverFrom(t, treeLandSite(t, x, z));
 }
 
 // Scene materials, by the w of a vertex colour.

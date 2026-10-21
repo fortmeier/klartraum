@@ -54,8 +54,9 @@ struct BonsaiScale {
     static constexpr float kForest = 0.21f;    ///< from here on trees and lantern have their real sizes
     static constexpr float kSoilUnits = 2.88f; ///< length of the soil in scene units
     static constexpr float kTreesPerHectare = 650.0f;
-    static constexpr float kReliefStart = 0.25f;    ///< below, the soil has no relief
-    static constexpr float kReliefMeters = 1500.0f; ///< from the valleys to the peaks at s = 1
+    static constexpr float kReliefStart = 0.25f;      ///< below, the soil has no relief
+    static constexpr float kReliefMeters = 1500.0f;   ///< from the valleys to the peaks at s = 1
+    static constexpr float kTreeLineMeters = 1150.0f; ///< above the valley floors
 
     float regionMeters() const;
     float metersPerUnit() const { return regionMeters() / kSoilUnits; }
@@ -72,6 +73,8 @@ struct BonsaiScale {
     float reliefUnits() const;
     /// How ridged the landscape is, from 0 (rounded hills) to 1 (mountain ridges).
     float reliefRidges() const;
+    /// The share of the soil covered by forest: all of it up to s = 0.3, half of it from s = 0.6 on.
+    float forestShare() const;
 };
 
 struct BonsaiSceneConfig {
@@ -111,6 +114,16 @@ struct BonsaiScene {
 };
 
 BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config = BonsaiSceneConfig{});
+
+/**
+ * @brief The forest threshold (TreeTerrainParams::cover.x) for which forest covers `share` of the soil.
+ *
+ * Found by bisection on the mean forest weight of treeLandCover() over a
+ * grid on the soil; all of `terrain` but cover.x is used as given. A share
+ * of 1 or more gives a threshold below every score: forest wherever no rock
+ * or tree line forbids it.
+ */
+float calibrateForestThreshold(const TreeTerrainParams& terrain, float share);
 
 /**
  * @brief Samples a triangle list at random points about `spacing` apart, for TreeGaussians' surfels.
