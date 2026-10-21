@@ -7,7 +7,7 @@
 // writes one PPM image per view.
 //
 //   tree_bonsai_example [--renderer classical|gaussian|both] [--backend raster|compute]
-//                       [--views 4] [--scale 0.21] [--trees N] [--seed 7] [--width 1280] [--height 720]
+//                       [--views 4] [--scale 0.21] [--relief 1] [--trees N] [--seed 7] [--width 1280] [--height 720]
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--from 0] [--to N] [--moss-patches 250]
@@ -117,6 +117,8 @@ int main(int argc, char** argv) {
             sceneConfig.treeCount = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--scale" && hasValue) {
             sceneConfig.scale.s = std::stof(argv[++i]);
+        } else if (arg == "--relief" && hasValue) {
+            sceneConfig.scale.reliefExaggeration = std::stof(argv[++i]);
         } else if (arg == "--seed" && hasValue) {
             sceneConfig.seed = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--width" && hasValue) {
