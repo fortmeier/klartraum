@@ -1,0 +1,99 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// The vertices of the selected terrain nodes (TreeTerrain, CDLOD): one
+// workgroup per node computes the heights of its (quads + 1)^2 grid and a
+// border of two vertices into shared memory, then each vertex's height and
+// normal, morphed towards the next coarser level by its distance from the
+// camera (treeTerrainMorph()). Morphing moves only heights and normals: odd
+// vertices blend towards the mean of their even neighbours along the edge
+// or, inside a quad, along the diagonal the triangles share, so a fully
+// morphed node is the coarser level's surface and meets coarser neighbours
+// without cracks. Vertex positions come from integer coordinates on the
+// finest grid, so nodes compute identical values for the vertices they share.
+
+#define TREE_CAMERA_SET 0
+#define TREE_CAMERA_BINDING 2
+#include "tree_render_common.glsl"
+
+#define MAX_SIDE 37 // quads + 5 for at most 32 quads per side
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer Nodes {
+    vec4 nodes[];
+};
+layout(std430, binding = 1) readonly buffer Config {
+    TreeTerrainConfig config;
+};
+// Per node (quads + 1)^2 vertices, rows along x: xyz the normal, w the height.
+layout(std430, binding = 3) writeonly buffer Vertices {
+    vec4 vertices[];
+};
+
+shared float heights[MAX_SIDE * MAX_SIDE];
+
+int side;
+
+float H(int i, int j) {
+    return heights[(j + 2) * side + i + 2];
+}
+
+// The normal of the coarser level at an even vertex: central differences over two vertices.
+vec3 coarseNormal(int i, int j, float spacing) {
+    return normalize(vec3(H(i - 2, j) - H(i + 2, j), 4.0f * spacing, H(i, j - 2) - H(i, j + 2)));
+}
+
+void main() {
+    vec4 node = nodes[gl_WorkGroupID.x];
+    uint level = uint(node.w);
+    int quads = int(config.lod.ranges.z);
+    side = quads + 5;
+    // The finest grid: quads per side of a finest node, times the finest nodes along the root.
+    float unit = config.lod.root.z / (exp2(float(config.lod.levels.x - 1u)) * float(quads));
+    int step = 1 << level;
+    int gx = int(round((node.x - config.lod.root.x) / node.z)) * quads * step;
+    int gz = int(round((node.y - config.lod.root.y) / node.z)) * quads * step;
+    for (int k = int(gl_LocalInvocationID.x); k < side * side; k += 256) {
+        int i = k % side - 2;
+        int j = k / side - 2;
+        float x = config.lod.root.x + float(gx + i * step) * unit;
+        float z = config.lod.root.y + float(gz + j * step) * unit;
+        heights[k] = treeTerrainHeight(config.terrain, x, z);
+    }
+    barrier();
+
+    float spacing = float(step) * unit;
+    vec3 eye = camera.cameraWorldPos.xyz;
+    int row = quads + 1;
+    uint base = gl_WorkGroupID.x * uint(row * row);
+    for (int v = int(gl_LocalInvocationID.x); v < row * row; v += 256) {
+        int i = v % row;
+        int j = v / row;
+        float x = config.lod.root.x + float(gx + i * step) * unit;
+        float z = config.lod.root.y + float(gz + j * step) * unit;
+        float h = H(i, j);
+        float k = treeTerrainMorph(config.lod, level, distance(eye, vec3(x, h, z)));
+        vec3 fine = normalize(vec3(H(i - 1, j) - H(i + 1, j), 2.0f * spacing, H(i, j - 1) - H(i, j + 1)));
+        bool oddI = (i & 1) == 1;
+        bool oddJ = (j & 1) == 1;
+        float coarseHeight = h;
+        vec3 coarse;
+        if (oddI && oddJ) {
+            coarseHeight = 0.5f * (H(i - 1, j - 1) + H(i + 1, j + 1));
+            coarse = coarseNormal(i - 1, j - 1, spacing) + coarseNormal(i + 1, j + 1, spacing);
+        } else if (oddI) {
+            coarseHeight = 0.5f * (H(i - 1, j) + H(i + 1, j));
+            coarse = coarseNormal(i - 1, j, spacing) + coarseNormal(i + 1, j, spacing);
+        } else if (oddJ) {
+            coarseHeight = 0.5f * (H(i, j - 1) + H(i, j + 1));
+            coarse = coarseNormal(i, j - 1, spacing) + coarseNormal(i, j + 1, spacing);
+        } else {
+            coarse = coarseNormal(i, j, spacing);
+        }
+        vertices[base + uint(v)] = vec4(normalize(mix(fine, normalize(coarse), k)), mix(h, coarseHeight, k));
+    }
+}

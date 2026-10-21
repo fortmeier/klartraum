@@ -13,6 +13,7 @@
 #define TREE_LIGHT_SET 1
 #define TREE_LIGHT_BINDING 3
 #include "tree_light.glsl"
+#include "tree_scene_shading.glsl"
 
 layout(std430, set = 1, binding = 1) readonly buffer Settings {
     TreeRenderSettings settings[];
@@ -29,28 +30,5 @@ void main() {
     if (treeBehindScene(s)) {
         discard;
     }
-    vec3 normal = normalize(inNormal);
-    // Fine structure fades out where it would be finer than about two pixels.
-    float detail = clamp(1.5f - 140.0f * length(fwidth(inWorldPos)), 0.0f, 1.0f);
-    vec3 albedo = treeSceneAlbedoDetail(inColor, inWorldPos, detail);
-    if (inColor.w == TREE_MATERIAL_MOSS && detail > 0.0f) {
-        // The relief of the moss cushions tilts the normal.
-        float e = 0.002f;
-        float h = treeMossHeight(inWorldPos);
-        float dx = (treeMossHeight(inWorldPos + vec3(e, 0.0f, 0.0f)) - h) / e;
-        float dz = (treeMossHeight(inWorldPos + vec3(0.0f, 0.0f, e)) - h) / e;
-        normal = normalize(normal - detail * vec3(dx, 0.0f, dz));
-    }
-    albedo = mix(albedo, vec3(0.8f), treeSnowOn(normalize(inNormal), inWorldPos, s.season.y));
-    // The pot is one of the static occluders, which would shadow its own walls at grazing light.
-    vec2 light = inColor.w == TREE_MATERIAL_GLAZE ? treeLightOfTreesAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal)
-                                                 : treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
-    vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
-    if (inColor.w == TREE_MATERIAL_GLAZE) {
-        // The glaze's highlight.
-        vec3 toCamera = normalize(camera.cameraWorldPos.xyz - inWorldPos);
-        vec3 halfway = normalize(toCamera + s.sun.xyz);
-        color += vec3(0.35f) * pow(max(dot(normal, halfway), 0.0f), 60.0f) * s.sun.w * light.x * s.lightColor.rgb;
-    }
-    outColor = treeOutputColor(color, s);
+    outColor = treeSceneColor(inWorldPos, inNormal, inColor, s);
 }

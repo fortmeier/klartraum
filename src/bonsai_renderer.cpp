@@ -107,7 +107,13 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         stems = std::make_unique<TreeStemRenderer>(vulkanContext, *generator, camera, settings, renderExtent, inputs);
         leaves = std::make_unique<TreeLeafRenderer>(vulkanContext, *generator, scene.types, camera, settings,
                                                     renderExtent, inputs);
-        meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, scene.mesh, settings, renderExtent, inputs);
+        meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, config.terrainLod ? potMesh : scene.mesh, settings,
+                                                     renderExtent, inputs);
+        if (config.terrainLod) {
+            terrain = std::make_unique<TreeTerrain>(vulkanContext, scene.terrain, camera, config.terrain);
+            terrainRenderer =
+                std::make_unique<TreeTerrainRenderer>(vulkanContext, *terrain, settings, renderExtent, inputs);
+        }
 
         pass = std::make_shared<RenderPass>(vulkanContext.getSwapChainImageFormat(), renderExtent);
         pass->setInput(toGeneral, 0);
@@ -119,6 +125,10 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         pass->addComputeDependency(settings);
         pass->addComputeDependency(lightVolume->getElement());
         pass->addDrawComponent(meshes->getDrawComponent());
+        if (terrain) {
+            pass->addComputeDependency(terrain->getElement());
+            pass->addDrawComponent(terrainRenderer->getDrawComponent());
+        }
         pass->addDrawComponent(stems->getDrawComponent());
         pass->addDrawComponent(leaves->getDrawComponent());
         output = pass;

@@ -10,7 +10,7 @@
 // them (treeTerrainNodeAction()), putting the children of split nodes into
 // the other queue for the next, finer level. The selected nodes and the
 // indirect draw of all of them are the result; selectTerrainNodesReference()
-// does the same on the CPU.
+// does the same on the CPU. It also writes the dispatch of the vertex pass.
 
 #define TREE_CAMERA_SET 0
 #define TREE_CAMERA_BINDING 5
@@ -36,6 +36,10 @@ layout(std430, binding = 3) readonly buffer Config {
 };
 layout(std430, binding = 4) readonly buffer Bounds {
     vec2 bounds[];
+};
+// The dispatch of tree_terrain_vertices.comp: a workgroup per selected node.
+layout(std430, binding = 7) writeonly buffer DispatchArgs {
+    uint dispatchArgs[3];
 };
 // TreeTerrainStat; zeroed before the pass.
 layout(std430, binding = 6) buffer Stats {
@@ -108,5 +112,8 @@ void main() {
         drawArgs[1] = min(stats[0], config.lod.levels.z);
         drawArgs[2] = 0u;
         drawArgs[3] = 0u;
+        dispatchArgs[0] = min(stats[0], config.lod.levels.z);
+        dispatchArgs[1] = 1u;
+        dispatchArgs[2] = 1u;
     }
 }
