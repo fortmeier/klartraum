@@ -24,6 +24,8 @@
 #include "klartraum/tree/tree_moss_lod.hpp"
 #include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
+#include "klartraum/tree/tree_terrain.hpp"
+#include "klartraum/tree/tree_terrain_renderer.hpp"
 
 namespace klartraum {
 
@@ -46,6 +48,10 @@ struct BonsaiRenderConfig {
     /// Pixel diameters below which a moss patch uses its levels 1, 2 and 3, and the crossfade band (TreeMossLod);
     /// twice those of klartraum-spacegame, as ground cover is seen close up and shows its texture.
     glm::vec4 mossLod{320.0f, 96.0f, 24.0f, 0.15f};
+    /// The classical renderer draws the soil as a TreeTerrain with its level of detail; false draws the soil
+    /// mesh of the BonsaiScene instead.
+    bool terrainLod = true;
+    TreeTerrainLodConfig terrain;
 };
 
 /**
@@ -83,6 +89,8 @@ public:
     TreeStemRenderer* getStems() { return stems.get(); }
     TreeLeafRenderer* getLeaves() { return leaves.get(); }
     TreeLightVolume& getLightVolume() { return *lightVolume; }
+    /// The terrain of the classical renderer, or nullptr.
+    TreeTerrain* getTerrain() { return terrain.get(); }
 
     /// The lantern capture, cropped to the lantern and its moss and placed on the soil.
     static std::vector<Gaussian3D> loadLantern(const BonsaiScene& scene, const std::string& path);
@@ -106,6 +114,8 @@ private:
     std::unique_ptr<TreeStemRenderer> stems;
     std::unique_ptr<TreeLeafRenderer> leaves;
     std::unique_ptr<SceneMeshRenderer> meshes;
+    std::unique_ptr<TreeTerrain> terrain;
+    std::unique_ptr<TreeTerrainRenderer> terrainRenderer;
     std::shared_ptr<RenderPass> pass;
 
     ComputeGraphElementPtr output;

@@ -25,12 +25,12 @@ enum TreeTerrainStat : uint32_t {
 
 /// How the terrain's quadtree is laid out; see TreeTerrainLod.
 struct TreeTerrainLodConfig {
-    uint32_t levels = 12;      ///< of the quadtree: finest nodes 1/2048 of the root
-    uint32_t boundsLevels = 9; ///< of the height bounds pyramid: 256 x 256 cells at its finest
-    uint32_t quads = 32;       ///< per node side
-    float rangeFactor = 6.0f;  ///< a node of size s is drawn up to rangeFactor * s from the camera
-    float morphStart = 0.66f;  ///< within the band between the finer level's range and the node's own
-    uint32_t nodeCapacity = 4096;
+    uint32_t levels = 12;         ///< of the quadtree: finest nodes 1/2048 of the root
+    uint32_t boundsLevels = 9;    ///< of the height bounds pyramid: 256 x 256 cells at its finest
+    uint32_t quads = 32;          ///< per node side
+    float rangeFactor = 6.0f;     ///< a node of size s is drawn up to rangeFactor * s from the camera
+    float morphStart = 0.66f;     ///< within the band between the finer level's range and the node's own
+    uint32_t nodeCapacity = 1024; ///< each holds (quads + 1)^2 vertices of 16 bytes
     uint32_t queueCapacity = 4096;
 };
 
@@ -67,7 +67,11 @@ std::vector<TreeTerrainNode> selectTerrainNodesReference(const TreeTerrainConfig
  * level in one workgroup, and writes the nodes to draw (TreeTerrainNode) and
  * an indirect draw of `6 * quads^2` vertices per node. Nodes farther from the
  * camera are coarser; each level's range is twice the finer level's, so
- * neighbouring nodes differ by at most one level.
+ * neighbouring nodes differ by at most one level. `tree_terrain_vertices.comp`
+ * then computes the heights and normals of the selected nodes' vertices,
+ * morphed towards the coarser level near each level's range so that levels
+ * meet without cracks or popping (getVertices(), TreeTerrainRenderer draws
+ * them).
  */
 class TreeTerrain {
 public:
@@ -77,21 +81,29 @@ public:
     const TreeTerrainConfig& getConfig() const { return config; }
     const std::vector<glm::vec2>& getBounds() const { return bounds; }
     ComputeGraphElementPtr getSelect() const { return select; }
+    /// The vertex pass, which runs after the selection; depend on this one.
+    ComputeGraphElementPtr getElement() const { return vertices; }
+    /// Per selected node (quads + 1)^2 vertices, rows along x: xyz the normal, w the height.
+    BufferRef getVertices() const { return {vertices, 3}; }
     /// The selected nodes (TreeTerrainNode), the indirect draw arguments and the configuration buffer.
-    BufferRef getNodes() const { return {select, 0}; }
+    BufferRef getNodes() const { return {vertices, 0}; }
     BufferRef getDrawArgs() const { return {select, 1}; }
-    BufferRef getConfigBuffer() const { return {select, 3}; }
+    BufferRef getConfigBuffer() const { return {vertices, 1}; }
 
     /// After a submission of `pathId`: the selected nodes as the GPU wrote them.
     std::vector<TreeTerrainNode> readNodes(uint32_t pathId = 0);
     /// After a submission of `pathId`: the statistics (TreeTerrainStat).
     std::vector<uint32_t> readStats(uint32_t pathId = 0);
+    /// After a submission of `pathId`: the vertices of the selected nodes (see getVertices()).
+    std::vector<glm::vec4> readVertices(uint32_t pathId = 0);
 
 private:
     TreeTerrainConfig config{};
     std::vector<glm::vec2> bounds;
     std::shared_ptr<GeneralComputation<uint32_t>> select;
+    std::shared_ptr<GeneralComputation<uint32_t>> vertices;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> nodes;
+    std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> vertexData;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> stats;
 };
 

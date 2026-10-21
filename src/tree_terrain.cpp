@@ -5,6 +5,7 @@
 #include "klartraum/tree/tree_terrain.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 #include <thread>
 
 namespace klartraum {
@@ -106,6 +107,10 @@ std::vector<TreeTerrainNode> selectTerrainNodesReference(const TreeTerrainConfig
 
 TreeTerrain::TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& terrain,
                          std::shared_ptr<CameraUboType> camera, const TreeTerrainLodConfig& lodConfig) {
+    // The vertex pass keeps a node's grid with a border of two in shared memory, and morphs by vertex parity.
+    if (lodConfig.quads > 32u || lodConfig.quads % 2u != 0u || lodConfig.quads == 0u) {
+        throw std::invalid_argument("TreeTerrain: quads per node side must be even and at most 32");
+    }
     config.terrain = terrain;
     config.lod = makeTreeTerrainLod(terrain, lodConfig);
     bounds = buildTerrainBounds(config);
@@ -141,8 +146,29 @@ TreeTerrain::TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& 
     select->setInput(boundsBuffer, 4);
     select->setInput(camera, 5);
     select->setInput(stats, 6);
+    auto dispatchArgs = std::make_shared<DispatchIndirectCommandBufferElement>(
+        vulkanContext, 1u,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    dispatchArgs->setName("TreeTerrainDispatchArgs");
+    select->setInput(dispatchArgs, 7);
     select->setGroupCountX(1);
     select->setPushConstants({0u});
+
+    const uint32_t row = lodConfig.quads + 1u;
+    vertexData = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(
+        vulkanContext, lodConfig.nodeCapacity * row * row, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vertexData->setName("TreeTerrainVertices");
+    vertices =
+        std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_terrain_vertices.comp.spv");
+    vertices->setName("TreeTerrainVertices");
+    vertices->setInput(select, 0, 0);
+    vertices->setInput(select, 1, 3);
+    vertices->setInput(camera, 2);
+    vertices->setInput(vertexData, 3);
+    vertices->setDynamicGroupDispatchParams(dispatchArgs);
+    vertices->setPushConstants({0u});
 }
 
 std::vector<TreeTerrainNode> TreeTerrain::readNodes(uint32_t pathId) {
@@ -150,6 +176,15 @@ std::vector<TreeTerrainNode> TreeTerrain::readNodes(uint32_t pathId) {
     std::vector<glm::vec4> values(config.lod.levels.z);
     nodes->getBuffer(pathId).memcopyTo(values);
     values.resize(count);
+    return values;
+}
+
+std::vector<glm::vec4> TreeTerrain::readVertices(uint32_t pathId) {
+    const uint32_t count = std::min(readStats(pathId)[kTreeTerrainStatSelected], config.lod.levels.z);
+    const uint32_t row = uint32_t(config.lod.ranges.z) + 1u;
+    std::vector<glm::vec4> values(vertexData->getBuffer(pathId).getSize());
+    vertexData->getBuffer(pathId).memcopyTo(values);
+    values.resize(size_t(count) * row * row);
     return values;
 }
 
