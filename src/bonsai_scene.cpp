@@ -91,18 +91,24 @@ uint32_t BonsaiScale::treeCount(float soilArea) const {
     return std::max(1u, uint32_t(std::lround(kTreesPerHectare * squareMeters / 1e4f)));
 }
 
+float BonsaiScale::reliefUnits() const {
+    const float t = std::clamp((s - kReliefStart) / (1.0f - kReliefStart), 0.0f, 1.0f);
+    const float atLargest = kReliefMeters / BonsaiScale{1.0f}.metersPerUnit();
+    return reliefExaggeration * atLargest * t * t * (3.0f - 2.0f * t);
+}
+
+float BonsaiScale::reliefRidges() const {
+    const float t = std::clamp((s - 0.4f) / 0.6f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 float BonsaiScene::potMeasure(float x, float z, float scale) const {
     const BonsaiPot& pot = config.pot;
     return std::pow(std::abs(x / (pot.halfLength * scale)), pot.exponent) +
            std::pow(std::abs(z / (pot.halfWidth * scale)), pot.exponent);
 }
 
-float BonsaiScene::soilHeight(float x, float z) const {
-    const BonsaiPot& pot = config.pot;
-    const float r = std::min(std::pow(potMeasure(x, z, innerScale(pot)), 1.0f / pot.exponent), 1.0f);
-    const float bumps = 0.012f * (tree::treeFbm(glm::vec3(x * 3.0f, 0.0f, z * 3.0f)) - 0.5f);
-    return pot.soilHeight + pot.soilMound * (1.0f - r * r) + bumps * (1.0f - r);
-}
+float BonsaiScene::soilHeight(float x, float z) const { return tree::treeTerrainHeight(terrain, x, z); }
 
 BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     BonsaiScene scene;
@@ -120,6 +126,12 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         throw std::invalid_argument("makeBonsaiScene: more than 60 trees (scale too large for a planting)");
     }
     scene.lanternScale = scale.lanternUnits() / 0.28f;
+    // The soil fills the pot's inner outline; the landscape's main features are about 1.3 units apart, so the pot
+    // holds a few hills or mountains at every scale with relief.
+    scene.terrain.outline = glm::vec4(pot.halfLength * inner, pot.halfWidth * inner, pot.exponent, 0.0f);
+    scene.terrain.soil = glm::vec4(pot.soilHeight, pot.soilMound, 0.012f, 0.0f);
+    scene.terrain.relief = glm::vec4(scale.reliefUnits(), 0.75f, scale.reliefRidges(), 0.25f);
+    scene.terrain.seed = glm::uvec4(config.seed, 0u, 0u, 0u);
     const glm::vec4 glaze(pot.glaze, TREE_MATERIAL_GLAZE);
     const int around = 160;
 
@@ -150,14 +162,15 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
             return glm::vec3(p.x, pot.height + (bottom - pot.height) * v, p.y);
         },
         around, 2, glaze, [](glm::vec3 p) { return glm::vec3(-p.x, 0.0f, -p.z); });
-    // Soil with moss.
+    // Soil with moss; a finer grid where a landscape rises from it.
+    const bool relief = scene.terrain.relief.x > 0.0f;
     addSurface(
         scene.mesh,
         [&](float u, float v) {
             const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, inner * v);
             return glm::vec3(p.x, s.soilHeight(p.x, p.y), p.y);
         },
-        around, 24, glm::vec4(0.075f, 0.11f, 0.025f, TREE_MATERIAL_MOSS),
+        relief ? 2 * around : around, relief ? 96 : 24, glm::vec4(0.075f, 0.11f, 0.025f, TREE_MATERIAL_MOSS),
         [](glm::vec3) { return glm::vec3(0.0f, 1.0f, 0.0f); });
     // The bottom, closing the pot for views from below.
     addSurface(

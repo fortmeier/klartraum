@@ -151,6 +151,17 @@ struct TreeRenderSettings {
     vec4 capturedTint;    // rgb factor on the colours of captured Gaussians (the lantern) for the current light
 };
 
+// The ground in the pot (treeTerrainHeight()): the soil with its mound, and the relief of a landscape that the
+// scale gives (BonsaiScale::reliefUnits()), falling to the soil level towards the rim.
+struct TreeTerrainParams {
+    vec4 outline; // x half length (along x), y half width (along z) of the soil's outline, z its superellipse
+                  // exponent, w unused
+    vec4 soil;    // x soil height at the rim, y mound towards the middle, z amplitude of the bumps, w unused
+    vec4 relief;  // x height of the relief in units (0: none), y feature frequency per unit, z ridge character in
+                  // [0, 1], w width of the band at the rim in which the relief falls to the soil (in r, see below)
+    uvec4 seed;   // x seed of the landscape, yzw unused
+};
+
 const float TREE_PI = 3.14159265f;
 
 // Stem draw buckets: bucket b holds segments that need at most
@@ -377,6 +388,87 @@ TREE_FN float treeValueNoise(vec3 p) {
 // Three octaves of value noise.
 TREE_FN float treeFbm(vec3 p) {
     return 0.5f * treeValueNoise(p) + 0.3f * treeValueNoise(2.03f * p) + 0.2f * treeValueNoise(4.11f * p);
+}
+
+// --- terrain ---------------------------------------------------------------
+
+// Where (x, z) lies relative to the soil's outline: 0 in the middle, 1 on the outline and beyond.
+TREE_FN float treeTerrainRadius(TreeTerrainParams t, float x, float z) {
+    float e = t.outline.z;
+    float m = pow(abs(x / t.outline.x), e) + pow(abs(z / t.outline.y), e);
+    return min(pow(m, 1.0f / e), 1.0f);
+}
+
+// Gradient noise (Perlin) in about [-1, 1] on the integer lattice of the plane, a different field per seed.
+// Its zero crossings form connected networks of lines, which ridged noise turns into mountain ridges.
+TREE_FN float treeGradientNoise(vec2 p, uint seed) {
+    vec2 i = floor(p);
+    vec2 f = p - i;
+    vec2 u = f * f * f * (f * (f * 6.0f - vec2(15.0f, 15.0f)) + vec2(10.0f, 10.0f));
+    uint x = uint(int(i.x));
+    uint y = uint(int(i.y));
+    float a00 = 2.0f * TREE_PI * treeRand(treeHash2(seed, x), y);
+    float a10 = 2.0f * TREE_PI * treeRand(treeHash2(seed, x + 1u), y);
+    float a01 = 2.0f * TREE_PI * treeRand(treeHash2(seed, x), y + 1u);
+    float a11 = 2.0f * TREE_PI * treeRand(treeHash2(seed, x + 1u), y + 1u);
+    float n00 = cos(a00) * f.x + sin(a00) * f.y;
+    float n10 = cos(a10) * (f.x - 1.0f) + sin(a10) * f.y;
+    float n01 = cos(a01) * f.x + sin(a01) * (f.y - 1.0f);
+    float n11 = cos(a11) * (f.x - 1.0f) + sin(a11) * (f.y - 1.0f);
+    return 1.414f * mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
+}
+
+// Fractal sums of gradient noise at p: x rounded hills, y ridges. Each octave is twice as fine as the one
+// before and turned by 37 degrees, which hides the noise lattice; amplitudes fall by 0.36 per octave, so the
+// fine octaves roughen the slopes without steepening them much. Ridges are finer on high ground than in the
+// valleys (ridged multifractal, Musgrave), as erosion leaves them.
+TREE_FN vec2 treeTerrainOctaves(vec2 p, uint seed) {
+    float rounded = 0.0f;
+    float ridged = 0.0f;
+    float amplitude = 0.5f;
+    float weight = 1.0f;
+    for (int i = 0; i < 6; ++i) {
+        float n = treeGradientNoise(p, treeHash2(seed, uint(i)));
+        rounded += amplitude * n;
+        float ridge = 1.0f - abs(n);
+        ridge *= ridge;
+        ridged += amplitude * ridge * weight;
+        weight = clamp(1.5f * ridge, 0.0f, 1.0f);
+        amplitude *= 0.36f;
+        p = vec2(1.6f * p.x - 1.2f * p.y, 1.2f * p.x + 1.6f * p.y);
+    }
+    return vec2(rounded, ridged);
+}
+
+// The landscape's shape in [0, 1] at (x, z) in units: valleys near 0, peaks near 1. Fractal noise on a
+// domain-warped plane, blended from rounded hills to ridges by t.relief.z, with a network of valleys with flat
+// floors carved into it.
+TREE_FN float treeTerrainShape(TreeTerrainParams t, float x, float z) {
+    uint seed = treeHash2(t.seed.x, 0x7e44a1u);
+    vec2 p = vec2(x, z) * t.relief.y;
+    // Domain warping bends the features, so ridges and valleys meander.
+    vec2 q = 0.5f * p;
+    p = p + 0.6f * vec2(treeGradientNoise(q, seed + 101u), treeGradientNoise(q, seed + 211u));
+    vec2 sums = treeTerrainOctaves(p, seed);
+    // Stretched to [0, 1] from their 1st to 99th percentiles (measured over many seeds).
+    float h = mix(smoothstep(-0.37f, 0.36f, sums.x), smoothstep(0.1f, 0.71f, sums.y), t.relief.z);
+    // Valleys: along the lines where a coarse noise crosses 0, the land sinks to a flat floor.
+    float v = treeGradientNoise(0.4f * p + vec2(2.3f, 4.7f), seed + 307u);
+    float valley = smoothstep(0.02f, 0.55f, abs(v));
+    return h * (0.15f + 0.85f * valley);
+}
+
+// Height of the ground at (x, z) inside the pot: the soil with its mound and bumps, and the landscape's relief,
+// which falls to the soil level in the band at the rim.
+TREE_FN float treeTerrainHeight(TreeTerrainParams t, float x, float z) {
+    float r = treeTerrainRadius(t, x, z);
+    float bumps = t.soil.z * (treeFbm(vec3(x * 3.0f, 0.0f, z * 3.0f)) - 0.5f);
+    float soil = t.soil.x + t.soil.y * (1.0f - r * r) + bumps * (1.0f - r);
+    if (t.relief.x <= 0.0f) {
+        return soil;
+    }
+    float fade = 1.0f - smoothstep(1.0f - t.relief.w, 1.0f, r);
+    return soil + t.relief.x * fade * treeTerrainShape(t, x, z);
 }
 
 // Scene materials, by the w of a vertex colour.

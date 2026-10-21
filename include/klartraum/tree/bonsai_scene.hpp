@@ -40,15 +40,21 @@ struct BonsaiPot {
  * pot (10.7 m young trees at kForest) while their number grows at a forest
  * density of 650 per hectare (at least one tree) and their style blends from
  * bonsai to natural; beyond, they grow to 25 m mature trees by s = 0.4.
+ * The ground is flat soil up to kReliefStart; beyond, a landscape rises in
+ * the pot whose relief grows to kReliefMeters (valleys to peaks) at s = 1.
  */
 struct BonsaiScale {
     float s = 0.21f;
+    /// Factor on the relief's height in the pot: 1 for true proportions, more for a more dramatic landscape.
+    float reliefExaggeration = 1.0f;
 
     static constexpr float kSmallestRegion = 3.6f; ///< metres the soil spans at s = 0
     static constexpr float kLargestRegion = 8000.0f;
     static constexpr float kForest = 0.21f;    ///< from here on trees and lantern have their real sizes
     static constexpr float kSoilUnits = 2.88f; ///< length of the soil in scene units
     static constexpr float kTreesPerHectare = 650.0f;
+    static constexpr float kReliefStart = 0.25f;    ///< below, the soil has no relief
+    static constexpr float kReliefMeters = 1500.0f; ///< from the valleys to the peaks at s = 1
 
     float regionMeters() const;
     float metersPerUnit() const { return regionMeters() / kSoilUnits; }
@@ -60,6 +66,11 @@ struct BonsaiScale {
     float bonsaiStyle() const;
     /// Trees on `soilArea` square units of soil.
     uint32_t treeCount(float soilArea) const;
+    /// Height of the landscape from its valleys to its peaks in units, times reliefExaggeration: 0 up to
+    /// kReliefStart, growing smoothly to kReliefMeters at s = 1 (rolling hills at middle scales, mountains at 1).
+    float reliefUnits() const;
+    /// How ridged the landscape is, from 0 (rounded hills) to 1 (mountain ridges).
+    float reliefRidges() const;
 };
 
 struct BonsaiSceneConfig {
@@ -90,8 +101,9 @@ struct BonsaiScene {
     glm::vec3 lanternFlame{0.0f}; ///< where the lantern's flame burns, in its fire box
     float lanternScale = 1.0f;    ///< of the lantern capture (0.28 units tall at 1)
     float soilArea = 0.0f;        ///< square units
+    TreeTerrainParams terrain{};  ///< the ground in the pot, for treeTerrainHeight()
 
-    /// Height of the soil surface at (x, z) inside the pot.
+    /// Height of the ground at (x, z) inside the pot: treeTerrainHeight() of `terrain`.
     float soilHeight(float x, float z) const;
     /// The superellipse measure of (x, z): below 1 inside the pot's outline scaled by `scale`.
     float potMeasure(float x, float z, float scale = 1.0f) const;

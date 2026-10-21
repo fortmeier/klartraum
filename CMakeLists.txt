@@ -322,6 +322,7 @@ add_executable(
   tests/test_tree_seasons.cpp
   tests/test_tree_sky.cpp
   tests/test_bonsai_scene.cpp
+  tests/test_tree_terrain.cpp
   tests/test_gaussian_lod.cpp
   tests/test_tree_moss_lod.cpp
 )
