@@ -246,11 +246,16 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     const glm::vec2 main = glm::mix(glm::vec2(-0.2f, -0.05f), glm::vec2(-0.4f, -0.15f), planting);
     // Trees about 1.9 m apart at least.
     const float minDistance = 1.9f / scale.metersPerUnit();
-    std::vector<glm::vec2> positions = {main};
+    // Trees grow in the forest only (all of the soil at small scales).
+    auto forested = [&](glm::vec2 p) { return tree::treeLandCover(scene.terrain, p.x, p.y).vegetation.x > 0.5f; };
+    std::vector<glm::vec2> positions;
+    if (forested(main)) {
+        positions.push_back(main);
+    }
     for (uint32_t key = 0; positions.size() < treeCount && key < 20000; ++key) {
         const glm::vec2 p((2.0f * hashUnit(config.seed, 2 * key) - 1.0f) * pot.halfLength,
                           (2.0f * hashUnit(config.seed, 2 * key + 1) - 1.0f) * pot.halfWidth);
-        if (scene.potMeasure(p.x, p.y, inner * 0.82f) > 1.0f) {
+        if (scene.potMeasure(p.x, p.y, inner * 0.82f) > 1.0f || !forested(p)) {
             continue;
         }
         if (glm::length(p - glm::vec2(lantern.x, lantern.z)) < 0.1f + 1.0f * scale.lanternUnits()) {
