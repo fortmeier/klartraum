@@ -46,7 +46,8 @@ struct BonsaiPot {
 struct BonsaiScale {
     float s = 0.21f;
     /// Factor on the relief's height in the pot: 1 for true proportions, more for a more dramatic landscape.
-    float reliefExaggeration = 1.0f;
+    /// 1.5 lets the mountains stand out in the pot while keeping their slopes plausible.
+    float reliefExaggeration = 1.5f;
 
     static constexpr float kSmallestRegion = 3.6f; ///< metres the soil spans at s = 0
     static constexpr float kLargestRegion = 8000.0f;
