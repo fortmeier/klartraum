@@ -25,6 +25,7 @@
 #include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
 #include "klartraum/tree/tree_terrain.hpp"
+#include "klartraum/tree/tree_terrain_gaussians.hpp"
 #include "klartraum/tree/tree_terrain_renderer.hpp"
 
 namespace klartraum {
@@ -48,9 +49,10 @@ struct BonsaiRenderConfig {
     /// Pixel diameters below which a moss patch uses its levels 1, 2 and 3, and the crossfade band (TreeMossLod);
     /// twice those of klartraum-spacegame, as ground cover is seen close up and shows its texture.
     glm::vec4 mossLod{320.0f, 96.0f, 24.0f, 0.15f};
-    /// The classical renderer draws the soil as a TreeTerrain with its level of detail; false draws the soil
-    /// mesh of the BonsaiScene instead.
+    /// Both renderers draw the soil as a TreeTerrain with its level of detail; false draws the soil mesh of the
+    /// BonsaiScene instead (classically, or as surfels).
     bool terrainLod = true;
+    uint32_t terrainPool = 65536; ///< Gaussians of the terrain per frame, at most (256 per selected node)
     TreeTerrainLodConfig terrain;
 };
 
@@ -89,8 +91,10 @@ public:
     TreeStemRenderer* getStems() { return stems.get(); }
     TreeLeafRenderer* getLeaves() { return leaves.get(); }
     TreeLightVolume& getLightVolume() { return *lightVolume; }
-    /// The terrain of the classical renderer, or nullptr.
+    /// The terrain, or nullptr.
     TreeTerrain* getTerrain() { return terrain.get(); }
+    /// The terrain's Gaussians of the Gaussian renderer, or nullptr.
+    TreeTerrainGaussians* getTerrainGaussians() { return terrainGaussians.get(); }
 
     /// The lantern capture, cropped to the lantern and its moss and placed on the soil.
     static std::vector<Gaussian3D> loadLantern(const BonsaiScene& scene, const std::string& path);
@@ -109,6 +113,7 @@ private:
     // Captured lantern and moss (classical) or everything (Gaussian) as Gaussians
     std::unique_ptr<TreeGaussians> gaussians;
     std::unique_ptr<TreeMossLod> moss;
+    std::unique_ptr<TreeTerrainGaussians> terrainGaussians;
 
     // Classical
     std::unique_ptr<TreeStemRenderer> stems;

@@ -12,11 +12,11 @@ namespace klartraum {
 TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, const std::vector<MossPatch>& patches,
                          std::vector<TreeLodInstance> instances, std::shared_ptr<CameraUboType> camera,
                          std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light,
-                         glm::vec4 boundaries) {
+                         glm::vec4 boundaries, uint32_t poolSlots) {
     if (patches.empty() || instances.empty()) {
         throw std::invalid_argument("TreeMossLod: needs patches and placed copies");
     }
-    const uint32_t capacity = target.getExtraSlots();
+    const uint32_t capacity = poolSlots > 0 ? std::min(poolSlots, target.getExtraSlots()) : target.getExtraSlots();
     const uint32_t offset = target.getExtraOffset();
 
     // The library: every patch's four levels, one after the other.

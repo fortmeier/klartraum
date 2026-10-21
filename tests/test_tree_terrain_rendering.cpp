@@ -12,10 +12,11 @@
  * - terrainRendersWithoutHoles: rendered from above the peaks at either end of the pot against a black
  *   background, every column of the image is covered from the bottom up to the terrain's silhouette
  * - smallScalesRenderAsBefore: at scales 0 and 0.21 the bonsai with the terrain looks like the one with the soil
- *   mesh (PSNR above 40 dB); images are written to build/TestingOutput/tree/
+ *   mesh, classically (PSNR above 40 dB) and as Gaussians (above 35 dB: surfels on a grid instead of random
+ *   samples); images are written to build/TestingOutput/tree/
  * - materialsFollowTheLandCover: seen from straight above at scale 1 in summer, rock is grey, meadows and forest
  *   green, fields more yellow than meadows, and rock brighter than forest
- * - snowLiesAboveTheSnowLine: in fall only gentle ground above the snow line is white; in winter most ground
+ * - snowLiesAboveTheSnowLine: in fall only gentle ground above the snow line is white; in winter most ground is
  * - distantDetailDoesNotAlias: from outside the pot at scale 1 the image varies between neighbouring pixels about as
  *   much as one rendered at twice the resolution and filtered down
  **/
@@ -350,37 +351,42 @@ TEST_F(TreeTerrainRenderingTest, terrainRendersWithoutHoles) {
 
 TEST_F(TreeTerrainRenderingTest, smallScalesRenderAsBefore) {
     const VkExtent2D extent{480, 270};
-    for (float s : {0.0f, BonsaiScale::kForest}) {
-        const BonsaiScene scene = sceneAt(s);
-        std::vector<uint8_t> images[2];
-        for (int withTerrain = 0; withTerrain < 2; ++withTerrain) {
-            auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
-            BonsaiRenderConfig config;
-            config.extent = extent;
-            config.terrainLod = withTerrain == 1;
-            BonsaiRenderer renderer(*vc, scene, target, config);
-            ComputeGraph graph(*vc, 1);
-            graph.compileFrom(renderer.getOutput());
-            renderer.initialize(1);
-            const Eye e = outsideEye();
-            setCamera(renderer.getCamera()->ubo, e.eye, e.target, 40.0f, float(extent.width) / float(extent.height));
-            renderer.getCamera()->update(0);
-            graph.submitAndWait(vc->getGraphicsQueue(), 0);
-            images[withTerrain] = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
-            writePpm(std::string(withTerrain ? "terrain" : "soil_mesh") + "_s" + std::to_string(int(s * 100.0f)),
-                     images[withTerrain], extent);
-        }
-        double squared = 0.0;
-        for (size_t i = 0; i < images[0].size(); i += 4) {
-            for (int c = 0; c < 3; ++c) {
-                const double d = double(images[0][i + c]) - double(images[1][i + c]);
-                squared += d * d;
+    for (int gaussian = 0; gaussian < 2; ++gaussian) {
+        for (float s : {0.0f, BonsaiScale::kForest}) {
+            const BonsaiScene scene = sceneAt(s);
+            std::vector<uint8_t> images[2];
+            for (int withTerrain = 0; withTerrain < 2; ++withTerrain) {
+                auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+                BonsaiRenderConfig config;
+                config.extent = extent;
+                config.mode = gaussian ? BonsaiRenderMode::Gaussian : BonsaiRenderMode::Classical;
+                config.terrainLod = withTerrain == 1;
+                BonsaiRenderer renderer(*vc, scene, target, config);
+                ComputeGraph graph(*vc, 1);
+                graph.compileFrom(renderer.getOutput());
+                renderer.initialize(1);
+                const Eye e = outsideEye();
+                setCamera(renderer.getCamera()->ubo, e.eye, e.target, 40.0f,
+                          float(extent.width) / float(extent.height));
+                renderer.getCamera()->update(0);
+                graph.submitAndWait(vc->getGraphicsQueue(), 0);
+                images[withTerrain] = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+                writePpm(std::string(gaussian ? "gaussian_" : "") + (withTerrain ? "terrain" : "soil_mesh") + "_s" +
+                             std::to_string(int(s * 100.0f)),
+                         images[withTerrain], extent);
             }
+            double squared = 0.0;
+            for (size_t i = 0; i < images[0].size(); i += 4) {
+                for (int c = 0; c < 3; ++c) {
+                    const double d = double(images[0][i + c]) - double(images[1][i + c]);
+                    squared += d * d;
+                }
+            }
+            const double mse = squared / double(extent.width * extent.height * 3);
+            const double psnr = 10.0 * std::log10(255.0 * 255.0 / std::max(mse, 1e-12));
+            std::printf("%s, scale %.2f: PSNR %.1f dB\n", gaussian ? "Gaussian" : "classical", s, psnr);
+            EXPECT_GT(psnr, gaussian ? 35.0 : 40.0) << s;
         }
-        const double mse = squared / double(extent.width * extent.height * 3);
-        const double psnr = 10.0 * std::log10(255.0 * 255.0 / std::max(mse, 1e-12));
-        std::printf("scale %.2f: PSNR %.1f dB\n", s, psnr);
-        EXPECT_GT(psnr, 40.0) << s;
     }
 }
 

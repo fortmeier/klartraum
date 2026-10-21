@@ -92,6 +92,8 @@ public:
     BufferRef getNodes() const { return {vertices, 0}; }
     BufferRef getDrawArgs() const { return {select, 1}; }
     BufferRef getConfigBuffer() const { return {vertices, 1}; }
+    /// The indirect dispatch of one workgroup per selected node, for passes over the nodes after getElement().
+    std::shared_ptr<DispatchIndirectCommandBufferElement> getDispatchArgs() const { return dispatchArgs; }
 
     /// After a submission of `pathId`: the selected nodes as the GPU wrote them.
     std::vector<TreeTerrainNode> readNodes(uint32_t pathId = 0);
@@ -110,6 +112,7 @@ private:
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> nodes;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> vertexData;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> coverData;
+    std::shared_ptr<DispatchIndirectCommandBufferElement> dispatchArgs;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> stats;
 };
 
