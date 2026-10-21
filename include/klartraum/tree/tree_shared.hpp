@@ -185,6 +185,23 @@ struct TreeTerrainConfig {
     TreeTerrainLod lod;
 };
 
+// Where trees grow (treeSiteAt()): one candidate per cell of a square grid over the soil.
+struct TreePlacementParams {
+    vec4 grid;    // x cell size in units, y jitter of a candidate within its cell (fraction of the cell), z chance of a
+                  // shrub where the land cover is scrub, w metres per unit
+    vec4 species; // x altitude in metres above the valley floors where conifers take over, y half the width of
+                  // that change, z share of conifers in the valleys, w unused
+    vec4 size;    // x mean height of the trees in metres, y their spread (fraction), z mean height of shrubs in
+                  // metres, w unused
+    uvec4 seed;   // x seed of the placement, yzw unused
+};
+
+// A cell's tree, if any.
+struct TreeSite {
+    vec4 posHeight; // xyz the stem's foot on the ground, w the height in units (0: no tree in this cell)
+    vec4 kind;      // x species (TREE_SITE_*), y turn about +y in radians, z forest weight there, w unused
+};
+
 // Weights of the land-cover classes at a place, summing to 1.
 struct TreeLandCover {
     vec4 vegetation; // x forest, y meadow, z field, w scrub
@@ -652,6 +669,57 @@ TREE_FN TreeLandCover treeLandCoverFrom(TreeTerrainParams t, vec4 site) {
 
 TREE_FN TreeLandCover treeLandCover(TreeTerrainParams t, float x, float z) {
     return treeLandCoverFrom(t, treeLandSite(t, x, z));
+}
+
+// --- tree placement ------------------------------------------------------------
+
+#define TREE_SITE_BROADLEAF 0.0f
+#define TREE_SITE_CONIFER 1.0f
+#define TREE_SITE_SHRUB 2.0f
+
+// The tree of cell (cx, cz), whose square spans [cx, cx + 1) x [cz, cz + 1) cells from the origin. The candidate
+// lies near the cell's middle, jittered by up to half of p.grid.y cells each way, so trees stand at least
+// (1 - p.grid.y) cells apart. It becomes a tree with the probability of the forest weight there, else a shrub with
+// the scrub weight times p.grid.z; species and height come from the altitude (conifers higher up, smaller trees
+// towards the tree line). Each cell's decisions hash its own indices, so a cell's tree is the same whenever and
+// in whatever order it is evaluated.
+TREE_FN TreeSite treeSiteAt(TreeTerrainParams t, TreePlacementParams p, int cx, int cz) {
+    TreeSite site;
+    site.posHeight = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    site.kind = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    uint key = treeHash2(treeHash2(uint(cx), uint(cz)), p.seed.x);
+    float cell = p.grid.x;
+    float x = (float(cx) + 0.5f + p.grid.y * (treeRand(key, 1u) - 0.5f)) * cell;
+    float z = (float(cz) + 0.5f + p.grid.y * (treeRand(key, 2u) - 0.5f)) * cell;
+    // Off the pot's wall.
+    if (treeTerrainRadius(t, x, z) >= 0.98f) {
+        return site;
+    }
+    vec4 land = treeLandSite(t, x, z);
+    TreeLandCover c = treeLandCoverFrom(t, land);
+    float u = treeRand(key, 3u);
+    float forest = c.vegetation.x;
+    bool shrub = u >= forest;
+    if (shrub && u >= forest + p.grid.z * c.vegetation.w) {
+        return site;
+    }
+    float altitude = land.y;
+    float meters;
+    float species;
+    if (shrub) {
+        species = TREE_SITE_SHRUB;
+        meters = p.size.z * (0.6f + 0.8f * treeRand(key, 5u));
+    } else {
+        float conifers =
+            mix(p.species.z, 1.0f, smoothstep(p.species.x - p.species.y, p.species.x + p.species.y, altitude));
+        species = treeRand(key, 4u) < conifers ? TREE_SITE_CONIFER : TREE_SITE_BROADLEAF;
+        float treeLine = t.cover.z;
+        meters = p.size.x * (1.0f + p.size.y * (2.0f * treeRand(key, 5u) - 1.0f)) *
+                 (1.0f - 0.6f * smoothstep(treeLine - 300.0f, treeLine, altitude));
+    }
+    site.posHeight = vec4(x, treeTerrainHeight(t, x, z), z, meters / p.grid.w);
+    site.kind = vec4(species, 2.0f * TREE_PI * treeRand(key, 6u), forest, 0.0f);
+    return site;
 }
 
 // Scene materials, by the w of a vertex colour.
