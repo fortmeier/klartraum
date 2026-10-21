@@ -58,6 +58,10 @@ layout(std430, binding = 8) readonly buffer Settings {
 layout(std430, binding = 9) buffer Stats {
     uint stats[];
 };
+// The vertices' canopy weight in x.
+layout(std430, binding = 12) readonly buffer Extras {
+    vec4 extras[];
+};
 
 layout(push_constant) uniform Push {
     uint offset;   // of the pool in the output buffers
@@ -112,7 +116,11 @@ void main() {
         cover.vegetation = clamp(covers[v], vec4(0.0f), vec4(1.0f));
         cover.bare = vec4(max(1.0f - dot(cover.vegetation, vec4(1.0f)), 0.0f), 0.0f, 0.0f, 0.0f);
         vec3 albedo = treeTerrainAlbedo(t, cover, pos, 2.0f * spacing, s.season.x);
-        albedo = mix(albedo, vec3(0.8f), treeTerrainSnow(t, pos, normal, s.season.x, s.season.y));
+        float canopy = clamp(extras[v].x, 0.0f, 1.0f);
+        if (canopy > 0.0f) {
+            albedo = mix(albedo, treeCanopyAlbedo(t, config.placement, pos, 2.0f * spacing, s.season.x), canopy);
+        }
+        albedo = mix(albedo, vec3(0.8f), (1.0f - 0.5f * canopy) * treeTerrainSnow(t, pos, normal, s.season.x, s.season.y));
         vec2 light = treeLightAt(s, pos + 0.5f * s.lightGridMin.w * normal);
         vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
         vec3 displayed = treeOutputColor(color, s).rgb;

@@ -38,6 +38,7 @@ TreeTerrainGaussians::TreeTerrainGaussians(VulkanContext& vulkanContext, TreeTer
     const BufferRef lightRef = bufferOrPlaceholder(vulkanContext, light);
     write->setInput(lightRef.element, 10, lightRef.slot);
     write->setInput(camera, 11);
+    terrain.getExtras().connectTo(*write, 12);
     write->setDynamicGroupDispatchParams(terrain.getDispatchArgs());
     write->setPushConstants({glm::uvec2(poolOffset, poolSlots)});
 

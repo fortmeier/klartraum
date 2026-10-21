@@ -25,10 +25,14 @@ layout(std430, set = 1, binding = 5) readonly buffer Config {
 layout(std430, set = 1, binding = 6) readonly buffer Covers {
     vec4 covers[];
 };
+layout(std430, set = 1, binding = 7) readonly buffer Extras {
+    vec4 extras[];
+};
 
 layout(location = 0) out vec3 outWorldPos;
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec4 outCover; // forest, meadow, field, scrub
+layout(location = 3) out float outCanopy;
 
 const ivec2 corners[6] = ivec2[6](ivec2(0, 0), ivec2(1, 0), ivec2(1, 1), ivec2(0, 0), ivec2(1, 1), ivec2(0, 1));
 
@@ -48,5 +52,6 @@ void main() {
     outWorldPos = p;
     outNormal = v.xyz;
     outCover = covers[index];
+    outCanopy = extras[index].x;
     gl_Position = camera.proj * camera.view * vec4(p, 1.0f);
 }

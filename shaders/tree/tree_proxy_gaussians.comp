@@ -79,10 +79,13 @@ void main() {
     float radius = shape.z * h;
     vec3 up = vec3(0.0f, 1.0f, 0.0f);
     vec3 albedo = mix(vec3(crown), vec3(0.8f), 0.6f * s.season.y);
+    // Fading in where the canopy fades out.
+    crown.w *= site.kind.w;
+    float trunkAlpha = shape.w > 0.0f ? 0.95f * site.kind.w : 0.0f;
     uint base = pc.offset + 4u * i;
     float trunkTop = (shape.x + 0.05f) * h;
     write(base, foot + vec3(0.0f, 0.5f * trunkTop, 0.0f), vec3(shape.w * h, 0.5f * trunkTop, shape.w * h) * 0.7f,
-          lit(vec3(0.09f, 0.07f, 0.05f), foot, normalize(s.sun.xyz), shape.w > 0.0f ? 0.95f : 0.0f));
+          lit(vec3(0.09f, 0.07f, 0.05f), foot, normalize(s.sun.xyz), trunkAlpha));
     float below = shape.y - shape.x;
     float above = 1.0f - shape.y;
     write(base + 1u, foot + vec3(0.0f, (shape.x + 0.65f * below) * h, 0.0f),

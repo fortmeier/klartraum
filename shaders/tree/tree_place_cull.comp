@@ -7,7 +7,8 @@
 // Culls the trees of the placement's pool for this frame (TreeProxies): one
 // workgroup per slot. A tile outside the view is skipped at once by its
 // bounds; of the others, each tree whose box is in the view and whose crown
-// spans at least pc.minPixels pixels is appended to the visible instances,
+// spans at least pc.minPixels pixels is appended to the visible instances
+// with how far it has faded in (kind.w, where the forest canopy fades out),
 // unless it is one of the near trees generated in full (within the near
 // radius). Trees beyond the capacity are counted.
 
@@ -48,6 +49,8 @@ layout(std430, binding = 8) readonly buffer Near {
 layout(push_constant) uniform Push {
     uint capacity;
     float minPixels;
+    float fadeAbove; // the trees fade in up to this size (kind.w of the visible sites), 0: no fading
+    float pad;
 }
 pc;
 
@@ -84,9 +87,12 @@ void main() {
         if (treeBoxOutsideFrustum(viewProj, foot - r, foot + r + vec3(0.0f, h, 0.0f))) {
             continue;
         }
-        if (treePixelDiameter(eye, foot + vec3(0.0f, 0.5f * h, 0.0f), 0.5f * h, focal) < pc.minPixels) {
+        float pixels = treePixelDiameter(eye, foot + vec3(0.0f, 0.5f * h, 0.0f), 0.5f * h, focal);
+        if (pixels < pc.minPixels) {
             continue;
         }
+        site.kind.w = pc.fadeAbove > pc.minPixels ? treeProxyFade(vec4(pc.minPixels, pc.fadeAbove, 0.0f, 0.0f), pixels)
+                                                  : 1.0f;
         uint k = atomicAdd(counter[0], 1u);
         if (k < pc.capacity) {
             visible[k] = site;

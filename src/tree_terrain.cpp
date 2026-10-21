@@ -4,6 +4,8 @@
 
 #include "klartraum/tree/tree_terrain.hpp"
 
+#include "klartraum/storage_draw_component.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 #include <thread>
@@ -106,13 +108,21 @@ std::vector<TreeTerrainNode> selectTerrainNodesReference(const TreeTerrainConfig
 }
 
 TreeTerrain::TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& terrain,
-                         std::shared_ptr<CameraUboType> camera, const TreeTerrainLodConfig& lodConfig) {
+                         std::shared_ptr<CameraUboType> camera, const TreeTerrainLodConfig& lodConfig,
+                         const TreeCanopy& canopy, std::shared_ptr<HostValues<TreeRenderSettings>> settings) {
+    if (canopy.enabled && !settings) {
+        throw std::invalid_argument("TreeTerrain: a canopy needs the render settings");
+    }
     // The vertex pass keeps a node's grid with a border of two in shared memory, and morphs by vertex parity.
     if (lodConfig.quads > 32u || lodConfig.quads % 2u != 0u || lodConfig.quads == 0u) {
         throw std::invalid_argument("TreeTerrain: quads per node side must be even and at most 32");
     }
     config.terrain = terrain;
     config.lod = makeTreeTerrainLod(terrain, lodConfig);
+    if (canopy.enabled) {
+        config.placement = canopy.placement;
+        config.canopy = glm::vec4(canopy.fullBelow, canopy.noneAbove, 0.0f, 0.0f);
+    }
     bounds = buildTerrainBounds(config);
 
     auto configBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<TreeTerrainConfig>>>(vulkanContext, 1u);
@@ -164,6 +174,10 @@ TreeTerrain::TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& 
         vulkanContext, lodConfig.nodeCapacity * row * row, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     coverData->setName("TreeTerrainCovers");
+    extraData = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(
+        vulkanContext, lodConfig.nodeCapacity * row * row, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    extraData->setName("TreeTerrainExtras");
     vertices =
         std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_terrain_vertices.comp.spv");
     vertices->setName("TreeTerrainVertices");
@@ -172,6 +186,13 @@ TreeTerrain::TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& 
     vertices->setInput(camera, 2);
     vertices->setInput(vertexData, 3);
     vertices->setInput(coverData, 4);
+    if (settings) {
+        vertices->setInput(settings, 5);
+    } else {
+        const BufferRef placeholder = bufferOrPlaceholder(vulkanContext, BufferRef{});
+        vertices->setInput(placeholder.element, 5, placeholder.slot);
+    }
+    vertices->setInput(extraData, 6);
     vertices->setDynamicGroupDispatchParams(dispatchArgs);
     vertices->setPushConstants({0u});
 }
@@ -198,6 +219,15 @@ std::vector<glm::vec4> TreeTerrain::readCovers(uint32_t pathId) {
     const uint32_t row = uint32_t(config.lod.ranges.z) + 1u;
     std::vector<glm::vec4> values(coverData->getBuffer(pathId).getSize());
     coverData->getBuffer(pathId).memcopyTo(values);
+    values.resize(size_t(count) * row * row);
+    return values;
+}
+
+std::vector<glm::vec4> TreeTerrain::readExtras(uint32_t pathId) {
+    const uint32_t count = std::min(readStats(pathId)[kTreeTerrainStatSelected], config.lod.levels.z);
+    const uint32_t row = uint32_t(config.lod.ranges.z) + 1u;
+    std::vector<glm::vec4> values(extraData->getBuffer(pathId).getSize());
+    extraData->getBuffer(pathId).memcopyTo(values);
     values.resize(size_t(count) * row * row);
     return values;
 }

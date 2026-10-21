@@ -101,6 +101,17 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     const uint32_t mossSlots = mossCopies.empty() ? 0u : config.mossPool;
     const bool terrainGaussianPool = !classical && config.terrainLod;
     const uint32_t proxySlots = scene.placed && !classical ? 4u * config.proxies.capacity : 0u;
+    // The canopy and the proxies crossfade over the same band of tree sizes, in rendered pixels.
+    TreeProxyConfig proxyConfig = config.proxies;
+    TreeCanopy canopy;
+    if (scene.placed) {
+        canopy.enabled = true;
+        canopy.placement = placement;
+        canopy.fullBelow = config.canopyPixels.x * float(supersample);
+        canopy.noneAbove = config.canopyPixels.y * float(supersample);
+        proxyConfig.minPixels = canopy.fullBelow;
+        proxyConfig.fadeAbove = canopy.noneAbove;
+    }
     sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u) + proxySlots;
     // The classical renderer draws only the captured lantern and moss as Gaussians.
     sources.trees = !classical;
@@ -115,7 +126,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         splats = moss->getGaussians();
     }
     if (config.terrainLod) {
-        terrain = std::make_unique<TreeTerrain>(vulkanContext, scene.terrain, camera, config.terrain);
+        terrain = std::make_unique<TreeTerrain>(vulkanContext, scene.terrain, camera, config.terrain, canopy, settings);
     }
     if (terrainGaussianPool) {
         terrainGaussians = std::make_unique<TreeTerrainGaussians>(
@@ -127,13 +138,13 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         TreeTileLayout layout = config.tiles;
         if (layout.range <= 0.0f) {
             const float focal = 0.5f * float(renderExtent.height) / std::tan(glm::radians(20.0f));
-            layout.range = scene.config.scale.treeHeightUnits() * focal / config.proxies.minPixels;
+            layout.range = scene.config.scale.treeHeightUnits() * focal / proxyConfig.minPixels;
         }
         tiles = std::make_unique<TreePlacementTiles>(vulkanContext, scene.terrain, placement, layout);
     }
     if (tiles && !classical) {
         proxies = std::make_unique<TreeProxies>(vulkanContext, *tiles, camera, settings, renderExtent,
-                                                TreeRenderInputs{BufferRef{}, lightVolume->getLight()}, config.proxies);
+                                                TreeRenderInputs{BufferRef{}, lightVolume->getLight()}, proxyConfig);
         proxyGaussians = std::make_unique<TreeProxyGaussians>(
             vulkanContext, *proxies, splats, gaussians->getExtraOffset() + sources.extraSlots - proxySlots,
             config.proxies.capacity, settings, camera, lightVolume->getLight());
@@ -162,7 +173,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                                                      renderExtent, inputs);
         if (tiles) {
             proxies = std::make_unique<TreeProxies>(vulkanContext, *tiles, camera, settings, renderExtent, inputs,
-                                                    config.proxies);
+                                                    proxyConfig);
         }
         if (terrain) {
             terrainRenderer =
