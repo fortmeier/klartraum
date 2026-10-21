@@ -166,6 +166,24 @@ struct TreeTerrainParams {
     vec4 cover;
 };
 
+// The terrain's quadtree for Continuous Distance-Dependent Level of Detail (CDLOD, Strugar 2009). Level 0 has
+// the finest nodes, level levels.x - 1 is the root; a node of level L is twice the size of one of level L - 1.
+struct TreeTerrainLod {
+    vec4 root;    // xy the root node's lower corner (x, z), z its size, w unused
+    vec4 ranges;  // x range factor: a node of size s is drawn up to x * s from the camera; y where its morph towards
+                  // the next coarser level starts, as a fraction of the band between its range and the finer
+                  // level's; z quads per node side; w unused
+    uvec4 levels; // x levels of the quadtree, y levels of the height bounds pyramid, z capacity of selected nodes,
+                  // w capacity of each selection queue
+    vec4 reserved;
+};
+
+// What the terrain passes read: the ground and its quadtree.
+struct TreeTerrainConfig {
+    TreeTerrainParams terrain;
+    TreeTerrainLod lod;
+};
+
 // Weights of the land-cover classes at a place, summing to 1.
 struct TreeLandCover {
     vec4 vegetation; // x forest, y meadow, z field, w scrub
@@ -483,6 +501,86 @@ TREE_FN float treeTerrainHeight(TreeTerrainParams t, float x, float z) {
     float bumps = t.soil.z * (treeFbm(vec3(x * 3.0f, 0.0f, z * 3.0f)) - 0.5f);
     float soil = t.soil.x + t.soil.y * (1.0f - r * r) + bumps * (1.0f - r);
     return soil + treeTerrainRelief(t, x, z);
+}
+
+// --- terrain level of detail ---------------------------------------------------
+
+#define TREE_TERRAIN_CULL 0u
+#define TREE_TERRAIN_DRAW 1u
+#define TREE_TERRAIN_SPLIT 2u
+
+TREE_FN float treeTerrainNodeSize(TreeTerrainLod lod, uint level) {
+    return lod.root.z * exp2(float(level) - float(lod.levels.x - 1u));
+}
+
+// How far from the camera nodes of `level` are drawn.
+TREE_FN float treeTerrainRange(TreeTerrainLod lod, uint level) {
+    return lod.ranges.x * treeTerrainNodeSize(lod, level);
+}
+
+// How far a vertex at distance `dist` of a node of `level` has morphed towards the next coarser level, in [0, 1].
+TREE_FN float treeTerrainMorph(TreeTerrainLod lod, uint level, float dist) {
+    float end = treeTerrainRange(lod, level);
+    float start = mix(0.5f * end, end, lod.ranges.y);
+    return clamp((dist - start) / (end - start), 0.0f, 1.0f);
+}
+
+// Index of the height bounds of node (ix, iz) of `level` in the pyramid: level p of the pyramid has 2^p x 2^p
+// cells (rows along x) and starts at (4^p - 1) / 3; nodes finer than the pyramid use their ancestor's cell.
+TREE_FN uint treeTerrainBoundsIndex(TreeTerrainLod lod, uint ix, uint iz, uint level) {
+    uint depth = lod.levels.x - 1u - level;
+    uint p = min(depth, lod.levels.y - 1u);
+    uint shift = depth - p;
+    return ((1u << (2u * p)) - 1u) / 3u + (iz >> shift) * (1u << p) + (ix >> shift);
+}
+
+// Distance from `eye` to the box [lo, hi].
+TREE_FN float treeBoxDistance(vec3 eye, vec3 lo, vec3 hi) {
+    return length(max(max(lo - eye, eye - hi), vec3(0.0f, 0.0f, 0.0f)));
+}
+
+// Whether the box [lo, hi] lies entirely on the negative side of `plane`.
+TREE_FN bool treeBoxBehindPlane(vec4 plane, vec3 lo, vec3 hi) {
+    vec3 far = vec3(plane.x >= 0.0f ? hi.x : lo.x, plane.y >= 0.0f ? hi.y : lo.y, plane.z >= 0.0f ? hi.z : lo.z);
+    return dot(vec3(plane.x, plane.y, plane.z), far) + plane.w < 0.0f;
+}
+
+// Whether the box [lo, hi] is outside the view of `viewProj` (Vulkan clip space), by its four side planes and the
+// near plane.
+TREE_FN bool treeBoxOutsideFrustum(mat4 m, vec3 lo, vec3 hi) {
+    vec4 r0 = vec4(m[0][0], m[1][0], m[2][0], m[3][0]);
+    vec4 r1 = vec4(m[0][1], m[1][1], m[2][1], m[3][1]);
+    vec4 r2 = vec4(m[0][2], m[1][2], m[2][2], m[3][2]);
+    vec4 r3 = vec4(m[0][3], m[1][3], m[2][3], m[3][3]);
+    return treeBoxBehindPlane(r3 + r0, lo, hi) || treeBoxBehindPlane(r3 - r0, lo, hi) ||
+           treeBoxBehindPlane(r3 + r1, lo, hi) || treeBoxBehindPlane(r3 - r1, lo, hi) || treeBoxBehindPlane(r2, lo, hi);
+}
+
+// Whether the rectangle [lo, hi] in (x, z) reaches into the soil's outline.
+TREE_FN bool treeTerrainRectInSoil(TreeTerrainParams t, vec2 lo, vec2 hi) {
+    vec2 nearest = clamp(vec2(0.0f, 0.0f), lo, hi);
+    return treeTerrainRadius(t, nearest.x, nearest.y) < 1.0f;
+}
+
+// What the selection does with node (ix, iz) of `level`, whose heights lie in `heights`: cull it (outside the
+// soil or the view), draw it, or split it into its four children because the finer level's range reaches it.
+TREE_FN uint treeTerrainNodeAction(TreeTerrainConfig c, mat4 viewProj, vec3 eye, uint ix, uint iz, uint level,
+                                   vec2 heights) {
+    float size = treeTerrainNodeSize(c.lod, level);
+    vec2 lo = vec2(c.lod.root.x + float(ix) * size, c.lod.root.y + float(iz) * size);
+    vec2 hi = lo + vec2(size, size);
+    if (!treeTerrainRectInSoil(c.terrain, lo, hi)) {
+        return TREE_TERRAIN_CULL;
+    }
+    vec3 lo3 = vec3(lo.x, heights.x, lo.y);
+    vec3 hi3 = vec3(hi.x, heights.y, hi.y);
+    if (treeBoxOutsideFrustum(viewProj, lo3, hi3)) {
+        return TREE_TERRAIN_CULL;
+    }
+    if (level == 0u || treeBoxDistance(eye, lo3, hi3) > treeTerrainRange(c.lod, level - 1u)) {
+        return TREE_TERRAIN_DRAW;
+    }
+    return TREE_TERRAIN_SPLIT;
 }
 
 // --- land cover --------------------------------------------------------------
