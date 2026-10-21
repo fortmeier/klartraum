@@ -59,6 +59,10 @@ struct BonsaiRenderConfig {
     /// view of 40 degrees; the nearest tiles come first when the pool is too small.
     TreeTileLayout tiles{64, 512, 64, 0.0f};
     TreeProxyConfig proxies{131072, 3.0f};
+    /// When the trees follow the placement: the terrain carries the forest canopy where trees span fewer than
+    /// x output pixels, the proxies take over from y (crossfading between); proxies.minPixels and fadeAbove
+    /// follow from these.
+    glm::vec2 canopyPixels{4.0f, 8.0f};
     TreeTerrainLodConfig terrain;
 };
 

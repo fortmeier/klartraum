@@ -167,6 +167,17 @@ struct TreeTerrainParams {
     vec4 cover;
 };
 
+// Where trees grow (treeSiteAt()): one candidate per cell of a square grid over the soil.
+struct TreePlacementParams {
+    vec4 grid;    // x cell size in units, y jitter of a candidate within its cell (fraction of the cell), z chance of a
+                  // shrub where the land cover is scrub, w metres per unit
+    vec4 species; // x altitude in metres above the valley floors where conifers take over, y half the width of
+                  // that change, z share of conifers in the valleys, w unused
+    vec4 size;    // x mean height of the trees in metres, y their spread (fraction), z mean height of shrubs in
+                  // metres, w unused
+    uvec4 seed;   // x seed of the placement, yzw unused
+};
+
 // The terrain's quadtree for Continuous Distance-Dependent Level of Detail (CDLOD, Strugar 2009). Level 0 has
 // the finest nodes, level levels.x - 1 is the root; a node of level L is twice the size of one of level L - 1.
 struct TreeTerrainLod {
@@ -179,21 +190,14 @@ struct TreeTerrainLod {
     vec4 reserved;
 };
 
-// What the terrain passes read: the ground and its quadtree.
+// What the terrain passes read: the ground, its quadtree, and the forest canopy that stands in for trees too small
+// to draw one by one (treeCanopyWeight()).
 struct TreeTerrainConfig {
     TreeTerrainParams terrain;
     TreeTerrainLod lod;
-};
-
-// Where trees grow (treeSiteAt()): one candidate per cell of a square grid over the soil.
-struct TreePlacementParams {
-    vec4 grid;    // x cell size in units, y jitter of a candidate within its cell (fraction of the cell), z chance of a
-                  // shrub where the land cover is scrub, w metres per unit
-    vec4 species; // x altitude in metres above the valley floors where conifers take over, y half the width of
-                  // that change, z share of conifers in the valleys, w unused
-    vec4 size;    // x mean height of the trees in metres, y their spread (fraction), z mean height of shrubs in
-                  // metres, w unused
-    uvec4 seed;   // x seed of the placement, yzw unused
+    TreePlacementParams placement; // of the trees whose canopy the terrain carries
+    vec4 canopy; // x tree size in pixels below which the canopy stands in fully, y above which not at all, zw unused;
+                 // the canopy is off where x <= 0
 };
 
 // A cell's tree, if any.
@@ -680,6 +684,29 @@ TREE_FN TreeLandCover treeLandCover(TreeTerrainParams t, float x, float z) {
 
 // --- tree placement ------------------------------------------------------------
 
+// The share of conifers among the trees at `altitude` metres above the valley floors.
+TREE_FN float treeConiferShare(TreePlacementParams p, float altitude) {
+    return mix(p.species.z, 1.0f, smoothstep(p.species.x - p.species.y, p.species.x + p.species.y, altitude));
+}
+
+// The mean height of the trees at `altitude` in units: the placement's height, smaller towards the tree line.
+TREE_FN float treeMeanTreeHeight(TreeTerrainParams t, TreePlacementParams p, float altitude) {
+    float treeLine = t.cover.z;
+    return p.size.x / p.grid.w * (1.0f - 0.6f * smoothstep(treeLine - 300.0f, treeLine, altitude));
+}
+
+// How much the forest canopy stands in for the trees at a place where a tree spans `pixels` pixels: 1 below
+// canopy.x, 0 above canopy.y, smoothly between (the trees' proxies fade the other way, treeProxyFade()).
+TREE_FN float treeCanopyWeight(vec4 canopy, float pixels) {
+    if (canopy.x <= 0.0f) {
+        return 0.0f;
+    }
+    return 1.0f - smoothstep(canopy.x, canopy.y, pixels);
+}
+
+// How much a tree's proxy shows when it spans `pixels` pixels: the complement of treeCanopyWeight().
+TREE_FN float treeProxyFade(vec4 canopy, float pixels) { return 1.0f - treeCanopyWeight(canopy, pixels); }
+
 #define TREE_SITE_BROADLEAF 0.0f
 #define TREE_SITE_CONIFER 1.0f
 #define TREE_SITE_SHRUB 2.0f
@@ -717,12 +744,8 @@ TREE_FN TreeSite treeSiteAt(TreeTerrainParams t, TreePlacementParams p, int cx, 
         species = TREE_SITE_SHRUB;
         meters = p.size.z * (0.6f + 0.8f * treeRand(key, 5u));
     } else {
-        float conifers =
-            mix(p.species.z, 1.0f, smoothstep(p.species.x - p.species.y, p.species.x + p.species.y, altitude));
-        species = treeRand(key, 4u) < conifers ? TREE_SITE_CONIFER : TREE_SITE_BROADLEAF;
-        float treeLine = t.cover.z;
-        meters = p.size.x * (1.0f + p.size.y * (2.0f * treeRand(key, 5u) - 1.0f)) *
-                 (1.0f - 0.6f * smoothstep(treeLine - 300.0f, treeLine, altitude));
+        species = treeRand(key, 4u) < treeConiferShare(p, altitude) ? TREE_SITE_CONIFER : TREE_SITE_BROADLEAF;
+        meters = treeMeanTreeHeight(t, p, altitude) * p.grid.w * (1.0f + p.size.y * (2.0f * treeRand(key, 5u) - 1.0f));
     }
     site.posHeight = vec4(x, treeTerrainHeight(t, x, z), z, meters / p.grid.w);
     site.kind = vec4(species, 2.0f * TREE_PI * treeRand(key, 6u), forest, 0.0f);
@@ -981,6 +1004,33 @@ TREE_FN vec3 treeTerrainAlbedo(TreeTerrainParams t, TreeLandCover c, vec3 pos, f
     albedo += c.vegetation.y * meadow + c.vegetation.z * treeFieldAlbedo(m, fm, season, t.seed.x) +
               c.vegetation.w * scrub + c.bare.x * rock;
     return albedo;
+}
+
+// The albedo of the forest canopy at world position pos (TreeTerrainConfig::canopy) in season S, seen with
+// `footprint` world units per pixel: the crowns of broadleaves and conifers mixed by their share at the altitude,
+// each crown (a cell of the placement) a little apart in colour, darker in the gaps between crowns; the crowns
+// and gaps fade to their mean where a pixel covers them.
+TREE_FN vec3 treeCanopyAlbedo(TreeTerrainParams t, TreePlacementParams p, vec3 pos, float footprint, float season) {
+    float altitude = treeTerrainAltitude(t, pos);
+    TreeSite crown;
+    crown.posHeight = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    crown.kind = vec4(TREE_SITE_BROADLEAF, 0.0f, 1.0f, 0.0f);
+    vec3 broadleaf = vec3(treeProxyCrown(crown, season));
+    crown.kind.x = TREE_SITE_CONIFER;
+    vec3 conifer = vec3(treeProxyCrown(crown, season));
+    vec3 mean = mix(broadleaf, conifer, treeConiferShare(p, altitude));
+    // Crowns about a cell wide: their own shade of the mix, lit tops and dark gaps.
+    float cell = p.grid.x;
+    vec3 c = pos / cell;
+    float resolved = treeTerrainResolved(footprint, cell);
+    float tone = mix(0.5f, treeValueNoise(vec3(c.x, 0.0f, c.z) * 1.3f), resolved);
+    float gaps = mix(0.5f, treeFbm(vec3(c.x, 0.0f, c.z) * 2.1f + vec3(3.1f, 0.0f, 7.7f)), resolved);
+    float conifers = treeConiferShare(p, altitude);
+    vec3 albedo = mix(broadleaf, conifer, clamp(conifers + 0.6f * (tone - 0.5f), 0.0f, 1.0f));
+    albedo *= 0.75f + 0.5f * smoothstep(0.3f, 0.7f, gaps);
+    // Far away the canopy is its mean colour (as the mean of the crowns and gaps above). Crowns shade each other
+    // and the ground between them, which a surface facing up does not: 0.55, matched to the trees' proxies.
+    return 0.55f * mix(mean, albedo, resolved);
 }
 
 // The snow line in metres above the valley floors in season S: 1,300 m in summer, 1,050 m in spring and fall,

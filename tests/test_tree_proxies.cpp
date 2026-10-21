@@ -11,6 +11,9 @@
  *   holds the capacity
  * - theRendererDrawsNearTreesAndProxies: at scale 0.75 the renderer generates the trees nearest to the camera in
  *   full and draws the others as proxies, none of them within the near trees' radius
+ * - canopyAndProxiesCrossfade: looking down on a forest at scale 1 from farther and farther away, as its trees shrink
+ *   from 30 to 2 pixels and the canopy takes over from the proxies, the forest's mean colour changes gradually in
+ *   both renderers and nothing of it turns black
  * - proxiesRenderBothWays: looking down onto a forest edge in summer, the proxies cover nearly the same pixels
  *   classically and as Gaussians (IoU above 0.6); images and the GPU time of a view over the forest are written
  **/
@@ -311,4 +314,74 @@ TEST_F(TreeProxiesTest, proxiesRenderBothWays) {
                 double(either) / double(extent.width * extent.height));
     EXPECT_GT(iou, 0.6);
     EXPECT_LT(either, size_t(extent.width * extent.height * 9 / 10));
+}
+
+TEST_F(TreeProxiesTest, canopyAndProxiesCrossfade) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.scale.s = 1.0f;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    // A forest in a valley (all forest within 0.04 units of it).
+    const glm::vec2 at(-0.62f, 0.32f);
+    const glm::vec3 ground(at.x, scene.soilHeight(at.x, at.y), at.y);
+    const VkExtent2D extent{320, 180};
+    for (int gaussian = 0; gaussian < 2; ++gaussian) {
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig config;
+        config.extent = extent;
+        config.mode = gaussian ? BonsaiRenderMode::Gaussian : BonsaiRenderMode::Classical;
+        BonsaiRenderer renderer(*vc, scene, target, config);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(renderer.getOutput());
+        renderer.initialize(1);
+        renderer.setSeason(2.0f);
+        std::vector<glm::vec3> means;
+        std::vector<float> pixels;
+        for (int k = 0; k <= 16; ++k) {
+            // From about 30 down to 2 pixels per tree.
+            const float distance = 0.07f * std::pow(1.2f, float(k));
+            const glm::vec3 eye = ground + distance * glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f));
+            setCamera(renderer.getCamera()->ubo, eye, ground, 40.0f, 16.0f / 9.0f, 1e-5f, 100.0f);
+            renderer.getCamera()->update(0);
+            renderer.setView(eye);
+            for (int frame = 0; frame < 8 && renderer.getPendingTiles() > 0; ++frame) {
+                graph.submitAndWait(vc->getGraphicsQueue(), 0);
+                renderer.setView(eye);
+            }
+            graph.submitAndWait(vc->getGraphicsQueue(), 0);
+            const std::vector<uint8_t> image =
+                readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+            if (k % 4 == 0) {
+                writePpm(std::string(gaussian ? "crossfade_gaussian_" : "crossfade_classical_") + std::to_string(k),
+                         image, extent);
+            }
+            // The middle of the image, which stays on the soil.
+            glm::dvec3 sum(0.0);
+            int black = 0, count = 0;
+            for (uint32_t y = extent.height / 4; y < 3 * extent.height / 4; ++y) {
+                for (uint32_t x = extent.width / 4; x < 3 * extent.width / 4; ++x) {
+                    const size_t i = (size_t(y) * extent.width + x) * 4;
+                    sum += glm::dvec3(image[i + 2], image[i + 1], image[i]) / 255.0;
+                    black += covered(image, extent, x, y) ? 0 : 1;
+                    ++count;
+                }
+            }
+            EXPECT_EQ(black, 0) << gaussian << " " << k;
+            means.push_back(glm::vec3(sum / double(count)));
+            const float focal = 0.5f * float(extent.height) / std::tan(glm::radians(20.0f));
+            pixels.push_back(scene.config.scale.treeHeightMeters() / scene.config.scale.metersPerUnit() * focal /
+                             distance);
+        }
+        float largest = 0.0f;
+        for (size_t k = 0; k < means.size(); ++k) {
+            std::printf("%s: tree %5.1f px, mean %.3f %.3f %.3f\n", gaussian ? "Gaussian" : "classical", pixels[k],
+                        means[k].x, means[k].y, means[k].z);
+            if (k > 0) {
+                const glm::vec3 d = glm::abs(means[k] - means[k - 1]);
+                largest = std::max(largest, d.x + d.y + d.z);
+            }
+        }
+        // The view's content changes with the distance too: steps of 20 % in distance change the mean by at most
+        // a little, also where the canopy takes over (measured 0.034 classically, 0.065 as Gaussians).
+        EXPECT_LT(largest, 0.08f) << gaussian;
+    }
 }

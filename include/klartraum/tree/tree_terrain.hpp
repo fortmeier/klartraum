@@ -10,6 +10,7 @@
 
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/tree/tree_model.hpp"
 #include "klartraum/vulkan_gaussian_splatting_types.hpp"
 
@@ -32,6 +33,15 @@ struct TreeTerrainLodConfig {
     float morphStart = 0.66f;     ///< within the band between the finer level's range and the node's own
     uint32_t nodeCapacity = 1024; ///< each holds (quads + 1)^2 vertices of 16 bytes
     uint32_t queueCapacity = 4096;
+};
+
+/// The forest canopy the terrain carries where the trees of `placement` span fewer than `fullBelow` pixels, fading
+/// out up to `noneAbove` pixels (treeCanopyWeight()); off when `enabled` is false.
+struct TreeCanopy {
+    bool enabled = false;
+    TreePlacementParams placement{};
+    float fullBelow = 8.0f;
+    float noneAbove = 16.0f;
 };
 
 /// The quadtree for `terrain`: its root square covers the soil's bounding box.
@@ -76,8 +86,10 @@ std::vector<TreeTerrainNode> selectTerrainNodesReference(const TreeTerrainConfig
  */
 class TreeTerrain {
 public:
+    /// `settings` (for the viewport) is needed with a canopy.
     TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& terrain, std::shared_ptr<CameraUboType> camera,
-                const TreeTerrainLodConfig& lodConfig = {});
+                const TreeTerrainLodConfig& lodConfig = {}, const TreeCanopy& canopy = {},
+                std::shared_ptr<HostValues<TreeRenderSettings>> settings = nullptr);
 
     const TreeTerrainConfig& getConfig() const { return config; }
     const std::vector<glm::vec2>& getBounds() const { return bounds; }
@@ -88,6 +100,8 @@ public:
     BufferRef getVertices() const { return {vertices, 3}; }
     /// The same vertices' land cover (TreeLandCover::vegetation; rock is the rest to 1).
     BufferRef getCovers() const { return {vertices, 4}; }
+    /// The same vertices' canopy weight in x (the share of the surface that is forest canopy).
+    BufferRef getExtras() const { return {vertices, 6}; }
     /// The selected nodes (TreeTerrainNode), the indirect draw arguments and the configuration buffer.
     BufferRef getNodes() const { return {vertices, 0}; }
     BufferRef getDrawArgs() const { return {select, 1}; }
@@ -103,6 +117,8 @@ public:
     std::vector<glm::vec4> readVertices(uint32_t pathId = 0);
     /// After a submission of `pathId`: the land cover of the selected nodes' vertices (see getCovers()).
     std::vector<glm::vec4> readCovers(uint32_t pathId = 0);
+    /// After a submission of `pathId`: the canopy weights of the selected nodes' vertices (see getExtras()).
+    std::vector<glm::vec4> readExtras(uint32_t pathId = 0);
 
 private:
     TreeTerrainConfig config{};
@@ -112,6 +128,7 @@ private:
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> nodes;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> vertexData;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> coverData;
+    std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> extraData;
     std::shared_ptr<DispatchIndirectCommandBufferElement> dispatchArgs;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> stats;
 };

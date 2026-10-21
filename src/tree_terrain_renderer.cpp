@@ -21,6 +21,7 @@ TreeTerrainRenderer::TreeTerrainRenderer(VulkanContext& vulkanContext, TreeTerra
                                                               terrain.getNodes(),
                                                               terrain.getConfigBuffer(),
                                                               terrain.getCovers(),
+                                                              terrain.getExtras(),
                                                           });
     StorageDrawComponent::Draw d;
     d.indirect = terrain.getDrawArgs();

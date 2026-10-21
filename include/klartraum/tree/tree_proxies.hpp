@@ -19,11 +19,15 @@ namespace klartraum {
 struct TreeProxyCullPush {
     uint32_t capacity = 0;
     float minPixels = 0.0f;
+    float fadeAbove = 0.0f;
+    float pad = 0.0f;
 };
 
 struct TreeProxyConfig {
     uint32_t capacity = 65536; ///< visible trees per frame, at most
     float minPixels = 4.0f;    ///< trees smaller on screen are left out
+    /// Trees fade in from minPixels to this size (treeProxyFade()), where a canopy fades out; 0: no fading.
+    float fadeAbove = 0.0f;
 };
 
 /**

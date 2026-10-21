@@ -33,7 +33,7 @@ TreeProxies::TreeProxies(VulkanContext& vulkanContext, TreePlacementTiles& tiles
     near->setName("TreeProxyNear");
     cull->setInput(near, 8);
     cull->setGroupCountX(tiles.getTileConfig().tiles.y);
-    cull->setPushConstants({TreeProxyCullPush{config.capacity, config.minPixels}});
+    cull->setPushConstants({TreeProxyCullPush{config.capacity, config.minPixels, config.fadeAbove, 0.0f}});
 
     auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
         vulkanContext, 1u,

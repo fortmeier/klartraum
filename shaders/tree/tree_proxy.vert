@@ -81,7 +81,8 @@ void main() {
     // Lower in the crown is darker: less light reaches there.
     float shade = 0.6f + 0.4f * clamp(p[corner].y / h, 0.0f, 1.0f);
     outAlbedo = trunk ? vec3(0.09f, 0.07f, 0.05f) : vec3(crown) * shade;
-    outCoverage = trunk ? 1.0f : crown.w;
+    // Fading in where the canopy fades out (kind.w).
+    outCoverage = (trunk ? 1.0f : crown.w) * site.kind.w;
     outWorldPos = world;
     outNormal = normal;
     gl_Position = camera.proj * camera.view * vec4(world, 1.0f);
