@@ -37,14 +37,15 @@ struct TreeLodSelectPush {
  * `tree_lod_select.comp` culls the copies outside the view and reserves room
  * for the others, and `tree_lod_write.comp` writes them, turned, scaled, on
  * their ground planes and coloured like captured Gaussians. Copies that do not
- * fit any more are left out (readCounter()[1]).
+ * fit any more are left out (readCounter()[1]). The pool is the first
+ * `poolSlots` extra slots, or all of them for 0.
  */
 class TreeMossLod {
 public:
     TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, const std::vector<MossPatch>& patches,
                 std::vector<TreeLodInstance> instances, std::shared_ptr<CameraUboType> camera,
                 std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light = {},
-                glm::vec4 boundaries = glm::vec4(160.0f, 48.0f, 12.0f, 0.15f));
+                glm::vec4 boundaries = glm::vec4(160.0f, 48.0f, 12.0f, 0.15f), uint32_t poolSlots = 0);
 
     /// The target's Gaussians, as the write pass leaves them; give these to the splatting backend.
     const GaussianSoABuffers& getGaussians() const { return gaussians; }

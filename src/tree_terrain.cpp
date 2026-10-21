@@ -146,7 +146,7 @@ TreeTerrain::TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& 
     select->setInput(boundsBuffer, 4);
     select->setInput(camera, 5);
     select->setInput(stats, 6);
-    auto dispatchArgs = std::make_shared<DispatchIndirectCommandBufferElement>(
+    dispatchArgs = std::make_shared<DispatchIndirectCommandBufferElement>(
         vulkanContext, 1u,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);

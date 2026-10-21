@@ -75,18 +75,29 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     TreeGaussianSources sources;
     sources.captured = std::move(lanternGaussians);
     sources.light = lightVolume->getLight();
-    sources.extraSlots = mossCopies.empty() ? 0u : config.mossPool;
+    const uint32_t mossSlots = mossCopies.empty() ? 0u : config.mossPool;
+    const bool terrainGaussianPool = !classical && config.terrainLod;
+    sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u);
     // The classical renderer draws only the captured lantern and moss as Gaussians.
     sources.trees = !classical;
     if (!classical) {
-        sources.surfels = sampleMeshSurfels(scene.mesh, config.meshGaussianSpacing, 1);
+        sources.surfels = sampleMeshSurfels(config.terrainLod ? potMesh : scene.mesh, config.meshGaussianSpacing, 1);
     }
     gaussians = std::make_unique<TreeGaussians>(vulkanContext, *generator, camera, settings, std::move(sources));
     GaussianSoABuffers splats = gaussians->getGaussians();
     if (!mossCopies.empty()) {
         moss = std::make_unique<TreeMossLod>(vulkanContext, *gaussians, mossPatches, mossCopies, camera, settings,
-                                             lightVolume->getLight(), config.mossLod);
+                                             lightVolume->getLight(), config.mossLod, mossSlots);
         splats = moss->getGaussians();
+    }
+    if (config.terrainLod) {
+        terrain = std::make_unique<TreeTerrain>(vulkanContext, scene.terrain, camera, config.terrain);
+    }
+    if (terrainGaussianPool) {
+        terrainGaussians = std::make_unique<TreeTerrainGaussians>(
+            vulkanContext, *terrain, splats, gaussians->getExtraOffset() + mossSlots, config.terrainPool, settings,
+            camera, lightVolume->getLight());
+        splats = terrainGaussians->getGaussians();
     }
 
     if (classical) {
@@ -109,8 +120,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                                                     renderExtent, inputs);
         meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, config.terrainLod ? potMesh : scene.mesh, settings,
                                                      renderExtent, inputs);
-        if (config.terrainLod) {
-            terrain = std::make_unique<TreeTerrain>(vulkanContext, scene.terrain, camera, config.terrain);
+        if (terrain) {
             terrainRenderer =
                 std::make_unique<TreeTerrainRenderer>(vulkanContext, *terrain, settings, renderExtent, inputs);
         }
