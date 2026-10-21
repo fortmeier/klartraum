@@ -15,15 +15,27 @@
  * - terrainIsContinuousAcrossTheRimBand: along rays from the middle to the rim the ground has no jumps, the
  *   relief falls to nothing at the rim, and beyond the outline the ground is the soil at the rim
  * - terrainIsDeterministicPerSeed: the same seed gives the same ground, another seed another landscape
+ * - landCoverWeightsSumToOne: the weights of the classes are in [0, 1] and sum to 1 everywhere, water is 0
+ * - landCoverIsAllForestAtSmallScales: up to scale 0.3 forest covers all of the soil
+ * - forestCoversHalfTheRegion: at scale 1 forest covers 50 +- 5 % of the soil for several seeds, measured on a
+ *   grid other than the calibration's; between, the share follows BonsaiScale::forestShare; land-cover maps are
+ *   written to build/TestingOutput/tree_terrain/
+ * - landCoverFormsConnectedAreas: forest and open land form large connected areas with few tiny islands
+ * - landCoverFollowsTheTerrain: fields lie mostly on slopes below 10 degrees and low ground; rock on steep
+ *   ground or above the tree line; no forest above the tree line
+ * - landCoverIsDeterministicPerSeed: the same seed gives the same land cover, another seed another one
  **/
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
+#include <vector>
 
 #include "klartraum/tree/bonsai_scene.hpp"
 
@@ -68,12 +80,12 @@ void forSoilGrid(const BonsaiScene& scene, int n, F f) {
     }
 }
 
-// A shaded height map of the soil (black outside its outline) to build/TestingOutput/tree_terrain/<name>.ppm.
-void writeHeightMap(const BonsaiScene& scene, const std::string& name, int width) {
+// A map of the soil from above, coloured by `color(x, z, height)` and shaded by the slopes (black outside the
+// soil's outline), to build/TestingOutput/tree_terrain/<name>.ppm.
+void writeShadedMap(const BonsaiScene& scene, const std::string& name, int width,
+                    const std::function<glm::vec3(float, float, float)>& color) {
     const TreeTerrainParams& t = scene.terrain;
     const int height = int(width * t.outline.y / t.outline.x);
-    const float low = t.soil.x - t.soil.z;
-    const float high = t.soil.x + t.soil.y + std::max(scene.config.scale.reliefUnits(), 0.05f);
     std::filesystem::create_directories("build/TestingOutput/tree_terrain");
     std::ofstream file("build/TestingOutput/tree_terrain/" + name + ".ppm", std::ios::binary);
     file << "P6\n" << width << " " << height << "\n255\n";
@@ -89,9 +101,7 @@ void writeHeightMap(const BonsaiScene& scene, const std::string& name, int width
                 const glm::vec3 n =
                     glm::normalize(glm::vec3(scene.soilHeight(x - step, z) - scene.soilHeight(x + step, z), 2.0f * step,
                                              scene.soilHeight(x, z - step) - scene.soilHeight(x, z + step)));
-                const float a = std::clamp((h - low) / (high - low), 0.0f, 1.0f);
-                const glm::vec3 color = glm::mix(glm::vec3(0.25f, 0.45f, 0.2f), glm::vec3(0.95f, 0.92f, 0.85f), a);
-                rgb = color * (0.25f + 0.75f * std::max(glm::dot(n, light), 0.0f));
+                rgb = color(x, z, h) * (0.25f + 0.75f * std::max(glm::dot(n, light), 0.0f));
             }
             const char c[3] = {char(std::lround(255.0f * std::clamp(rgb.x, 0.0f, 1.0f))),
                                char(std::lround(255.0f * std::clamp(rgb.y, 0.0f, 1.0f))),
@@ -99,6 +109,97 @@ void writeHeightMap(const BonsaiScene& scene, const std::string& name, int width
             file.write(c, 3);
         }
     }
+}
+
+// The soil's heights, from green valleys to white peaks.
+void writeHeightMap(const BonsaiScene& scene, const std::string& name, int width) {
+    const TreeTerrainParams& t = scene.terrain;
+    const float low = t.soil.x - t.soil.z;
+    const float high = t.soil.x + t.soil.y + std::max(scene.config.scale.reliefUnits(), 0.05f);
+    writeShadedMap(scene, name, width, [&](float, float, float h) {
+        const float a = std::clamp((h - low) / (high - low), 0.0f, 1.0f);
+        return glm::mix(glm::vec3(0.25f, 0.45f, 0.2f), glm::vec3(0.95f, 0.92f, 0.85f), a);
+    });
+}
+
+// The land cover: forest dark green, meadow light green, field yellow, scrub olive, rock grey.
+void writeLandCoverMap(const BonsaiScene& scene, const std::string& name, int width) {
+    writeShadedMap(scene, name, width, [&](float x, float z, float) {
+        const TreeLandCover c = tree::treeLandCover(scene.terrain, x, z);
+        return c.vegetation.x * glm::vec3(0.08f, 0.3f, 0.1f) + c.vegetation.y * glm::vec3(0.45f, 0.75f, 0.3f) +
+               c.vegetation.z * glm::vec3(0.9f, 0.8f, 0.35f) + c.vegetation.w * glm::vec3(0.45f, 0.5f, 0.2f) +
+               c.bare.x * glm::vec3(0.6f, 0.58f, 0.55f);
+    });
+}
+
+// The mean land cover over a grid on the soil, and each grid point's weights.
+struct CoverGrid {
+    int nx = 0, nz = 0;
+    std::vector<TreeLandCover> cells; // nx * nz, rows along x; bare.w = 1 inside the soil's outline
+    std::vector<glm::vec4> sites;
+    TreeLandCover mean{};
+};
+
+CoverGrid coverGrid(const BonsaiScene& scene, int nx, float offset = 0.5f) {
+    const TreeTerrainParams& t = scene.terrain;
+    CoverGrid g;
+    g.nx = nx;
+    g.nz = int(nx * t.outline.y / t.outline.x);
+    int inside = 0;
+    for (int j = 0; j < g.nz; ++j) {
+        for (int i = 0; i < g.nx; ++i) {
+            const float x = t.outline.x * (2.0f * (i + offset) / g.nx - 1.0f);
+            const float z = t.outline.y * (2.0f * (j + offset) / g.nz - 1.0f);
+            TreeLandCover c{};
+            glm::vec4 site(0.0f);
+            if (tree::treeTerrainRadius(t, x, z) < 1.0f) {
+                site = tree::treeLandSite(t, x, z);
+                c = tree::treeLandCoverFrom(t, site);
+                g.mean.vegetation += c.vegetation;
+                g.mean.bare += c.bare;
+                c.bare.w = 1.0f;
+                ++inside;
+            }
+            g.cells.push_back(c);
+            g.sites.push_back(site);
+        }
+    }
+    g.mean.vegetation /= float(inside);
+    g.mean.bare /= float(inside);
+    return g;
+}
+
+// Sizes of the 4-connected components of the cells where `in` holds.
+std::vector<int> componentSizes(const CoverGrid& g, const std::function<bool(const TreeLandCover&)>& in) {
+    std::vector<int> label(g.cells.size(), -1), sizes;
+    for (size_t start = 0; start < g.cells.size(); ++start) {
+        if (label[start] >= 0 || !in(g.cells[start])) {
+            continue;
+        }
+        std::vector<size_t> stack = {start};
+        label[start] = int(sizes.size());
+        int size = 0;
+        while (!stack.empty()) {
+            const size_t k = stack.back();
+            stack.pop_back();
+            ++size;
+            const int i = int(k % g.nx), j = int(k / g.nx);
+            const int di[4] = {1, -1, 0, 0}, dj[4] = {0, 0, 1, -1};
+            for (int d = 0; d < 4; ++d) {
+                const int a = i + di[d], b = j + dj[d];
+                if (a < 0 || b < 0 || a >= g.nx || b >= g.nz) {
+                    continue;
+                }
+                const size_t n = size_t(b) * g.nx + a;
+                if (label[n] < 0 && in(g.cells[n])) {
+                    label[n] = label[start];
+                    stack.push_back(n);
+                }
+            }
+        }
+        sizes.push_back(size);
+    }
+    return sizes;
 }
 
 } // namespace
@@ -229,4 +330,114 @@ TEST(TreeTerrain, terrainIsDeterministicPerSeed) {
     });
     // Another seed is another landscape: on average its heights differ by a good part of the relief.
     EXPECT_GT(difference / count, 0.1 * a.terrain.relief.x);
+}
+
+TEST(TreeTerrain, landCoverWeightsSumToOne) {
+    for (float s : {0.0f, 0.3f, 0.5f, 1.0f}) {
+        const BonsaiScene scene = sceneAt(s);
+        forSoilGrid(scene, 61, [&](float x, float z, float) {
+            const TreeLandCover c = tree::treeLandCover(scene.terrain, x, z);
+            for (float w : {c.vegetation.x, c.vegetation.y, c.vegetation.z, c.vegetation.w, c.bare.x, c.bare.y}) {
+                EXPECT_GE(w, 0.0f);
+                EXPECT_LE(w, 1.0f);
+            }
+            EXPECT_EQ(c.bare.y, 0.0f);
+            EXPECT_NEAR(c.vegetation.x + c.vegetation.y + c.vegetation.z + c.vegetation.w + c.bare.x + c.bare.y, 1.0f,
+                        1e-5f);
+        });
+    }
+}
+
+TEST(TreeTerrain, landCoverIsAllForestAtSmallScales) {
+    for (float s : {0.0f, BonsaiScale::kForest, 0.3f}) {
+        EXPECT_EQ(BonsaiScale{s}.forestShare(), 1.0f) << s;
+        const BonsaiScene scene = sceneAt(s);
+        forSoilGrid(scene, 41, [&](float x, float z, float) {
+            EXPECT_FLOAT_EQ(tree::treeLandCover(scene.terrain, x, z).vegetation.x, 1.0f) << s << " " << x << " " << z;
+        });
+    }
+}
+
+TEST(TreeTerrain, forestCoversHalfTheRegion) {
+    EXPECT_NEAR(BonsaiScale{1.0f}.forestShare(), 0.5f, 1e-6f);
+    for (uint32_t seed : {7u, 8u, 9u, 21u}) {
+        const BonsaiScene scene = sceneAt(1.0f, seed);
+        // A finer grid, offset from the calibration's.
+        const CoverGrid g = coverGrid(scene, 233, 0.31f);
+        EXPECT_NEAR(g.mean.vegetation.x, 0.5f, 0.05f) << seed;
+        // Every class of open land occurs.
+        EXPECT_GT(g.mean.vegetation.y, 0.05f) << seed;
+        EXPECT_GT(g.mean.vegetation.z, 0.02f) << seed;
+        EXPECT_GT(g.mean.vegetation.w, 0.02f) << seed;
+        EXPECT_GT(g.mean.bare.x, 0.01f) << seed;
+        std::printf("seed %u: forest %.3f meadow %.3f field %.3f scrub %.3f rock %.3f\n", seed, g.mean.vegetation.x,
+                    g.mean.vegetation.y, g.mean.vegetation.z, g.mean.vegetation.w, g.mean.bare.x);
+        writeLandCoverMap(scene, "cover_s100_seed" + std::to_string(seed), 720);
+    }
+    for (float s : {0.45f, 0.6f, 0.75f}) {
+        const BonsaiScene scene = sceneAt(s);
+        EXPECT_NEAR(coverGrid(scene, 233, 0.31f).mean.vegetation.x, scene.config.scale.forestShare(), 0.05f) << s;
+        writeLandCoverMap(scene, "cover_s" + std::to_string(int(std::lround(s * 100.0f))), 720);
+    }
+}
+
+TEST(TreeTerrain, landCoverFormsConnectedAreas) {
+    for (uint32_t seed : {7u, 8u, 9u}) {
+        const BonsaiScene scene = sceneAt(1.0f, seed);
+        const CoverGrid g = coverGrid(scene, 240);
+        auto check = [&](const char* what, const std::function<bool(const TreeLandCover&)>& in) {
+            const std::vector<int> sizes = componentSizes(g, in);
+            int total = 0, tiny = 0, largest = 0;
+            for (int size : sizes) {
+                total += size;
+                largest = std::max(largest, size);
+                // Below 0.1 % of the soil: some 50 cells, at scale 1 about 18 ha.
+                tiny += size < int(0.001f * g.cells.size()) ? size : 0;
+            }
+            // Tiny islands hold a small part of the area, and one area holds a good part of it.
+            EXPECT_LT(tiny, 0.05f * total) << what << " " << seed;
+            EXPECT_GT(largest, 0.2f * total) << what << " " << seed;
+        };
+        check("forest", [](const TreeLandCover& c) { return c.bare.w > 0.0f && c.vegetation.x > 0.5f; });
+        check("open land", [](const TreeLandCover& c) { return c.bare.w > 0.0f && c.vegetation.x <= 0.5f; });
+    }
+}
+
+TEST(TreeTerrain, landCoverFollowsTheTerrain) {
+    const float gentle = std::tan(glm::radians(10.0f));
+    const float steep = std::tan(glm::radians(30.0f));
+    for (uint32_t seed : {7u, 8u, 9u}) {
+        const BonsaiScene scene = sceneAt(1.0f, seed);
+        const CoverGrid g = coverGrid(scene, 200);
+        double field = 0.0, fieldGentle = 0.0, rock = 0.0, rockSteepOrHigh = 0.0;
+        for (size_t k = 0; k < g.cells.size(); ++k) {
+            const TreeLandCover& c = g.cells[k];
+            const glm::vec4& site = g.sites[k];
+            field += c.vegetation.z;
+            fieldGentle += site.x < gentle ? c.vegetation.z : 0.0f;
+            rock += c.bare.x;
+            rockSteepOrHigh += (site.x > steep || site.y > BonsaiScale::kTreeLineMeters) ? c.bare.x : 0.0f;
+            if (site.y > BonsaiScale::kTreeLineMeters) {
+                EXPECT_EQ(c.vegetation.x, 0.0f);
+            }
+        }
+        EXPECT_GT(fieldGentle, 0.8 * field) << seed;
+        EXPECT_GT(rockSteepOrHigh, 0.8 * rock) << seed;
+    }
+}
+
+TEST(TreeTerrain, landCoverIsDeterministicPerSeed) {
+    const BonsaiScene a = sceneAt(1.0f, 7);
+    const BonsaiScene b = sceneAt(1.0f, 7);
+    const BonsaiScene c = sceneAt(1.0f, 8);
+    EXPECT_EQ(a.terrain.cover.x, b.terrain.cover.x);
+    int differ = 0, count = 0;
+    forSoilGrid(a, 61, [&](float x, float z, float) {
+        const float fa = tree::treeLandCover(a.terrain, x, z).vegetation.x;
+        EXPECT_EQ(fa, tree::treeLandCover(b.terrain, x, z).vegetation.x);
+        differ += std::abs(fa - tree::treeLandCover(c.terrain, x, z).vegetation.x) > 0.5f ? 1 : 0;
+        ++count;
+    });
+    // Two independent half-forested maps disagree on about half of the soil.
+    EXPECT_GT(differ, count / 4);
 }

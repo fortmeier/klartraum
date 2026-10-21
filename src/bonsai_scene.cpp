@@ -102,6 +102,45 @@ float BonsaiScale::reliefRidges() const {
     return t * t * (3.0f - 2.0f * t);
 }
 
+float BonsaiScale::forestShare() const {
+    const float t = std::clamp((s - 0.3f) / 0.3f, 0.0f, 1.0f);
+    return 1.0f - 0.5f * t * t * (3.0f - 2.0f * t);
+}
+
+float calibrateForestThreshold(const TreeTerrainParams& terrain, float share) {
+    if (share >= 1.0f) {
+        return -10.0f;
+    }
+    // What decides the land cover, once per grid point; only the threshold changes during the bisection.
+    std::vector<glm::vec4> sites;
+    const int nx = 144, nz = 88;
+    for (int j = 0; j < nz; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            const float x = terrain.outline.x * (2.0f * (i + 0.5f) / nx - 1.0f);
+            const float z = terrain.outline.y * (2.0f * (j + 0.5f) / nz - 1.0f);
+            if (tree::treeTerrainRadius(terrain, x, z) < 1.0f) {
+                sites.push_back(tree::treeLandSite(terrain, x, z));
+            }
+        }
+    }
+    TreeTerrainParams t = terrain;
+    auto forestShare = [&](float threshold) {
+        t.cover.x = threshold;
+        double sum = 0.0;
+        for (const glm::vec4& site : sites) {
+            sum += tree::treeLandCoverFrom(t, site).vegetation.x;
+        }
+        return float(sum / double(sites.size()));
+    };
+    // The forest shrinks as the threshold rises.
+    float low = -1.0f, high = 2.5f;
+    for (int i = 0; i < 40; ++i) {
+        const float middle = 0.5f * (low + high);
+        (forestShare(middle) > share ? low : high) = middle;
+    }
+    return 0.5f * (low + high);
+}
+
 float BonsaiScene::potMeasure(float x, float z, float scale) const {
     const BonsaiPot& pot = config.pot;
     return std::pow(std::abs(x / (pot.halfLength * scale)), pot.exponent) +
@@ -126,12 +165,15 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         throw std::invalid_argument("makeBonsaiScene: more than 60 trees (scale too large for a planting)");
     }
     scene.lanternScale = scale.lanternUnits() / 0.28f;
-    // The soil fills the pot's inner outline; the landscape's main features are about 1.3 units apart, so the pot
+    // The soil fills the pot's inner outline; the landscape's main features are about 1.7 units apart, so the pot
     // holds a few hills or mountains at every scale with relief.
     scene.terrain.outline = glm::vec4(pot.halfLength * inner, pot.halfWidth * inner, pot.exponent, 0.0f);
     scene.terrain.soil = glm::vec4(pot.soilHeight, pot.soilMound, 0.012f, 0.0f);
-    scene.terrain.relief = glm::vec4(scale.reliefUnits(), 0.75f, scale.reliefRidges(), 0.25f);
+    scene.terrain.relief = glm::vec4(scale.reliefUnits(), 0.6f, scale.reliefRidges(), 0.25f);
     scene.terrain.seed = glm::uvec4(config.seed, 0u, 0u, 0u);
+    scene.terrain.cover =
+        glm::vec4(0.0f, scale.metersPerUnit(), BonsaiScale::kTreeLineMeters, scale.reliefExaggeration);
+    scene.terrain.cover.x = calibrateForestThreshold(scene.terrain, scale.forestShare());
     const glm::vec4 glaze(pot.glaze, TREE_MATERIAL_GLAZE);
     const int around = 160;
 
