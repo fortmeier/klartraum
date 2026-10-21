@@ -6,7 +6,8 @@
 
 // The terrain's selected nodes (TreeTerrain), one instance each: a grid of
 // quads x quads, two triangles per quad sharing the diagonal from (i, j) to
-// (i + 1, j + 1), with heights and normals from tree_terrain_vertices.comp.
+// (i + 1, j + 1), with heights, normals and land cover from
+// tree_terrain_vertices.comp.
 
 #define TREE_CAMERA_SET 0
 #define TREE_CAMERA_BINDING 0
@@ -21,15 +22,13 @@ layout(std430, set = 1, binding = 4) readonly buffer Nodes {
 layout(std430, set = 1, binding = 5) readonly buffer Config {
     TreeTerrainConfig config;
 };
-
-layout(push_constant) uniform Push {
-    vec4 color; // rgb albedo of the soil, w its material
-}
-pc;
+layout(std430, set = 1, binding = 6) readonly buffer Covers {
+    vec4 covers[];
+};
 
 layout(location = 0) out vec3 outWorldPos;
 layout(location = 1) out vec3 outNormal;
-layout(location = 2) out vec4 outColor;
+layout(location = 2) out vec4 outCover; // forest, meadow, field, scrub
 
 const ivec2 corners[6] = ivec2[6](ivec2(0, 0), ivec2(1, 0), ivec2(1, 1), ivec2(0, 0), ivec2(1, 1), ivec2(0, 1));
 
@@ -42,11 +41,12 @@ void main() {
     float unit = config.lod.root.z / (exp2(float(config.lod.levels.x - 1u)) * float(quads));
     int gx = int(round((node.x - config.lod.root.x) / node.z)) * quads * step;
     int gz = int(round((node.y - config.lod.root.y) / node.z)) * quads * step;
-    vec4 v = vertices[gl_InstanceIndex * (quads + 1) * (quads + 1) + ij.y * (quads + 1) + ij.x];
+    int index = gl_InstanceIndex * (quads + 1) * (quads + 1) + ij.y * (quads + 1) + ij.x;
+    vec4 v = vertices[index];
     vec3 p = vec3(config.lod.root.x + float(gx + ij.x * step) * unit, v.w,
                   config.lod.root.y + float(gz + ij.y * step) * unit);
     outWorldPos = p;
     outNormal = v.xyz;
-    outColor = pc.color;
+    outCover = covers[index];
     gl_Position = camera.proj * camera.view * vec4(p, 1.0f);
 }

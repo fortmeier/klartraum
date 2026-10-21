@@ -8,12 +8,11 @@ namespace klartraum {
 
 TreeTerrainRenderer::TreeTerrainRenderer(VulkanContext& vulkanContext, TreeTerrain& terrain,
                                          std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent,
-                                         TreeRenderInputs inputs, glm::vec4 color) {
+                                         TreeRenderInputs inputs) {
     StorageDrawConfig config;
     config.vertexShader = "shaders/tree/tree_terrain.vert.spv";
     config.fragmentShader = "shaders/tree/tree_terrain.frag.spv";
     config.extent = extent;
-    config.pushConstantSize = sizeof(glm::vec4);
     draw = std::make_shared<StorageDrawComponent>(config, std::vector<BufferRef>{
                                                               terrain.getVertices(),
                                                               {settings, -1},
@@ -21,10 +20,10 @@ TreeTerrainRenderer::TreeTerrainRenderer(VulkanContext& vulkanContext, TreeTerra
                                                               bufferOrPlaceholder(vulkanContext, inputs.light),
                                                               terrain.getNodes(),
                                                               terrain.getConfigBuffer(),
+                                                              terrain.getCovers(),
                                                           });
     StorageDrawComponent::Draw d;
     d.indirect = terrain.getDrawArgs();
-    d.pushConstants = StorageDrawComponent::bytes(color);
     draw->addDraw(std::move(d));
 }
 

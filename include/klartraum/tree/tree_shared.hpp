@@ -156,7 +156,8 @@ struct TreeRenderSettings {
 struct TreeTerrainParams {
     vec4 outline; // x half length (along x), y half width (along z) of the soil's outline, z its superellipse
                   // exponent, w unused
-    vec4 soil;    // x soil height at the rim, y mound towards the middle, z amplitude of the bumps, w unused
+    vec4 soil;    // x soil height at the rim, y mound towards the middle, z amplitude of the bumps, w scale of the
+                  // moss patterns of the forest floor (1 up to the scale at which they show real moss, larger beyond)
     vec4 relief;  // x height of the relief in units (0: none), y feature frequency per unit, z ridge character in
                   // [0, 1], w width of the band at the rim in which the relief falls to the soil (in r, see below)
     uvec4 seed;   // x seed of the landscape, yzw unused
@@ -495,12 +496,21 @@ TREE_FN float treeTerrainRelief(TreeTerrainParams t, float x, float z) {
     return t.relief.x * fade * treeTerrainShape(t, x, z);
 }
 
-// Height of the ground at (x, z) inside the pot: the soil with its mound and bumps, and the landscape's relief.
-TREE_FN float treeTerrainHeight(TreeTerrainParams t, float x, float z) {
+// Height of the soil at (x, z), without the landscape's relief: its mound and bumps.
+TREE_FN float treeTerrainSoil(TreeTerrainParams t, float x, float z) {
     float r = treeTerrainRadius(t, x, z);
     float bumps = t.soil.z * (treeFbm(vec3(x * 3.0f, 0.0f, z * 3.0f)) - 0.5f);
-    float soil = t.soil.x + t.soil.y * (1.0f - r * r) + bumps * (1.0f - r);
-    return soil + treeTerrainRelief(t, x, z);
+    return t.soil.x + t.soil.y * (1.0f - r * r) + bumps * (1.0f - r);
+}
+
+// Height of the ground at (x, z) inside the pot: the soil with its mound and bumps, and the landscape's relief.
+TREE_FN float treeTerrainHeight(TreeTerrainParams t, float x, float z) {
+    return treeTerrainSoil(t, x, z) + treeTerrainRelief(t, x, z);
+}
+
+// Altitude in metres above the valley floors, at true proportions, of a point on the ground.
+TREE_FN float treeTerrainAltitude(TreeTerrainParams t, vec3 pos) {
+    return (pos.y - treeTerrainSoil(t, pos.x, pos.z)) / t.cover.w * t.cover.y;
 }
 
 // --- terrain level of detail ---------------------------------------------------
@@ -518,7 +528,12 @@ TREE_FN float treeTerrainRange(TreeTerrainLod lod, uint level) {
     return lod.ranges.x * treeTerrainNodeSize(lod, level);
 }
 
-// How far a vertex at distance `dist` of a node of `level` has morphed towards the next coarser level, in [0, 1].
+// The factor on distances for the terrain's level of detail with the projection `proj`: 1 for a vertical field of
+// view of 40 degrees, less for a narrower one (a telephoto view resolves more detail at the same distance).
+TREE_FN float treeTerrainZoom(mat4 proj) { return 1.0f / (abs(proj[1][1]) * 0.36397f); }
+
+// How far a vertex at distance `dist` (times treeTerrainZoom()) of a node of `level` has morphed towards the next
+// coarser level, in [0, 1].
 TREE_FN float treeTerrainMorph(TreeTerrainLod lod, uint level, float dist) {
     float end = treeTerrainRange(lod, level);
     float start = mix(0.5f * end, end, lod.ranges.y);
@@ -564,8 +579,9 @@ TREE_FN bool treeTerrainRectInSoil(TreeTerrainParams t, vec2 lo, vec2 hi) {
 
 // What the selection does with node (ix, iz) of `level`, whose heights lie in `heights`: cull it (outside the
 // soil or the view), draw it, or split it into its four children because the finer level's range reaches it.
-TREE_FN uint treeTerrainNodeAction(TreeTerrainConfig c, mat4 viewProj, vec3 eye, uint ix, uint iz, uint level,
-                                   vec2 heights) {
+// Distances count times `zoom` (treeTerrainZoom()).
+TREE_FN uint treeTerrainNodeAction(TreeTerrainConfig c, mat4 viewProj, vec3 eye, float zoom, uint ix, uint iz,
+                                   uint level, vec2 heights) {
     float size = treeTerrainNodeSize(c.lod, level);
     vec2 lo = vec2(c.lod.root.x + float(ix) * size, c.lod.root.y + float(iz) * size);
     vec2 hi = lo + vec2(size, size);
@@ -577,7 +593,7 @@ TREE_FN uint treeTerrainNodeAction(TreeTerrainConfig c, mat4 viewProj, vec3 eye,
     if (treeBoxOutsideFrustum(viewProj, lo3, hi3)) {
         return TREE_TERRAIN_CULL;
     }
-    if (level == 0u || treeBoxDistance(eye, lo3, hi3) > treeTerrainRange(c.lod, level - 1u)) {
+    if (level == 0u || zoom * treeBoxDistance(eye, lo3, hi3) > treeTerrainRange(c.lod, level - 1u)) {
         return TREE_TERRAIN_DRAW;
     }
     return TREE_TERRAIN_SPLIT;
@@ -775,6 +791,105 @@ TREE_FN float treeSnowOn(vec3 normal, vec3 pos, float cover) {
     float upwards = smoothstep(0.15f, 0.75f, normal.y);
     float patches = smoothstep(0.3f, 0.6f, treeValueNoise(pos * 60.0f) + 0.6f * cover - 0.3f);
     return cover * upwards * mix(patches, 1.0f, upwards * cover);
+}
+
+// --- terrain materials --------------------------------------------------------
+
+// Fades a pattern of features `size` wide to its mean once a pixel covers more than half a feature, as the moss
+// detail does: 1 while resolved, 0 when not. `footprint` and `size` in the same unit.
+TREE_FN float treeTerrainResolved(float footprint, float size) {
+    return clamp(1.5f - 2.0f * footprint / size, 0.0f, 1.0f);
+}
+
+// Field parcels: x a random number of the parcel, y the direction of its rows in radians, z how far a point lies
+// inside the parcel (0 on a border, 0.5 in the middle), from the position in metres. Parcels are strips of about
+// 220 x 90 m, turned by an angle that changes over kilometres, their borders bent by noise so that they are not
+// a grid.
+TREE_FN vec3 treeFieldParcel(vec2 meters, uint seed) {
+    float angle = TREE_PI * treeGradientNoise(meters * 0.0004f, seed + 10u);
+    vec2 turned = vec2(cos(angle) * meters.x - sin(angle) * meters.y, sin(angle) * meters.x + cos(angle) * meters.y);
+    vec2 bend = vec2(treeGradientNoise(meters * 0.005f, seed + 11u), treeGradientNoise(meters * 0.005f, seed + 12u));
+    vec2 cell = turned / vec2(220.0f, 90.0f) + 0.45f * bend;
+    vec2 index = floor(cell);
+    vec2 inside = cell - index;
+    uint key = treeHash2(uint(int(index.x)), uint(int(index.y)));
+    float border = min(min(inside.x, 1.0f - inside.x), min(inside.y, 1.0f - inside.y));
+    return vec3(treeRand(seed, key), TREE_PI * treeRand(seed + 1u, key), border);
+}
+
+// The albedo of a field in season S: one of four crops per parcel (wheat, maize, plough land, grassland for hay),
+// in rows that fade out at a distance, with darker borders.
+TREE_FN vec3 treeFieldAlbedo(vec2 meters, float footprint, float season, uint seed) {
+    vec3 parcel = treeFieldParcel(meters, seed);
+    float s = treeSeasonWrap(season);
+    // Green from spring, ripe in summer, stubble or bare in fall and winter.
+    float growth = smoothstep(0.8f, 1.6f, s) * (1.0f - smoothstep(3.1f, 3.6f, s));
+    float ripe = smoothstep(1.5f, 2.1f, s);
+    vec3 bare = vec3(0.13f, 0.09f, 0.06f);
+    vec3 crop;
+    if (parcel.x < 0.3f) {
+        crop = mix(bare, mix(vec3(0.11f, 0.19f, 0.045f), vec3(0.34f, 0.28f, 0.11f), ripe), growth);
+    } else if (parcel.x < 0.5f) {
+        crop = mix(bare, mix(vec3(0.09f, 0.17f, 0.04f), vec3(0.2f, 0.2f, 0.08f), 0.5f * ripe), growth);
+    } else if (parcel.x < 0.7f) {
+        crop = vec3(0.15f, 0.1f, 0.065f);
+    } else {
+        crop = mix(vec3(0.1f, 0.13f, 0.05f), vec3(0.13f, 0.21f, 0.06f), growth);
+    }
+    float c = cos(parcel.y);
+    float d = sin(parcel.y);
+    float rows = 0.5f + 0.5f * sin(2.0f * TREE_PI * (c * meters.x + d * meters.y) / 1.5f);
+    crop *= 1.0f + 0.25f * (rows - 0.5f) * treeTerrainResolved(footprint, 1.5f);
+    float hedge = 1.0f - smoothstep(0.0f, 0.03f, parcel.z);
+    return mix(crop, vec3(0.05f, 0.08f, 0.03f), hedge * treeTerrainResolved(footprint, 8.0f));
+}
+
+// The albedo of the ground of land cover `c` at world position pos, seen with `footprint` world units per
+// pixel, in season S. The forest floor is the mossy soil of the pot, its patterns scaled by t.soil.w; the other
+// classes are patterned in metres. Every pattern fades to its mean where a pixel covers it.
+TREE_FN vec3 treeTerrainAlbedo(TreeTerrainParams t, TreeLandCover c, vec3 pos, float footprint, float season) {
+    vec3 pd = pos * t.soil.w;
+    float fd = footprint * t.soil.w;
+    float detail = clamp(1.5f - 140.0f * fd, 0.0f, 1.0f);
+    vec3 moss = treeMossAlbedo(vec3(0.075f, 0.11f, 0.025f), pd, detail);
+    vec3 albedo = c.vegetation.x * mix(vec3(0.062f, 0.072f, 0.027f), moss, clamp(1.5f - 40.0f * fd, 0.0f, 1.0f));
+    float rest = 1.0f - c.vegetation.x;
+    if (rest <= 0.0f) {
+        return albedo;
+    }
+    vec3 pm = pos * t.cover.y;
+    float fm = footprint * t.cover.y;
+    vec2 m = vec2(pm.x, pm.z);
+    float broad = treeFbm(pm * 0.025f);
+    float fine = mix(0.5f, treeFbm(pm * 0.4f), treeTerrainResolved(fm, 2.5f));
+    float s = treeSeasonWrap(season);
+    float dry = smoothstep(1.8f, 2.6f, s) * (1.0f - smoothstep(3.5f, 3.9f, s));
+    vec3 meadow = mix(vec3(0.1f, 0.17f, 0.045f), vec3(0.2f, 0.18f, 0.08f), dry * smoothstep(0.45f, 0.7f, broad));
+    meadow *= 0.8f + 0.4f * broad + 0.3f * (fine - 0.5f);
+    vec3 scrub = vec3(0.06f, 0.095f, 0.035f) * (0.7f + 0.6f * fine) * (0.85f + 0.3f * broad);
+    float strata = 0.5f + 0.5f * sin(pm.y / 6.0f + 4.0f * broad);
+    vec3 cliff = vec3(0.15f, 0.145f, 0.14f) * (0.75f + 0.5f * broad) *
+                 (1.0f + 0.2f * (strata - 0.5f) * treeTerrainResolved(fm, 6.0f) + 0.3f * (fine - 0.5f));
+    vec3 scree = vec3(0.2f, 0.195f, 0.18f) * (0.85f + 0.3f * fine);
+    vec3 rock = mix(scree, cliff, smoothstep(0.35f, 0.85f, c.bare.x));
+    albedo += c.vegetation.y * meadow + c.vegetation.z * treeFieldAlbedo(m, fm, season, t.seed.x) +
+              c.vegetation.w * scrub + c.bare.x * rock;
+    return albedo;
+}
+
+// The snow line in metres above the valley floors in season S: 1,300 m in summer, 1,050 m in spring and fall,
+// 800 m in winter.
+TREE_FN float treeSnowLine(float season) {
+    return 1050.0f + 250.0f * cos(0.5f * TREE_PI * (treeSeasonWrap(season) - 2.0f));
+}
+
+// Snow on the ground at world position pos with `normal`: the winter's cover everywhere (treeSnowOn()), and
+// above the snow line on all but steep ground.
+TREE_FN float treeTerrainSnow(TreeTerrainParams t, vec3 pos, vec3 normal, float season, float cover) {
+    float winter = treeSnowOn(normal, pos * t.soil.w, cover);
+    float line = treeSnowLine(season);
+    float high = smoothstep(line, line + 150.0f, treeTerrainAltitude(t, pos)) * smoothstep(0.35f, 0.7f, normal.y);
+    return max(winter, high);
 }
 
 // The normal of a flat Gaussian: its thinnest axis, turned up.

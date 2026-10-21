@@ -63,6 +63,7 @@ void main() {
     uint capacity = config.lod.levels.w;
     mat4 viewProj = camera.proj * camera.view;
     vec3 eye = camera.cameraWorldPos.xyz;
+    float zoom = treeTerrainZoom(camera.proj);
     if (t == 0u) {
         queues[0] = uvec2(0u, 0u);
         queueCount[0] = 1u;
@@ -79,7 +80,7 @@ void main() {
         for (uint i = t; i < count; i += THREADS) {
             uvec2 node = queues[current * capacity + i];
             vec2 heights = bounds[treeTerrainBoundsIndex(config.lod, node.x, node.y, uint(level))];
-            uint action = treeTerrainNodeAction(config, viewProj, eye, node.x, node.y, uint(level), heights);
+            uint action = treeTerrainNodeAction(config, viewProj, eye, zoom, node.x, node.y, uint(level), heights);
             if (action == TREE_TERRAIN_CULL) {
                 atomicAdd(stats[1], 1u);
             } else if (action == TREE_TERRAIN_DRAW) {
