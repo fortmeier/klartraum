@@ -1,0 +1,37 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// After tree_place_cull.comp: the indirect draw of the visible proxy trees and
+// the dispatch of their Gaussians (64 trees per workgroup).
+
+layout(local_size_x = 1) in;
+
+layout(std430, binding = 0) readonly buffer Counter {
+    uint counter[];
+};
+layout(std430, binding = 1) writeonly buffer DrawArgs {
+    uint drawArgs[4];
+};
+layout(std430, binding = 2) writeonly buffer DispatchArgs {
+    uint dispatchArgs[3];
+};
+
+layout(push_constant) uniform Push {
+    uint capacity;
+    uint vertices;
+}
+pc;
+
+void main() {
+    uint count = min(counter[0], pc.capacity);
+    drawArgs[0] = pc.vertices;
+    drawArgs[1] = count;
+    drawArgs[2] = 0u;
+    drawArgs[3] = 0u;
+    dispatchArgs[0] = (count + 63u) / 64u;
+    dispatchArgs[1] = 1u;
+    dispatchArgs[2] = 1u;
+}
