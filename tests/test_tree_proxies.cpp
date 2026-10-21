@@ -1,0 +1,270 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+/**
+ * TESTS:
+ * - visibleTreesAreThoseInTheView: the visible trees are exactly the resident trees whose box is in the view and
+ *   that span at least minPixels pixels, as the CPU finds them
+ * - lookingAwayShowsNoTrees: looking up into the sky, no tree is visible
+ * - aFullListCountsTheRest: with a small capacity the list is full, the rest is counted, and the indirect draw
+ *   holds the capacity
+ * - proxiesRenderBothWays: looking down onto a forest edge in summer, the proxies cover nearly the same pixels
+ *   classically and as Gaussians (IoU above 0.6); images and the GPU time of a view over the forest are written
+ **/
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+
+#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/headless_frontend.hpp"
+#include "klartraum/tree/tree_gaussians.hpp"
+#include "klartraum/tree/tree_proxies.hpp"
+
+#include "tree_test_helpers.hpp"
+
+using namespace klartraum;
+using namespace klartraum::tree_test;
+
+namespace {
+
+BonsaiScene sceneAt(float s) {
+    BonsaiSceneConfig config;
+    config.scale.s = s;
+    config.treeCount = s > 0.3f ? 12u : 0u;
+    return makeBonsaiScene(config);
+}
+
+struct Eye {
+    glm::vec3 eye;
+    glm::vec3 target;
+};
+
+// About 60 m above a forested slope at scale 1, looking along it.
+Eye overTheForest(const BonsaiScene& scene) {
+    const glm::vec2 at(-0.75f, 0.2f);
+    const glm::vec3 eye(at.x, scene.soilHeight(at.x, at.y) + 60.0f / scene.config.scale.metersPerUnit(), at.y);
+    return {eye, eye + glm::vec3(0.3f, -0.02f, -0.1f)};
+}
+
+// About 250 m above a forest edge at scale 1, looking down onto it.
+Eye downOntoAnEdge(const BonsaiScene& scene) {
+    const glm::vec2 at(0.83f, -0.15f);
+    const glm::vec3 ground(at.x, scene.soilHeight(at.x, at.y), at.y);
+    return {ground + glm::vec3(-0.04f, 250.0f / scene.config.scale.metersPerUnit(), 0.04f), ground};
+}
+
+void setSeason(HostValues<TreeRenderSettings>& settings, float season) {
+    TreeRenderSettings values = settings.values().at(0);
+    values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
+    settings.set(0, values);
+}
+
+// Tiles, proxies and their Gaussians, drawn alone into two black targets.
+struct ProxyScene {
+    ProxyScene(VulkanContext& vc, const BonsaiScene& scene, VkExtent2D extent, TreeProxyConfig config = {})
+        : vc(vc),
+          scene(scene),
+          extent(extent) {
+        camera = std::make_shared<CameraUboType>();
+        settings = std::make_shared<HostValues<TreeRenderSettings>>(
+            vc, std::vector<TreeRenderSettings>{defaultTreeRenderSettings(extent)});
+        TreeTileLayout layout;
+        layout.range = 0.3f;
+        placement = makeTreePlacement(scene);
+        tiles = std::make_unique<TreePlacementTiles>(vc, scene.terrain, placement, layout);
+        proxies = std::make_unique<TreeProxies>(vc, *tiles, camera, settings, extent, TreeRenderInputs{}, config);
+        classicalTarget = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        pass = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), extent);
+        pass->setInput(classicalTarget, 0);
+        pass->setInput(camera, 1);
+        pass->setDepthAttachment(true);
+        pass->addComputeDependency(proxies->getElement());
+        pass->addComputeDependency(settings);
+        pass->addDrawComponent(proxies->getDrawComponent());
+        classicalGraph = std::make_unique<ComputeGraph>(vc, 1);
+        classicalGraph->enableProfiling();
+        classicalGraph->compileFrom(pass);
+
+        TreeTypeParams p = tree_presets::quakingAspen();
+        p.ratios.x = 1.0f;
+        p.leafCount.x = 0.0f;
+        const std::vector<TreeTypeParams> types = {p};
+        const std::vector<TreeInstance> trees = {makeInstance(0, 1, glm::vec3(10.0f, 0.0f, 0.0f), 0.01f)};
+        generator = std::make_shared<TreeGenerator>(vc, types, trees,
+                                                    TreeCapacity::fromReference(types, trees, defaultTreeFrame()));
+        TreeGaussianSources sources;
+        sources.trees = false;
+        sources.extraSlots = 4u * config.capacity;
+        gaussians = std::make_unique<TreeGaussians>(vc, *generator, camera, settings, std::move(sources));
+        proxyGaussians = std::make_unique<TreeProxyGaussians>(
+            vc, *proxies, gaussians->getGaussians(), gaussians->getExtraOffset(), config.capacity, settings, camera);
+        gaussianTarget = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        splatting =
+            createGaussianSplatting(vc, GsplatBackend::Raster, gaussianTarget, camera, proxyGaussians->getGaussians());
+        gaussianGraph = std::make_unique<ComputeGraph>(vc, 1);
+        gaussianGraph->compileFrom(splatting);
+        gaussians->initializeBuffers(1);
+    }
+
+    void setView(const Eye& e) {
+        setCamera(camera->ubo, e.eye, e.target, 40.0f, float(extent.width) / float(extent.height), 1e-5f, 100.0f);
+        camera->update(0);
+        tiles->update(e.eye);
+    }
+
+    std::vector<uint8_t> renderClassical(const Eye& e) {
+        setView(e);
+        classicalGraph->submitAndWait(vc.getGraphicsQueue(), 0);
+        return readImage(vc, classicalTarget->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    }
+
+    std::vector<uint8_t> renderGaussians(const Eye& e) {
+        setView(e);
+        gaussianGraph->submitAndWait(vc.getGraphicsQueue(), 0);
+        return readImage(vc, gaussianTarget->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    }
+
+    // The resident trees that the cull pass keeps, found on the CPU.
+    std::vector<TreeSite> visibleOnTheCpu(const Eye& e) {
+        const glm::mat4 viewProj = camera->ubo.proj * camera->ubo.view;
+        const float focal = std::abs(camera->ubo.proj[1][1]) * 0.5f * float(extent.height);
+        const int n = int(tiles->getTileConfig().tiles.x);
+        std::vector<TreeSite> result;
+        for (const glm::ivec4& slot : tiles->getCache().getSlots()) {
+            if (slot.w == 0) {
+                continue;
+            }
+            for (const TreeSite& site :
+                 treeSitesIn(scene.terrain, placement, slot.x * n, slot.y * n, (slot.x + 1) * n, (slot.y + 1) * n)) {
+                const float h = site.posHeight.w;
+                const glm::vec4 shape = tree::treeProxyShape(site.kind.x);
+                const glm::vec3 foot(site.posHeight), r(shape.z * h, 0.0f, shape.z * h);
+                if (tree::treeBoxOutsideFrustum(viewProj, foot - r, foot + r + glm::vec3(0.0f, h, 0.0f))) {
+                    continue;
+                }
+                if (tree::treePixelDiameter(e.eye, foot + glm::vec3(0.0f, 0.5f * h, 0.0f), 0.5f * h, focal) <
+                    proxies->getConfig().minPixels) {
+                    continue;
+                }
+                result.push_back(site);
+            }
+        }
+        return result;
+    }
+
+    VulkanContext& vc;
+    const BonsaiScene& scene;
+    VkExtent2D extent;
+    TreePlacementParams placement{};
+    std::shared_ptr<CameraUboType> camera;
+    std::shared_ptr<HostValues<TreeRenderSettings>> settings;
+    std::unique_ptr<TreePlacementTiles> tiles;
+    std::unique_ptr<TreeProxies> proxies;
+    std::shared_ptr<OffscreenTarget> classicalTarget;
+    std::shared_ptr<RenderPass> pass;
+    std::unique_ptr<ComputeGraph> classicalGraph;
+    std::shared_ptr<TreeGenerator> generator;
+    std::unique_ptr<TreeGaussians> gaussians;
+    std::unique_ptr<TreeProxyGaussians> proxyGaussians;
+    std::shared_ptr<OffscreenTarget> gaussianTarget;
+    std::shared_ptr<ComputeGraphElement> splatting;
+    std::unique_ptr<ComputeGraph> gaussianGraph;
+};
+
+} // namespace
+
+class TreeProxiesTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        frontend = std::make_unique<HeadlessFrontend>();
+        vc = &frontend->getKlartraumEngine().getVulkanContext();
+    }
+    void TearDown() override { frontend.reset(); }
+
+    std::unique_ptr<HeadlessFrontend> frontend;
+    VulkanContext* vc = nullptr;
+};
+
+TEST_F(TreeProxiesTest, visibleTreesAreThoseInTheView) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    ProxyScene p(*vc, scene, {640, 360});
+    const Eye e = overTheForest(scene);
+    p.renderClassical(e);
+    std::vector<TreeSite> gpu = p.proxies->readVisible();
+    std::vector<TreeSite> cpu = p.visibleOnTheCpu(e);
+    auto less = [](const TreeSite& a, const TreeSite& b) {
+        return std::tie(a.posHeight.x, a.posHeight.z) < std::tie(b.posHeight.x, b.posHeight.z);
+    };
+    std::sort(gpu.begin(), gpu.end(), less);
+    std::sort(cpu.begin(), cpu.end(), less);
+    std::printf("visible: %zu on the GPU, %zu on the CPU\n", gpu.size(), cpu.size());
+    EXPECT_GT(cpu.size(), 1000u);
+    // Heights from the GPU's sines and cosines can move a tree at the edge of the view or of minPixels.
+    EXPECT_NEAR(double(gpu.size()), double(cpu.size()), 0.002 * cpu.size() + 2.0);
+    size_t matched = 0;
+    for (const TreeSite& g : gpu) {
+        matched += std::binary_search(cpu.begin(), cpu.end(), g, less) ? 1 : 0;
+    }
+    EXPECT_GT(matched, gpu.size() * 99 / 100);
+    EXPECT_EQ(p.proxies->readCounter()[1], 0u);
+}
+
+TEST_F(TreeProxiesTest, lookingAwayShowsNoTrees) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    ProxyScene p(*vc, scene, {320, 180});
+    Eye e = overTheForest(scene);
+    e.target = e.eye + glm::vec3(0.01f, 1.0f, 0.0f);
+    p.renderClassical(e);
+    EXPECT_EQ(p.proxies->readCounter()[0], 0u);
+}
+
+TEST_F(TreeProxiesTest, aFullListCountsTheRest) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    TreeProxyConfig config;
+    config.capacity = 500;
+    ProxyScene p(*vc, scene, {320, 180}, config);
+    p.renderClassical(overTheForest(scene));
+    const std::vector<uint32_t> counter = p.proxies->readCounter();
+    EXPECT_GT(counter[0], 500u);
+    EXPECT_EQ(counter[1], counter[0] - 500u);
+    EXPECT_EQ(p.proxies->readVisible().size(), 500u);
+}
+
+TEST_F(TreeProxiesTest, proxiesRenderBothWays) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    const VkExtent2D extent{640, 360};
+    ProxyScene p(*vc, scene, extent);
+    setSeason(*p.settings, 2.0f);
+    p.renderClassical(overTheForest(scene));
+    p.classicalGraph->resetProfiling();
+    writePpm("proxies_over_the_forest", p.renderClassical(overTheForest(scene)), extent);
+    std::printf("%u trees visible, proxies take %.2f ms of GPU time at 640 x 360 (tiles resident)\n",
+                p.proxies->readCounter()[0], p.classicalGraph->getGpuSpanMs());
+    const Eye e = downOntoAnEdge(scene);
+    const std::vector<uint8_t> classical = p.renderClassical(e);
+    const std::vector<uint8_t> splatted = p.renderGaussians(e);
+    writePpm("proxies_classical", classical, extent);
+    writePpm("proxies_gaussian", splatted, extent);
+    // Covered where brighter than the faint tails of the Gaussians: 0.1 summed over the channels.
+    auto solid = [&](const std::vector<uint8_t>& image, uint32_t x, uint32_t y) {
+        const size_t i = (size_t(y) * extent.width + x) * 4;
+        return int(image[i]) + int(image[i + 1]) + int(image[i + 2]) > 25;
+    };
+    size_t both = 0, either = 0;
+    for (uint32_t y = 0; y < extent.height; ++y) {
+        for (uint32_t x = 0; x < extent.width; ++x) {
+            const bool a = solid(classical, x, y), b = solid(splatted, x, y);
+            both += (a && b) ? 1 : 0;
+            either += (a || b) ? 1 : 0;
+        }
+    }
+    const double iou = double(both) / double(std::max<size_t>(either, 1));
+    std::printf("proxies classical vs Gaussian: IoU %.3f, covering %.2f of the image\n", iou,
+                double(either) / double(extent.width * extent.height));
+    EXPECT_GT(iou, 0.6);
+    EXPECT_LT(either, size_t(extent.width * extent.height * 9 / 10));
+}

@@ -828,6 +828,37 @@ TREE_FN vec3 treeLeafSeason(float season, float r, float offset, bool deciduous)
     return vec3(size, fresh, fall);
 }
 
+// The crown of a proxy tree (TreeProxies) in season S: rgb its albedo, w how dense it is (1 in leaf or for
+// conifers, sparse twigs for bare broadleaves). Conifers are dark green; broadleaves fresh green in spring, green
+// in summer, yellow to red in fall, bare in winter, each tree a little apart from its neighbours.
+TREE_FN vec4 treeProxyCrown(TreeSite site, float season) {
+    float r = treeRand(floatBitsToUint(site.kind.y), 0x31u);
+    bool conifer = site.kind.x == TREE_SITE_CONIFER;
+    if (conifer) {
+        return vec4(vec3(0.025f, 0.065f, 0.03f) * (0.8f + 0.4f * r), 1.0f);
+    }
+    vec3 state = treeLeafSeason(season, r, 0.0f, true);
+    vec3 green = vec3(0.05f, 0.12f, 0.03f) * (0.8f + 0.4f * r);
+    green = mix(green, green * 1.4f + vec3(0.02f, 0.03f, 0.0f), 0.5f * state.y);
+    vec3 fall = mix(vec3(0.3f, 0.09f, 0.02f), vec3(0.36f, 0.25f, 0.03f), r);
+    vec3 leaves = mix(green, fall, state.z);
+    vec3 twigs = vec3(0.1f, 0.085f, 0.07f);
+    return vec4(mix(twigs, leaves, state.x), mix(0.25f, 1.0f, state.x));
+}
+
+// The shape of a proxy tree of `species` and height h: x the bottom of its crown, y the height of its widest ring,
+// z that ring's radius, w the trunk's radius, all as fractions of h. Its crown is two cones meeting at the ring
+// and reaching up to h.
+TREE_FN vec4 treeProxyShape(float species) {
+    if (species == TREE_SITE_CONIFER) {
+        return vec4(0.1f, 0.22f, 0.24f, 0.025f);
+    }
+    if (species == TREE_SITE_SHRUB) {
+        return vec4(0.05f, 0.45f, 0.5f, 0.0f);
+    }
+    return vec4(0.3f, 0.62f, 0.32f, 0.03f);
+}
+
 // Snow cover in season S: in deep winter.
 TREE_FN float treeSnowCover(float season) {
     float s = treeSeasonWrap(season);
