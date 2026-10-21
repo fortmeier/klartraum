@@ -12,6 +12,8 @@
  * - treesStandInThePot: 8, 13 and 20 trees stand on the soil inside the pot, apart from each other and from the
  *   lantern
  * - treesAreFourToNineLanternsTall: the generated trees are 4 to 9 times as tall as the lantern
+ * - treesStandInTheForest: in a landscape with open land and rock, every tree stands where the land cover is mostly
+ *   forest
  * - mossCoversPartOfTheSoil: moss grows on 30 to 80 % of the soil in patches a few centimetres wide, greener
  *   than the bare soil, and fading the fine detail keeps the mean colour but smooths it
  * - soilLiesInThePot: the soil rises from below the rim at the pot's edge towards the middle
@@ -173,6 +175,17 @@ TEST(BonsaiScene, treesAreFourToNineLanternsTall) {
         const float height = top[i] - scene.trees[i].posScale.y;
         EXPECT_GE(height / kLanternHeight, 4.0f) << i;
         EXPECT_LE(height / kLanternHeight, 9.0f) << i;
+    }
+}
+
+TEST(BonsaiScene, treesStandInTheForest) {
+    BonsaiSceneConfig config;
+    config.scale.s = 1.0f;
+    config.treeCount = 40;
+    const BonsaiScene scene = makeBonsaiScene(config);
+    EXPECT_EQ(scene.trees.size(), 40u);
+    for (const TreeInstance& t : scene.trees) {
+        EXPECT_GT(tree::treeLandCover(scene.terrain, t.posScale.x, t.posScale.z).vegetation.x, 0.5f);
     }
 }
 

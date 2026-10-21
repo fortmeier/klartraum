@@ -19,6 +19,8 @@
  * - snowLiesAboveTheSnowLine: in fall only gentle ground above the snow line is white; in winter most ground is
  * - distantDetailDoesNotAlias: from outside the pot at scale 1 the image varies between neighbouring pixels about as
  *   much as one rendered at twice the resolution and filtered down
+ * - terrainFitsTheFrameBudget: from the example's view at scale 1 the terrain (selection, vertices, drawing) takes
+ *   at most 8 ms of GPU time at 1080p
  **/
 
 #include <gtest/gtest.h>
@@ -68,7 +70,8 @@ Eye groundEye(const BonsaiScene& scene, glm::vec2 at = glm::vec2(0.35f, 0.15f),
 
 // The terrain alone, drawn into a black target.
 struct TerrainScene {
-    TerrainScene(VulkanContext& vc, const BonsaiScene& scene, VkExtent2D extent, TreeTerrainLodConfig lod = {})
+    TerrainScene(VulkanContext& vc, const BonsaiScene& scene, VkExtent2D extent, TreeTerrainLodConfig lod = {},
+                 bool profile = false)
         : vc(vc),
           extent(extent) {
         camera = std::make_shared<CameraUboType>();
@@ -85,6 +88,9 @@ struct TerrainScene {
         pass->addComputeDependency(settings);
         pass->addDrawComponent(renderer->getDrawComponent());
         graph = std::make_unique<ComputeGraph>(vc, 1);
+        if (profile) {
+            graph->enableProfiling();
+        }
         graph->compileFrom(pass);
     }
 
@@ -538,4 +544,26 @@ TEST_F(TreeTerrainRenderingTest, distantDetailDoesNotAlias) {
     writePpm("terrain_alias_native", a, extent);
     std::printf("neighbour variation: native %.4f, filtered %.4f\n", native1, filtered);
     EXPECT_LT(native1, 1.3 * filtered);
+}
+
+TEST_F(TreeTerrainRenderingTest, terrainFitsTheFrameBudget) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    double ms[2] = {};
+    const VkExtent2D extents[2] = {{1920, 1080}, {3840, 2160}};
+    for (int k = 0; k < 2; ++k) {
+        TerrainScene t(*vc, scene, extents[k], {}, true);
+        t.render(outsideEye());
+        t.graph->resetProfiling();
+        for (int frame = 0; frame < 10; ++frame) {
+            t.render(outsideEye());
+        }
+        ms[k] = t.graph->getGpuSpanMs();
+        for (const auto& [name, time] : t.graph->getProfilingResults()) {
+            std::printf("  %s: %.3f ms\n", name.c_str(), time);
+        }
+    }
+    std::printf("terrain GPU time: %.2f ms at 1080p, %.2f ms at 2160p (the classical renderer's supersampling)\n",
+                ms[0], ms[1]);
+    EXPECT_GT(ms[0], 0.0);
+    EXPECT_LE(ms[0], 8.0);
 }
