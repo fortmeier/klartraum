@@ -202,6 +202,13 @@ struct TreeSite {
     vec4 kind;      // x species (TREE_SITE_*), y turn about +y in radians, z forest weight there, w unused
 };
 
+// What the tile passes of the placement read (TreePlacementTiles).
+struct TreeTileConfig {
+    TreeTerrainParams terrain;
+    TreePlacementParams placement;
+    uvec4 tiles; // x cells per tile side, y slots of the pool, z tiles generated per frame at most, w unused
+};
+
 // Weights of the land-cover classes at a place, summing to 1.
 struct TreeLandCover {
     vec4 vegetation; // x forest, y meadow, z field, w scrub

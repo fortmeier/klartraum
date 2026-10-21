@@ -52,6 +52,7 @@ using tree::TreeSite;
 using tree::TreeTerrainConfig;
 using tree::TreeTerrainLod;
 using tree::TreeTerrainParams;
+using tree::TreeTileConfig;
 using tree::TreeTypeParams;
 
 static_assert(sizeof(TreeTypeParams) == 25 * 16, "TreeTypeParams must match its std430 layout");
@@ -65,6 +66,7 @@ static_assert(sizeof(TreeTerrainParams) == 80, "TreeTerrainParams must match its
 static_assert(sizeof(TreeTerrainLod) == 64, "TreeTerrainLod must match its std430 layout");
 static_assert(sizeof(TreePlacementParams) == 64, "TreePlacementParams must match its std430 layout");
 static_assert(sizeof(TreeSite) == 32, "TreeSite must match its std430 layout");
+static_assert(sizeof(TreeTileConfig) == 160, "TreeTileConfig must match its std430 layout");
 static_assert(sizeof(TreeTerrainConfig) == 144, "TreeTerrainConfig must match its std430 layout");
 
 /// The records the generation writes for a set of trees.
