@@ -7,8 +7,9 @@
 // Culls the trees of the placement's pool for this frame (TreeProxies): one
 // workgroup per slot. A tile outside the view is skipped at once by its
 // bounds; of the others, each tree whose box is in the view and whose crown
-// spans at least pc.minPixels pixels is appended to the visible instances.
-// Trees beyond the capacity are counted.
+// spans at least pc.minPixels pixels is appended to the visible instances,
+// unless it is one of the near trees generated in full (within the near
+// radius). Trees beyond the capacity are counted.
 
 #define TREE_CAMERA_SET 0
 #define TREE_CAMERA_BINDING 4
@@ -38,6 +39,10 @@ layout(std430, binding = 6) writeonly buffer Visible {
 // [0] trees visible (also beyond the capacity), [1] trees left out for lack of room; zeroed before the pass.
 layout(std430, binding = 7) buffer Counter {
     uint counter[];
+};
+// x the near radius: trees whose foot is at most this far from the camera are drawn in full elsewhere.
+layout(std430, binding = 8) readonly buffer Near {
+    vec4 near[];
 };
 
 layout(push_constant) uniform Push {
@@ -71,6 +76,9 @@ void main() {
             continue;
         }
         vec3 foot = site.posHeight.xyz;
+        if (distance(foot, eye) <= near[0].x) {
+            continue;
+        }
         vec4 shape = treeProxyShape(site.kind.x);
         vec3 r = vec3(shape.z * h, 0.0f, shape.z * h);
         if (treeBoxOutsideFrustum(viewProj, foot - r, foot + r + vec3(0.0f, h, 0.0f))) {

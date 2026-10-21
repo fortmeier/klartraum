@@ -207,6 +207,7 @@ int main(int argc, char** argv) {
                                                        std::cos(angle) * std::cos(elevation));
                 setCamera(bonsai.getCamera()->ubo, eye, scene.focus, aspect);
                 bonsai.getCamera()->update(0);
+                bonsai.setView(eye);
                 bonsai.setTime(seconds, days.timeOfDayAt(seconds), days.seasonAt(seconds),
                                glm::vec4(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength));
                 graph.submitAndWait(vc.getGraphicsQueue(), 0);
@@ -227,6 +228,12 @@ int main(int argc, char** argv) {
                                                    std::cos(angle) * std::cos(elevation));
             setCamera(bonsai.getCamera()->ubo, eye, scene.focus, float(extent.width) / float(extent.height));
             bonsai.getCamera()->update(0);
+            bonsai.setView(eye);
+            // A still waits for all tiles of the placement in range, which come a few per frame.
+            for (int settle = 0; settle < 32 && bonsai.getPendingTiles() > 0; ++settle) {
+                graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                bonsai.setView(eye);
+            }
             const auto start = std::chrono::steady_clock::now();
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             const double ms =

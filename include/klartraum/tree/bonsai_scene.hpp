@@ -79,7 +79,8 @@ struct BonsaiScale {
 
 struct BonsaiSceneConfig {
     BonsaiScale scale;
-    uint32_t treeCount = 0; ///< 0: from the scale; otherwise this many
+    uint32_t treeCount = 0;  ///< 0: from the scale; otherwise this many
+    uint32_t nearTrees = 24; ///< trees generated in full when the trees follow the placement (BonsaiScene::placed)
     uint32_t seed = 7;
     BonsaiPot pot;
     glm::vec3 lanternPosition{0.72f, 0.0f, 0.36f}; ///< y is taken from the soil
@@ -106,6 +107,10 @@ struct BonsaiScene {
     float lanternScale = 1.0f;    ///< of the lantern capture (0.28 units tall at 1)
     float soilArea = 0.0f;        ///< square units
     TreeTerrainParams terrain{};  ///< the ground in the pot, for treeTerrainHeight()
+    /// Whether the trees follow the placement (beyond a planting of 60 trees): `trees` are then the nearTrees
+    /// generated in full, nearest to the camera (BonsaiRenderer::setView()), and the others come from `placement`.
+    bool placed = false;
+    TreePlacementParams placement{};
 
     /// Height of the ground at (x, z) inside the pot: treeTerrainHeight() of `terrain`.
     float soilHeight(float x, float z) const;

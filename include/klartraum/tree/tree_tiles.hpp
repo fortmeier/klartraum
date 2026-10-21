@@ -87,6 +87,7 @@ public:
     BufferRef getConfig() const { return {generate, 0}; }
     std::shared_ptr<HostValues<glm::ivec4>> getSlotTable() const { return slotTable; }
     TreeTileCache& getCache() { return cache; }
+    const TreeTileCache& getCache() const { return cache; }
     const TreeTileConfig& getTileConfig() const { return config; }
 
     /// After a submission of `pathId`: the sites of `slot`.
