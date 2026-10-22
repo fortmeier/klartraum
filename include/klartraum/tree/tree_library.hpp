@@ -20,8 +20,8 @@ namespace klartraum {
  * when `reduced`) at scale
  * 1 grown in season seasons[k], upright with its foot at the origin: a flat Gaussian per leaf, coloured with its
  * seasonal albedo, and Gaussians along the stems thicker than a thousandth of the tree's height, all lit by
- * defaultTreeRenderSettings() (TreeMossLod tints them for the current light). `heights` receives each type's
- * height.
+ * their colours are albedos (Gaussian3D::color), lit every frame like the trees (TreeLodInstance::ids.w). `heights`
+ * receives each type's height.
  */
 std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams>& types,
                                                 const std::vector<float>& seasons, std::vector<float>& heights,

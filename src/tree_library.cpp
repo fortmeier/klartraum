@@ -12,17 +12,13 @@ namespace klartraum {
 
 namespace {
 
-constexpr float kShC0 = 0.28209479f;
-
-Gaussian3D litGaussian(glm::vec3 pos, glm::vec4 rot, glm::vec3 scale, glm::vec3 albedo, glm::vec3 normal,
-                       const TreeRenderSettings& s, float alpha) {
-    const glm::vec3 displayed = tree::treeDisplayColor(tree::treeShadeLit(albedo, normal, s, glm::vec2(1.0f)), s.sky.w);
+// A Gaussian of a tree with its albedo as colour: the copies are lit every frame (tree_lod_write.comp).
+Gaussian3D albedoGaussian(glm::vec3 pos, glm::vec4 rot, glm::vec3 scale, glm::vec3 albedo, float alpha) {
     Gaussian3D g{};
     g.position = {pos.x, pos.y, pos.z};
     g.rotation = {rot.x, rot.y, rot.z, rot.w};
     g.scale = {scale.x, scale.y, scale.z};
-    const glm::vec3 sh = (displayed - glm::vec3(0.5f)) / kShC0;
-    g.color = {sh.x, sh.y, sh.z};
+    g.color = {albedo.x, albedo.y, albedo.z};
     g.alpha = alpha;
     return g;
 }
@@ -42,7 +38,6 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
             type = treeReducedType(type, 0.08f);
         }
     }
-    const TreeRenderSettings settings = defaultTreeRenderSettings({1920, 1080});
     const glm::vec4 up = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
     std::vector<MossPatch> patches;
     heights.assign(types.size(), 0.0f);
@@ -75,13 +70,11 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
                 // A flat Gaussian over the blade: along +z, thin along its normal (+y); it stands for a cluster of
                 // the full tree's leaves (or needles), so it is at least half as wide as long.
                 const glm::vec3 center = glm::vec3(l.posScale) + 0.5f * length * tree::qforward(l.rot);
-                glm::vec3 normal = tree::qrot(l.rot, glm::vec3(0.0f, 1.0f, 0.0f));
-                normal = normal.y < 0.0f ? -normal : normal;
                 const glm::vec3 albedo = tree::treeLeafSeasonAlbedo(p, l.ids.y, 1u, l.ids.w);
-                patch.push_back(litGaussian(
+                patch.push_back(albedoGaussian(
                     center, l.rot,
                     glm::vec3(0.35f * length * std::max(p.leafCount.z, 0.6f), 0.04f * length, 0.4f * length), albedo,
-                    normal, settings, 0.9f));
+                    0.9f));
             }
             for (const SegmentRecord& s : records.segments) {
                 const glm::vec3 a(s.fromPosRadius), b(s.toPosRadius);
@@ -96,8 +89,7 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
                 const glm::vec3 bark(p.barkColor);
                 for (int k = 0; k < n; ++k) {
                     const glm::vec3 c = glm::mix(a, b, (k + 0.5f) / n);
-                    patch.push_back(litGaussian(c, rot, glm::vec3(radius, radius, 0.6f * length / n), bark,
-                                                glm::normalize(glm::vec3(settings.sun)), settings, 0.95f));
+                    patch.push_back(albedoGaussian(c, rot, glm::vec3(radius, radius, 0.6f * length / n), bark, 0.95f));
                 }
             }
             patches.push_back(std::move(patch));

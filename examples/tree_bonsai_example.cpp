@@ -246,8 +246,9 @@ int main(int argc, char** argv) {
             setCamera(bonsai.getCamera()->ubo, eye, scene.focus, float(extent.width) / float(extent.height));
             bonsai.getCamera()->update(0);
             bonsai.setView(eye);
-            // A still waits for all tiles of the placement in range, which come a few per frame.
-            for (int settle = 0; settle < 32 && bonsai.getPendingTiles() > 0; ++settle) {
+            // A still waits for all tiles of the placement in range, which come a few per frame, and for the
+            // canopy's band to settle.
+            for (int settle = 0; settle < 32 && !bonsai.isSettled(); ++settle) {
                 graph.submitAndWait(vc.getGraphicsQueue(), 0);
                 bonsai.setView(eye);
             }

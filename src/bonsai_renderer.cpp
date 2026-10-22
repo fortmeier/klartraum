@@ -74,6 +74,14 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                                      std::max(1.0f, 1.6f * scene.config.scale.treeHeightUnits() + 0.4f),
                                      pot.halfWidth + 0.15f),
                            config.lightVoxel);
+    if (scene.terrain.relief.x > 0.0f) {
+        // Haze in the world above the soil, up to its peaks and the trees on them.
+        values.atmosphere =
+            glm::vec4(scene.config.scale.metersPerUnit(), config.visibilityMeters, config.valleyFog, 0.0f);
+        values.atmosphereBox = glm::vec4(scene.terrain.outline.x, scene.terrain.outline.y, scene.terrain.soil.x,
+                                         scene.terrain.soil.x + scene.terrain.soil.y + scene.terrain.relief.x +
+                                             scene.config.scale.treeHeightUnits());
+    }
     settings = std::make_shared<HostValues<TreeRenderSettings>>(vulkanContext, std::vector<TreeRenderSettings>{values});
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
     // The pot and the lantern cast shadows; the soil's gentle mound is left out, which would shadow itself
@@ -114,6 +122,10 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         canopy.noneAbove = config.canopyPixels.y * float(supersample);
         proxyConfig.minPixels = canopy.fullBelow;
         proxyConfig.fadeAbove = canopy.noneAbove;
+        canopyBand = glm::vec2(canopy.fullBelow, canopy.noneAbove);
+        TreeRenderSettings band = settings->values().at(0);
+        band.canopyBand = glm::vec4(canopyBand, 0.0f, 0.0f);
+        settings->set(0, band);
     }
     sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u) + proxySlots;
     // The classical renderer draws only the captured lantern and moss as Gaussians.
@@ -303,7 +315,26 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     if (!tiles) {
         return;
     }
+    const std::vector<glm::ivec4> slotsBefore = tiles->getCache().getSlots();
     tiles->update(eye);
+    const bool tilesChanged = tiles->getCache().getSlots() != slotsBefore;
+    // The canopy takes over more trees when the last frame's visible trees came near the proxies' capacity, and
+    // hands them back down to its configured band when they are few: the band grows by up to 10 % or shrinks by up
+    // to 8 % per frame (where many trees have about the same size on screen, their number changes steeply with
+    // it), left alone between 25 and 100 % of the target.
+    const float visible = float(proxies->readCounter()[0]);
+    const float target = 0.8f * float(proxies->getConfig().capacity);
+    TreeRenderSettings values = settings->values().at(0);
+    glm::vec2 band(values.canopyBand);
+    const glm::vec2 before = band;
+    if (visible > target || visible < 0.25f * target) {
+        band = glm::max(band * std::clamp(std::sqrt(std::max(visible, 1.0f) / target), 0.92f, 1.1f), canopyBand);
+    }
+    // Before a frame showed the trees of every tile, the band cannot be judged yet.
+    bandChanged = band != before || !viewedOnce || tilesChanged;
+    viewedOnce = true;
+    values.canopyBand = glm::vec4(band, 0.0f, 0.0f);
+    settings->set(0, values);
     // The nearest trees in full, the next ones reduced (L1).
     // With less detail fewer of them, the farther ones left to the impostors or library copies.
     const size_t activeNear = std::max<size_t>(1, size_t(std::lround(detail * nearTrees)));

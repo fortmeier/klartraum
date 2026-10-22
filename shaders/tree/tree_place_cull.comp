@@ -89,11 +89,14 @@ void main() {
             continue;
         }
         float pixels = treePixelDiameter(eye, foot + vec3(0.0f, 0.5f * h, 0.0f), 0.5f * h, focal);
-        if (pixels < pc.minPixels) {
+        // The band of the settings when they give one (it follows the number of visible trees).
+        float minPixels = settings[0].canopyBand.x > 0.0f && pc.fadeAbove > 0.0f ? settings[0].canopyBand.x : pc.minPixels;
+        float fadeAbove = settings[0].canopyBand.x > 0.0f && pc.fadeAbove > 0.0f ? settings[0].canopyBand.y : pc.fadeAbove;
+        if (pixels < minPixels) {
             continue;
         }
         site.kind.z = treeTerrainSunVisibility(config.terrain, foot + vec3(0.0f, 0.6f * h, 0.0f), settings[0].sun.xyz);
-        site.kind.w = pc.fadeAbove > pc.minPixels ? treeProxyFade(vec4(pc.minPixels, pc.fadeAbove, 0.0f, 0.0f), pixels)
+        site.kind.w = fadeAbove > minPixels ? treeProxyFade(vec4(minPixels, fadeAbove, 0.0f, 0.0f), pixels)
                                                   : 1.0f;
         uint k = atomicAdd(counter[0], 1u);
         if (k < pc.capacity) {
