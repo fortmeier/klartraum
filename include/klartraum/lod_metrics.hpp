@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_POPPING_METRIC_HPP
-#define KLARTRAUM_POPPING_METRIC_HPP
+#ifndef KLARTRAUM_LOD_METRICS_HPP
+#define KLARTRAUM_LOD_METRICS_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -52,17 +52,35 @@ private:
     std::vector<std::vector<float>> frames; // the last two
 };
 
-struct PoppingSummary {
+struct SeriesSummary {
     float max = 0.0f;
     float median = 0.0f;
     float mean = 0.0f;
-    size_t worst = 0;   ///< index of the largest residual
+    size_t worst = 0;   ///< index of the largest value
     float spike = 0.0f; ///< max / median (0 when the median is 0)
 };
 
-/// The largest, median and mean residual of a run (empty: all 0).
-PoppingSummary summarizePopping(const std::vector<float>& residuals);
+/// The largest, median and mean of a run of per-frame values, e.g. residuals or errors (empty: all 0).
+SeriesSummary summarizeSeries(const std::vector<float>& values);
+
+struct FidelityConfig {
+    uint32_t block = 4;     ///< side of the square blocks in pixels; a partial block at the edges is left out
+    float minLight = 0.01f; ///< blocks darker than this (mean of the RGB means) in both images are left out
+};
+
+/**
+ * @brief How far an image lies from a reference of the same view (e.g. the same tree without levels of detail): the
+ *        mean over the lit blocks of the absolute difference of the blocks' RGB means, averaged over the channels,
+ *        in [0, 1].
+ *
+ * A block counts when it is lit in either image, so a part missing from the image weighs as much as a part too
+ * many; blocks dark in both are left out, which makes the error independent of how much of the screen the object
+ * covers. Detail finer than a block that keeps its mean light does not count. Returns 0 without lit blocks. The
+ * images are BGRA8 of width x height pixels.
+ */
+float fidelityError(const std::vector<uint8_t>& image, const std::vector<uint8_t>& reference, uint32_t width,
+                    uint32_t height, FidelityConfig config = {});
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_POPPING_METRIC_HPP
+#endif // KLARTRAUM_LOD_METRICS_HPP

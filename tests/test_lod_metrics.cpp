@@ -17,13 +17,21 @@
  * - framesMustMatchTheSize: frames of the wrong size are rejected
  * - meterStreamsTheResiduals: PoppingMeter returns nothing for the first two frames, then each middle frame's
  *   residual, and starts over after reset()
- * - summaryOfARun: summarizePopping() gives the largest, median and mean residual, the worst frame and max / median;
+ * - summaryOfARun: summarizeSeries() gives the largest, median and mean value, the worst frame and max / median;
  *   an empty run gives zeros
+ * - identicalImagesAreFaithful: an image against itself has a fidelity error of 0
+ * - fidelityIsTheMeanBlockDifference: one 4 x 4 block brighter by 0.4 in one channel out of two lit blocks gives
+ *   0.4 / 3 / 2; a difference within a block that keeps its mean gives 0
+ * - fidelityCountsBlocksLitInEitherImage: a block lit only in the reference (a part missing) or only in the image (a
+ *   part too many) counts, blocks dark in both do not; both all dark gives 0
+ * - fidelityImagesMustMatchTheSize: images of the wrong size are rejected
  **/
 
 #include <gtest/gtest.h>
 
-#include "klartraum/popping_metric.hpp"
+#include <cmath>
+
+#include "klartraum/lod_metrics.hpp"
 
 using namespace klartraum;
 
@@ -44,7 +52,7 @@ std::vector<float> image(uint32_t width, uint32_t height, float value, int bx = 
 
 } // namespace
 
-TEST(PoppingMetricTest, luminanceOfColours) {
+TEST(LodMetricsTest, luminanceOfColours) {
     const std::vector<uint8_t> bgra = {255, 255, 255, 255, 0, 0, 0, 255, 0, 255, 0, 255};
     const std::vector<float> l = imageLuminance(bgra);
     ASSERT_EQ(l.size(), 3u);
@@ -53,16 +61,16 @@ TEST(PoppingMetricTest, luminanceOfColours) {
     EXPECT_NEAR(l[2], 0.7152f, 1e-5f);
 }
 
-TEST(PoppingMetricTest, stillFramesDoNotPop) {
+TEST(LodMetricsTest, stillFramesDoNotPop) {
     const std::vector<float> a = image(64, 32, 0.5f);
     EXPECT_FLOAT_EQ(poppingResidual(a, a, a, 64, 32), 0.0f);
 }
 
-TEST(PoppingMetricTest, linearFadeDoesNotPop) {
+TEST(LodMetricsTest, linearFadeDoesNotPop) {
     EXPECT_NEAR(poppingResidual(image(64, 32, 0.2f), image(64, 32, 0.4f), image(64, 32, 0.6f), 64, 32), 0.0f, 1e-6f);
 }
 
-TEST(PoppingMetricTest, stepPopsOnBothSides) {
+TEST(LodMetricsTest, stepPopsOnBothSides) {
     // A lit image whose block (1, 0) jumps from 0.3 to 0.7 between frames 2 and 3; all blocks are lit.
     std::vector<std::vector<float>> frames;
     for (int t = 0; t < 6; ++t) {
@@ -76,7 +84,7 @@ TEST(PoppingMetricTest, stepPopsOnBothSides) {
     }
 }
 
-TEST(PoppingMetricTest, textureMovingWithinBlocksDoesNotPop) {
+TEST(LodMetricsTest, textureMovingWithinBlocksDoesNotPop) {
     // Vertical stripes of 1 px moving by a pixel per frame: every pixel changes, no block's mean does.
     auto stripes = [](int shift) {
         std::vector<float> l(64 * 32);
@@ -90,7 +98,7 @@ TEST(PoppingMetricTest, textureMovingWithinBlocksDoesNotPop) {
     EXPECT_NEAR(poppingResidual(stripes(0), stripes(1), stripes(2), 64, 32), 0.0f, 1e-6f);
 }
 
-TEST(PoppingMetricTest, darkBlocksAreLeftOut) {
+TEST(LodMetricsTest, darkBlocksAreLeftOut) {
     // One lit block jumps by 0.4: its residual is 0.2 in a small image and in a large one.
     for (uint32_t size : {32u, 128u}) {
         const std::vector<float> before = image(size, size, 0.0f, 0, 0, 0.3f);
@@ -101,7 +109,7 @@ TEST(PoppingMetricTest, darkBlocksAreLeftOut) {
     EXPECT_FLOAT_EQ(poppingResidual(dark, dark, image(64, 64, 0.0f), 64, 64), 0.0f);
 }
 
-TEST(PoppingMetricTest, partialBlocksAreLeftOut) {
+TEST(LodMetricsTest, partialBlocksAreLeftOut) {
     // 40 x 20 pixels: two whole blocks; the jump happens only in the leftover columns and rows.
     std::vector<float> a(40 * 20, 0.5f), b = a;
     for (uint32_t y = 0; y < 20; ++y) {
@@ -114,12 +122,12 @@ TEST(PoppingMetricTest, partialBlocksAreLeftOut) {
     EXPECT_FLOAT_EQ(poppingResidual(a, a, b, 40, 20), 0.0f);
 }
 
-TEST(PoppingMetricTest, framesMustMatchTheSize) {
+TEST(LodMetricsTest, framesMustMatchTheSize) {
     const std::vector<float> a = image(32, 32, 0.5f);
     EXPECT_THROW(poppingResidual(a, a, image(32, 16, 0.5f), 32, 32), std::invalid_argument);
 }
 
-TEST(PoppingMetricTest, meterStreamsTheResiduals) {
+TEST(LodMetricsTest, meterStreamsTheResiduals) {
     PoppingMeter meter(32, 32);
     EXPECT_FALSE(meter.push(image(32, 32, 0.5f)).has_value());
     EXPECT_FALSE(meter.push(image(32, 32, 0.5f)).has_value());
@@ -136,16 +144,75 @@ TEST(PoppingMetricTest, meterStreamsTheResiduals) {
     EXPECT_FALSE(meter.push(image(32, 32, 0.5f)).has_value());
 }
 
-TEST(PoppingMetricTest, summaryOfARun) {
-    const PoppingSummary s = summarizePopping({0.1f, 0.4f, 0.2f, 0.1f, 0.2f});
+TEST(LodMetricsTest, summaryOfARun) {
+    const SeriesSummary s = summarizeSeries({0.1f, 0.4f, 0.2f, 0.1f, 0.2f});
     EXPECT_FLOAT_EQ(s.max, 0.4f);
     EXPECT_EQ(s.worst, 1u);
     EXPECT_FLOAT_EQ(s.median, 0.2f);
     EXPECT_NEAR(s.mean, 0.2f, 1e-6f);
     EXPECT_FLOAT_EQ(s.spike, 2.0f);
-    const PoppingSummary even = summarizePopping({0.1f, 0.3f});
+    const SeriesSummary even = summarizeSeries({0.1f, 0.3f});
     EXPECT_FLOAT_EQ(even.median, 0.2f);
-    const PoppingSummary empty = summarizePopping({});
+    const SeriesSummary empty = summarizeSeries({});
     EXPECT_FLOAT_EQ(empty.max, 0.0f);
     EXPECT_FLOAT_EQ(empty.spike, 0.0f);
+}
+
+namespace {
+
+// A width x height BGRA image of grey `value` in [0, 1].
+std::vector<uint8_t> grey(uint32_t width, uint32_t height, float value) {
+    const uint8_t v = uint8_t(std::lround(value * 255.0f));
+    std::vector<uint8_t> bgra(size_t(width) * height * 4, v);
+    for (size_t i = 3; i < bgra.size(); i += 4) {
+        bgra[i] = 255;
+    }
+    return bgra;
+}
+
+// Sets channel c (0 b, 1 g, 2 r) of the pixels [x0, x1) x [y0, y1) to `value` in [0, 1].
+void paint(std::vector<uint8_t>& bgra, uint32_t width, uint32_t x0, uint32_t x1, uint32_t y0, uint32_t y1, int c,
+           float value) {
+    for (uint32_t y = y0; y < y1; ++y) {
+        for (uint32_t x = x0; x < x1; ++x) {
+            bgra[(size_t(y) * width + x) * 4 + c] = uint8_t(std::lround(value * 255.0f));
+        }
+    }
+}
+
+} // namespace
+
+TEST(LodMetricsTest, identicalImagesAreFaithful) {
+    std::vector<uint8_t> a = grey(16, 8, 0.4f);
+    paint(a, 16, 0, 4, 0, 4, 2, 1.0f);
+    EXPECT_FLOAT_EQ(fidelityError(a, a, 16, 8), 0.0f);
+}
+
+TEST(LodMetricsTest, fidelityIsTheMeanBlockDifference) {
+    // Two lit 4 x 4 blocks (8 x 4 pixels); the image's first block is brighter by 0.4 in red.
+    const std::vector<uint8_t> reference = grey(8, 4, 0.4f);
+    std::vector<uint8_t> image = reference;
+    paint(image, 8, 0, 4, 0, 4, 2, 0.8f);
+    EXPECT_NEAR(fidelityError(image, reference, 8, 4), 0.4f / 3.0f / 2.0f, 1e-3f);
+    // Half of a block brighter by 0.4 and the other half darker by 0.4: the block's mean stays.
+    std::vector<uint8_t> shuffled = reference;
+    paint(shuffled, 8, 0, 2, 0, 4, 1, 0.8f);
+    paint(shuffled, 8, 2, 4, 0, 4, 1, 0.0f);
+    EXPECT_NEAR(fidelityError(shuffled, reference, 8, 4), 0.0f, 1e-6f);
+}
+
+TEST(LodMetricsTest, fidelityCountsBlocksLitInEitherImage) {
+    // Four blocks over black: the reference has blocks 0 and 1 lit, the image blocks 1 and 2; block 3 is dark in
+    // both. Blocks 0 and 2 differ by 0.6 in every channel, block 1 matches: (0.6 + 0 + 0.6) / 3.
+    std::vector<uint8_t> reference = grey(16, 4, 0.0f), image = grey(16, 4, 0.0f);
+    for (int c = 0; c < 3; ++c) {
+        paint(reference, 16, 0, 8, 0, 4, c, 0.6f);
+        paint(image, 16, 4, 12, 0, 4, c, 0.6f);
+    }
+    EXPECT_NEAR(fidelityError(image, reference, 16, 4), 1.2f / 3.0f, 1e-3f);
+    EXPECT_FLOAT_EQ(fidelityError(grey(16, 4, 0.0f), grey(16, 4, 0.0f), 16, 4), 0.0f);
+}
+
+TEST(LodMetricsTest, fidelityImagesMustMatchTheSize) {
+    EXPECT_THROW(fidelityError(grey(8, 4, 0.5f), grey(4, 4, 0.5f), 8, 4), std::invalid_argument);
 }
