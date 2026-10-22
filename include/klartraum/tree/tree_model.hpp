@@ -40,6 +40,10 @@ using tree::LeafRecord;
 using tree::SegmentRecord;
 using tree::StemRecord;
 using tree::TreeFrame;
+using tree::TreeGrassClump;
+using tree::TreeGrassParams;
+using tree::TreeGrassSetup;
+using tree::TreeGrassVisible;
 using tree::TreeImpostorParams;
 using tree::TreeInstance;
 using tree::TreeLandCover;
@@ -69,6 +73,10 @@ static_assert(sizeof(TreePlacementParams) == 64, "TreePlacementParams must match
 static_assert(sizeof(TreeSite) == 32, "TreeSite must match its std430 layout");
 static_assert(sizeof(TreeTileConfig) == 160, "TreeTileConfig must match its std430 layout");
 static_assert(sizeof(TreeImpostorParams) == 80, "TreeImpostorParams must match its std430 layout");
+static_assert(sizeof(TreeGrassParams) == 48, "TreeGrassParams must match its std430 layout");
+static_assert(sizeof(TreeGrassClump) == 32, "TreeGrassClump must match its std430 layout");
+static_assert(sizeof(TreeGrassVisible) == 64, "TreeGrassVisible must match its std430 layout");
+static_assert(sizeof(TreeGrassSetup) == 128, "TreeGrassSetup must match its std430 layout");
 static_assert(sizeof(TreeTerrainConfig) == 224, "TreeTerrainConfig must match its std430 layout");
 
 /// The records the generation writes for a set of trees.

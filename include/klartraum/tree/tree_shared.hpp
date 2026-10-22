@@ -227,6 +227,34 @@ struct TreeImpostorParams {
     vec4 heights;   // per type (x, y) the baked tree's height at scale 1, zw unused
 };
 
+// Grass near the camera (treeGrassCell(), TreeGrass): a clump of blades per cell of a grid in world metres.
+struct TreeGrassParams {
+    vec4 grid;    // x cell size in units, y radius in units beyond which there is no grass, z blades per clump near
+                  // the camera, w metres per unit
+    vec4 blade;   // x height in metres, y width in metres, zw unused
+    uvec4 counts; // x cells per side of the grid around the camera, y clumps at most, z seed, w unused
+};
+
+// One clump of grass.
+struct TreeGrassClump {
+    vec4 posHeight; // xyz the clump's middle on the ground, w the blades' height in units
+    vec4 kind;      // x blades, y turn in radians, z the sun's visibility over the terrain, w a random number
+};
+
+// A clump of grass that tree_grass.comp found visible this frame.
+struct TreeGrassVisible {
+    vec4 posHeight; // as TreeGrassClump
+    vec4 kind;      // as TreeGrassClump, z the sun's visibility over the terrain
+    vec4 ground;    // x, y the ground's slope along x and z, z the snow on it, w the clump's distance in units
+    vec4 albedo;    // rgb the grass's albedo, w unused
+};
+
+// What tree_grass.comp reads.
+struct TreeGrassSetup {
+    TreeTerrainParams terrain;
+    TreeGrassParams grass;
+};
+
 // What the tile passes of the placement read (TreePlacementTiles).
 struct TreeTileConfig {
     TreeTerrainParams terrain;
@@ -1159,6 +1187,62 @@ TREE_FN float treeTerrainSnow(TreeTerrainParams t, vec3 pos, vec3 normal, float 
     float line = treeSnowLine(season);
     float high = smoothstep(line, line + 150.0f, treeTerrainAltitude(t, pos)) * smoothstep(0.35f, 0.7f, normal.y);
     return max(winter, high);
+}
+
+// --- grass ---------------------------------------------------------------------
+
+// How tall a field's crop stands in season S, relative to grass, at a position in metres: grain and other crops
+// grow from spring to summer and stand until the fall, then stubble; nothing on ploughed parcels; pasture like
+// grass (the parcels of treeFieldAlbedo()).
+TREE_FN float treeFieldCropHeight(vec2 meters, float season, uint seed) {
+    vec3 parcel = treeFieldParcel(meters, seed);
+    float s = treeSeasonWrap(season);
+    float growth = smoothstep(0.8f, 1.6f, s) * (1.0f - smoothstep(3.1f, 3.6f, s));
+    if (parcel.x < 0.3f) {
+        return 0.15f + 2.0f * growth;
+    }
+    if (parcel.x < 0.5f) {
+        return 0.15f + 1.2f * growth;
+    }
+    if (parcel.x < 0.7f) {
+        return 0.0f;
+    }
+    return 1.0f;
+}
+
+// The clump of grass of cell (cx, cz) seen from eye in season S: where meadow, field (and some scrub) grows, with
+// the probability of their weight, jittered in its cell; with fewer blades from a third of the radius on and none
+// beyond it; in fields as tall as their crop (treeFieldCropHeight()). Hashing the cell's indices keeps a clump the
+// same while the camera moves. No grass: x of kind is 0.
+TREE_FN TreeGrassClump treeGrassCell(TreeTerrainParams t, TreeGrassParams g, int cx, int cz, vec3 eye, float season) {
+    TreeGrassClump clump;
+    clump.posHeight = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    clump.kind = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    uint key = treeHash2(treeHash2(uint(cx), uint(cz)), g.counts.z);
+    float x = (float(cx) + treeRand(key, 1u)) * g.grid.x;
+    float z = (float(cz) + treeRand(key, 2u)) * g.grid.x;
+    float d = length(vec2(x - eye.x, z - eye.z));
+    if (d > g.grid.y || treeTerrainRadius(t, x, z) >= 0.98f) {
+        return clump;
+    }
+    TreeLandCover c = treeLandCover(t, x, z);
+    float open = c.vegetation.y + c.vegetation.z + 0.6f * c.vegetation.w;
+    float u = treeRand(key, 3u);
+    if (u >= open) {
+        return clump;
+    }
+    // Field or other open land, by where u falls among their weights.
+    float crop = u >= c.vegetation.y && u < c.vegetation.y + c.vegetation.z
+                     ? treeFieldCropHeight(vec2(x, z) * t.cover.y, season, t.seed.x)
+                     : 1.0f;
+    float meters = g.blade.x * (0.6f + 0.8f * treeRand(key, 4u)) * crop;
+    if (meters < 0.02f) {
+        return clump;
+    }
+    float blades = max(1.0f, floor(g.grid.z * (1.0f - smoothstep(0.33f * g.grid.y, g.grid.y, d)) + 0.5f));
+    clump.posHeight = vec4(x, treeTerrainHeight(t, x, z), z, meters / g.grid.w);
+    clump.kind = vec4(blades, 2.0f * TREE_PI * treeRand(key, 5u), 1.0f, treeRand(key, 6u));
+    return clump;
 }
 
 // The normal of a flat Gaussian: its thinnest axis, turned up.
