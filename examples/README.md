@@ -368,7 +368,7 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--fps F` | Frames per second of the video (default 30) |
 | `--wind W` | Strength of the wind (default 0.5) |
 | `--turns T` | Turns of the camera around the pot during the video (default 0.5) |
-| `--fly-in S` | Render a flight of S seconds instead of views or days: from the first view outside the pot down to the `--ground` place at noon of the season, ending with a slow pan; takes precedence over `--video` |
+| `--fly-in S` | Render a flight of S seconds instead of views or days: from the first view outside the pot down to the `--ground` place at noon of the season, ending with a slow pan; takes precedence over `--video`. Without `--ground` (scale 0.6 or more), the flight goes low over a field into a dense forest and ends at 1.7 m among the trunks |
 | `--from N`, `--to M` | Render only the video frames N to M - 1 |
 | `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
@@ -378,4 +378,6 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 scripts/tree/make_bonsai_video.sh   # both renderers' videos in build/TestingOutput/tree_bonsai_video/
 scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_flyin --scale 1 --fly-in 16 --azimuth -2.09 \
     --ground -1.04,0.15,1.7,120   # from outside the pot down onto a meadow
+scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_forest --scale 1 --fly-in 24 \
+    --azimuth -2.09               # over a field into the forest, among the trunks
 ```
