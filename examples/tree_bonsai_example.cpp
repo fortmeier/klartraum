@@ -9,7 +9,8 @@
 //   tree_bonsai_example [--renderer classical|gaussian|both] [--backend raster|compute]
 //                       [--views 4] [--scale 0.21] [--relief 1.5] [--trees N] [--seed 7] [--width 1280] [--height 720]
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
-//                       [--profile] [--budget MS] [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
+//                       [--ground X,Z,METERS,HEADING] [--profile] [--budget MS] [--video] [--days 4] [--seconds-per-day
+//                       10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--from 0] [--to N] [--moss-patches 250]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
 //
@@ -75,10 +76,12 @@ void writePpm(const std::filesystem::path& path, const std::vector<uint8_t>& bgr
     }
 }
 
-void setCamera(CameraMVP& ubo, glm::vec3 eye, glm::vec3 target, float aspect) {
+// `nearPlane` follows how close the camera is to the ground: from outside the pot 0.05 units, standing in a large
+// landscape a fraction of a metre.
+void setCamera(CameraMVP& ubo, glm::vec3 eye, glm::vec3 target, float aspect, float nearPlane = 0.05f) {
     ubo.model = glm::mat4(1.0f);
     ubo.view = glm::lookAt(eye, target, glm::vec3(0.0f, 1.0f, 0.0f));
-    ubo.proj = glm::perspective(glm::radians(40.0f), aspect, 0.05f, 50.0f);
+    ubo.proj = glm::perspective(glm::radians(40.0f), aspect, nearPlane, 50.0f);
     ubo.proj[1][1] *= -1.0f;
     ubo.cameraWorldPos = glm::vec4(eye, 1.0f);
 }
@@ -98,6 +101,8 @@ int main(int argc, char** argv) {
     bool video = false;
     bool profile = false;
     float budgetMs = 0.0f;
+    bool ground = false;
+    glm::vec4 groundView(0.0f); // x, z in units, metres above the ground, heading in degrees (0 towards -z)
     BonsaiDays days;
     float fps = 30.0f;
     float windStrength = 0.5f;
@@ -136,6 +141,9 @@ int main(int argc, char** argv) {
             azimuth = std::stof(argv[++i]);
         } else if (arg == "--season" && hasValue) {
             season = std::stof(argv[++i]);
+        } else if (arg == "--ground" && hasValue) {
+            ground =
+                std::sscanf(argv[++i], "%f,%f,%f,%f", &groundView.x, &groundView.y, &groundView.z, &groundView.w) == 4;
         } else if (arg == "--budget" && hasValue) {
             budgetMs = std::stof(argv[++i]);
         } else if (arg == "--profile") {
@@ -240,10 +248,20 @@ int main(int argc, char** argv) {
 
         for (uint32_t view = 0; view < views; ++view) {
             const float angle = azimuth + 2.0f * 3.14159265f * float(view) / float(views);
-            const glm::vec3 eye =
+            glm::vec3 eye =
                 scene.focus + distance * glm::vec3(std::sin(angle) * std::cos(elevation), std::sin(elevation),
                                                    std::cos(angle) * std::cos(elevation));
-            setCamera(bonsai.getCamera()->ubo, eye, scene.focus, float(extent.width) / float(extent.height));
+            glm::vec3 lookAt = scene.focus;
+            float nearPlane = 0.05f;
+            if (ground) {
+                // Standing in the landscape, looking a little down along the heading (turned by the view).
+                const float above = groundView.z / scene.config.scale.metersPerUnit();
+                eye = glm::vec3(groundView.x, scene.soilHeight(groundView.x, groundView.y) + above, groundView.y);
+                const float heading = glm::radians(groundView.w) + 2.0f * 3.14159265f * float(view) / float(views);
+                lookAt = eye + glm::vec3(std::sin(heading), -0.08f, -std::cos(heading));
+                nearPlane = std::clamp(0.5f * above, 1e-5f, 0.05f);
+            }
+            setCamera(bonsai.getCamera()->ubo, eye, lookAt, float(extent.width) / float(extent.height), nearPlane);
             bonsai.getCamera()->update(0);
             bonsai.setView(eye);
             // A still waits for all tiles of the placement in range, which come a few per frame, and for the
