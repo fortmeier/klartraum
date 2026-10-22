@@ -11,7 +11,8 @@ namespace klartraum {
 TreeProxies::TreeProxies(VulkanContext& vulkanContext, TreePlacementTiles& tiles, std::shared_ptr<CameraUboType> camera,
                          std::shared_ptr<HostValues<TreeRenderSettings>> settings, VkExtent2D extent,
                          TreeRenderInputs inputs, TreeProxyConfig config)
-    : config(config) {
+    : config(config),
+      tileConfig(tiles.getConfig()) {
     visible = std::make_shared<BufferElement<VulkanBuffer<TreeSite>>>(vulkanContext, config.capacity);
     visible->setName("TreeProxyVisible");
     counter = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 4);

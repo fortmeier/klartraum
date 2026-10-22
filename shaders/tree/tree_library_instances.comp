@@ -5,15 +5,16 @@
 #version 450
 
 // Turns the visible trees of TreeProxies into copies of the Gaussian tree
-// library (TreeGaussianForest): per tree the patch of its type and of the
-// season sample nearest to the current season, its foot, turn and scale, and
-// how far it has faded out; slots beyond the visible trees get scale 0 and
-// are skipped.
+// library (TreeGaussianForest), one per entry of the visible list: per tree
+// the patch of its type and of the season sample nearest to the current
+// season, its foot, turn and scale, and how far it has faded out. Trees whose
+// size on screen times treeCopyPriority() lies below the cut-off
+// (tree_library_cut.comp) fade out above it (treeCopyFade());
+// they and the slots beyond the visible trees get scale 0 and are skipped.
 
-#extension GL_GOOGLE_include_directive : require
-
-#define TREE_FN
-#include "klartraum/tree/tree_shared.hpp"
+#define TREE_CAMERA_SET 0
+#define TREE_CAMERA_BINDING 5
+#include "tree_render_common.glsl"
 
 layout(local_size_x = 64) in;
 
@@ -27,7 +28,7 @@ layout(std430, binding = 2) readonly buffer Settings {
     TreeRenderSettings settings[];
 };
 // x the season samples (up to 4), y the types' heights at scale 1 (x, y), z x the number of season samples, y of
-// types, z of copies.
+// types, z of copies at most.
 layout(std430, binding = 3) readonly buffer Library {
     vec4 seasons;
     vec4 heights;
@@ -36,18 +37,36 @@ layout(std430, binding = 3) readonly buffer Library {
 layout(std430, binding = 4) writeonly buffer Instances {
     TreeLodInstance instances[];
 };
+// [0] the cut-off in log2 pixels (float bits); see tree_library_cut.comp.
+layout(std430, binding = 6) readonly buffer State {
+    uint state[];
+};
+
+layout(std430, binding = 7) readonly buffer Config {
+    TreeTileConfig config;
+};
+
+layout(push_constant) uniform Push {
+    uint capacity; // of the visible list
+}
+pc;
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
-    if (i >= counts.z) {
+    if (i >= pc.capacity) {
         return;
     }
     TreeLodInstance inst;
     inst.posYaw = vec4(0.0f);
     inst.plane = vec4(0.0f);
     inst.ids = uvec4(0u);
-    if (i < min(counter[0], counts.z)) {
-        TreeSite site = visible[i];
+    TreeSite site = visible[min(i, pc.capacity - 1u)];
+    float h = site.posHeight.w;
+    float pixels = treePixelDiameter(camera.cameraWorldPos.xyz, site.posHeight.xyz + vec3(0.0f, 0.5f * h, 0.0f),
+                                     0.5f * h, treeFocalPixels(settings[0]));
+    pixels *= treeCopyPriority(treeLandCover(config.terrain, site.posHeight.x, site.posHeight.z).vegetation.x);
+    float shown = site.kind.w * treeCopyFade(pixels, uintBitsToFloat(state[0]));
+    if (i < min(counter[0], pc.capacity) && shown > 0.0f) {
         uint type = min(site.kind.x == TREE_SITE_CONIFER ? 1u : 0u, counts.y - 1u);
         float season = treeSeasonWrap(settings[0].season.x);
         uint nearest = 0u;
@@ -62,7 +81,7 @@ void main() {
         }
         inst.posYaw = vec4(site.posHeight.xyz, site.kind.y);
         inst.plane = vec4(0.0f, 0.0f, site.posHeight.w / heights[type], 0.0f);
-        inst.ids = uvec4(type * counts.x + nearest, floatBitsToUint(1.0f - site.kind.w),
+        inst.ids = uvec4(type * counts.x + nearest, floatBitsToUint(1.0f - shown),
                          floatBitsToUint(1.0f - site.kind.z), 1u);
     }
     instances[i] = inst;

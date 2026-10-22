@@ -90,6 +90,10 @@ void main() {
     if (withCanopy && settings[0].canopyBand.x > 0.0f) {
         band.xy = settings[0].canopyBand.xy;
     }
+    // Where the library copies' cut-off lies above the band, the canopy covers the trees below it.
+    if (withCanopy && settings[0].canopyBand.z > band.x) {
+        band.xy = settings[0].canopyBand.zw;
+    }
     bool withShadows = config.canopy.w > 0.0f;
     float focal = withCanopy ? treeFocalPixels(settings[0]) : 0.0f;
     vec3 sun = withShadows ? settings[0].sun.xyz : vec3(0.0f, 1.0f, 0.0f);
