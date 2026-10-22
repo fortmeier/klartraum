@@ -167,6 +167,35 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         toGeneral->addDependency(splatting);
 
         stems = std::make_unique<TreeStemRenderer>(vulkanContext, *generator, camera, settings, renderExtent, inputs);
+        if (scene.placed && config.reducedTrees > 0) {
+            // The reduced trees, all hidden until setView() places them.
+            for (const TreeTypeParams& type : scene.types) {
+                reducedTypes.push_back(treeReducedType(type));
+            }
+            reducedCount = config.reducedTrees;
+            std::vector<TreeInstance> hidden(reducedCount, scene.trees.front());
+            std::vector<TreeInstance> tallest = hidden;
+            TreeCapacity reducedCapacity{};
+            for (uint32_t type = 0; type < reducedTypes.size(); ++type) {
+                for (TreeInstance& inst : tallest) {
+                    inst.ids.x = type;
+                    inst.posScale.w = placement.size.x * (1.0f + placement.size.y) / placement.grid.w /
+                                      reducedTypes[type].shapeBase.z;
+                }
+                const TreeCapacity c = TreeCapacity::fromReference(reducedTypes, tallest, frame);
+                for (size_t level = 0; level < reducedCapacity.stems.size(); ++level) {
+                    reducedCapacity.stems[level] = std::max(reducedCapacity.stems[level], c.stems[level]);
+                }
+                reducedCapacity.segments = std::max(reducedCapacity.segments, c.segments);
+                reducedCapacity.leaves = std::max(reducedCapacity.leaves, c.leaves);
+            }
+            reducedGenerator =
+                std::make_shared<TreeGenerator>(vulkanContext, reducedTypes, hidden, reducedCapacity, frame);
+            reducedStems = std::make_unique<TreeStemRenderer>(vulkanContext, *reducedGenerator, camera, settings,
+                                                              renderExtent, inputs);
+            reducedLeaves = std::make_unique<TreeLeafRenderer>(vulkanContext, *reducedGenerator, reducedTypes, camera,
+                                                               settings, renderExtent, inputs);
+        }
         leaves = std::make_unique<TreeLeafRenderer>(vulkanContext, *generator, scene.types, camera, settings,
                                                     renderExtent, inputs);
         meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, config.terrainLod ? potMesh : scene.mesh, settings,
@@ -188,6 +217,12 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         pass->addComputeDependency(stems->getClassify());
         pass->addComputeDependency(leaves->getClassify());
         pass->addComputeDependency(settings);
+        if (reducedGenerator) {
+            pass->addComputeDependency(reducedStems->getClassify());
+            pass->addComputeDependency(reducedLeaves->getClassify());
+            pass->addDrawComponent(reducedStems->getDrawComponent());
+            pass->addDrawComponent(reducedLeaves->getDrawComponent());
+        }
         pass->addComputeDependency(lightVolume->getElement());
         pass->addDrawComponent(meshes->getDrawComponent());
         if (terrain) {
@@ -229,6 +264,9 @@ void BonsaiRenderer::setSeason(float season) {
     TreeFrame frame = generator->getFrame().values().at(0);
     frame.timeSeason.y = season;
     generator->getFrame().set(0, frame);
+    if (reducedGenerator) {
+        reducedGenerator->getFrame().set(0, frame);
+    }
     TreeRenderSettings values = settings->values().at(0);
     values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
     settings->set(0, values);
@@ -239,6 +277,9 @@ void BonsaiRenderer::setTime(float seconds, float timeOfDay, float season, glm::
     frame.timeSeason = glm::vec4(seconds, season, 0.0f, 0.0f);
     frame.wind = wind;
     generator->getFrame().set(0, frame);
+    if (reducedGenerator) {
+        reducedGenerator->getFrame().set(0, frame);
+    }
     TreeRenderSettings values = settings->values().at(0);
     applyTreeSky(values, treeSkyAt(timeOfDay, season), lanternFlame, seconds);
     values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
@@ -250,19 +291,26 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
         return;
     }
     tiles->update(eye);
-    const std::vector<TreeSite> sites = nearestTreeSites(terrainParams, placement, eye, nearTrees);
-    std::vector<TreeInstance> instances;
-    for (const TreeSite& site : sites) {
-        instances.push_back(treeInstanceFor(site, types, seed));
+    // The nearest trees in full, the next ones reduced (L1).
+    const std::vector<TreeSite> sites = nearestTreeSites(terrainParams, placement, eye, nearTrees + reducedCount);
+    auto instancesOf = [&](size_t from, size_t count, const std::vector<TreeTypeParams>& of) {
+        std::vector<TreeInstance> instances;
+        for (size_t i = from; i < std::min(sites.size(), from + count); ++i) {
+            instances.push_back(treeInstanceFor(sites[i], of, seed));
+        }
+        // Over open land fewer trees are near; the rest are tiny and far below the pot.
+        while (instances.size() < count) {
+            TreeInstance hidden{};
+            hidden.posScale = glm::vec4(0.0f, -100.0f, 0.0f, 1e-4f);
+            hidden.rot = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
+            instances.push_back(hidden);
+        }
+        return instances;
+    };
+    generator->getInstances().set(instancesOf(0, nearTrees, types));
+    if (reducedGenerator) {
+        reducedGenerator->getInstances().set(instancesOf(nearTrees, reducedCount, reducedTypes));
     }
-    // Over open land fewer trees are near; the rest are tiny and far below the pot.
-    while (instances.size() < nearTrees) {
-        TreeInstance hidden{};
-        hidden.posScale = glm::vec4(0.0f, -100.0f, 0.0f, 1e-4f);
-        hidden.rot = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
-        instances.push_back(hidden);
-    }
-    generator->getInstances().set(instances);
     proxies->setNearRadius(sites.empty() ? -1.0f : glm::length(glm::vec3(sites.back().posHeight) - eye));
 }
 
