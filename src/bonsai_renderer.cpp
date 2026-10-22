@@ -119,6 +119,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     const uint32_t mossSlots = mossCopies.empty() ? 0u : config.mossPool;
     const bool terrainGaussianPool = !classical && config.terrainLod;
     const uint32_t proxySlots = scene.placed && !classical ? config.forestPool : 0u;
+    const uint32_t grassSlots = scene.placed && !classical && config.grass && config.terrainLod ? config.grassPool : 0u;
     // The canopy and the proxies crossfade over the same band of tree sizes, in rendered pixels.
     TreeProxyConfig proxyConfig = config.proxies;
     TreeCanopy canopy;
@@ -134,7 +135,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         band.canopyBand = glm::vec4(canopyBand, 0.0f, 0.0f);
         settings->set(0, band);
     }
-    sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u) + proxySlots;
+    sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u) + grassSlots + proxySlots;
     // The classical renderer draws only the captured lantern and moss as Gaussians.
     sources.trees = !classical;
     if (!classical) {
@@ -155,6 +156,14 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             vulkanContext, *terrain, splats, gaussians->getExtraOffset() + mossSlots, config.terrainPool, settings,
             camera, lightVolume->getLight());
         splats = terrainGaussians->getGaussians();
+    }
+    if (grassSlots > 0) {
+        grass = std::make_unique<TreeGrass>(vulkanContext, scene.terrain, makeTreeGrass(scene, config.grassBlades),
+                                            camera, settings, renderExtent);
+        grassGaussians = std::make_unique<TreeGrassGaussians>(
+            vulkanContext, *grass, splats, gaussians->getExtraOffset() + mossSlots + config.terrainPool, grassSlots,
+            settings, camera, lightVolume->getLight());
+        splats = grassGaussians->getGaussians();
     }
     if (scene.placed) {
         TreeTileLayout layout = config.tiles;
@@ -253,6 +262,12 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             pass->addComputeDependency(terrain->getElement());
             pass->addDrawComponent(terrainRenderer->getDrawComponent());
         }
+        if (scene.placed && config.grass && config.terrainLod) {
+            grass = std::make_unique<TreeGrass>(vulkanContext, scene.terrain, makeTreeGrass(scene, config.grassBlades),
+                                                camera, settings, renderExtent, inputs);
+            pass->addComputeDependency(grass->getElement());
+            pass->addDrawComponent(grass->getDrawComponent());
+        }
         if (proxies) {
             pass->addComputeDependency(proxies->getElement());
             if (config.impostors) {
@@ -308,6 +323,9 @@ void BonsaiRenderer::setTime(float seconds, float timeOfDay, float season, glm::
     applyTreeSky(values, treeSkyAt(timeOfDay, season), lanternFlame, seconds);
     values.season = glm::vec4(season, tree::treeSnowCover(season), 0.0f, 0.0f);
     settings->set(0, values);
+    if (grass) {
+        grass->setWind(seconds, wind.w, glm::vec2(wind.x, wind.z));
+    }
 }
 
 float TreeDetailBudget::update(float frameMs) {
@@ -321,6 +339,9 @@ float TreeDetailBudget::update(float frameMs) {
 void BonsaiRenderer::setView(glm::vec3 eye) {
     if (!tiles) {
         return;
+    }
+    if (grass) {
+        grass->setView(eye);
     }
     const std::vector<glm::ivec4> slotsBefore = tiles->getCache().getSlots();
     tiles->update(eye);

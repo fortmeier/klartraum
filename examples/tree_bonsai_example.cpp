@@ -9,7 +9,7 @@
 //   tree_bonsai_example [--renderer classical|gaussian|both] [--backend raster|compute]
 //                       [--views 4] [--scale 0.21] [--relief 1.5] [--trees N] [--seed 7] [--width 1280] [--height 720]
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
-//                       [--ground X,Z,METERS,HEADING] [--profile] [--budget MS]
+//                       [--ground X,Z,METERS,HEADING] [--no-grass] [--profile] [--budget MS]
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--from 0] [--to N] [--moss-patches 250]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
@@ -100,6 +100,7 @@ int main(int argc, char** argv) {
     float season = 2.0f;
     bool video = false;
     bool profile = false;
+    bool grass = true;
     float budgetMs = 0.0f;
     bool ground = false;
     glm::vec4 groundView(0.0f); // x, z in units, metres above the ground, heading in degrees (0 towards -z)
@@ -146,6 +147,8 @@ int main(int argc, char** argv) {
                 std::sscanf(argv[++i], "%f,%f,%f,%f", &groundView.x, &groundView.y, &groundView.z, &groundView.w) == 4;
         } else if (arg == "--budget" && hasValue) {
             budgetMs = std::stof(argv[++i]);
+        } else if (arg == "--no-grass") {
+            grass = false;
         } else if (arg == "--profile") {
             profile = true;
         } else if (arg == "--video") {
@@ -203,6 +206,7 @@ int main(int argc, char** argv) {
         config.mode = mode;
         config.backend = backendName == "raster" ? GsplatBackend::Raster : GsplatBackend::Compute;
         config.mossPatches = mossPatches;
+        config.grass = grass;
 
         auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderer bonsai(vc, scene, target, config);
