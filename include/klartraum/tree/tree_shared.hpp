@@ -157,7 +157,8 @@ struct TreeRenderSettings {
     vec4 atmosphere;
     vec4 atmosphereBox; // the box the atmosphere fills: x, y its half length and width, z its bottom, w its top
     // x, y the tree sizes in pixels between which the forest canopy hands over to the trees (treeCanopyWeight());
-    // per frame, so that the visible trees fit their buffers; zw unused. 0: the terrain's own (TreeTerrainConfig).
+    // per frame, so that the visible trees fit their buffers. 0: the terrain's own (TreeTerrainConfig). z, w the
+    // same for the library copies' cut-off (TreeGaussianForest; 0: none): the canopy covers the larger band.
     vec4 canopyBand;
 };
 
@@ -856,6 +857,33 @@ TREE_FN float treeCanopyWeight(vec4 canopy, float pixels) {
 
 // How much a tree's proxy shows when it spans `pixels` pixels: the complement of treeCanopyWeight().
 TREE_FN float treeProxyFade(vec4 canopy, float pixels) { return 1.0f - treeCanopyWeight(canopy, pixels); }
+
+// The trees' sizes on screen in TREE_SIZE_BINS bins of equal width in log2(pixels), from 0.5 to 4096 pixels: the
+// library copies (TreeGaussianForest) go to the largest trees, down to a cut-off between bins, and fade in over
+// TREE_COPY_FADE_WIDTH (in log2 pixels, four bins) above it.
+#define TREE_SIZE_BINS 256u
+#define TREE_SIZE_LOG_MIN -1.0f
+#define TREE_SIZE_BIN_WIDTH 0.05078125f
+#define TREE_COPY_FADE_WIDTH 0.203125f
+
+TREE_FN uint treeSizeBin(float pixels) {
+    float x = (log2(max(pixels, 1e-6f)) - TREE_SIZE_LOG_MIN) / TREE_SIZE_BIN_WIDTH;
+    return uint(clamp(floor(x), 0.0f, float(TREE_SIZE_BINS - 1u)));
+}
+
+// The lower edge of `bin` in log2(pixels).
+TREE_FN float treeSizeBinEdge(uint bin) { return TREE_SIZE_LOG_MIN + float(bin) * TREE_SIZE_BIN_WIDTH; }
+
+// How many times its size on screen a tree counts when the library copies are given to the largest trees, for the
+// forest weight at its foot: the canopy stands in for the trees of a forest below the cut-off, but not for those in
+// the open.
+TREE_FN float treeCopyPriority(float forest) { return mix(8.0f, 1.0f, clamp(forest, 0.0f, 1.0f)); }
+
+// How much a library copy shows at `pixels` for the cut-off `cut` (log2 pixels): none at the cut-off, all
+// TREE_COPY_FADE_WIDTH above it.
+TREE_FN float treeCopyFade(float pixels, float cut) {
+    return clamp((log2(max(pixels, 1e-6f)) - cut) / TREE_COPY_FADE_WIDTH, 0.0f, 1.0f);
+}
 
 #define TREE_SITE_BROADLEAF 0.0f
 #define TREE_SITE_CONIFER 1.0f

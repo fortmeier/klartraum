@@ -52,6 +52,8 @@ public:
     std::shared_ptr<StorageDrawComponent> getDrawComponent() const { return draw; }
     BufferRef getVisible() const { return {cull, 6}; }
     BufferRef getCounter() const { return {cull, 7}; }
+    /// The tiles' TreeTileConfig (the terrain and the placement).
+    BufferRef getTileConfig() const { return tileConfig; }
     /// Two indirect draws of the visible trees: [0] the proxies (kVertices each), [1] impostors (6 each).
     BufferRef getDrawArgs() const { return {args, 1}; }
     std::shared_ptr<DispatchIndirectCommandBufferElement> getDispatchArgs() const { return dispatchArgs; }
@@ -66,6 +68,7 @@ public:
 
 private:
     TreeProxyConfig config;
+    BufferRef tileConfig;
     std::shared_ptr<GeneralComputation<TreeProxyCullPush>> cull;
     std::shared_ptr<GeneralComputation<glm::uvec2>> args;
     std::shared_ptr<BufferElement<VulkanBuffer<TreeSite>>> visible;

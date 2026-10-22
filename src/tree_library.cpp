@@ -123,9 +123,33 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
     auto libraryBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<Library>>>(vulkanContext, 1u);
     libraryBuffer->setName("TreeLibraryParams");
     libraryBuffer->getBuffer().memcopyFrom(std::vector<Library>{library});
-    auto instances = std::make_shared<BufferElement<VulkanBuffer<TreeLodInstance>>>(
-        vulkanContext, config.trees, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    const uint32_t visibleCapacity = proxies.getConfig().capacity;
+    // Read back by the tests, so host visible.
+    instances = std::make_shared<BufferElement<VulkanBuffer<TreeLodInstance>>>(vulkanContext, visibleCapacity);
     instances->setName("TreeLibraryInstances");
+    state = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 4u + TREE_SIZE_BINS);
+    state->setName("TreeLibraryCut");
+    // The bins are counted anew every frame; the cut-off before them carries over.
+    state->setRecordToZeroRange(4 * sizeof(uint32_t), TREE_SIZE_BINS * sizeof(uint32_t));
+
+    histogram =
+        std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_library_histogram.comp.spv");
+    histogram->setName("TreeLibraryHistogram");
+    proxies.getVisible().connectTo(*histogram, 0);
+    proxies.getCounter().connectTo(*histogram, 1);
+    histogram->setInput(settings, 2);
+    histogram->setInput(camera, 3);
+    histogram->setInput(state, 4);
+    proxies.getTileConfig().connectTo(*histogram, 5);
+    histogram->addDependency(proxies.getElement());
+    histogram->setGroupCountX((visibleCapacity + 255) / 256);
+    histogram->setPushConstants({visibleCapacity});
+
+    cutoff = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_library_cut.comp.spv");
+    cutoff->setName("TreeLibraryCut");
+    cutoff->setInput(histogram, 0, 4);
+    cutoff->setGroupCountX(1);
+    cutoff->setPushConstants({config.trees});
 
     convert =
         std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_library_instances.comp.spv");
@@ -135,12 +159,51 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
     convert->setInput(settings, 2);
     convert->setInput(libraryBuffer, 3);
     convert->setInput(instances, 4);
+    convert->setInput(camera, 5);
+    convert->setInput(cutoff, 6, 0);
+    proxies.getTileConfig().connectTo(*convert, 7);
     convert->addDependency(proxies.getElement());
-    convert->setGroupCountX((config.trees + 63) / 64);
-    convert->setPushConstants({0u});
+    convert->setGroupCountX((visibleCapacity + 63) / 64);
+    convert->setPushConstants({visibleCapacity});
 
-    lod = std::make_unique<TreeMossLod>(vulkanContext, source, patches, BufferRef{convert, 4}, config.trees, camera,
+    lod = std::make_unique<TreeMossLod>(vulkanContext, source, patches, BufferRef{convert, 4}, visibleCapacity, camera,
                                         settings, light, config.boundaries, poolSlots, poolOffset);
+}
+
+void TreeGaussianForest::initialize(uint32_t numberPaths) {
+    for (uint32_t path = 0; path < numberPaths; ++path) {
+        state->getBuffer(path).memcopyFrom(std::vector<uint32_t>(4u + TREE_SIZE_BINS, 0u));
+    }
+}
+
+TreeForestCut TreeGaussianForest::readCut(uint32_t pathId) {
+    std::vector<uint32_t> values(4u + TREE_SIZE_BINS, 0u);
+    state->getBuffer(pathId).memcopyTo(values);
+    TreeForestCut cut;
+    cut.cut = glm::uintBitsToFloat(values[0]);
+    cut.target = glm::uintBitsToFloat(values[1]);
+    cut.taken = values[2];
+    cut.bins.assign(values.begin() + 4, values.end());
+    return cut;
+}
+
+std::vector<TreeLodInstance> TreeGaussianForest::readInstances(uint32_t pathId) {
+    std::vector<TreeLodInstance> values(instances->getBuffer(pathId).getBufferMemSize() / sizeof(TreeLodInstance));
+    instances->getBuffer(pathId).memcopyTo(values);
+    return values;
+}
+
+float treeForestCutTarget(const std::vector<uint32_t>& bins, uint32_t copies, uint32_t* taken) {
+    uint32_t sum = 0;
+    uint32_t bin = uint32_t(bins.size());
+    while (bin > 0 && sum + bins[bin - 1] <= copies) {
+        --bin;
+        sum += bins[bin];
+    }
+    if (taken) {
+        *taken = sum;
+    }
+    return tree::treeSizeBinEdge(bin);
 }
 
 } // namespace klartraum

@@ -377,7 +377,15 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     // Before a frame showed the trees of every tile, the band cannot be judged yet.
     bandChanged = band != before || !viewedOnce || tilesChanged;
     viewedOnce = true;
-    values.canopyBand = glm::vec4(band, 0.0f, 0.0f);
+    // The canopy also covers the trees below the library copies' cut-off of the last frame, as they fade out.
+    glm::vec2 copyBand(0.0f);
+    if (forest) {
+        const float cut = forest->readCut().cut;
+        if (cut > TREE_SIZE_LOG_MIN) {
+            copyBand = glm::vec2(std::exp2(cut), std::exp2(cut + TREE_COPY_FADE_WIDTH));
+        }
+    }
+    values.canopyBand = glm::vec4(band, copyBand);
     settings->set(0, values);
     // The nearest trees in full, the next ones reduced (L1).
     // With less detail fewer of them, the farther ones left to the impostors or library copies.
@@ -425,6 +433,11 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     proxies->setNearRadius(sites.empty() ? -1.0f : glm::length(glm::vec3(sites.back().posHeight) - eye));
 }
 
-void BonsaiRenderer::initialize(uint32_t numberPaths) { gaussians->initializeBuffers(numberPaths); }
+void BonsaiRenderer::initialize(uint32_t numberPaths) {
+    gaussians->initializeBuffers(numberPaths);
+    if (forest) {
+        forest->initialize(numberPaths);
+    }
+}
 
 } // namespace klartraum

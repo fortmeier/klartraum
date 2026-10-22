@@ -27,9 +27,23 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
                                                 const std::vector<float>& seasons, std::vector<float>& heights,
                                                 bool reduced = true);
 
+/// The cut-off (log2 pixels, the lower edge of a size bin) from which on the trees counted in `bins` (TREE_SIZE_BINS,
+/// treeSizeBin()) fit `copies`: the lowest bin edge for which the bins at or above it hold at most `copies` trees.
+/// `taken` receives that number. What tree_library_cut.comp computes as its target.
+float treeForestCutTarget(const std::vector<uint32_t>& bins, uint32_t copies, uint32_t* taken = nullptr);
+
+/// The cut-off of the library copies after a frame (TreeGaussianForest::readCut()).
+struct TreeForestCut {
+    float cut = 0.0f;    ///< log2 pixels: copies fade in above it (treeCopyFade())
+    float target = 0.0f; ///< this frame's target (treeForestCutTarget()), which the cut-off follows
+    uint32_t taken = 0;  ///< trees at or above the target's bin
+    std::vector<uint32_t> bins;
+};
+
 struct TreeGaussianForestConfig {
     std::vector<float> seasons{0.2f, 1.2f, 2.0f, 3.0f}; ///< at most 4
-    uint32_t trees = 32768;                             ///< copies per frame, at most
+    /// Copies per frame, at most: the largest visible trees (TreeForestCut), the others fade out by size.
+    uint32_t trees = 32768;
     /// Pixel diameters (of the crown) below which a tree uses its library levels 1, 2 and 3, and the crossfade band.
     glm::vec4 boundaries{480.0f, 160.0f, 60.0f, 0.15f};
 };
@@ -39,9 +53,13 @@ struct TreeGaussianForestConfig {
  *        season sample nearest to the current season, turned and scaled to its site, with a level of detail by its
  *        size on screen (TreeMossLod) and faded as TreeProxies fades it.
  *
- * `tree_library_instances.comp` turns the visible sites into TreeLodInstance
- * every frame; the copies go into `poolSlots` slots from `poolOffset` of
- * `source`, after its writers.
+ * Every frame `tree_library_histogram.comp` counts the visible trees by size,
+ * `tree_library_cut.comp` finds the cut-off above which they fit `trees`
+ * copies, and `tree_library_instances.comp` turns the visible sites above it
+ * into TreeLodInstance, one slot per entry of the visible list; the copies go
+ * into `poolSlots` slots from `poolOffset` of `source`, after its writers.
+ * Which trees are copied thus depends on their sizes only, not on the order
+ * of the visible list. Call initialize() once after the graph is compiled.
  */
 class TreeGaussianForest {
 public:
@@ -55,8 +73,19 @@ public:
     TreeMossLod& getLod() { return *lod; }
     const std::vector<float>& getHeights() const { return heights; }
 
+    /// Starts the cut-off anew in every path; call after compiling.
+    void initialize(uint32_t numberPaths);
+    /// After a submission of `pathId`: the cut-off and the histogram it came from.
+    TreeForestCut readCut(uint32_t pathId = 0);
+    /// After a submission of `pathId`: the copies, one per entry of the visible list (scale 0: none).
+    std::vector<TreeLodInstance> readInstances(uint32_t pathId = 0);
+
 private:
     std::vector<float> heights;
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> state;
+    std::shared_ptr<BufferElement<VulkanBuffer<TreeLodInstance>>> instances;
+    std::shared_ptr<GeneralComputation<uint32_t>> histogram;
+    std::shared_ptr<GeneralComputation<uint32_t>> cutoff;
     std::shared_ptr<GeneralComputation<uint32_t>> convert;
     std::unique_ptr<TreeMossLod> lod;
 };
