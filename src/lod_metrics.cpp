@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include "klartraum/popping_metric.hpp"
+#include "klartraum/lod_metrics.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -65,26 +65,59 @@ std::optional<float> PoppingMeter::push(std::vector<float> frame) {
 
 void PoppingMeter::reset() { frames.clear(); }
 
-PoppingSummary summarizePopping(const std::vector<float>& residuals) {
-    PoppingSummary s;
-    if (residuals.empty()) {
+SeriesSummary summarizeSeries(const std::vector<float>& values) {
+    SeriesSummary s;
+    if (values.empty()) {
         return s;
     }
     double sum = 0.0;
-    for (size_t i = 0; i < residuals.size(); ++i) {
-        sum += residuals[i];
-        if (residuals[i] > s.max) {
-            s.max = residuals[i];
+    for (size_t i = 0; i < values.size(); ++i) {
+        sum += values[i];
+        if (values[i] > s.max) {
+            s.max = values[i];
             s.worst = i;
         }
     }
-    s.mean = float(sum / double(residuals.size()));
-    std::vector<float> sorted = residuals;
+    s.mean = float(sum / double(values.size()));
+    std::vector<float> sorted = values;
     std::sort(sorted.begin(), sorted.end());
     const size_t n = sorted.size();
     s.median = n % 2 == 1 ? sorted[n / 2] : 0.5f * (sorted[n / 2 - 1] + sorted[n / 2]);
     s.spike = s.median > 0.0f ? s.max / s.median : 0.0f;
     return s;
+}
+
+float fidelityError(const std::vector<uint8_t>& image, const std::vector<uint8_t>& reference, uint32_t width,
+                    uint32_t height, FidelityConfig config) {
+    const size_t bytes = size_t(width) * height * 4;
+    if (image.size() != bytes || reference.size() != bytes || config.block == 0) {
+        throw std::invalid_argument("fidelityError: images must have width x height BGRA pixels");
+    }
+    const uint32_t b = config.block;
+    const double scale = 1.0 / (double(b) * b * 255.0);
+    double sum = 0.0;
+    size_t blocks = 0;
+    for (uint32_t by = 0; by + b <= height; by += b) {
+        for (uint32_t bx = 0; bx + b <= width; bx += b) {
+            double a[3] = {0.0, 0.0, 0.0}, r[3] = {0.0, 0.0, 0.0};
+            for (uint32_t y = by; y < by + b; ++y) {
+                for (uint32_t x = bx; x < bx + b; ++x) {
+                    const size_t i = (size_t(y) * width + x) * 4;
+                    for (int c = 0; c < 3; ++c) {
+                        a[c] += image[i + c];
+                        r[c] += reference[i + c];
+                    }
+                }
+            }
+            const double lightImage = (a[0] + a[1] + a[2]) * scale / 3.0;
+            const double lightReference = (r[0] + r[1] + r[2]) * scale / 3.0;
+            if (std::max(lightImage, lightReference) > config.minLight) {
+                sum += (std::abs(a[0] - r[0]) + std::abs(a[1] - r[1]) + std::abs(a[2] - r[2])) * scale / 3.0;
+                ++blocks;
+            }
+        }
+    }
+    return blocks > 0 ? float(sum / double(blocks)) : 0.0f;
 }
 
 } // namespace klartraum

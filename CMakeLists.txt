@@ -331,7 +331,7 @@ add_executable(
   tests/test_bonsai_flight.cpp
   tests/test_tree_floor.cpp
   tests/test_tree_gaussian_quality.cpp
-  tests/test_popping_metric.cpp
+  tests/test_lod_metrics.cpp
   tests/test_tree_tiles.cpp
   tests/test_tree_proxies.cpp
   tests/test_tree_impostors.cpp
@@ -393,7 +393,7 @@ set(KLARTRAUM_LIB_SRC
   src/tree_placement.cpp
   src/tree_grass.cpp
   src/bonsai_flight.cpp
-  src/popping_metric.cpp
+  src/lod_metrics.cpp
   src/tree_floor.cpp
   src/tree_tiles.cpp
   src/tree_proxies.cpp

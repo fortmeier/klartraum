@@ -2,25 +2,28 @@
 //
 // SPDX-License-Identifier: MIT
 
-// Measures how much a single Gaussian tree pops while the camera moves away from it and back (poppingResidual()),
-// as the Gaussian BonsaiRenderer draws it today: generated every frame (TreeGaussians) while it is among the near
-// trees, beyond that as its library copy (TreeMossLod) with the copy's levels of detail by size on screen:
+// Measures how much a single Gaussian tree pops (poppingResidual()) and how far it lies from the same tree without
+// levels of detail (fidelityError()) while the camera moves away from it and back, as the Gaussian BonsaiRenderer
+// draws it today: generated every frame (TreeGaussians) while it is among the near trees, beyond that as its
+// library copy (TreeMossLod) with the copy's levels of detail by size on screen:
 //
-//   tree_lod_popping_example [--species broadleaf|conifer] [--yaw 0.3] [--width 1280] [--height 720] [--fov 50]
+//   tree_lod_metrics_example [--species broadleaf|conifer] [--yaw 0.3] [--width 1280] [--height 720] [--fov 50]
 //                            [--start 5] [--far 300] [--frames 800] [--near-radius M] [--wind 0.5]
-//                            [--out-dir build/TestingOutput/tree_lod_popping]
+//                            [--out-dir build/TestingOutput/tree_lod_metrics]
 //
-// Two runs over the same flight, side by side: a static tree (no wind) and a dynamic one (wind of --wind, as the
-// bonsai explorer blows it). The camera, level with the tree's middle, moves from --start to --far metres from the
-// trunk and back, the logarithm of the distance following a cosine, so the motion is smooth everywhere and slow at
-// both ends. The tree is generated while the camera is nearer than --near-radius; by default that is the distance
-// of the scene's nearTrees-th nearest tree at the bonsai explorer's start in the forest, which is where the
-// renderer hands its trees over to the library. The copy is never squeezed by its pool here (one tree).
+// Four runs over the same flight: a static tree (no wind) and a dynamic one (wind of --wind, as the bonsai explorer
+// blows it), each with the levels of detail and without them (generated every frame at every distance, its stems
+// never culled by size), the reference of the fidelity. The camera, level with the tree's middle, moves from --start to
+// --far metres from the trunk and back, the logarithm of the distance following a cosine, so the motion is smooth
+// everywhere and slow at both ends. The tree is generated while the camera is nearer than --near-radius; by default
+// that is the distance of the scene's nearTrees-th nearest tree at the bonsai explorer's start in the forest, which is
+// where the renderer hands its trees over to the library. The copy is never squeezed by its pool here (one tree).
 //
-// Writes <out-dir>/popping.csv (per frame: distance, what draws the tree, the copy's level and crossfade, the
-// crown's diameter in pixels and both runs' residuals) and <out-dir>/frames/frame_NNNN.ppm (static left, dynamic
-// right, each at 3/4 of the measured size), and prints a summary. scripts/tree/make_lod_popping_video.sh labels
-// the frames and encodes the video.
+// Writes <out-dir>/metrics.csv (per frame: distance, what draws the tree, the copy's level and crossfade, the
+// crown's diameter in pixels, the four runs' popping residuals and the fidelity errors of the static and the
+// dynamic run) and <out-dir>/frames/frame_NNNN.ppm (with levels of detail above, without below; static left,
+// dynamic right; each at 3/4 of the measured size), and prints a summary. scripts/tree/make_lod_metrics_video.sh
+// labels the frames and encodes the video.
 
 #include <algorithm>
 #include <cmath>
@@ -38,7 +41,7 @@
 #include "klartraum/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/offscreen_target.hpp"
-#include "klartraum/popping_metric.hpp"
+#include "klartraum/lod_metrics.hpp"
 #include "klartraum/tree/bonsai_flight.hpp"
 #include "klartraum/tree/bonsai_scene.hpp"
 #include "klartraum/tree/tree_gaussians.hpp"
@@ -76,8 +79,8 @@ std::vector<uint8_t> readImage(VulkanContext& vc, VkImage image, VkExtent2D exte
 }
 
 // Bilinear samples of a BGRA image at the centres of a smaller image's pixels, as RGB.
-void resampleInto(const std::vector<uint8_t>& bgra, VkExtent2D from, std::vector<uint8_t>& rgb, uint32_t rowWidth,
-                  uint32_t x0, VkExtent2D to) {
+void resampleInto(const std::vector<uint8_t>& bgra, VkExtent2D from, uint8_t* rgb, uint32_t rowWidth, uint32_t x0,
+                  VkExtent2D to) {
     const float sx = float(from.width) / float(to.width), sy = float(from.height) / float(to.height);
     for (uint32_t y = 0; y < to.height; ++y) {
         const float fy = std::clamp((float(y) + 0.5f) * sy - 0.5f, 0.0f, float(from.height - 1));
@@ -101,16 +104,21 @@ void resampleInto(const std::vector<uint8_t>& bgra, VkExtent2D from, std::vector
 
 // One tree over black, drawn by the raster splatting into its own target: either generated every frame as the
 // near trees are (TreeGaussians) or as its library copy (TreeMossLod), lit the same way, in season kSeason.
+// Without `cullStems` the generated tree keeps the stems thinner than the renderer draws (TreeRenderSettings::
+// viewport.w), its only reduction by size.
 struct TreeView {
     TreeView(VulkanContext& vc, const BonsaiScene& scene, const TreeSite& site, bool copy, VkExtent2D extent,
              std::shared_ptr<CameraUboType> camera, const std::vector<GaussianLods>& library, uint32_t variant,
-             const TreeGaussianForestConfig& forest)
+             const TreeGaussianForestConfig& forest, bool cullStems = true)
         : vc(vc),
           extent(extent) {
         settings = std::make_shared<HostValues<TreeRenderSettings>>(
             vc, std::vector<TreeRenderSettings>{defaultTreeRenderSettings(extent)});
         TreeRenderSettings values = settings->values().at(0);
         values.season = glm::vec4(kSeason, tree::treeSnowCover(kSeason), 0.0f, 0.0f);
+        if (!cullStems) {
+            values.viewport.w = 0.0f;
+        }
         settings->set(0, values);
         TreeFrame frame = defaultTreeFrame();
         frame.timeSeason.y = kSeason;
@@ -182,14 +190,20 @@ struct TreeView {
     std::unique_ptr<ComputeGraph> graph;
 };
 
-void printSummary(const char* name, const std::vector<float>& residuals, const std::vector<float>& distances,
-                  const std::vector<std::string>& drawnBy) {
+// The popping of a run: its largest residual, and those where what draws the tree changes against the run's
+// median, the frames around it and the same frames without levels of detail (`reference`, the residual the motion
+// alone leaves).
+void printPopping(const char* name, const std::vector<float>& residuals, const std::vector<float>& reference,
+                  const std::vector<float>& distances, const std::vector<std::string>& drawnBy) {
     // The first and last frames have no neighbour on one side.
     const std::vector<float> inner(residuals.begin() + 1, residuals.end() - 1);
-    const PoppingSummary s = summarizePopping(inner);
+    const SeriesSummary s = summarizeSeries(inner);
     const size_t worst = s.worst + 1;
-    std::printf("%s: max %.5f at frame %zu (%.1f m, %s), median %.5f, mean %.5f, max/median %.1f\n", name, s.max, worst,
-                distances[worst], drawnBy[worst].c_str(), s.median, s.mean, s.spike);
+    const SeriesSummary free = summarizeSeries(std::vector<float>(reference.begin() + 1, reference.end() - 1));
+    std::printf("%s popping: max %.5f at frame %zu (%.1f m, %s), median %.5f, mean %.5f, max/median %.1f; without "
+                "levels of detail max %.5f, median %.5f\n",
+                name, s.max, worst, distances[worst], drawnBy[worst].c_str(), s.median, s.mean, s.spike, free.max,
+                free.median);
     // The frames where what draws the tree changes, and their residuals (the larger of the two frames around it),
     // against the run's median and against the frames 3 to 12 away on both sides (the motion there).
     for (size_t k = 1; k + 2 < residuals.size(); ++k) {
@@ -202,11 +216,41 @@ void printSummary(const char* name, const std::vector<float>& residuals, const s
             for (size_t j = k + 4; j < std::min(k + 14, residuals.size() - 1); ++j) {
                 around.push_back(residuals[j]);
             }
-            const float local = summarizePopping(around).median;
-            std::printf("  %-12s -> %-12s at %6.1f m: %.5f (%5.1f x median, %5.1f x around)\n", drawnBy[k].c_str(),
-                        drawnBy[k + 1].c_str(), 0.5f * (distances[k] + distances[k + 1]), r,
-                        s.median > 0.0f ? r / s.median : 0.0f, local > 0.0f ? r / local : 0.0f);
+            const float local = summarizeSeries(around).median;
+            const float motion = std::max(reference[k], reference[k + 1]);
+            std::printf("  %-12s -> %-12s at %6.1f m: %.5f (%5.1f x median, %5.1f x around, %5.1f x without levels "
+                        "of detail)\n",
+                        drawnBy[k].c_str(), drawnBy[k + 1].c_str(), 0.5f * (distances[k] + distances[k + 1]), r,
+                        s.median > 0.0f ? r / s.median : 0.0f, local > 0.0f ? r / local : 0.0f,
+                        motion > 0.0f ? r / motion : 0.0f);
         }
+    }
+}
+
+// The fidelity of a run: its mean and largest error over the frames drawn by each representation.
+void printFidelity(const char* name, const std::vector<float>& errors, const std::vector<float>& distances,
+                   const std::vector<std::string>& drawnBy) {
+    const SeriesSummary all = summarizeSeries(errors);
+    std::printf("%s fidelity: mean error %.4f, max %.4f at %.1f m (%s)\n", name, all.mean, all.max,
+                distances[all.worst], drawnBy[all.worst].c_str());
+    std::vector<std::string> order;
+    for (const std::string& by : drawnBy) {
+        if (std::find(order.begin(), order.end(), by) == order.end()) {
+            order.push_back(by);
+        }
+    }
+    for (const std::string& by : order) {
+        std::vector<float> e;
+        float nearest = 1e30f, farthest = 0.0f;
+        for (size_t k = 0; k < errors.size(); ++k) {
+            if (drawnBy[k] == by) {
+                e.push_back(errors[k]);
+                nearest = std::min(nearest, distances[k]);
+                farthest = std::max(farthest, distances[k]);
+            }
+        }
+        const SeriesSummary s = summarizeSeries(e);
+        std::printf("  %-12s %6.1f - %6.1f m: mean %.4f, max %.4f\n", by.c_str(), nearest, farthest, s.mean, s.max);
     }
 }
 
@@ -221,7 +265,7 @@ int main(int argc, char** argv) {
     int frames = 800;
     float nearRadiusMeters = 0.0f; // 0: from the forest at the explorer's start
     float windStrength = 0.5f;
-    std::filesystem::path outDir = "build/TestingOutput/tree_lod_popping";
+    std::filesystem::path outDir = "build/TestingOutput/tree_lod_metrics";
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -302,20 +346,24 @@ int main(int argc, char** argv) {
     auto camera = std::make_shared<CameraUboType>();
     TreeView generated(vc, scene, site, false, extent, camera, library, variant, forest);
     TreeView copy(vc, scene, site, true, extent, camera, library, variant, forest);
+    TreeView reference(vc, scene, site, false, extent, camera, library, variant, forest, false);
 
     const VkExtent2D panel{width * 3 / 4, height * 3 / 4};
     std::filesystem::create_directories(outDir / "frames");
-    std::ofstream csv(outDir / "popping.csv");
-    csv << "frame,distance_m,drawn_by,level,fade,crown_px,residual_static,residual_dynamic\n";
+    std::ofstream csv(outDir / "metrics.csv");
+    csv << "frame,distance_m,drawn_by,level,fade,crown_px,residual_static,residual_dynamic,residual_free_static,"
+           "residual_free_dynamic,fidelity_static,fidelity_dynamic\n";
 
     const glm::vec3 middle = glm::vec3(site.posHeight) + glm::vec3(0.0f, 0.5f * treeHeight, 0.0f);
     const glm::vec4 wind(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength);
-    PoppingMeter meterStatic(width, height), meterDynamic(width, height);
-    std::vector<float> residualStatic(size_t(frames) + 1, 0.0f), residualDynamic(size_t(frames) + 1, 0.0f);
+    // The runs: 0 static, 1 dynamic, 2 static without levels of detail, 3 dynamic without.
+    std::vector<PoppingMeter> poppingMeters(4, PoppingMeter(width, height));
+    std::vector<std::vector<float>> residuals(4, std::vector<float>(size_t(frames) + 1, 0.0f));
+    std::vector<std::vector<float>> fidelity(2, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<float> distances(size_t(frames) + 1);
     std::vector<std::string> drawnBy(size_t(frames) + 1);
     std::vector<glm::vec3> lods(size_t(frames) + 1); // level, fade, crown pixels
-    std::vector<uint8_t> rgb(size_t(panel.width) * 2 * panel.height * 3);
+    std::vector<uint8_t> rgb(size_t(panel.width) * 2 * panel.height * 2 * 3);
     std::printf("tree %.1f m tall (%s, variant %u), generated nearer than %.1f m, %ux%u at %.0f deg, %d frames\n",
                 treeHeight / m, species.c_str(), variant + 1, nearRadiusMeters, width, height, fov, frames);
     for (int k = 0; k <= frames; ++k) {
@@ -351,21 +399,26 @@ int main(int argc, char** argv) {
 
         const float seconds = float(k) / 30.0f;
         TreeView& view = near ? generated : copy;
-        const std::vector<uint8_t> still = view.render(seconds, glm::vec4(glm::vec3(wind), 0.0f));
-        const std::vector<uint8_t> windy = view.render(seconds, wind);
-        if (const std::optional<float> r = meterStatic.push(imageLuminance(still))) {
-            residualStatic[k - 1] = *r;
+        const std::vector<uint8_t> images[4] = {
+            view.render(seconds, glm::vec4(glm::vec3(wind), 0.0f)), view.render(seconds, wind),
+            reference.render(seconds, glm::vec4(glm::vec3(wind), 0.0f)), reference.render(seconds, wind)};
+        for (int run = 0; run < 4; ++run) {
+            if (const std::optional<float> r = poppingMeters[run].push(imageLuminance(images[run]))) {
+                residuals[run][k - 1] = *r;
+            }
         }
-        if (const std::optional<float> r = meterDynamic.push(imageLuminance(windy))) {
-            residualDynamic[k - 1] = *r;
-        }
+        fidelity[0][k] = fidelityError(images[0], images[2], width, height);
+        fidelity[1][k] = fidelityError(images[1], images[3], width, height);
 
-        resampleInto(still, extent, rgb, panel.width * 2, 0, panel);
-        resampleInto(windy, extent, rgb, panel.width * 2, panel.width, panel);
+        // With levels of detail above, without below; static left, dynamic right.
+        for (int run = 0; run < 4; ++run) {
+            resampleInto(images[run], extent, rgb.data() + size_t(run / 2) * panel.height * panel.width * 2 * 3,
+                         panel.width * 2, (run % 2) * panel.width, panel);
+        }
         char name[32];
         std::snprintf(name, sizeof(name), "frame_%04d.ppm", k);
         std::ofstream file(outDir / "frames" / name, std::ios::binary);
-        file << "P6\n" << panel.width * 2 << " " << panel.height << "\n255\n";
+        file << "P6\n" << panel.width * 2 << " " << panel.height * 2 << "\n255\n";
         file.write(reinterpret_cast<const char*>(rgb.data()), std::streamsize(rgb.size()));
         if (k % 100 == 0) {
             std::printf("frame %d: %.1f m, %s\n", k, meters, label);
@@ -373,10 +426,13 @@ int main(int argc, char** argv) {
     }
     for (int k = 0; k <= frames; ++k) {
         csv << k << "," << distances[k] << "," << drawnBy[k] << "," << lods[k].x << "," << lods[k].y << "," << lods[k].z
-            << "," << residualStatic[k] << "," << residualDynamic[k] << "\n";
+            << "," << residuals[0][k] << "," << residuals[1][k] << "," << residuals[2][k] << "," << residuals[3][k]
+            << "," << fidelity[0][k] << "," << fidelity[1][k] << "\n";
     }
-    printSummary("static ", residualStatic, distances, drawnBy);
-    printSummary("dynamic", residualDynamic, distances, drawnBy);
-    std::cout << "frames and popping.csv in " << outDir.string() << std::endl;
+    printPopping("static ", residuals[0], residuals[2], distances, drawnBy);
+    printPopping("dynamic", residuals[1], residuals[3], distances, drawnBy);
+    printFidelity("static ", fidelity[0], distances, drawnBy);
+    printFidelity("dynamic", fidelity[1], distances, drawnBy);
+    std::cout << "frames and metrics.csv in " << outDir.string() << std::endl;
     return 0;
 }
