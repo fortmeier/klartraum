@@ -165,6 +165,7 @@ TreeMossLod::Fit TreeMossLod::readFit(uint32_t pathId) {
     fitState->getBuffer(pathId).memcopyTo(values);
     result.step = values[0];
     result.factor = glm::uintBitsToFloat(values[1]);
+    result.leaveOut = glm::uintBitsToFloat(values[2]);
     result.sums.assign(values.begin() + 4, values.end());
     return result;
 }

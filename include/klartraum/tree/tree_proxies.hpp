@@ -102,7 +102,7 @@ private:
     BufferRef tileConfig;
     std::shared_ptr<GeneralComputation<TreeProxyCullPush>> cull;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sizeState;
-    std::shared_ptr<GeneralComputation<uint32_t>> sizeCut;
+    std::shared_ptr<GeneralComputation<glm::uvec2>> sizeCut;
     std::shared_ptr<GeneralComputation<glm::uvec2>> args;
     std::shared_ptr<BufferElement<VulkanBuffer<TreeSite>>> visible;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> counter;

@@ -29,8 +29,10 @@ std::vector<TreeSite> nearestTreeSites(const TreeTerrainParams& terrain, const T
                                        glm::vec3 eye, uint32_t count, int maxCells = 300);
 
 /// The instance of a TreeGenerator for `site`: type 0 for broadleaves and shrubs, 1 for conifers, scaled to the
-/// site's height (the types are `shapeBase.z` metres tall at scale 1), turned by its yaw, seeded by `seed`.
-TreeInstance treeInstanceFor(const TreeSite& site, const std::vector<TreeTypeParams>& types, uint32_t seed);
+/// site's height (the types are `shapeBase.z` metres tall at scale 1), turned by its yaw, seeded by
+/// treeSiteSeed() of `seed` and `variants`.
+TreeInstance treeInstanceFor(const TreeSite& site, const std::vector<TreeTypeParams>& types, uint32_t seed,
+                             uint32_t variants = 0);
 
 /// The sites with a tree among the cells [x0, x1) x [z0, z1), in the order of the cells (rows along x).
 std::vector<TreeSite> treeSitesIn(const TreeTerrainParams& terrain, const TreePlacementParams& placement, int x0,

@@ -18,7 +18,8 @@
 
 layout(local_size_x = 1) in;
 
-// [0] the step in use, [1] its factor (float bits), then from [4] the sums per step.
+// [0] the step in use, [1] its factor (float bits), [2] the share of the copies to leave out (float bits), then
+// from [4] the sums per step.
 layout(std430, binding = 0) buffer Fit {
     uint fit[];
 };
@@ -44,4 +45,14 @@ void main() {
     }
     fit[0] = step;
     fit[1] = floatBitsToUint(treeLodFitFactor(step));
+    // When even the coarsest step does not fit, fewer copies must come: the share to leave out, for the copies'
+    // cut-off of the next frame (tree_size_cut.comp); it shrinks back gradually once there is room.
+    float leaveOut = uintBitsToFloat(fit[2]);
+    uint coarsest = fit[4u + TREE_LOD_FIT_STEPS - 1u];
+    if (coarsest > pc.capacity) {
+        leaveOut = 1.0f - (1.0f - leaveOut) * 0.95f * float(pc.capacity) / float(coarsest);
+    } else if (coarsest < pc.capacity - pc.capacity / 7u) {
+        leaveOut = max(leaveOut - 0.01f, 0.0f);
+    }
+    fit[2] = floatBitsToUint(leaveOut);
 }

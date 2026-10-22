@@ -27,7 +27,7 @@ Gaussian3D albedoGaussian(glm::vec3 pos, glm::vec4 rot, glm::vec3 scale, glm::ve
 
 std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams>& types,
                                                 const std::vector<float>& seasons, std::vector<float>& heights,
-                                                bool reduced) {
+                                                bool reduced, uint32_t variants) {
     if (types.empty() || seasons.empty()) {
         throw std::invalid_argument("buildTreeGaussianLibrary: needs tree types and seasons");
     }
@@ -41,7 +41,8 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
     const glm::vec4 up = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
     std::vector<MossPatch> patches;
     heights.assign(types.size(), 0.0f);
-    for (uint32_t type = 0; type < types.size(); ++type) {
+    for (uint32_t tv = 0; tv < types.size() * variants; ++tv) {
+        const uint32_t type = tv / variants;
         for (float season : seasons) {
             TreeFrame frame = defaultTreeFrame();
             frame.wind.w = 0.0f;
@@ -49,7 +50,7 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
             TreeInstance inst{};
             inst.posScale = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
             inst.rot = up;
-            inst.ids = glm::uvec4(type, 1u, 0u, 0u);
+            inst.ids = glm::uvec4(type, 1u + tv % variants, 0u, 0u);
             const TreeRecords records = generateTreesReference(grown, {inst}, frame);
             const TreeTypeParams& p = grown[type];
             float height = 0.0f;
@@ -108,17 +109,22 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
     }
     const uint32_t typeCount = std::min<uint32_t>(uint32_t(types.size()), 2u);
     const std::vector<TreeTypeParams> used(types.begin(), types.begin() + typeCount);
-    const std::vector<MossPatch> patches = buildTreeGaussianLibrary(used, config.seasons, heights);
+    const uint32_t variants = std::max(config.variants, 1u);
+    const std::vector<MossPatch> patches = buildTreeGaussianLibrary(used, config.seasons, heights, true, variants);
 
     struct Library {
         glm::vec4 seasons;
         glm::vec4 heights;
         glm::uvec4 counts;
+        glm::uvec4 variants;
     } library{};
     for (uint32_t k = 0; k < 4; ++k) {
         library.seasons[k] = config.seasons[std::min<size_t>(k, config.seasons.size() - 1)];
     }
-    library.heights = glm::vec4(heights[0], heights[std::min(1u, typeCount - 1)], 0.0f, 0.0f);
+    // A copy is scaled as treeInstanceFor() scales the near tree of the same seed: the library's trees are its
+    // trees at scale 1.
+    library.heights = glm::vec4(used[0].shapeBase.z, used[std::min(1u, typeCount - 1)].shapeBase.z, 0.0f, 0.0f);
+    library.variants = glm::uvec4(variants, config.seed, 0u, 0u);
     library.counts = glm::uvec4(uint32_t(config.seasons.size()), typeCount, config.trees, 0u);
     auto libraryBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<Library>>>(vulkanContext, 1u);
     libraryBuffer->setName("TreeLibraryParams");
@@ -145,11 +151,13 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
     histogram->setGroupCountX((visibleCapacity + 255) / 256);
     histogram->setPushConstants({visibleCapacity});
 
-    cutoff = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_size_cut.comp.spv");
+    cutoff = std::make_shared<GeneralComputation<glm::uvec2>>(vulkanContext, "shaders/tree/tree_size_cut.comp.spv");
     cutoff->setName("TreeLibraryCutoff");
     cutoff->setInput(histogram, 0, 4);
     cutoff->setGroupCountX(1);
-    cutoff->setPushConstants({config.trees});
+    // The copies the pool cannot hold even at the coarsest levels are left out from the next frame on (binding 1,
+    // the level of detail's fitting, set below).
+    cutoff->setPushConstants({glm::uvec2(config.trees, 1u)});
 
     convert =
         std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_library_instances.comp.spv");
@@ -168,6 +176,7 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
 
     lod = std::make_unique<TreeMossLod>(vulkanContext, source, patches, BufferRef{convert, 4}, visibleCapacity, camera,
                                         settings, light, config.boundaries, poolSlots, poolOffset, true);
+    cutoff->setInput(lod->getFitState(), 1);
 }
 
 void TreeGaussianForest::initialize(uint32_t numberPaths) {

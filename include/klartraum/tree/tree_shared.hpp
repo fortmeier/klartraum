@@ -308,6 +308,14 @@ TREE_FN uint treeHash(uint v) {
 
 TREE_FN uint treeHash2(uint a, uint b) { return treeHash(a ^ treeHash(b + 0x9e3779b9u)); }
 
+// The seed of the tree of a placed site turned by `yaw`: its own (treeHash2() of the scene's seed and the yaw), or
+// with `variants` > 0 one of the seeds 1 to `variants` of the Gaussian tree library (TreeGaussianForest), so
+// that a tree drawn in full and as its library copy is the same tree.
+TREE_FN uint treeSiteSeed(uint seed, float yaw, uint variants) {
+    uint own = treeHash2(seed, floatBitsToUint(yaw));
+    return variants > 0u ? 1u + own % variants : own;
+}
+
 // Uniform in [0, 1); 24 bits, so CPU and GPU convert to the same float.
 TREE_FN float treeRand(uint seed, uint key) { return float(treeHash2(seed, key) >> 8u) * (1.0f / 16777216.0f); }
 

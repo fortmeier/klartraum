@@ -8,6 +8,9 @@
  *   just above a bin's lower edge into that bin
  * - cutTargetKeepsTheLargestTrees: treeSizeCutTarget() keeps all trees when they fit, else the bins from the top
  *   down (empty ones included) as long as they fit the copies
+ * - generatedTreesMatchTheLibrary: the near trees of 8 sites per type (treeInstanceFor() with the library's
+ *   variants) are on average as tall as their sites say (within 10 %), and each one's library tree, as its copy
+ *   scales it, is as tall within 5 % and as wide within 15 %
  * - reservedFollowsTheLevels: treeLodReserved() is the level's count, plus the next coarser one's while
  *   crossfading, and larger boundaries (treeLodFitFactor()) give coarser levels
  * - copiesAreTheLargestTrees: at R2 the GPU's histogram is the CPU's of the visible trees (sizes times
@@ -21,8 +24,8 @@
  * - noTreeLeftOutAlongTheFlight: flying from R0 to past R2 at twice the speed of the 16 s fly-in, the proxies'
  *   list never runs out of room
  * - forestFitsItsPool: at R0-R3 the copies' levels fit the forest pool with none left out: the fitted step needs
- *   what was reserved, at most the pool; where they fit at once, the boundaries stay as they are; a still camera
- *   keeps its step
+ *   what was reserved, at most the pool; where they fit at once, the boundaries stay as they are; where even the
+ *   coarsest levels do not fit, fewer copies come; a still camera keeps its step
  * - overflowAlongTheFlight: at the reference views R0-R3 of the fly-in at scale 1 and 1920 x 1080, the visible
  *   trees of the proxies, the library copies taken of them and the forest pool's Gaussians, none left out, and the
  *   GPU time of a frame
@@ -168,6 +171,7 @@ struct FlightRenderer {
 struct Library {
     std::vector<MossPatch> patches;
     std::vector<float> heights;
+    std::vector<TreeTypeParams> types;
     TreeGaussianForestConfig config;
 };
 
@@ -176,7 +180,8 @@ const Library& libraryOf(const BonsaiScene& scene) {
         Library l;
         const std::vector<TreeTypeParams> used(scene.types.begin(),
                                                scene.types.begin() + std::min<size_t>(scene.types.size(), 2));
-        l.patches = buildTreeGaussianLibrary(used, l.config.seasons, l.heights);
+        l.patches = buildTreeGaussianLibrary(used, l.config.seasons, l.heights, true, l.config.variants);
+        l.types = used;
         return l;
     }();
     return library;
@@ -191,11 +196,13 @@ TreeLodInstance copyOf(const TreeSite& site, const Library& library) {
             nearest = k;
         }
     }
+    const uint32_t variants = library.config.variants;
+    const uint32_t variant = tree::treeSiteSeed(sceneAtScale1().config.seed, site.kind.y, variants) - 1u;
     TreeLodInstance inst{};
     inst.posYaw = glm::vec4(glm::vec3(site.posHeight), site.kind.y);
-    inst.plane = glm::vec4(0.0f, 0.0f, site.posHeight.w / library.heights[type], 0.0f);
-    inst.ids = glm::uvec4(type * uint32_t(library.config.seasons.size()) + nearest, glm::floatBitsToUint(0.0f),
-                          glm::floatBitsToUint(0.0f), 1u);
+    inst.plane = glm::vec4(0.0f, 0.0f, site.posHeight.w / library.types[type].shapeBase.z, 0.0f);
+    inst.ids = glm::uvec4((type * variants + variant) * uint32_t(library.config.seasons.size()) + nearest,
+                          glm::floatBitsToUint(0.0f), glm::floatBitsToUint(0.0f), 1u);
     return inst;
 }
 
@@ -228,7 +235,8 @@ struct SingleTree {
             sources.trees = false;
             sources.extraSlots = 262144;
         } else {
-            const std::vector<TreeInstance> trees = {treeInstanceFor(site, scene.types, scene.config.seed)};
+            const std::vector<TreeInstance> trees = {
+                treeInstanceFor(site, scene.types, scene.config.seed, libraryOf(scene).config.variants)};
             generator = std::make_shared<TreeGenerator>(vc, scene.types, trees,
                                                         TreeCapacity::fromReference(scene.types, trees, frame), frame);
         }
@@ -418,6 +426,64 @@ TEST(TreeGaussianQualityCpuTest, cutTargetKeepsTheLargestTrees) {
     EXPECT_EQ(taken, 0u);
 }
 
+namespace {
+
+// Height and crown radius (around the stem's foot, of the leaves and stems) of generated trees.
+glm::vec2 treeExtent(const TreeRecords& records) {
+    glm::vec2 extent(0.0f);
+    auto add = [&](glm::vec3 p) {
+        extent.x = std::max(extent.x, p.y);
+        extent.y = std::max(extent.y, glm::length(glm::vec2(p.x, p.z)));
+    };
+    for (const SegmentRecord& seg : records.segments) {
+        add(glm::vec3(seg.toPosRadius));
+    }
+    for (const LeafRecord& leaf : records.leaves) {
+        add(glm::vec3(leaf.posScale) + leaf.posScale.w * tree::qforward(leaf.rot));
+    }
+    return extent;
+}
+
+} // namespace
+
+TEST(TreeGaussianQualityCpuTest, generatedTreesMatchTheLibrary) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const Library& library = libraryOf(scene);
+    TreeFrame frame = defaultTreeFrame();
+    frame.wind.w = 0.0f;
+    frame.timeSeason.y = kSeason;
+    std::vector<TreeTypeParams> reduced = library.types;
+    for (TreeTypeParams& p : reduced) {
+        p = treeReducedType(p, 0.08f);
+    }
+    for (uint32_t type = 0; type < 2; ++type) {
+        glm::vec2 sum(0.0f), worst(0.0f);
+        for (int k = 0; k < 8; ++k) {
+            const TreeSite site =
+                siteOf(type == 1 ? TREE_SITE_CONIFER : TREE_SITE_BROADLEAF, 0.7f * float(k) + 0.1f, 1.0f);
+            const TreeInstance nearTree =
+                treeInstanceFor(site, scene.types, scene.config.seed, library.config.variants);
+            const glm::vec2 n = treeExtent(generateTreesReference(scene.types, {nearTree}, frame));
+            // The copy as tree_library_instances.comp places it: the library's tree of the same seed, at the site's
+            // height over the type's.
+            const TreeLodInstance copy = copyOf(site, library);
+            TreeInstance libraryTree = nearTree;
+            libraryTree.posScale.w = copy.plane.z;
+            const glm::vec2 c = treeExtent(generateTreesReference(reduced, {libraryTree}, frame));
+            sum += n;
+            worst = glm::max(worst, glm::abs(c / n - 1.0f));
+        }
+        const glm::vec2 mean = sum / 8.0f;
+        std::printf("%s: near trees of a 1 unit site %.3f tall, crown radius %.3f; copies differ by at most %.1f %% "
+                    "in height, %.1f %% in crown radius\n",
+                    type == 1 ? "conifer" : "broadleaf", mean.x, mean.y, 100.0f * worst.x, 100.0f * worst.y);
+        EXPECT_NEAR(mean.x, 1.0f, 0.1f) << type;
+        EXPECT_LT(worst.x, 0.05f) << type;
+        // The library's trees keep 8 % of the leaves, so their outermost leaf tips reach a little less far.
+        EXPECT_LT(worst.y, 0.15f) << type;
+    }
+}
+
 TEST(TreeGaussianQualityCpuTest, reservedFollowsTheLevels) {
     TreeLodPatch patch{};
     patch.count = glm::uvec4(1000, 250, 60, 15);
@@ -598,8 +664,9 @@ TEST_F(TreeGaussianQualityTest, forestFitsItsPool) {
         const TreeMossLod::Fit fit = lod.readFit();
         const std::vector<uint32_t> pool = lod.readCounter();
         std::printf("R%d: step %u (boundaries x %.2f) needs %u of %u Gaussians, %u reserved, %u copies left out; "
-                    "finest step needs %u\n",
-                    view, fit.step, fit.factor, fit.sums[fit.step], r.config.forestPool, pool[0], pool[1], fit.sums[0]);
+                    "finest step needs %u; %.1f %% fewer copies\n",
+                    view, fit.step, fit.factor, fit.sums[fit.step], r.config.forestPool, pool[0], pool[1], fit.sums[0],
+                    100.0f * fit.leaveOut);
         EXPECT_EQ(pool[1], 0u) << view;
         EXPECT_EQ(fit.sums[fit.step], pool[0]) << view;
         EXPECT_LE(pool[0], r.config.forestPool) << view;

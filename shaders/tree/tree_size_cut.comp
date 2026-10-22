@@ -26,15 +26,22 @@ layout(std430, binding = 0) buffer State {
     uint state[];
 };
 
+// With pc.leaveOut: [2] the share of the capacity to leave out (float bits), as tree_lod_fit.comp keeps it.
+layout(std430, binding = 1) readonly buffer Fit {
+    uint fit[];
+};
+
 layout(push_constant) uniform Push {
     uint capacity;
+    uint leaveOut; // 1: the capacity times 1 - fit[2]
 }
 pc;
 
 void main() {
+    uint capacity = pc.leaveOut != 0u ? uint(float(pc.capacity) * (1.0f - uintBitsToFloat(fit[2]))) : pc.capacity;
     uint sum = 0u;
     uint bin = TREE_SIZE_BINS;
-    while (bin > 0u && sum + state[4u + bin - 1u] <= pc.capacity) {
+    while (bin > 0u && sum + state[4u + bin - 1u] <= capacity) {
         bin -= 1u;
         sum += state[4u + bin];
     }

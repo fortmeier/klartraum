@@ -41,11 +41,13 @@ TreeProxies::TreeProxies(VulkanContext& vulkanContext, TreePlacementTiles& tiles
     cull->setGroupCountX(tiles.getTileConfig().tiles.y);
     cull->setPushConstants(
         {TreeProxyCullPush{config.capacity, config.minPixels, config.fadeAbove, config.bySize ? 1u : 0u}});
-    sizeCut = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_size_cut.comp.spv");
+    sizeCut = std::make_shared<GeneralComputation<glm::uvec2>>(vulkanContext, "shaders/tree/tree_size_cut.comp.spv");
     sizeCut->setName("TreeProxySizeCut");
     sizeCut->setInput(cull, 0, 9);
+    const BufferRef none = bufferOrPlaceholder(vulkanContext, BufferRef{});
+    sizeCut->setInput(none.element, 1, none.slot);
     sizeCut->setGroupCountX(1);
-    sizeCut->setPushConstants({uint32_t(config.headroom * float(config.capacity))});
+    sizeCut->setPushConstants({glm::uvec2(uint32_t(config.headroom * float(config.capacity)), 0u)});
 
     auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
         vulkanContext, 2u,
