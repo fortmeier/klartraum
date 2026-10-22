@@ -9,7 +9,7 @@
 //   tree_bonsai_example [--renderer classical|gaussian|both] [--backend raster|compute]
 //                       [--views 4] [--scale 0.21] [--relief 1.5] [--trees N] [--seed 7] [--width 1280] [--height 720]
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
-//                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
+//                       [--profile] [--budget MS] [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--from 0] [--to N] [--moss-patches 250]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
 //
@@ -22,6 +22,7 @@
 // the camera turns --turns times around the pot; --from and --to select a
 // range of frames.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -95,6 +96,8 @@ int main(int argc, char** argv) {
     float azimuth = 0.35f;
     float season = 2.0f;
     bool video = false;
+    bool profile = false;
+    float budgetMs = 0.0f;
     BonsaiDays days;
     float fps = 30.0f;
     float windStrength = 0.5f;
@@ -133,6 +136,10 @@ int main(int argc, char** argv) {
             azimuth = std::stof(argv[++i]);
         } else if (arg == "--season" && hasValue) {
             season = std::stof(argv[++i]);
+        } else if (arg == "--budget" && hasValue) {
+            budgetMs = std::stof(argv[++i]);
+        } else if (arg == "--profile") {
+            profile = true;
         } else if (arg == "--video") {
             video = true;
         } else if (arg == "--days" && hasValue) {
@@ -192,12 +199,16 @@ int main(int argc, char** argv) {
         auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderer bonsai(vc, scene, target, config);
         ComputeGraph graph(vc, 1);
+        if (profile) {
+            graph.enableProfiling();
+        }
         graph.compileFrom(bonsai.getOutput());
         bonsai.initialize(1);
         bonsai.setSeason(season);
 
         if (video) {
             const uint32_t frames = uint32_t(std::lround(days.duration() * fps));
+            TreeDetailBudget budget(budgetMs > 0.0f ? budgetMs : 1e9f);
             const float aspect = float(extent.width) / float(extent.height);
             for (uint32_t frame = fromFrame; frame < std::min(frames, toFrame); ++frame) {
                 const float seconds = float(frame) / fps;
@@ -210,7 +221,13 @@ int main(int argc, char** argv) {
                 bonsai.setView(eye);
                 bonsai.setTime(seconds, days.timeOfDayAt(seconds), days.seasonAt(seconds),
                                glm::vec4(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength));
+                const auto start = std::chrono::steady_clock::now();
                 graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                if (budgetMs > 0.0f) {
+                    // The next frame's detail from this frame's time.
+                    bonsai.setDetail(budget.update(float(
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count())));
+                }
                 char name[64];
                 std::snprintf(name, sizeof(name), "%s_%04u.ppm", modeName, frame);
                 writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
@@ -242,6 +259,18 @@ int main(int argc, char** argv) {
             std::snprintf(name, sizeof(name), "%s_%03u.ppm", modeName, view);
             writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
             std::cout << modeName << " view " << view << ": " << ms << " ms" << std::endl;
+            if (profile) {
+                // The last frame's GPU times, longest first.
+                graph.resetProfiling();
+                graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                auto results = graph.getProfilingResults();
+                std::sort(results.begin(), results.end(),
+                          [](const auto& a, const auto& b) { return a.second > b.second; });
+                std::cout << "  GPU span " << graph.getGpuSpanMs() << " ms" << std::endl;
+                for (size_t k = 0; k < results.size() && k < 12; ++k) {
+                    std::cout << "  " << results[k].first << ": " << results[k].second << " ms" << std::endl;
+                }
+            }
         }
     }
     return 0;

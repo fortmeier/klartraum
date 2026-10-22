@@ -358,6 +358,8 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--elevation E` | Elevation of the camera in radians (default 0.32) |
 | `--azimuth A` | Azimuth of the first view in radians (default 0.35) |
 | `--season S` | Season from 0 (winter) over 1 (spring), 2 (summer) to 3 (fall) (default 2) |
+| `--budget MS` | In a video, keep the frame time near MS milliseconds by generating fewer trees in full (the others as impostors or Gaussian copies); only where the trees follow the placement |
+| `--profile` | Print the GPU time of the view's frame and of its 12 longest graph elements |
 | `--video` | Render the days of a video instead of views: one season per day, changing in the night, with sun, moon and wind |
 | `--days N` | Number of days of the video (default 4: spring, summer, fall, winter) |
 | `--seconds-per-day S` | Length of a day in the video (default 10) |

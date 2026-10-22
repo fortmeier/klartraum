@@ -48,6 +48,10 @@ TreeRecords generateTreesReference(const std::vector<TreeTypeParams>& types, con
     TreeRecords records;
     tree::ReferenceContext ctx{&types, &instances, frame, &records};
     for (uint32_t i = 0; i < instances.size(); ++i) {
+        // Instances of scale 0 have no tree, as on the GPU.
+        if (instances[i].posScale.w <= 0.0f) {
+            continue;
+        }
         records.stems[0].push_back(tree::treeRootStem(instances[i], i, ctx));
     }
     // Breadth first, level by level, as the GPU passes run.
