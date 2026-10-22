@@ -153,8 +153,13 @@ public:
 
     /**
      * @brief Tells the renderer where the camera is for the next frame, when the trees follow the placement:
-     *        the tiles around it, and the scene's nearTrees nearest trees generated in full (the others as
-     *        proxies). Does nothing for a planting.
+     *        the tiles around it, and the near trees generated in full (the others as proxies). Does nothing for
+     *        a planting.
+     *
+     * The classical renderer generates the scene's nearTrees nearest trees. The Gaussian renderer generates the
+     * trees within a near radius that follows 0.8 times the distance of the nearTrees-th nearest tree by at most
+     * 1 % per frame, and never reaches beyond it: a tree starts or stops being generated as its own distance
+     * crosses the radius, not because other trees come nearer.
      */
     void setView(glm::vec3 eye);
     /// The share in [0.25, 1] of the near and reduced trees generated (the others become impostors or library
@@ -232,6 +237,7 @@ private:
     std::vector<TreeTypeParams> types;
     uint32_t seed = 0;
     uint32_t nearTrees = 0;
+    float nearRadius = -1.0f; ///< the Gaussian renderer's (setView()); < 0 before the first view
 
     // Classical
     std::unique_ptr<TreeStemRenderer> stems;

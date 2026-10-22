@@ -396,6 +396,18 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     const size_t activeReduced = size_t(std::lround(detail * reducedCount));
     const std::vector<TreeSite> sites =
         nearestTreeSites(terrainParams, placement, eye, uint32_t(activeNear + activeReduced));
+    size_t generatedCount = std::min(sites.size(), activeNear);
+    if (forest && !sites.empty()) {
+        // Within the near radius, sorted by distance as the sites are.
+        auto distanceOf = [&](size_t i) { return glm::length(glm::vec3(sites[i].posHeight) - eye); };
+        const float reach = distanceOf(generatedCount - 1);
+        const float target = sites.size() >= activeNear ? 0.8f * reach : reach;
+        nearRadius = nearRadius < 0.0f ? target : std::clamp(target, 0.99f * nearRadius, 1.01f * nearRadius);
+        nearRadius = std::min(nearRadius, reach);
+        while (generatedCount > 0 && distanceOf(generatedCount - 1) > nearRadius) {
+            --generatedCount;
+        }
+    }
     auto instancesOf = [&](size_t from, size_t active, size_t count, const std::vector<TreeTypeParams>& of) {
         std::vector<TreeInstance> instances;
         for (size_t i = from; i < std::min(sites.size(), from + active); ++i) {
@@ -411,12 +423,12 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
         }
         return instances;
     };
-    generator->getInstances().set(instancesOf(0, activeNear, nearTrees, types));
+    generator->getInstances().set(instancesOf(0, generatedCount, nearTrees, types));
     // The light grid around the near trees: their crowns and a margin of empty voxels, so that what lies outside
     // reads the light of an empty edge.
     if (!sites.empty()) {
         glm::vec3 lo(1e30f), hi(-1e30f);
-        for (size_t i = 0; i < std::min(sites.size(), activeNear); ++i) {
+        for (size_t i = 0; i < generatedCount; ++i) {
             const glm::vec3 foot(sites[i].posHeight);
             const float h = sites[i].posHeight.w;
             lo = glm::min(lo, foot - glm::vec3(0.4f * h, 0.1f * h, 0.4f * h));
@@ -434,7 +446,9 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     if (reducedGenerator) {
         reducedGenerator->getInstances().set(instancesOf(activeNear, activeReduced, reducedCount, reducedTypes));
     }
-    proxies->setNearRadius(sites.empty() ? -1.0f : glm::length(glm::vec3(sites.back().posHeight) - eye));
+    proxies->setNearRadius(sites.empty() ? -1.0f
+                           : forest      ? nearRadius
+                                         : glm::length(glm::vec3(sites.back().posHeight) - eye));
 }
 
 void BonsaiRenderer::initialize(uint32_t numberPaths) {
