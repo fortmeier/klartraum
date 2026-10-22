@@ -149,35 +149,13 @@ void stemGaussian(uint i, uint segment, uint local) {
     writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, radial, false), 0.95f);
 }
 
-// Half width of a lobe at height y, along the polygon of its curve ends.
-float lobeHalfWidth(TreeLeafOutline o, float y) {
-    for (int c = 0; c < 4; ++c) {
-        vec2 a = o.v[2 * c];
-        vec2 b = o.v[2 * c + 2];
-        if (y <= b.y || c == 3) {
-            float t = clamp((y - a.y) / max(b.y - a.y, 1e-6f), 0.0f, 1.0f);
-            return mix(a.x, b.x, t);
-        }
-    }
-    return 0.0f;
-}
-
 void leafGaussian(uint i, uint leafIndex, uint local) {
     LeafRecord leaf = leaves[leafIndex];
     TreeTypeParams p = params[treeType(leaf.ids)];
-    uint lobes = uint(clamp(p.leafLobes.x, 1.0f, float(LEAF_GAUSSIANS)));
-    uint lobe = local % lobes;
-    uint row = local / lobes;
-    uint rows = (LEAF_GAUSSIANS - lobe + lobes - 1u) / lobes;
-
     TreeLeafOutline o = treeLeafOutline(p.leafShape, 0.5f * p.leafCount.z);
-    float y = (float(row) + 0.5f) / float(rows);
-    float halfWidth = max(lobeHalfWidth(o, y), 0.02f);
-
-    float offset = float(lobe) - 0.5f * float(lobes - 1u);
-    float angle = radians(offset * p.leafLobes.y);
-    float lobeScale = pow(p.leafLobes.z, abs(offset));
-    vec2 q = lobeScale * vec2(sin(angle) * y, cos(angle) * y);
+    TreeLeafGaussian shape = treeLeafGaussianShape(p, o, local, LEAF_GAUSSIANS);
+    vec2 q = vec2(shape.placement.x, shape.placement.y);
+    float angle = shape.placement.z;
 
     vec3 x = qrot(leaf.rot, vec3(1.0f, 0.0f, 0.0f));
     vec3 z = qforward(leaf.rot);
@@ -185,7 +163,7 @@ void leafGaussian(uint i, uint leafIndex, uint local) {
     vec3 pos = leaf.posScale.xyz + size * (q.x * x + q.y * z);
     // Local axes: x across the blade, y the leaf normal, z along the lobe.
     vec4 rot = normalize(qmul(leaf.rot, qaxis(vec3(0.0f, 1.0f, 0.0f), angle)));
-    vec3 scale = size * lobeScale * vec3(0.55f * halfWidth, 0.01f, 0.6f / float(rows));
+    vec3 scale = size * vec3(shape.scale);
 
     vec3 normal = qrot(leaf.rot, vec3(0.0f, 1.0f, 0.0f));
     if (dot(normal, settings[0].sun.xyz) < 0.0f) {

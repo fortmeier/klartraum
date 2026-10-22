@@ -9,8 +9,8 @@
  * - cutTargetKeepsTheLargestTrees: treeSizeCutTarget() keeps all trees when they fit, else the bins from the top
  *   down (empty ones included) as long as they fit the copies
  * - generatedTreesMatchTheLibrary: the near trees of 8 sites per type (treeInstanceFor() with the library's
- *   variants) are on average as tall as their sites say (within 10 %), and each one's library tree, as its copy
- *   scales it, is as tall within 5 % and as wide within 15 %
+ *   variants) are on average as tall as their sites say (within 10 %), and the finest level of each one's copy is
+ *   as tall within 5 % and as wide within 15 %
  * - reservedFollowsTheLevels: treeLodReserved() is the level's count, plus the next coarser one's while
  *   crossfading, and larger boundaries (treeLodFitFactor()) give coarser levels
  * - copiesAreTheLargestTrees: at R2 the GPU's histogram is the CPU's of the visible trees (sizes times
@@ -33,12 +33,16 @@
  * - flickerWhileDollying: from R2 along the flight by 0.2 % of the distance to the place per frame, the mean over
  *   16 px blocks of how far a frame lies from the mean of its neighbours
  * - nearAndFarTreeAgree: a site drawn as a near tree (TreeGaussians) and as its library copy (TreeMossLod) at the
- *   same camera, 30 to 300 px tall: height and width of the bounding box, covered area and mean colour
+ *   same camera, 30 to 300 px tall: height and width of the bounding box and covered area agree within 10 % on
+ *   average per type; the mean colour is measured
  * - smallTreesKeepTheirCoverage: a near tree and its copy drawn 12 to 60 px tall, against the near tree drawn at 4
- *   times the resolution and box-filtered down: how much more light they carry (the splatting's dilation widens
- *   sub-pixel Gaussians); measured only
+ *   times the resolution and box-filtered down: the copy carries its light within 30 %; the near tree's excess (the
+ *   splatting's dilation widens sub-pixel Gaussians) is measured
+ * - levelsKeepTheirCoverage: each level of a copy carries the light of the next finer one, within 10 %, at the size
+ *   where they switch
  * - farTreesAreSharp: the copy at 20, 60 and 200 px against the near tree's Gaussians drawn at 4 times the
- *   resolution and box-filtered down: the mean absolute error per 4 px block and the Laplacian energy ratio
+ *   resolution and box-filtered down: its mean absolute error per 4 px block is at most the near tree's at the same
+ *   size; the Laplacian energy ratio is measured
  **/
 
 #include <gtest/gtest.h>
@@ -169,7 +173,7 @@ struct FlightRenderer {
 
 // The tree library of TreeGaussianForest for the scene's types.
 struct Library {
-    std::vector<MossPatch> patches;
+    std::vector<GaussianLods> patches;
     std::vector<float> heights;
     std::vector<TreeTypeParams> types;
     TreeGaussianForestConfig config;
@@ -180,7 +184,8 @@ const Library& libraryOf(const BonsaiScene& scene) {
         Library l;
         const std::vector<TreeTypeParams> used(scene.types.begin(),
                                                scene.types.begin() + std::min<size_t>(scene.types.size(), 2));
-        l.patches = buildTreeGaussianLibrary(used, l.config.seasons, l.heights, true, l.config.variants);
+        l.patches =
+            buildTreeGaussianLibraryLevels(used, l.config.seasons, l.heights, l.config.variants, l.config.budgets);
         l.types = used;
         return l;
     }();
@@ -209,7 +214,8 @@ TreeLodInstance copyOf(const TreeSite& site, const Library& library) {
 // One site over black, either generated in full as the near trees are (TreeGaussians) or as its library copy
 // (TreeMossLod), lit the same way, in season kSeason without wind.
 struct SingleTree {
-    SingleTree(VulkanContext& vc, const BonsaiScene& scene, const TreeSite& site, bool copy, VkExtent2D extent)
+    SingleTree(VulkanContext& vc, const BonsaiScene& scene, const TreeSite& site, bool copy, VkExtent2D extent,
+               glm::vec4 boundaries = glm::vec4(0.0f))
         : vc(vc),
           extent(extent),
           height(site.posHeight.w) {
@@ -245,9 +251,9 @@ struct SingleTree {
         ComputeGraphElementPtr last = gaussians->getElement();
         if (copy) {
             const Library& library = libraryOf(scene);
-            lod = std::make_unique<TreeMossLod>(vc, *gaussians, library.patches,
-                                                std::vector<TreeLodInstance>{copyOf(site, library)}, camera, settings,
-                                                BufferRef{}, library.config.boundaries);
+            lod = std::make_unique<TreeMossLod>(
+                vc, *gaussians, library.patches, std::vector<TreeLodInstance>{copyOf(site, library)}, camera, settings,
+                BufferRef{}, boundaries.x > 0.0f ? boundaries : library.config.boundaries);
             splats = lod->getGaussians();
         }
         target = std::make_shared<OffscreenTarget>(vc, extent, 1);
@@ -452,10 +458,6 @@ TEST(TreeGaussianQualityCpuTest, generatedTreesMatchTheLibrary) {
     TreeFrame frame = defaultTreeFrame();
     frame.wind.w = 0.0f;
     frame.timeSeason.y = kSeason;
-    std::vector<TreeTypeParams> reduced = library.types;
-    for (TreeTypeParams& p : reduced) {
-        p = treeReducedType(p, 0.08f);
-    }
     for (uint32_t type = 0; type < 2; ++type) {
         glm::vec2 sum(0.0f), worst(0.0f);
         for (int k = 0; k < 8; ++k) {
@@ -464,12 +466,14 @@ TEST(TreeGaussianQualityCpuTest, generatedTreesMatchTheLibrary) {
             const TreeInstance nearTree =
                 treeInstanceFor(site, scene.types, scene.config.seed, library.config.variants);
             const glm::vec2 n = treeExtent(generateTreesReference(scene.types, {nearTree}, frame));
-            // The copy as tree_library_instances.comp places it: the library's tree of the same seed, at the site's
-            // height over the type's.
+            // The copy as tree_library_instances.comp places it: its patch's finest level, scaled.
             const TreeLodInstance copy = copyOf(site, library);
-            TreeInstance libraryTree = nearTree;
-            libraryTree.posScale.w = copy.plane.z;
-            const glm::vec2 c = treeExtent(generateTreesReference(reduced, {libraryTree}, frame));
+            glm::vec2 c(0.0f);
+            for (const Gaussian3D& g : library.patches[copy.ids.x].levels[0]) {
+                c.x = std::max(c.x, g.position[1] + g.scale[2]);
+                c.y = std::max(c.y, glm::length(glm::vec2(g.position[0], g.position[2])));
+            }
+            c *= copy.plane.z;
             sum += n;
             worst = glm::max(worst, glm::abs(c / n - 1.0f));
         }
@@ -478,8 +482,8 @@ TEST(TreeGaussianQualityCpuTest, generatedTreesMatchTheLibrary) {
                     "in height, %.1f %% in crown radius\n",
                     type == 1 ? "conifer" : "broadleaf", mean.x, mean.y, 100.0f * worst.x, 100.0f * worst.y);
         EXPECT_NEAR(mean.x, 1.0f, 0.1f) << type;
+        // The copies' Gaussians sit at the middles of their leaves; the leaf tips reach a little farther.
         EXPECT_LT(worst.x, 0.05f) << type;
-        // The library's trees keep 8 % of the leaves, so their outermost leaf tips reach a little less far.
         EXPECT_LT(worst.y, 0.15f) << type;
     }
 }
@@ -827,6 +831,9 @@ TEST_F(TreeGaussianQualityTest, nearAndFarTreeAgree) {
         std::printf("%s mean copy/near: height %.2f, width %.2f, area %.2f; colour difference %.3f\n",
                     species == TREE_SITE_CONIFER ? "conifer" : "broadleaf", ratioSum.x / cases, ratioSum.y / cases,
                     ratioSum.z / cases, colorSum / cases);
+        EXPECT_NEAR(ratioSum.x / cases, 1.0f, 0.1f) << species;
+        EXPECT_NEAR(ratioSum.y / cases, 1.0f, 0.1f) << species;
+        EXPECT_NEAR(ratioSum.z / cases, 1.0f, 0.1f) << species;
     }
 }
 
@@ -854,7 +861,43 @@ TEST_F(TreeGaussianQualityTest, smallTreesKeepTheirCoverage) {
             std::printf("%-9s %2.0f px: light of the near tree %.2f, of the copy %.2f times the reference's\n",
                         species == TREE_SITE_CONIFER ? "conifer" : "broadleaf", pixels, n, c);
             EXPECT_GT(n, 0.0) << species << " " << pixels;
-            EXPECT_GT(c, 0.0) << species << " " << pixels;
+            EXPECT_NEAR(c, 1.0, 0.3) << species << " " << pixels;
+        }
+    }
+}
+
+TEST_F(TreeGaussianQualityTest, levelsKeepTheirCoverage) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const VkExtent2D extent{512, 512};
+    const float height = scene.config.scale.treeHeightUnits();
+    auto light = [](const std::vector<uint8_t>& bgra) {
+        double sum = 0.0;
+        for (float l : luminance(bgra)) {
+            sum += l;
+        }
+        return sum;
+    };
+    const glm::vec3 switches = libraryOf(scene).config.boundaries;
+    for (float species : {TREE_SITE_BROADLEAF, TREE_SITE_CONIFER}) {
+        const TreeSite site = siteOf(species, 0.3f, height);
+        // Each level alone: boundaries far above the sizes for the finer levels, far below for the coarser ones.
+        std::array<std::unique_ptr<SingleTree>, 4> levels;
+        for (int level = 0; level < 4; ++level) {
+            glm::vec4 b(0.0f, 0.0f, 0.0f, 0.0f);
+            for (int k = 0; k < 3; ++k) {
+                b[k] = k < level ? 1e6f : 1e-3f;
+            }
+            levels[level] = std::make_unique<SingleTree>(*vc, scene, site, true, extent, b);
+        }
+        for (int level = 1; level < 4; ++level) {
+            // The tree as tall on screen as its crown is wide at the switch (the crown about 0.75 of the height).
+            const float pixels = std::min(switches[level - 1] / 0.75f, 480.0f);
+            const double finer = light(levels[level - 1]->render(pixels, glm::vec3(site.posHeight)));
+            const double coarser = light(levels[level]->render(pixels, glm::vec3(site.posHeight)));
+            std::printf("%-9s %3.0f px: level %d carries %.2f times the light of level %d\n",
+                        species == TREE_SITE_CONIFER ? "conifer" : "broadleaf", pixels, level, coarser / finer,
+                        level - 1);
+            EXPECT_NEAR(coarser / finer, 1.0, 0.1) << species << " " << level;
         }
     }
 }
@@ -875,6 +918,7 @@ TEST_F(TreeGaussianQualityTest, farTreesAreSharp) {
             const std::vector<uint8_t> n = nearTree.render(pixels, foot);
             const std::vector<uint8_t> c = copy.render(pixels, foot);
             const double energy = laplacianEnergy(ref, extent);
+            EXPECT_LE(blockError(c, ref, extent), blockError(n, ref, extent)) << name << " " << pixels;
             std::printf("%-9s %3.0f px: block error copy %.4f, near %.4f; Laplacian energy ratio copy %.2f, near "
                         "%.2f\n",
                         name, pixels, blockError(c, ref, extent), blockError(n, ref, extent),

@@ -9,7 +9,26 @@
 
 namespace klartraum {
 
+namespace {
+
+std::vector<GaussianLods> lodsOf(const std::vector<MossPatch>& patches) {
+    std::vector<GaussianLods> lods;
+    for (const MossPatch& patch : patches) {
+        lods.push_back(buildGaussianLods(patch));
+    }
+    return lods;
+}
+
+} // namespace
+
 TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, const std::vector<MossPatch>& patches,
+                         std::vector<TreeLodInstance> instances, std::shared_ptr<CameraUboType> camera,
+                         std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light,
+                         glm::vec4 boundaries, uint32_t poolSlots)
+    : TreeMossLod(vulkanContext, target, lodsOf(patches), std::move(instances), std::move(camera), std::move(settings),
+                  light, boundaries, poolSlots) {}
+
+TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, const std::vector<GaussianLods>& patches,
                          std::vector<TreeLodInstance> instances, std::shared_ptr<CameraUboType> camera,
                          std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light,
                          glm::vec4 boundaries, uint32_t poolSlots) {
@@ -36,21 +55,32 @@ TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers&
     if (patches.empty() || instanceCount == 0) {
         throw std::invalid_argument("TreeMossLod: needs patches and placed copies");
     }
-    build(vulkanContext, source, patches, instances, instanceCount, camera, settings, light, boundaries, poolSlots,
+    build(vulkanContext, source, lodsOf(patches), instances, instanceCount, camera, settings, light, boundaries,
+          poolSlots, poolOffset, fitPool);
+}
+
+TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers& source,
+                         const std::vector<GaussianLods>& levels, BufferRef instances, uint32_t instanceCount,
+                         std::shared_ptr<CameraUboType> camera,
+                         std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light,
+                         glm::vec4 boundaries, uint32_t poolSlots, uint32_t poolOffset, bool fitPool) {
+    if (levels.empty() || instanceCount == 0) {
+        throw std::invalid_argument("TreeMossLod: needs patches and placed copies");
+    }
+    build(vulkanContext, source, levels, instances, instanceCount, camera, settings, light, boundaries, poolSlots,
           poolOffset, fitPool);
 }
 
 void TreeMossLod::build(VulkanContext& vulkanContext, const GaussianSoABuffers& source,
-                        const std::vector<MossPatch>& patches, BufferRef instanceBuffer, uint32_t instanceCount,
+                        const std::vector<GaussianLods>& levels, BufferRef instanceBuffer, uint32_t instanceCount,
                         std::shared_ptr<CameraUboType> camera, std::shared_ptr<HostValues<TreeRenderSettings>> settings,
                         BufferRef light, glm::vec4 boundaries, uint32_t capacity, uint32_t offset, bool fitPool) {
     // The library: every patch's four levels, one after the other.
     std::vector<TreeLodSplat> library;
-    for (const MossPatch& patch : patches) {
-        const GaussianLods lods = buildGaussianLods(patch);
+    for (const GaussianLods& lods : levels) {
         TreeLodPatch entry{};
         float radius = 0.0f;
-        for (const Gaussian3D& g : patch) {
+        for (const Gaussian3D& g : lods.levels[0]) {
             radius = std::max(radius, glm::length(glm::vec2(g.position[0], g.position[2])));
         }
         entry.bounds = glm::vec4(radius, 0.0f, 0.0f, 0.0f);

@@ -1493,6 +1493,55 @@ TREE_FN TreeLeafOutline treeLeafOutline(vec4 shape, float halfWidth) {
     return o;
 }
 
+// Half width of a lobe at height y in [0, 1], along the polygon of its curve ends.
+TREE_FN float treeLobeHalfWidth(TreeLeafOutline o, float y) {
+    for (int c = 0; c < 4; ++c) {
+        vec2 a = o.v[2 * c];
+        vec2 b = o.v[2 * c + 2];
+        if (y <= b.y || c == 3) {
+            float t = clamp((y - a.y) / max(b.y - a.y, 1e-6f), 0.0f, 1.0f);
+            return mix(a.x, b.x, t);
+        }
+    }
+    return 0.0f;
+}
+
+// Gaussian `local` of the `count` Gaussians tree_gaussians.comp lays along the lobes of a leaf of type `p`, per
+// unit of leaf length: xyz its scale (x across the blade, y the leaf normal, z along the lobe; lobes at least 0.02
+// wide), and xy its place in the leaf's plane and z the lobe's angle about the normal.
+struct TreeLeafGaussian {
+    vec4 scale;
+    vec4 placement;
+};
+
+TREE_FN TreeLeafGaussian treeLeafGaussianShape(TreeTypeParams p, TreeLeafOutline o, uint local, uint count) {
+    uint lobes = uint(clamp(p.leafLobes.x, 1.0f, float(count)));
+    uint lobe = local % lobes;
+    uint row = local / lobes;
+    uint rows = (count - lobe + lobes - 1u) / lobes;
+    float y = (float(row) + 0.5f) / float(rows);
+    float halfWidth = max(treeLobeHalfWidth(o, y), 0.02f);
+    float offset = float(lobe) - 0.5f * float(lobes - 1u);
+    float angle = radians(offset * p.leafLobes.y);
+    float lobeScale = pow(p.leafLobes.z, abs(offset));
+    TreeLeafGaussian g;
+    g.scale = vec4(lobeScale * 0.55f * halfWidth, lobeScale * 0.01f, lobeScale * 0.6f / float(rows), 0.0f);
+    g.placement = vec4(lobeScale * sin(angle) * y, lobeScale * cos(angle) * y, angle, 0.0f);
+    return g;
+}
+
+// What a leaf of length 1 and type `p` covers as the near trees draw it with `count` Gaussians of opacity
+// `alpha`: the sum of their integrated opacities, 2 pi sx sz alpha.
+TREE_FN float treeLeafGaussianCoverage(TreeTypeParams p, uint count, float alpha) {
+    TreeLeafOutline o = treeLeafOutline(p.leafShape, 0.5f * p.leafCount.z);
+    float sum = 0.0f;
+    for (uint k = 0u; k < count; ++k) {
+        TreeLeafGaussian g = treeLeafGaussianShape(p, o, k, count);
+        sum += 2.0f * TREE_PI * g.scale.x * g.scale.z * alpha;
+    }
+    return sum;
+}
+
 // Whether the curve (a, b, c), running from the base towards the tip on the
 // right half, bulges outwards: its control point lies right of the chord.
 TREE_FN bool treeLeafCurveConvex(vec2 a, vec2 b, vec2 c) {

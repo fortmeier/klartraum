@@ -47,12 +47,23 @@ public:
                 std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light = {},
                 glm::vec4 boundaries = glm::vec4(160.0f, 48.0f, 12.0f, 0.15f), uint32_t poolSlots = 0);
 
+    /// The same with the levels of detail of every patch given (instead of buildGaussianLods() of the patches).
+    TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, const std::vector<GaussianLods>& levels,
+                std::vector<TreeLodInstance> instances, std::shared_ptr<CameraUboType> camera,
+                std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light = {},
+                glm::vec4 boundaries = glm::vec4(160.0f, 48.0f, 12.0f, 0.15f), uint32_t poolSlots = 0);
+
     /// The same with `instanceCount` copies that a compute pass writes into `instances` every frame (copies
     /// with scale 0 are skipped), into `poolSlots` slots from `poolOffset` of `source`, after its writers.
     /// With `fitPool`, all copies go coarser together when they would not fit the pool: `tree_lod_fit_count.comp`
     /// sums the Gaussians the copies need for each factor treeLodFitFactor() on the boundaries, and
     /// `tree_lod_fit.comp` picks the factor (readFit()).
     TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<MossPatch>& patches,
+                BufferRef instances, uint32_t instanceCount, std::shared_ptr<CameraUboType> camera,
+                std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light, glm::vec4 boundaries,
+                uint32_t poolSlots, uint32_t poolOffset, bool fitPool = false);
+    /// The same with the levels of detail of every patch given (instead of buildGaussianLods() of the patches).
+    TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<GaussianLods>& levels,
                 BufferRef instances, uint32_t instanceCount, std::shared_ptr<CameraUboType> camera,
                 std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light, glm::vec4 boundaries,
                 uint32_t poolSlots, uint32_t poolOffset, bool fitPool = false);
@@ -86,7 +97,7 @@ public:
     }
 
 private:
-    void build(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<MossPatch>& patches,
+    void build(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<GaussianLods>& levels,
                BufferRef instances, uint32_t instanceCount, std::shared_ptr<CameraUboType> camera,
                std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light, glm::vec4 boundaries,
                uint32_t capacity, uint32_t offset, bool fitPool = false);
