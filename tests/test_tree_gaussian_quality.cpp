@@ -29,6 +29,8 @@
  * - overflowAlongTheFlight: at the reference views R0-R3 of the fly-in at scale 1 and 1920 x 1080, the visible
  *   trees of the proxies, the library copies taken of them and the forest pool's Gaussians, none left out, and the
  *   GPU time of a frame
+ * - generatedTreesCost: at R3 at 1920 x 1080, the GPU time of a frame with 1 and 24 trees generated every frame (the
+ *   rest library copies), its share per kind of pass and the cost of a generated tree; more trees cost more
  * - flickerAtAFixedCamera: at R3 and R2 without wind, the largest and mean difference between consecutive frames
  * - flickerWhileDollying: from R2 along the flight by 0.2 % of the distance to the place per frame, the mean over
  *   16 px blocks of how far a frame lies from the mean of its neighbours
@@ -53,6 +55,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -709,6 +712,57 @@ TEST_F(TreeGaussianQualityTest, overflowAlongTheFlight) {
         EXPECT_EQ(pool[1], 0u);
         writeImage("flight_R" + std::to_string(view), image, r.extent);
         EXPECT_GT(proxies[0], 0u);
+    }
+}
+
+TEST_F(TreeGaussianQualityTest, generatedTreesCost) {
+    const ReferenceFlight flight(sceneAtScale1());
+    // The passes by what they belong to, from their names.
+    auto kindOf = [](const std::string& name) -> std::string {
+        for (const char* kind :
+             {"tree_level", "tree_roots", "tree_gaussians", "tree_lod", "tree_library", "tree_proxy", "tree_terrain",
+              "tree_grass", "tree_floor", "tree_light", "Raster", "Splat", "Sort", "Project"}) {
+            if (name.find(kind) != std::string::npos) {
+                return kind;
+            }
+        }
+        return "other";
+    };
+    double one = 0.0;
+    for (uint32_t trees : {1u, 24u}) {
+        BonsaiSceneConfig config;
+        config.scale.s = 1.0f;
+        config.seed = 7;
+        config.nearTrees = trees;
+        const BonsaiScene scene = makeBonsaiScene(config);
+        FlightRenderer r(*vc, scene, {1920, 1080});
+        for (int view : {3}) {
+            const FlyInPose pose = flight.at(kReferenceU[view]);
+            r.settle(pose);
+            r.graph->resetProfiling();
+            for (int i = 0; i < 3; ++i) {
+                r.frame(pose);
+            }
+            std::map<std::string, double> kinds;
+            for (const auto& [name, ms] : r.graph->getProfilingResults()) {
+                kinds[kindOf(name)] += ms;
+            }
+            const double ms = r.graph->getGpuSpanMs();
+            std::printf("R%d, %2u trees generated: %.1f ms per frame;", view, trees, ms);
+            for (const auto& [kind, kindMs] : kinds) {
+                if (kindMs >= 0.1) {
+                    std::printf(" %s %.1f", kind.c_str(), kindMs);
+                }
+            }
+            std::printf("\n");
+            EXPECT_GT(ms, 0.0);
+            if (trees == 1u) {
+                one = ms;
+            } else {
+                std::printf("a generated tree costs %.2f ms\n", (ms - one) / double(trees - 1u));
+                EXPECT_GT(ms, one);
+            }
+        }
     }
 }
 
