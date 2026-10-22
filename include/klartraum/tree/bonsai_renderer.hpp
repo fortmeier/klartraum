@@ -98,6 +98,10 @@ struct BonsaiRenderConfig {
     /// (TreeGaussianForest) with this many Gaussians per frame at most.
     TreeGaussianForestConfig forest;
     uint32_t forestPool = 1500000;
+    /// The miniature world's haze (treeAtmosphere()) where the soil has relief: how far one sees in its metres,
+    /// and how much thicker the haze lies in the valleys (0: not at all).
+    float visibilityMeters = 15000.0f;
+    float valleyFog = 0.0f;
     TreeTerrainLodConfig terrain;
 };
 
@@ -144,6 +148,9 @@ public:
     TreeGenerator* getReducedGenerator() { return reducedGenerator.get(); }
     /// Tiles in range of the last setView() still to be generated (they come a few per frame); 0 for a planting.
     uint32_t getPendingTiles() const { return tiles ? tiles->getCache().getMissing() : 0u; }
+    /// Whether the last setView() found nothing more to do: all tiles there and the canopy's band steady. A still
+    /// submits and calls setView() again until it is.
+    bool isSettled() const { return getPendingTiles() == 0 && !bandChanged; }
 
     std::shared_ptr<CameraUboType> getCamera() const { return camera; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
@@ -189,6 +196,9 @@ private:
     std::vector<TreeTypeParams> reducedTypes;
     uint32_t reducedCount = 0;
     float detail = 1.0f;
+    glm::vec2 canopyBand{0.0f}; ///< the configured band in rendered pixels; the settings' follows the visible trees
+    bool bandChanged = false;
+    bool viewedOnce = false;
     std::unique_ptr<TreeImpostorRenderer> impostors;
     // The placement, its seed and the tree types, for setView().
     TreeTerrainParams terrainParams{};

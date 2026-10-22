@@ -60,5 +60,5 @@ void main() {
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normalize(inNormal), inWorldPos, s.season.y));
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
-    outColor = treeSurfaceOutput(color, albedo, normal, s);
+    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s);
 }

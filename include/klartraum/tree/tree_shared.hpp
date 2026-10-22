@@ -117,7 +117,8 @@ struct TreeLodInstance {
     vec4 posYaw; // xyz the patch origin's position, w the turn about +y in radians
     vec4 plane;  // x dy/dx and y dy/dz of the ground, z scale, w unused
     uvec4 ids;   // x patch, y how far the copy has faded out, z how much of the sun the terrain takes away (both float
-                 // bits; 0: nothing), w unused
+                 // bits; 0: nothing), w 1 when the patch's colours are albedos to light (trees), 0 for captured
+                 // colours (moss)
 };
 
 // Values the whole generation reads.
@@ -151,6 +152,13 @@ struct TreeRenderSettings {
     vec4 pointLight;      // xyz position of a point light without shadows (the lantern's flame), w unused
     vec4 pointColor;      // rgb radiance of the point light at distance 1, w unused
     vec4 capturedTint;    // rgb factor on the colours of captured Gaussians (the lantern) for the current light
+    // The miniature world's atmosphere (treeAtmosphere()): x metres per unit (0: none), y the visibility in metres
+    // (the haze takes 63 % of a colour that far away), z how much thicker the haze is in the valleys, w unused.
+    vec4 atmosphere;
+    vec4 atmosphereBox; // the box the atmosphere fills: x, y its half length and width, z its bottom, w its top
+    // x, y the tree sizes in pixels between which the forest canopy hands over to the trees (treeCanopyWeight());
+    // per frame, so that the visible trees fit their buffers; zw unused. 0: the terrain's own (TreeTerrainConfig).
+    vec4 canopyBand;
 };
 
 // The ground in the pot (treeTerrainHeight()): the soil with its mound, and the relief of a landscape that the
@@ -420,6 +428,47 @@ TREE_FN float treeCapturedShade(TreeRenderSettings s, vec2 light) {
     float ambient = dot(vec3(s.sky.x, s.sky.y, s.sky.z), luma);
     float sun = 0.5f * s.sun.w * dot(vec3(s.lightColor.x, s.lightColor.y, s.lightColor.z), luma);
     return (ambient * light.y + sun * light.x) / max(ambient + sun, 1e-4f);
+}
+
+// The haze between eye and pos in the miniature world (TreeRenderSettings::atmosphere): rgb its colour (linear),
+// a how much of the surface's colour it replaces. Only the part of the view ray inside the world's box counts (a camera
+// outside the pot looks through clear air until it enters), in the world's metres; the haze thickens towards the valley
+// floor (the box's bottom) and takes the colour of the sky, brightened by the sun. treeAtmosphere() applies it to a
+// linear colour.
+TREE_FN vec4 treeHaze(vec3 pos, vec3 eye, TreeRenderSettings s) {
+    if (s.atmosphere.x <= 0.0f) {
+        return vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    vec3 lo = vec3(-s.atmosphereBox.x, s.atmosphereBox.z, -s.atmosphereBox.y);
+    vec3 hi = vec3(s.atmosphereBox.x, s.atmosphereBox.w, s.atmosphereBox.y);
+    vec3 d = pos - eye;
+    float enter = 0.0f;
+    float leave = 1.0f;
+    for (int a = 0; a < 3; ++a) {
+        if (abs(d[a]) < 1e-8f) {
+            if (eye[a] < lo[a] || eye[a] > hi[a]) {
+                return vec4(0.0f, 0.0f, 0.0f, 0.0f);
+            }
+        } else {
+            float t1 = (lo[a] - eye[a]) / d[a];
+            float t2 = (hi[a] - eye[a]) / d[a];
+            enter = max(enter, min(t1, t2));
+            leave = min(leave, max(t1, t2));
+        }
+    }
+    float meters = max(leave - enter, 0.0f) * length(d) * s.atmosphere.x;
+    float above = max(pos.y - s.atmosphereBox.z, 0.0f) * s.atmosphere.x;
+    float density = 1.0f + s.atmosphere.z * exp(-above / 150.0f);
+    float haze = 1.0f - exp(-meters * density / s.atmosphere.y);
+    vec3 sky = vec3(s.sky.x, s.sky.y, s.sky.z);
+    vec3 light = vec3(s.lightColor.x, s.lightColor.y, s.lightColor.z);
+    vec3 color = 1.4f * sky + 0.25f * light * s.sun.w * max(s.sun.y, 0.0f);
+    return vec4(color.x, color.y, color.z, haze);
+}
+
+TREE_FN vec3 treeAtmosphere(vec3 color, vec3 pos, vec3 eye, TreeRenderSettings s) {
+    vec4 haze = treeHaze(pos, eye, s);
+    return mix(color, vec3(haze.x, haze.y, haze.z), haze.w);
 }
 
 // Index of voxel (x, y, z) in the light volume.

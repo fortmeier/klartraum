@@ -98,7 +98,7 @@ vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal, bool glaze) {
     vec3 at = pos + 0.5f * s.lightGridMin.w * normal;
     vec2 light = glaze ? treeLightOfTreesAt(s, at) : treeLightAt(s, at);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
-    return treeOutputColor(color, s).rgb;
+    return treeOutputColor(treeAtmosphere(color, pos, camera.cameraWorldPos.xyz, s), s).rgb;
 }
 
 // Slots count from the first Gaussian after the static ones.

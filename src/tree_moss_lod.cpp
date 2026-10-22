@@ -120,6 +120,7 @@ void TreeMossLod::build(VulkanContext& vulkanContext, const GaussianSoABuffers& 
     const BufferRef lightRef = bufferOrPlaceholder(vulkanContext, light);
     write->setInput(lightRef.element, 9, lightRef.slot);
     write->setGroupCountX(instanceCount);
+    write->setInput(camera, 10);
     write->setPushConstants({offset});
 
     gaussians = source;

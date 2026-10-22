@@ -85,6 +85,11 @@ void main() {
     vec3 eye = camera.cameraWorldPos.xyz;
     // The settings are bound only with a canopy or the terrain's shadows.
     bool withCanopy = config.canopy.x > 0.0f;
+    // The band of the settings when they give one (it follows the number of visible trees), else the terrain's.
+    vec4 band = config.canopy;
+    if (withCanopy && settings[0].canopyBand.x > 0.0f) {
+        band.xy = settings[0].canopyBand.xy;
+    }
     bool withShadows = config.canopy.w > 0.0f;
     float focal = withCanopy ? treeFocalPixels(settings[0]) : 0.0f;
     vec3 sun = withShadows ? settings[0].sun.xyz : vec3(0.0f, 1.0f, 0.0f);
@@ -106,7 +111,7 @@ void main() {
                 float tree = treeMeanTreeHeight(config.terrain, config.placement,
                                                 treeTerrainAltitude(config.terrain, vec3(x, h, z)));
                 float pixels = treePixelDiameter(eye, vec3(x, h + 0.5f * tree, z), 0.5f * tree, focal);
-                c = vegetation.x * treeCanopyWeight(config.canopy, pixels);
+                c = vegetation.x * treeCanopyWeight(band, pixels);
                 h += 0.85f * tree * c;
             }
         }

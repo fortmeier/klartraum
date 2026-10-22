@@ -8,13 +8,16 @@
 // Gaussians it reserved: its level's, and while crossfading the next coarser
 // level's, with opacities that sum to the level's. They are turned and
 // scaled with the patch, laid on its ground plane and coloured like captured
-// Gaussians (treeCapturedColor(): tint, the trees' shadows, snow).
+// Gaussians (treeCapturedColor(): tint, the trees' shadows, snow), or for
+// copies of trees (TreeLodInstance::ids.w) lit from their albedos like the
+// trees' Gaussians; all through the miniature world's haze.
 
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_GOOGLE_include_directive : require
 
-#define TREE_FN
-#include "klartraum/tree/tree_shared.hpp"
+#define TREE_CAMERA_SET 0
+#define TREE_CAMERA_BINDING 10
+#include "tree_render_common.glsl"
 #define TREE_LIGHT_SET 0
 #define TREE_LIGHT_BINDING 9
 #include "tree_light.glsl"
@@ -87,8 +90,18 @@ void main() {
         // The terrain's shadow on the copy (ids.z, float bits of the share of the sun it takes away).
         vec2 light = treeLightOfTreesAt(s, pos);
         light.x *= 1.0f - uintBitsToFloat(inst.ids.z);
-        float shade = treeCapturedShade(s, light);
-        vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * g.color.rgb, normal, pos, shade, s);
+        vec3 displayed;
+        if (inst.ids.w == 1u) {
+            // A tree's albedo, lit like the trees' Gaussians, with snow in winter and through the haze.
+            vec3 albedo = mix(g.color.rgb, vec3(0.8f), 0.7f * treeSnowOn(normal, pos, s.season.y));
+            vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
+            displayed = treeDisplayColor(treeAtmosphere(color, pos, camera.cameraWorldPos.xyz, s), s.sky.w);
+        } else {
+            displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * g.color.rgb, normal, pos, treeCapturedShade(s, light), s);
+            // Through the miniature world's haze; the colours are displayed ones, so the haze's is displayed too.
+            vec4 haze = treeHaze(pos, camera.cameraWorldPos.xyz, s);
+            displayed = mix(displayed, treeDisplayColor(haze.rgb, s.sky.w), haze.a);
+        }
 
         uint slot = pc.offset + record.x + k;
         outPos[slot] = pos;

@@ -124,7 +124,7 @@ void main() {
         vec2 light = treeLightAt(s, pos + 0.5f * s.lightGridMin.w * normal);
         light.x *= clamp(extras[v].y, 0.0f, 1.0f);
         vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
-        vec3 displayed = treeOutputColor(color, s).rgb;
+        vec3 displayed = treeOutputColor(treeAtmosphere(color, pos, camera.cameraWorldPos.xyz, s), s).rgb;
 
         // Turned so that its x axis runs along tx.
         vec4 rot = qfromZ(normal);

@@ -14,6 +14,8 @@
  * - canopyAndProxiesCrossfade: looking down on a forest at scale 1 from farther and farther away, as its trees shrink
  *   from 30 to 2 pixels and the canopy takes over from the proxies, the forest's mean colour changes gradually in
  *   both renderers and nothing of it turns black
+ * - canopyBandKeepsTheTreesInTheirList: in a close view over the forest at scale 1, where more trees than fit would
+ *   be drawn, the renderer's canopy band settles with the visible trees within the list and none left out
  * - proxiesRenderBothWays: looking down onto a forest edge in summer, the proxies cover nearly the same pixels
  *   classically and as Gaussians (IoU above 0.6); images and the GPU time of a view over the forest are written
  **/
@@ -380,9 +382,43 @@ TEST_F(TreeProxiesTest, canopyAndProxiesCrossfade) {
                 largest = std::max(largest, d.x + d.y + d.z);
             }
         }
-        // The view's content changes with the distance too: steps of 20 % in distance change the mean by at most
-        // a little, also where the canopy takes over (measured 0.024 classically with impostors). The Gaussian
-        // library's trees are yellower than the canopy (about 0.08 less blue), so their step is larger: 0.094.
-        EXPECT_LT(largest, gaussian ? 0.11f : 0.08f) << gaussian;
+        // The view's content and its haze change with the distance too: steps of 20 % in distance change the mean
+        // by at most a little, also where the canopy takes over (measured 0.047 classically, 0.09 as Gaussians).
+        EXPECT_LT(largest, 0.1f) << gaussian;
     }
+}
+
+TEST_F(TreeProxiesTest, canopyBandKeepsTheTreesInTheirList) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.scale.s = 1.0f;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{640, 360};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.proxies.capacity = 8192;
+    BonsaiRenderer renderer(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(renderer.getOutput());
+    renderer.initialize(1);
+    const glm::vec3 eye =
+        glm::vec3(0.0f, 0.8f, 0.0f) +
+        1.7f * glm::vec3(std::cos(0.25f) * std::sin(0.35f), std::sin(0.25f), std::cos(0.25f) * std::cos(0.35f));
+    setCamera(renderer.getCamera()->ubo, eye, glm::vec3(0.0f, 0.8f, 0.0f), 40.0f, 16.0f / 9.0f);
+    renderer.getCamera()->update(0);
+    renderer.setView(eye);
+    int frames = 0;
+    for (; frames < 32 && !renderer.isSettled(); ++frames) {
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        renderer.setView(eye);
+    }
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const std::vector<uint32_t> counter = renderer.getProxies()->readCounter();
+    const glm::vec4 band = renderer.getSettings().values().at(0).canopyBand;
+    std::printf("settled after %d frames: %u visible, band %.1f to %.1f pixels\n", frames, counter[0], band.x, band.y);
+    EXPECT_TRUE(renderer.isSettled());
+    EXPECT_LE(counter[0], 8192u);
+    EXPECT_EQ(counter[1], 0u);
+    // The band had to grow: at its configured size far more trees are visible.
+    EXPECT_GT(band.x, 8.0f);
 }

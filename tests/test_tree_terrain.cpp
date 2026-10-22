@@ -26,6 +26,9 @@
  * - landCoverIsDeterministicPerSeed: the same seed gives the same land cover, another seed another one
  * - terrainShadowsItself: without relief nothing is in shadow, under an overhead sun nothing either; under a low
  *   sun ground facing away from it is in shadow, ground facing it mostly lit, with soft edges between
+ * - hazeGrowsWithDistance: the miniature world's haze is off without an atmosphere, grows monotonically with the
+ *   distance travelled inside the world's box, counts only that part of a view from outside, never covers a view
+ *   that misses the box, and thickens towards the valley floor with valley fog
  **/
 
 #include <gtest/gtest.h>
@@ -480,4 +483,31 @@ TEST(TreeTerrain, terrainShadowsItself) {
     EXPECT_GT(awayShadowed, away * 9 / 10);
     EXPECT_GT(facingLit, facing * 7 / 10);
     EXPECT_GT(soft, 20);
+}
+
+TEST(TreeTerrain, hazeGrowsWithDistance) {
+    TreeRenderSettings s = defaultTreeRenderSettings({1920, 1080});
+    const glm::vec3 eye(0.0f, 0.5f, 0.0f);
+    EXPECT_EQ(tree::treeHaze(eye + glm::vec3(1.0f, 0.0f, 0.0f), eye, s).w, 0.0f);
+    // A world of 8 km in 2.88 units, 15 km visibility, from y 0.26 to 1.5.
+    s.atmosphere = glm::vec4(8000.0f / 2.88f, 15000.0f, 0.0f, 0.0f);
+    s.atmosphereBox = glm::vec4(1.4f, 0.85f, 0.26f, 1.5f);
+    float previous = 0.0f;
+    for (float d = 0.05f; d < 1.35f; d += 0.05f) {
+        const float haze = tree::treeHaze(eye + glm::vec3(d, 0.0f, 0.0f), eye, s).w;
+        EXPECT_GT(haze, previous) << d;
+        EXPECT_NEAR(haze, 1.0f - std::exp(-d * s.atmosphere.x / s.atmosphere.y), 1e-4f) << d;
+        previous = haze;
+    }
+    // From outside the box only the part inside counts: 0.5 units of the 3.5 to the point.
+    const glm::vec3 outside(-3.0f, 0.5f, 0.0f);
+    EXPECT_NEAR(tree::treeHaze(glm::vec3(-0.9f, 0.5f, 0.0f), outside, s).w,
+                1.0f - std::exp(-0.5f * s.atmosphere.x / s.atmosphere.y), 1e-4f);
+    // Past the box: no haze.
+    EXPECT_EQ(tree::treeHaze(glm::vec3(-3.0f, 3.0f, 2.0f), outside, s).w, 0.0f);
+    // Valley fog: thicker near the floor than high up, at the same distance.
+    s.atmosphere.z = 4.0f;
+    const float low = tree::treeHaze(glm::vec3(0.5f, 0.27f, 0.0f), glm::vec3(0.0f, 0.27f, 0.0f), s).w;
+    const float high = tree::treeHaze(glm::vec3(0.5f, 1.2f, 0.0f), glm::vec3(0.0f, 1.2f, 0.0f), s).w;
+    EXPECT_GT(low, 1.5f * high);
 }
