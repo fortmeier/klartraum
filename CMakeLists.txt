@@ -389,6 +389,7 @@ set(KLARTRAUM_LIB_SRC
   src/tree_tiles.cpp
   src/tree_proxies.cpp
   src/tree_impostors.cpp
+  src/tree_library.cpp
   src/storage_draw_component.cpp
   ${SPZ_SRC}
   )

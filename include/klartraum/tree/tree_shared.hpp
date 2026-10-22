@@ -116,7 +116,7 @@ struct TreeLodPatch {
 struct TreeLodInstance {
     vec4 posYaw; // xyz the patch origin's position, w the turn about +y in radians
     vec4 plane;  // x dy/dx and y dy/dz of the ground, z scale, w unused
-    uvec4 ids;   // x patch, yzw unused
+    uvec4 ids;   // x patch, y how far the copy has faded out (float bits; 0: not at all), zw unused
 };
 
 // Values the whole generation reads.

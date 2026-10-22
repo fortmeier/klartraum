@@ -23,6 +23,7 @@
 #include "klartraum/tree/tree_light_volume.hpp"
 #include "klartraum/tree/tree_moss_lod.hpp"
 #include "klartraum/tree/tree_impostors.hpp"
+#include "klartraum/tree/tree_library.hpp"
 #include "klartraum/tree/tree_proxies.hpp"
 #include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
@@ -71,6 +72,10 @@ struct BonsaiRenderConfig {
     /// The classical renderer generates this many trees beyond the near ones with one stem level less
     /// (treeReducedType(), the level of detail L1); the impostors start beyond them.
     uint32_t reducedTrees = 96;
+    /// The Gaussian renderer draws the trees beyond the near ones as copies of a Gaussian library
+    /// (TreeGaussianForest) with this many Gaussians per frame at most.
+    TreeGaussianForestConfig forest;
+    uint32_t forestPool = 1500000;
     TreeTerrainLodConfig terrain;
 };
 
@@ -127,6 +132,8 @@ public:
     /// The placement's tiles and proxies, or nullptr for a planting.
     TreePlacementTiles* getTiles() { return tiles.get(); }
     TreeProxies* getProxies() { return proxies.get(); }
+    /// The Gaussian renderer's library copies of the trees, or nullptr.
+    TreeGaussianForest* getForest() { return forest.get(); }
 
     /// The lantern capture, cropped to the lantern and its moss and placed on the soil.
     static std::vector<Gaussian3D> loadLantern(const BonsaiScene& scene, const std::string& path);
@@ -148,7 +155,7 @@ private:
     std::unique_ptr<TreeTerrainGaussians> terrainGaussians;
     std::unique_ptr<TreePlacementTiles> tiles;
     std::unique_ptr<TreeProxies> proxies;
-    std::unique_ptr<TreeProxyGaussians> proxyGaussians;
+    std::unique_ptr<TreeGaussianForest> forest;
     std::unique_ptr<TreeImpostorAtlas> atlas;
     std::shared_ptr<TreeGenerator> reducedGenerator;
     std::unique_ptr<TreeStemRenderer> reducedStems;
