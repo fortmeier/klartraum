@@ -32,18 +32,18 @@ TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers&
                          const std::vector<MossPatch>& patches, BufferRef instances, uint32_t instanceCount,
                          std::shared_ptr<CameraUboType> camera,
                          std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light,
-                         glm::vec4 boundaries, uint32_t poolSlots, uint32_t poolOffset) {
+                         glm::vec4 boundaries, uint32_t poolSlots, uint32_t poolOffset, bool fitPool) {
     if (patches.empty() || instanceCount == 0) {
         throw std::invalid_argument("TreeMossLod: needs patches and placed copies");
     }
     build(vulkanContext, source, patches, instances, instanceCount, camera, settings, light, boundaries, poolSlots,
-          poolOffset);
+          poolOffset, fitPool);
 }
 
 void TreeMossLod::build(VulkanContext& vulkanContext, const GaussianSoABuffers& source,
                         const std::vector<MossPatch>& patches, BufferRef instanceBuffer, uint32_t instanceCount,
                         std::shared_ptr<CameraUboType> camera, std::shared_ptr<HostValues<TreeRenderSettings>> settings,
-                        BufferRef light, glm::vec4 boundaries, uint32_t capacity, uint32_t offset) {
+                        BufferRef light, glm::vec4 boundaries, uint32_t capacity, uint32_t offset, bool fitPool) {
     // The library: every patch's four levels, one after the other.
     std::vector<TreeLodSplat> library;
     for (const MossPatch& patch : patches) {
@@ -103,8 +103,34 @@ void TreeMossLod::build(VulkanContext& vulkanContext, const GaussianSoABuffers& 
     TreeLodSelectPush push;
     push.instanceCount = instanceCount;
     push.capacity = capacity;
+    push.fit = fitPool ? 1u : 0u;
     push.boundaries = boundaries;
     select->setPushConstants({push});
+    if (fitPool) {
+        fitState = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 4u + TREE_LOD_FIT_STEPS);
+        fitState->setName("TreeLodFit");
+        // The sums are counted anew every frame; the step in use carries over.
+        fitState->setRecordToZeroRange(4 * sizeof(uint32_t), TREE_LOD_FIT_STEPS * sizeof(uint32_t));
+        fitCount = std::make_shared<GeneralComputation<TreeLodSelectPush>>(vulkanContext,
+                                                                           "shaders/tree/tree_lod_fit_count.comp.spv");
+        fitCount->setName("TreeLodFitCount");
+        instanceBuffer.connectTo(*fitCount, 0);
+        fitCount->setInput(patchBuffer, 1);
+        fitCount->setInput(fitState, 2);
+        fitCount->setInput(camera, 3);
+        fitCount->setInput(settings, 4);
+        fitCount->setGroupCountX((instanceCount + 63) / 64);
+        fitCount->setPushConstants({push});
+        fit = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_lod_fit.comp.spv");
+        fit->setName("TreeLodFit");
+        fit->setInput(fitCount, 0, 2);
+        fit->setGroupCountX(1);
+        fit->setPushConstants({capacity});
+        select->setInput(fit, 6, 0);
+    } else {
+        const BufferRef none = bufferOrPlaceholder(vulkanContext, BufferRef{});
+        select->setInput(none.element, 6, none.slot);
+    }
 
     write = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_lod_write.comp.spv");
     write->setName("TreeLodWrite");
@@ -128,6 +154,19 @@ void TreeMossLod::build(VulkanContext& vulkanContext, const GaussianSoABuffers& 
     gaussians.rot = BufferRef{write, 1};
     gaussians.scale = BufferRef{write, 2};
     gaussians.colAlpha = BufferRef{write, 3};
+}
+
+TreeMossLod::Fit TreeMossLod::readFit(uint32_t pathId) {
+    Fit result;
+    if (!fitState) {
+        return result;
+    }
+    std::vector<uint32_t> values(4u + TREE_LOD_FIT_STEPS, 0u);
+    fitState->getBuffer(pathId).memcopyTo(values);
+    result.step = values[0];
+    result.factor = glm::uintBitsToFloat(values[1]);
+    result.sums.assign(values.begin() + 4, values.end());
+    return result;
 }
 
 std::vector<uint32_t> TreeMossLod::readCounter(uint32_t pathId) {

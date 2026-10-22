@@ -20,7 +20,7 @@ namespace klartraum {
 struct TreeLodSelectPush {
     uint32_t instanceCount = 0;
     uint32_t capacity = 0;
-    uint32_t pad0 = 0;
+    uint32_t fit = 0; ///< 1: the boundaries times the factor of tree_lod_fit.comp
     uint32_t pad1 = 0;
     glm::vec4 boundaries{160.0f, 48.0f, 12.0f, 0.15f};
 };
@@ -49,10 +49,13 @@ public:
 
     /// The same with `instanceCount` copies that a compute pass writes into `instances` every frame (copies
     /// with scale 0 are skipped), into `poolSlots` slots from `poolOffset` of `source`, after its writers.
+    /// With `fitPool`, all copies go coarser together when they would not fit the pool: `tree_lod_fit_count.comp`
+    /// sums the Gaussians the copies need for each factor treeLodFitFactor() on the boundaries, and
+    /// `tree_lod_fit.comp` picks the factor (readFit()).
     TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<MossPatch>& patches,
                 BufferRef instances, uint32_t instanceCount, std::shared_ptr<CameraUboType> camera,
                 std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light, glm::vec4 boundaries,
-                uint32_t poolSlots, uint32_t poolOffset);
+                uint32_t poolSlots, uint32_t poolOffset, bool fitPool = false);
 
     /// The target's Gaussians, as the write pass leaves them; give these to the splatting backend.
     const GaussianSoABuffers& getGaussians() const { return gaussians; }
@@ -63,17 +66,35 @@ public:
     /// The Gaussians at full detail of all copies: what the pool would need without level of detail.
     uint32_t getFullCount() const { return fullCount; }
 
+    /// After a submission of `pathId` with `fitPool`: the step in use, its factor on the boundaries, and the
+    /// Gaussians each step would need (TREE_LOD_FIT_STEPS).
+    struct Fit {
+        uint32_t step = 0;
+        float factor = 1.0f;
+        std::vector<uint32_t> sums;
+    };
+    Fit readFit(uint32_t pathId = 0);
+    /// Starts the fitting at the finest step in every path; call after compiling.
+    void resetFit() {
+        if (fitState) {
+            fitState->zero();
+        }
+    }
+
 private:
     void build(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<MossPatch>& patches,
                BufferRef instances, uint32_t instanceCount, std::shared_ptr<CameraUboType> camera,
                std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light, glm::vec4 boundaries,
-               uint32_t capacity, uint32_t offset);
+               uint32_t capacity, uint32_t offset, bool fitPool = false);
     std::vector<TreeLodPatch> table;
 
     std::shared_ptr<GeneralComputation<glm::uvec2>> clear;
     std::shared_ptr<GeneralComputation<TreeLodSelectPush>> select;
     std::shared_ptr<GeneralComputation<uint32_t>> write;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> counter;
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> fitState;
+    std::shared_ptr<GeneralComputation<TreeLodSelectPush>> fitCount;
+    std::shared_ptr<GeneralComputation<uint32_t>> fit;
     GaussianSoABuffers gaussians;
     uint32_t fullCount = 0;
 };

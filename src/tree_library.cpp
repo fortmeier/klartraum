@@ -167,13 +167,14 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
     convert->setPushConstants({visibleCapacity});
 
     lod = std::make_unique<TreeMossLod>(vulkanContext, source, patches, BufferRef{convert, 4}, visibleCapacity, camera,
-                                        settings, light, config.boundaries, poolSlots, poolOffset);
+                                        settings, light, config.boundaries, poolSlots, poolOffset, true);
 }
 
 void TreeGaussianForest::initialize(uint32_t numberPaths) {
     for (uint32_t path = 0; path < numberPaths; ++path) {
         state->getBuffer(path).memcopyFrom(TreeSizeCut::initialState());
     }
+    lod->resetFit();
 }
 
 TreeSizeCut TreeGaussianForest::readCut(uint32_t pathId) {
