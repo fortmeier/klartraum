@@ -22,8 +22,8 @@
 // moving with the season) go to <out-dir>/frames/<renderer>_<frame>.ppm while
 // the camera turns --turns times around the pot; --from and --to select a
 // range of frames. With --fly-in, the frames of a flight from the first view
-// down to the --ground place go to <out-dir>/frames/<renderer>_<frame>.ppm, at
-// noon of the season.
+// down to the --ground place (without --ground: over a field into a forest)
+// go to <out-dir>/frames/<renderer>_<frame>.ppm, at noon of the season.
 
 #include <algorithm>
 #include <chrono>
@@ -33,6 +33,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -190,14 +191,32 @@ int main(int argc, char** argv) {
         std::cerr << "--backend must be raster or compute" << std::endl;
         return 1;
     }
-    if (flyInSeconds > 0.0f && !ground) {
-        std::cerr << "--fly-in needs --ground for the place it flies to" << std::endl;
-        return 1;
-    }
-
     HeadlessFrontend frontend;
     VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
     const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    // Without --ground the fly-in goes over a field into a forest (ForestFlight).
+    std::unique_ptr<ForestFlight> forestFlight;
+    if (flyInSeconds > 0.0f && !ground) {
+        if (!scene.placed) {
+            std::cerr << "--fly-in without --ground needs a landscape (--scale 0.6 or more)" << std::endl;
+            return 1;
+        }
+        const glm::vec3 start =
+            scene.focus + distance * glm::vec3(std::sin(azimuth) * std::cos(elevation), std::sin(elevation),
+                                               std::cos(azimuth) * std::cos(elevation));
+        ForestApproachConfig flightConfig;
+        flightConfig.seconds = flyInSeconds;
+        flightConfig.season = season;
+        forestFlight = std::make_unique<ForestFlight>(scene, start, scene.focus,
+                                                      findForestApproach(scene, flightConfig), flightConfig);
+        if (!forestFlight->isValid()) {
+            std::cerr << "no place found to fly into a forest; give one with --ground" << std::endl;
+            return 1;
+        }
+        const ForestApproach& a = forestFlight->getApproach();
+        std::cout << "flying into the forest at " << a.end.x << "," << a.end.y << ", heading "
+                  << glm::degrees(a.heading) << " degrees" << std::endl;
+    }
     std::filesystem::create_directories(outDir / "frames");
     std::cout << "scale " << sceneConfig.scale.s << ": the pot holds " << sceneConfig.scale.regionMeters() << " m, "
               << scene.trees.size() << " trees, lantern " << sceneConfig.scale.lanternMeters() << " m" << std::endl;
@@ -236,9 +255,11 @@ int main(int argc, char** argv) {
             const float above = groundView.z / scene.config.scale.metersPerUnit();
             for (uint32_t frame = fromFrame; frame < std::min(frames, toFrame); ++frame) {
                 const float seconds = float(frame) / fps;
-                const FlyInPose pose =
-                    flyInPose(scene, start, scene.focus, glm::vec2(groundView.x, groundView.y), above,
-                              glm::radians(groundView.w), float(frame) / float(std::max(frames - 1, 1u)));
+                const float u = float(frame) / float(std::max(frames - 1, 1u));
+                const FlyInPose pose = forestFlight
+                                           ? forestFlight->at(u)
+                                           : flyInPose(scene, start, scene.focus, glm::vec2(groundView.x, groundView.y),
+                                                       above, glm::radians(groundView.w), u);
                 setCamera(bonsai.getCamera()->ubo, pose.eye, pose.lookAt, float(extent.width) / float(extent.height),
                           pose.nearPlane);
                 bonsai.getCamera()->update(0);
