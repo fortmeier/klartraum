@@ -29,7 +29,8 @@ void main() {
     barrier();
 
     uint numElements = activeNumElements();
-    uint itemsPerWorkGroup0 = numElements / gl_NumWorkGroups.x;
+    // Rounded up, so the workgroups cover every element also when there are fewer elements than workgroups.
+    uint itemsPerWorkGroup0 = (numElements + gl_NumWorkGroups.x - 1u) / gl_NumWorkGroups.x;
     uint iterationsPerWorkGroup = (itemsPerWorkGroup0 + gl_WorkGroupSize.x - 1) / gl_WorkGroupSize.x;
     uint itemsPerWorkGroup = iterationsPerWorkGroup * gl_WorkGroupSize.x;
 
