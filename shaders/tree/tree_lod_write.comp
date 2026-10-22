@@ -91,6 +91,6 @@ void main() {
         outPos[slot] = pos;
         outRot[slot] = rot;
         outScale[slot] = size;
-        outColAlpha[slot] = vec4((displayed - vec3(0.5f)) / SH_C0, g.color.a * weight);
+        outColAlpha[slot] = vec4((displayed - vec3(0.5f)) / SH_C0, g.color.a * weight * (1.0f - uintBitsToFloat(inst.ids.y)));
     }
 }

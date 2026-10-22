@@ -100,7 +100,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     sources.light = lightVolume->getLight();
     const uint32_t mossSlots = mossCopies.empty() ? 0u : config.mossPool;
     const bool terrainGaussianPool = !classical && config.terrainLod;
-    const uint32_t proxySlots = scene.placed && !classical ? 4u * config.proxies.capacity : 0u;
+    const uint32_t proxySlots = scene.placed && !classical ? config.forestPool : 0u;
     // The canopy and the proxies crossfade over the same band of tree sizes, in rendered pixels.
     TreeProxyConfig proxyConfig = config.proxies;
     TreeCanopy canopy;
@@ -145,10 +145,12 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     if (tiles && !classical) {
         proxies = std::make_unique<TreeProxies>(vulkanContext, *tiles, camera, settings, renderExtent,
                                                 TreeRenderInputs{BufferRef{}, lightVolume->getLight()}, proxyConfig);
-        proxyGaussians = std::make_unique<TreeProxyGaussians>(
-            vulkanContext, *proxies, splats, gaussians->getExtraOffset() + sources.extraSlots - proxySlots,
-            config.proxies.capacity, settings, camera, lightVolume->getLight());
-        splats = proxyGaussians->getGaussians();
+        TreeGaussianForestConfig forestConfig = config.forest;
+        forestConfig.trees = std::min(forestConfig.trees, proxyConfig.capacity);
+        forest = std::make_unique<TreeGaussianForest>(
+            vulkanContext, *proxies, splats, gaussians->getExtraOffset() + sources.extraSlots - proxySlots, proxySlots,
+            scene.types, camera, settings, lightVolume->getLight(), forestConfig);
+        splats = forest->getGaussians();
     }
 
     if (classical) {

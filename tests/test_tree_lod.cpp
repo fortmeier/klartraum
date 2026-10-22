@@ -10,6 +10,10 @@
  * - reducedTreesLookAlike: at the size where trees switch to the reduced type (96 pixels tall), a reduced tree
  *   covers about as many pixels as the full one (within 20 %) with nearly the same outline (IoU of 2 x 2 blocks above
  *   0.7, the leaves speckle differently) and mean colour; images are written to build/TestingOutput/tree/
+ * - gaussianLibraryHasTheTrees: the library holds per type and season a tree of the reduced type, as tall as
+ *   reported, its Gaussians within the tree's reach, the broadleaf's crown sparse in winter
+ * - gaussianForestCopiesTheVisibleTrees: at scale 0.75 the Gaussian renderer copies the library for the visible
+ *   trees within its pool, none left out
  **/
 
 #include <gtest/gtest.h>
@@ -21,7 +25,8 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "klartraum/headless_frontend.hpp"
-#include "klartraum/tree/bonsai_scene.hpp"
+#include "klartraum/tree/bonsai_renderer.hpp"
+#include "klartraum/tree/tree_library.hpp"
 
 #include "tree_test_helpers.hpp"
 
@@ -144,4 +149,62 @@ TEST_F(TreeLodTest, reducedTreesLookAlike) {
             EXPECT_LT(d.x + d.y + d.z, 0.1) << type << " " << elevation;
         }
     }
+}
+
+TEST(TreeLod, gaussianLibraryHasTheTrees) {
+    const std::vector<TreeTypeParams> types = forestTypes();
+    std::vector<float> heights;
+    const std::vector<float> seasons = {0.2f, 2.0f};
+    const std::vector<MossPatch> library = buildTreeGaussianLibrary(types, seasons, heights);
+    ASSERT_EQ(library.size(), types.size() * seasons.size());
+    for (uint32_t type = 0; type < types.size(); ++type) {
+        // As tall as the type at scale 1 (Weber and Penn's scale, give or take its variation).
+        EXPECT_NEAR(heights[type], types[type].shapeBase.z, 0.5f * types[type].shapeBase.z);
+        for (size_t k = 0; k < seasons.size(); ++k) {
+            const MossPatch& tree = library[type * seasons.size() + k];
+            float top = 0.0f;
+            for (const Gaussian3D& g : tree) {
+                EXPECT_GT(g.position[1], -0.05f * heights[type]);
+                EXPECT_LT(g.position[1], 1.05f * heights[type]);
+                EXPECT_LT(glm::length(glm::vec2(g.position[0], g.position[2])), heights[type]);
+                top = std::max(top, g.position[1]);
+            }
+            EXPECT_GT(top, 0.8f * heights[type]);
+            std::printf("type %u, season %.1f: %zu Gaussians\n", type, seasons[k], tree.size());
+        }
+    }
+    // The broadleaf is bare in winter.
+    EXPECT_LT(library[0].size(), library[1].size() / 2);
+}
+
+TEST_F(TreeLodTest, gaussianForestCopiesTheVisibleTrees) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.scale.s = 0.75f;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{480, 270};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.mode = BonsaiRenderMode::Gaussian;
+    BonsaiRenderer renderer(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(renderer.getOutput());
+    renderer.initialize(1);
+    const glm::vec3 eye(0.9f, 1.2f, 1.6f);
+    setCamera(renderer.getCamera()->ubo, eye, glm::vec3(0.0f, 0.4f, 0.0f), 40.0f, 16.0f / 9.0f);
+    renderer.getCamera()->update(0);
+    renderer.setView(eye);
+    for (int frame = 0; frame < 8 && renderer.getPendingTiles() > 0; ++frame) {
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        renderer.setView(eye);
+    }
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    writePpm("gaussian_forest_s75", readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent),
+             extent);
+    const uint32_t visible = renderer.getProxies()->readCounter()[0];
+    const std::vector<uint32_t> copies = renderer.getForest()->getLod().readCounter();
+    std::printf("%u visible trees, %u Gaussians written, %u trees left out\n", visible, copies[0], copies[1]);
+    EXPECT_GT(visible, 1000u);
+    EXPECT_GT(copies[0], 10u * visible);
+    EXPECT_EQ(copies[1], 0u);
 }

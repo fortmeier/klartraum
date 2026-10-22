@@ -1,0 +1,152 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#include "klartraum/tree/tree_library.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
+namespace klartraum {
+
+namespace {
+
+constexpr float kShC0 = 0.28209479f;
+
+Gaussian3D litGaussian(glm::vec3 pos, glm::vec4 rot, glm::vec3 scale, glm::vec3 albedo, glm::vec3 normal,
+                       const TreeRenderSettings& s, float alpha) {
+    const glm::vec3 displayed = tree::treeDisplayColor(tree::treeShadeLit(albedo, normal, s, glm::vec2(1.0f)), s.sky.w);
+    Gaussian3D g{};
+    g.position = {pos.x, pos.y, pos.z};
+    g.rotation = {rot.x, rot.y, rot.z, rot.w};
+    g.scale = {scale.x, scale.y, scale.z};
+    const glm::vec3 sh = (displayed - glm::vec3(0.5f)) / kShC0;
+    g.color = {sh.x, sh.y, sh.z};
+    g.alpha = alpha;
+    return g;
+}
+
+} // namespace
+
+std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams>& types,
+                                                const std::vector<float>& seasons, std::vector<float>& heights,
+                                                bool reduced) {
+    if (types.empty() || seasons.empty()) {
+        throw std::invalid_argument("buildTreeGaussianLibrary: needs tree types and seasons");
+    }
+    std::vector<TreeTypeParams> grown = types;
+    if (reduced) {
+        for (TreeTypeParams& type : grown) {
+            // Few, large leaves: far trees need few Gaussians.
+            type = treeReducedType(type, 0.08f);
+        }
+    }
+    const TreeRenderSettings settings = defaultTreeRenderSettings({1920, 1080});
+    const glm::vec4 up = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
+    std::vector<MossPatch> patches;
+    heights.assign(types.size(), 0.0f);
+    for (uint32_t type = 0; type < types.size(); ++type) {
+        for (float season : seasons) {
+            TreeFrame frame = defaultTreeFrame();
+            frame.wind.w = 0.0f;
+            frame.timeSeason.y = season;
+            TreeInstance inst{};
+            inst.posScale = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            inst.rot = up;
+            inst.ids = glm::uvec4(type, 1u, 0u, 0u);
+            const TreeRecords records = generateTreesReference(grown, {inst}, frame);
+            const TreeTypeParams& p = grown[type];
+            float height = 0.0f;
+            for (const SegmentRecord& s : records.segments) {
+                height = std::max(height, std::max(s.fromPosRadius.y, s.toPosRadius.y));
+            }
+            for (const LeafRecord& l : records.leaves) {
+                height = std::max(height, l.posScale.y + l.posScale.w);
+            }
+            heights[type] = std::max(heights[type], height);
+
+            MossPatch patch;
+            for (const LeafRecord& l : records.leaves) {
+                const float length = l.posScale.w;
+                if (length <= 0.0f) {
+                    continue;
+                }
+                // A flat Gaussian over the blade: along +z, as wide as the leaf, thin along its normal (+y).
+                const glm::vec3 center = glm::vec3(l.posScale) + 0.5f * length * tree::qforward(l.rot);
+                glm::vec3 normal = tree::qrot(l.rot, glm::vec3(0.0f, 1.0f, 0.0f));
+                normal = normal.y < 0.0f ? -normal : normal;
+                const glm::vec3 albedo = tree::treeLeafSeasonAlbedo(p, l.ids.y, 1u, l.ids.w);
+                patch.push_back(litGaussian(center, l.rot,
+                                            glm::vec3(0.3f * length * p.leafCount.z, 0.03f * length, 0.35f * length),
+                                            albedo, normal, settings, 0.9f));
+            }
+            for (const SegmentRecord& s : records.segments) {
+                const glm::vec3 a(s.fromPosRadius), b(s.toPosRadius);
+                const float radius = 0.5f * (s.fromPosRadius.w + s.toPosRadius.w);
+                const float length = glm::length(b - a);
+                if (radius < 1e-3f * height || length <= 0.0f) {
+                    continue;
+                }
+                // Gaussians along the segment, about as long as the stem is thick.
+                const int n = std::clamp(int(std::ceil(length / (2.0f * radius))), 1, 8);
+                const glm::vec4 rot = tree::qnlerp(s.fromRot, s.toRot, 0.5f);
+                const glm::vec3 bark(p.barkColor);
+                for (int k = 0; k < n; ++k) {
+                    const glm::vec3 c = glm::mix(a, b, (k + 0.5f) / n);
+                    patch.push_back(litGaussian(c, rot, glm::vec3(radius, radius, 0.6f * length / n), bark,
+                                                glm::normalize(glm::vec3(settings.sun)), settings, 0.95f));
+                }
+            }
+            patches.push_back(std::move(patch));
+        }
+    }
+    return patches;
+}
+
+TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies& proxies,
+                                       const GaussianSoABuffers& source, uint32_t poolOffset, uint32_t poolSlots,
+                                       const std::vector<TreeTypeParams>& types, std::shared_ptr<CameraUboType> camera,
+                                       std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light,
+                                       TreeGaussianForestConfig config) {
+    if (config.seasons.empty() || config.seasons.size() > 4) {
+        throw std::invalid_argument("TreeGaussianForest: needs 1 to 4 season samples");
+    }
+    const uint32_t typeCount = std::min<uint32_t>(uint32_t(types.size()), 2u);
+    const std::vector<TreeTypeParams> used(types.begin(), types.begin() + typeCount);
+    const std::vector<MossPatch> patches = buildTreeGaussianLibrary(used, config.seasons, heights);
+
+    struct Library {
+        glm::vec4 seasons;
+        glm::vec4 heights;
+        glm::uvec4 counts;
+    } library{};
+    for (uint32_t k = 0; k < 4; ++k) {
+        library.seasons[k] = config.seasons[std::min<size_t>(k, config.seasons.size() - 1)];
+    }
+    library.heights = glm::vec4(heights[0], heights[std::min(1u, typeCount - 1)], 0.0f, 0.0f);
+    library.counts = glm::uvec4(uint32_t(config.seasons.size()), typeCount, config.trees, 0u);
+    auto libraryBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<Library>>>(vulkanContext, 1u);
+    libraryBuffer->setName("TreeLibraryParams");
+    libraryBuffer->getBuffer().memcopyFrom(std::vector<Library>{library});
+    auto instances = std::make_shared<BufferElement<VulkanBuffer<TreeLodInstance>>>(
+        vulkanContext, config.trees, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    instances->setName("TreeLibraryInstances");
+
+    convert =
+        std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_library_instances.comp.spv");
+    convert->setName("TreeLibraryInstances");
+    proxies.getVisible().connectTo(*convert, 0);
+    proxies.getCounter().connectTo(*convert, 1);
+    convert->setInput(settings, 2);
+    convert->setInput(libraryBuffer, 3);
+    convert->setInput(instances, 4);
+    convert->addDependency(proxies.getElement());
+    convert->setGroupCountX((config.trees + 63) / 64);
+    convert->setPushConstants({0u});
+
+    lod = std::make_unique<TreeMossLod>(vulkanContext, source, patches, BufferRef{convert, 4}, config.trees, camera,
+                                        settings, light, config.boundaries, poolSlots, poolOffset);
+}
+
+} // namespace klartraum

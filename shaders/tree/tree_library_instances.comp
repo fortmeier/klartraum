@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Turns the visible trees of TreeProxies into copies of the Gaussian tree
+// library (TreeGaussianForest): per tree the patch of its type and of the
+// season sample nearest to the current season, its foot, turn and scale, and
+// how far it has faded out; slots beyond the visible trees get scale 0 and
+// are skipped.
+
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_FN
+#include "klartraum/tree/tree_shared.hpp"
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Visible {
+    TreeSite visible[];
+};
+layout(std430, binding = 1) readonly buffer Counter {
+    uint counter[];
+};
+layout(std430, binding = 2) readonly buffer Settings {
+    TreeRenderSettings settings[];
+};
+// x the season samples (up to 4), y the types' heights at scale 1 (x, y), z x the number of season samples, y of
+// types, z of copies.
+layout(std430, binding = 3) readonly buffer Library {
+    vec4 seasons;
+    vec4 heights;
+    uvec4 counts;
+};
+layout(std430, binding = 4) writeonly buffer Instances {
+    TreeLodInstance instances[];
+};
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= counts.z) {
+        return;
+    }
+    TreeLodInstance inst;
+    inst.posYaw = vec4(0.0f);
+    inst.plane = vec4(0.0f);
+    inst.ids = uvec4(0u);
+    if (i < min(counter[0], counts.z)) {
+        TreeSite site = visible[i];
+        uint type = min(site.kind.x == TREE_SITE_CONIFER ? 1u : 0u, counts.y - 1u);
+        float season = treeSeasonWrap(settings[0].season.x);
+        uint nearest = 0u;
+        float best = 4.0f;
+        for (uint k = 0u; k < counts.x; ++k) {
+            float d = treeSeasonWrap(season - seasons[k]);
+            d = min(d, 4.0f - d);
+            if (d < best) {
+                best = d;
+                nearest = k;
+            }
+        }
+        inst.posYaw = vec4(site.posHeight.xyz, site.kind.y);
+        inst.plane = vec4(0.0f, 0.0f, site.posHeight.w / heights[type], 0.0f);
+        inst.ids = uvec4(type * counts.x + nearest, floatBitsToUint(1.0f - site.kind.w), 0u, 0u);
+    }
+    instances[i] = inst;
+}

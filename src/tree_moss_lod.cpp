@@ -17,11 +17,35 @@ TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, co
         throw std::invalid_argument("TreeMossLod: needs patches and placed copies");
     }
     const uint32_t capacity = poolSlots > 0 ? std::min(poolSlots, target.getExtraSlots()) : target.getExtraSlots();
-    const uint32_t offset = target.getExtraOffset();
+    auto instanceBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<TreeLodInstance>>>(
+        vulkanContext, uint32_t(instances.size()));
+    instanceBuffer->setName("TreeLodInstances");
+    instanceBuffer->getBuffer().memcopyFrom(instances);
+    build(vulkanContext, target.getGaussians(), patches, {instanceBuffer, -1}, uint32_t(instances.size()), camera,
+          settings, light, boundaries, capacity, target.getExtraOffset());
+    for (const TreeLodInstance& inst : instances) {
+        fullCount += table.at(inst.ids.x).count[0];
+    }
+}
 
+TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers& source,
+                         const std::vector<MossPatch>& patches, BufferRef instances, uint32_t instanceCount,
+                         std::shared_ptr<CameraUboType> camera,
+                         std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light,
+                         glm::vec4 boundaries, uint32_t poolSlots, uint32_t poolOffset) {
+    if (patches.empty() || instanceCount == 0) {
+        throw std::invalid_argument("TreeMossLod: needs patches and placed copies");
+    }
+    build(vulkanContext, source, patches, instances, instanceCount, camera, settings, light, boundaries, poolSlots,
+          poolOffset);
+}
+
+void TreeMossLod::build(VulkanContext& vulkanContext, const GaussianSoABuffers& source,
+                        const std::vector<MossPatch>& patches, BufferRef instanceBuffer, uint32_t instanceCount,
+                        std::shared_ptr<CameraUboType> camera, std::shared_ptr<HostValues<TreeRenderSettings>> settings,
+                        BufferRef light, glm::vec4 boundaries, uint32_t capacity, uint32_t offset) {
     // The library: every patch's four levels, one after the other.
     std::vector<TreeLodSplat> library;
-    std::vector<TreeLodPatch> table;
     for (const MossPatch& patch : patches) {
         const GaussianLods lods = buildGaussianLods(patch);
         TreeLodPatch entry{};
@@ -44,11 +68,6 @@ TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, co
         }
         table.push_back(entry);
     }
-    for (const TreeLodInstance& inst : instances) {
-        fullCount += table.at(inst.ids.x).count[0];
-    }
-    const uint32_t instanceCount = uint32_t(instances.size());
-
     auto upload = [&](const auto& data, const char* name) {
         using T = typename std::decay_t<decltype(data)>::value_type;
         auto element = std::make_shared<BufferElementSinglePath<VulkanBuffer<T>>>(vulkanContext, uint32_t(data.size()));
@@ -58,15 +77,12 @@ TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, co
     };
     auto libraryBuffer = upload(library, "TreeLodLibrary");
     auto patchBuffer = upload(table, "TreeLodPatches");
-    auto instanceBuffer = upload(instances, "TreeLodInstances");
     auto records = std::make_shared<BufferElement<VulkanBuffer<glm::uvec4>>>(
         vulkanContext, instanceCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     records->setName("TreeLodRecords");
     counter = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 4);
     counter->setName("TreeLodCounter");
     counter->setRecordToZero(true);
-
-    const GaussianSoABuffers& source = target.getGaussians();
 
     clear = std::make_shared<GeneralComputation<glm::uvec2>>(vulkanContext, "shaders/tree/tree_lod_clear.comp.spv");
     clear->setName("TreeLodClear");
@@ -77,7 +93,7 @@ TreeMossLod::TreeMossLod(VulkanContext& vulkanContext, TreeGaussians& target, co
     select =
         std::make_shared<GeneralComputation<TreeLodSelectPush>>(vulkanContext, "shaders/tree/tree_lod_select.comp.spv");
     select->setName("TreeLodSelect");
-    select->setInput(instanceBuffer, 0);
+    instanceBuffer.connectTo(*select, 0);
     select->setInput(patchBuffer, 1);
     select->setInput(records, 2);
     select->setInput(counter, 3);

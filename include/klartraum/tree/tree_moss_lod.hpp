@@ -47,6 +47,13 @@ public:
                 std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light = {},
                 glm::vec4 boundaries = glm::vec4(160.0f, 48.0f, 12.0f, 0.15f), uint32_t poolSlots = 0);
 
+    /// The same with `instanceCount` copies that a compute pass writes into `instances` every frame (copies
+    /// with scale 0 are skipped), into `poolSlots` slots from `poolOffset` of `source`, after its writers.
+    TreeMossLod(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<MossPatch>& patches,
+                BufferRef instances, uint32_t instanceCount, std::shared_ptr<CameraUboType> camera,
+                std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light, glm::vec4 boundaries,
+                uint32_t poolSlots, uint32_t poolOffset);
+
     /// The target's Gaussians, as the write pass leaves them; give these to the splatting backend.
     const GaussianSoABuffers& getGaussians() const { return gaussians; }
     ComputeGraphElementPtr getElement() const { return write; }
@@ -57,6 +64,12 @@ public:
     uint32_t getFullCount() const { return fullCount; }
 
 private:
+    void build(VulkanContext& vulkanContext, const GaussianSoABuffers& source, const std::vector<MossPatch>& patches,
+               BufferRef instances, uint32_t instanceCount, std::shared_ptr<CameraUboType> camera,
+               std::shared_ptr<HostValues<TreeRenderSettings>> settings, BufferRef light, glm::vec4 boundaries,
+               uint32_t capacity, uint32_t offset);
+    std::vector<TreeLodPatch> table;
+
     std::shared_ptr<GeneralComputation<glm::uvec2>> clear;
     std::shared_ptr<GeneralComputation<TreeLodSelectPush>> select;
     std::shared_ptr<GeneralComputation<uint32_t>> write;
