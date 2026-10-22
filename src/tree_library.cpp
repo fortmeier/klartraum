@@ -178,7 +178,7 @@ GaussianLods buildTreeGaussianLevels(const TreeRecords& records, const TreeTypeP
             const float spread = 1.6f;
             float s1 = spread * std::sqrt(std::max(values.y, 1e-12f));
             float s2 = std::max(spread * std::sqrt(std::max(values.x, 1e-12f)), s1 / 3.0f);
-            const float sn = std::max(0.5f * std::sqrt(std::max(glm::dot(normal, cov * normal), 1e-12f)), s2 / 3.0f);
+            const float sn = std::max(0.5f * std::sqrt(std::max(glm::dot(normal, cov * normal), 1e-12f)), s2 / 2.0f);
             // As opaque as the leaves cover the Gaussian's face: half their drawn area (turned every way) over its
             // own.
             const float alpha =
