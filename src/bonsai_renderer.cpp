@@ -120,6 +120,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     const bool terrainGaussianPool = !classical && config.terrainLod;
     const uint32_t proxySlots = scene.placed && !classical ? config.forestPool : 0u;
     const uint32_t grassSlots = scene.placed && !classical && config.grass && config.terrainLod ? config.grassPool : 0u;
+    const uint32_t floorSlots = scene.placed && config.forestFloor && !mossPatches.empty() ? config.floorPool : 0u;
     // The canopy and the proxies crossfade over the same band of tree sizes, in rendered pixels.
     TreeProxyConfig proxyConfig = config.proxies;
     TreeCanopy canopy;
@@ -135,7 +136,9 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         band.canopyBand = glm::vec4(canopyBand, 0.0f, 0.0f);
         settings->set(0, band);
     }
-    sources.extraSlots = mossSlots + (terrainGaussianPool ? config.terrainPool : 0u) + grassSlots + proxySlots;
+    // The pools in the extra slots, one after the other.
+    const uint32_t terrainSlots = terrainGaussianPool ? config.terrainPool : 0u;
+    sources.extraSlots = mossSlots + terrainSlots + grassSlots + floorSlots + proxySlots;
     // The classical renderer draws only the captured lantern and moss as Gaussians.
     sources.trees = !classical;
     if (!classical) {
@@ -160,10 +163,20 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     if (grassSlots > 0) {
         grass = std::make_unique<TreeGrass>(vulkanContext, scene.terrain, makeTreeGrass(scene, config.grassBlades),
                                             camera, settings, renderExtent);
-        grassGaussians = std::make_unique<TreeGrassGaussians>(
-            vulkanContext, *grass, splats, gaussians->getExtraOffset() + mossSlots + config.terrainPool, grassSlots,
-            settings, camera, lightVolume->getLight());
+        grassGaussians = std::make_unique<TreeGrassGaussians>(vulkanContext, *grass, splats,
+                                                              gaussians->getExtraOffset() + mossSlots + terrainSlots,
+                                                              grassSlots, settings, camera, lightVolume->getLight());
         splats = grassGaussians->getGaussians();
+    }
+    if (floorSlots > 0) {
+        const float scale = 1.3f * scene.lanternScale;
+        forestFloor = std::make_unique<TreeForestFloor>(
+            vulkanContext,
+            makeTreeFloor(scene, uint32_t(mossPatches.size()), mossPatchRadius(mossPatches), scale, config.floor),
+            splats, mossPatches, camera, settings, lightVolume->getLight(),
+            glm::vec4(glm::vec3(config.floorLod) * float(supersample), config.floorLod.w), floorSlots,
+            gaussians->getExtraOffset() + mossSlots + terrainSlots + grassSlots);
+        splats = forestFloor->getGaussians();
     }
     if (scene.placed) {
         TreeTileLayout layout = config.tiles;
@@ -342,6 +355,9 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     }
     if (grass) {
         grass->setView(eye);
+    }
+    if (forestFloor) {
+        forestFloor->setView(eye);
     }
     const std::vector<glm::ivec4> slotsBefore = tiles->getCache().getSlots();
     tiles->update(eye);

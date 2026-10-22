@@ -346,6 +346,7 @@ add_executable(
   tests/test_tree_terrain_gaussians.cpp
   tests/test_tree_placement.cpp
   tests/test_tree_grass.cpp
+  tests/test_tree_floor.cpp
   tests/test_tree_tiles.cpp
   tests/test_tree_proxies.cpp
   tests/test_tree_impostors.cpp
@@ -398,6 +399,7 @@ set(KLARTRAUM_LIB_SRC
   src/tree_terrain_gaussians.cpp
   src/tree_placement.cpp
   src/tree_grass.cpp
+  src/tree_floor.cpp
   src/tree_tiles.cpp
   src/tree_proxies.cpp
   src/tree_impostors.cpp
