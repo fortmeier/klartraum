@@ -187,8 +187,11 @@ int main(int argc, char** argv) {
                                                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         resample->setInput((*renderer)->getOutput(), 0, 0);
         resample->setInput(target, 1);
-        auto present = std::make_shared<ImageToFinalLayout>();
-        present->setInput(resample, 0, 1);
+        // The resample leaves the swapchain image in GENERAL; it is presented from PRESENT_SRC.
+        auto present =
+            std::make_shared<ImageViewSrcTransition>(VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        present->setInput(target, 0);
+        present->addDependency(resample);
         e.add(present);
         (*renderer)->initialize(images);
         (*renderer)->setSeason(season);
