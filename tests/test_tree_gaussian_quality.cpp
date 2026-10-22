@@ -8,6 +8,8 @@
  *   just above a bin's lower edge into that bin
  * - cutTargetKeepsTheLargestTrees: treeSizeCutTarget() keeps all trees when they fit, else the bins from the top
  *   down (empty ones included) as long as they fit the copies
+ * - reservedFollowsTheLevels: treeLodReserved() is the level's count, plus the next coarser one's while
+ *   crossfading, and larger boundaries (treeLodFitFactor()) give coarser levels
  * - copiesAreTheLargestTrees: at R2 the GPU's histogram is the CPU's of the visible trees (sizes times
  *   treeCopyPriority()), its target is treeSizeCutTarget() of it, and exactly the trees above the cut-off are copied
  * (fading in above it), at most TreeGaussianForestConfig::trees and more than 80 % of them; a second frame copies the
@@ -18,9 +20,12 @@
  *   treeCopyPriority()), within its capacity and none left out, and the copies' cut-off lies above it
  * - noTreeLeftOutAlongTheFlight: flying from R0 to past R2 at twice the speed of the 16 s fly-in, the proxies'
  *   list never runs out of room
+ * - forestFitsItsPool: at R0-R3 the copies' levels fit the forest pool with none left out: the fitted step needs
+ *   what was reserved, at most the pool; where they fit at once, the boundaries stay as they are; a still camera
+ *   keeps its step
  * - overflowAlongTheFlight: at the reference views R0-R3 of the fly-in at scale 1 and 1920 x 1080, the visible
- *   trees of the proxies, the library copies taken of them and the forest pool's Gaussians, each with what was
- *   left out, and the GPU time of a frame
+ *   trees of the proxies, the library copies taken of them and the forest pool's Gaussians, none left out, and the
+ *   GPU time of a frame
  * - flickerAtAFixedCamera: at R3 and R2 without wind, the largest and mean difference between consecutive frames
  * - flickerWhileDollying: from R2 along the flight by 0.2 % of the distance to the place per frame, the mean over
  *   16 px blocks of how far a frame lies from the mean of its neighbours
@@ -410,6 +415,29 @@ TEST(TreeGaussianQualityCpuTest, cutTargetKeepsTheLargestTrees) {
     EXPECT_EQ(taken, 0u);
 }
 
+TEST(TreeGaussianQualityCpuTest, reservedFollowsTheLevels) {
+    TreeLodPatch patch{};
+    patch.count = glm::uvec4(1000, 250, 60, 15);
+    const glm::vec3 boundaries(480.0f, 160.0f, 60.0f);
+    EXPECT_EQ(tree::treeLodReserved(patch, 1000.0f, boundaries, 0.15f), 1000u);
+    EXPECT_EQ(tree::treeLodReserved(patch, 480.0f, boundaries, 0.15f), 1250u);
+    EXPECT_EQ(tree::treeLodReserved(patch, 300.0f, boundaries, 0.15f), 250u);
+    EXPECT_EQ(tree::treeLodReserved(patch, 100.0f, boundaries, 0.15f), 60u);
+    EXPECT_EQ(tree::treeLodReserved(patch, 10.0f, boundaries, 0.15f), 15u);
+    EXPECT_FLOAT_EQ(tree::treeLodFitFactor(0), 1.0f);
+    EXPECT_FLOAT_EQ(tree::treeLodFitFactor(4), 2.0f);
+    for (float pixels : {50.0f, 120.0f, 400.0f, 900.0f}) {
+        for (uint32_t k = 1; k < TREE_LOD_FIT_STEPS; ++k) {
+            EXPECT_LE(tree::treeLodReserved(patch, pixels, boundaries * tree::treeLodFitFactor(k), 0.15f),
+                      tree::treeLodReserved(patch, pixels, boundaries * tree::treeLodFitFactor(k - 1), 0.15f) +
+                          patch.count[1])
+                << pixels << " " << k;
+        }
+        EXPECT_LE(tree::treeLodReserved(patch, pixels, boundaries * tree::treeLodFitFactor(15), 0.15f),
+                  tree::treeLodReserved(patch, pixels, boundaries, 0.15f));
+    }
+}
+
 TEST_F(TreeGaussianQualityTest, copiesAreTheLargestTrees) {
     const BonsaiScene& scene = sceneAtScale1();
     const ReferenceFlight flight(scene);
@@ -555,6 +583,31 @@ TEST_F(TreeGaussianQualityTest, noTreeLeftOutAlongTheFlight) {
     EXPECT_EQ(leftOut, 0u);
 }
 
+TEST_F(TreeGaussianQualityTest, forestFitsItsPool) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const ReferenceFlight flight(scene);
+    FlightRenderer r(*vc, scene, {1920, 1080});
+    TreeMossLod& lod = r.renderer->getForest()->getLod();
+    for (int view = 0; view < 4; ++view) {
+        const FlyInPose pose = flight.at(kReferenceU[view]);
+        r.settle(pose);
+        r.frame(pose);
+        const TreeMossLod::Fit fit = lod.readFit();
+        const std::vector<uint32_t> pool = lod.readCounter();
+        std::printf("R%d: step %u (boundaries x %.2f) needs %u of %u Gaussians, %u reserved, %u copies left out; "
+                    "finest step needs %u\n",
+                    view, fit.step, fit.factor, fit.sums[fit.step], r.config.forestPool, pool[0], pool[1], fit.sums[0]);
+        EXPECT_EQ(pool[1], 0u) << view;
+        EXPECT_EQ(fit.sums[fit.step], pool[0]) << view;
+        EXPECT_LE(pool[0], r.config.forestPool) << view;
+        if (fit.sums[0] <= r.config.forestPool) {
+            EXPECT_EQ(fit.step, 0u) << view;
+        }
+        r.frame(pose);
+        EXPECT_EQ(lod.readFit().step, fit.step) << view;
+    }
+}
+
 TEST_F(TreeGaussianQualityTest, overflowAlongTheFlight) {
     const BonsaiScene& scene = sceneAtScale1();
     const ReferenceFlight flight(scene);
@@ -579,6 +632,7 @@ TEST_F(TreeGaussianQualityTest, overflowAlongTheFlight) {
                     std::exp2(cut.cut), pool[0], r.config.forestPool, pool[1], r.graph->getGpuSpanMs() / 2.0);
         EXPECT_LE(cut.taken, copies);
         EXPECT_EQ(proxies[1], 0u);
+        EXPECT_EQ(pool[1], 0u);
         writeImage("flight_R" + std::to_string(view), image, r.extent);
         EXPECT_GT(proxies[0], 0u);
     }

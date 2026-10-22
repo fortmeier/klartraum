@@ -750,6 +750,22 @@ TREE_FN bool treeBoxOutsideFrustum(mat4 m, vec3 lo, vec3 hi) {
            treeBoxBehindPlane(r3 + r1, lo, hi) || treeBoxBehindPlane(r3 - r1, lo, hi) || treeBoxBehindPlane(r2, lo, hi);
 }
 
+// Whether the sphere around `center` is outside the view of `viewProj`, by its four side planes and the near plane.
+TREE_FN bool treeSphereOutsideFrustum(mat4 m, vec3 center, float radius) {
+    vec4 r0 = vec4(m[0][0], m[1][0], m[2][0], m[3][0]);
+    vec4 r1 = vec4(m[0][1], m[1][1], m[2][1], m[3][1]);
+    vec4 r2 = vec4(m[0][2], m[1][2], m[2][2], m[3][2]);
+    vec4 r3 = vec4(m[0][3], m[1][3], m[2][3], m[3][3]);
+    vec4 planes[5] = {r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2};
+    for (int i = 0; i < 5; ++i) {
+        vec4 p = planes[i] / length(vec3(planes[i]));
+        if (dot(vec3(p), center) + p.w < -radius) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Whether the rectangle [lo, hi] in (x, z) reaches into the soil's outline.
 TREE_FN bool treeTerrainRectInSoil(TreeTerrainParams t, vec2 lo, vec2 hi) {
     vec2 nearest = clamp(vec2(0.0f, 0.0f), lo, hi);
@@ -1357,6 +1373,24 @@ TREE_FN vec2 treeLodBlend(float pixels, vec3 boundaries, float band) {
     }
     return vec2(3.0f, 0.0f);
 }
+
+// The Gaussians a copy of `source` reserves at `pixels`: those of its level and, while crossfading, of the next
+// coarser one.
+TREE_FN uint treeLodReserved(TreeLodPatch source, float pixels, vec3 boundaries, float band) {
+    vec2 lod = treeLodBlend(pixels, boundaries, band);
+    uint level = uint(lod.x);
+    uint count = source.count[level];
+    if (lod.y > 0.0f && level < 3u) {
+        count += source.count[level + 1u];
+    }
+    return count;
+}
+
+// TreeMossLod's fitting to its pool tries the level boundaries times treeLodFitFactor(k) for k below
+// TREE_LOD_FIT_STEPS: from 1 up to 2^3.75 in steps of 2^0.25.
+#define TREE_LOD_FIT_STEPS 16u
+
+TREE_FN float treeLodFitFactor(uint step) { return exp2(0.25f * float(step)); }
 
 // --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------
 
