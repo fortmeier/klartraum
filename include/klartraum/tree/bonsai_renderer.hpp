@@ -116,6 +116,9 @@ struct BonsaiRenderConfig {
  */
 class BonsaiRenderer {
 public:
+    /// The light grid's voxels per axis when it follows the near trees (scenes whose trees follow the placement).
+    static constexpr glm::uvec3 kFollowGrid{48u, 32u, 48u};
+
     BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& scene, std::shared_ptr<ImageViewSrc> target,
                    const BonsaiRenderConfig& config);
 
