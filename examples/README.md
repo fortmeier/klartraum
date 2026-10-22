@@ -426,3 +426,37 @@ VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json ./build/ex
 ./build/examples/tree_bonsai_explore_example                      # walk in the forest
 ./build/examples/tree_bonsai_explore_example --start pot          # fly in from outside the pot
 ```
+
+### `tree_lod_popping_example`
+
+Measures how much a single Gaussian tree pops while the camera moves away from it and back, as the Gaussian
+renderer of `tree_bonsai_example` draws it: generated every frame while it is among the near trees, beyond that as
+its library copy with the copy's levels of detail by size on screen. It runs headless and renders two runs over the
+same flight side by side: a static tree (no wind) and a dynamic one (in the wind).
+
+The camera stays level with the tree's middle and moves from `--start` to `--far` metres from the trunk and back.
+The logarithm of the distance follows a cosine, so the motion is smooth everywhere and slow at both ends. Every
+frame gets a residual (`poppingResidual()` in `klartraum/popping_metric.hpp`): over the lit 16 px blocks, the mean
+of how far a block's mean light lies from the mean of the same block in the two neighbouring frames. A smooth
+motion keeps it small, also where leaves slide by within a block; a sudden change of coverage or brightness puts
+half of its size into the frames on both sides. The program prints the largest, median and mean residual of each
+run, and the residual where what draws the tree changes, against the run's median and against the frames around it.
+
+| Option | Meaning |
+|---|---|
+| `--species broadleaf\|conifer` | Which tree (default `broadleaf`) |
+| `--yaw Y` | The tree's turn about its trunk in radians (default 0.3); also picks its seed |
+| `--width W`, `--height H` | Size of the measured images (default 1280 x 720, the explorer's) |
+| `--fov F` | Vertical field of view in degrees (default 50, the explorer's) |
+| `--start M`, `--far M` | Nearest and farthest distance in metres (default 5 and 300) |
+| `--frames N` | Frames of the flight out and back (default 800) |
+| `--near-radius M` | Generated nearer than this; by default the distance of the 24th nearest tree at the explorer's start in the forest |
+| `--wind S` | Strength of the wind in the dynamic run (default 0.5) |
+| `--out-dir D` | Where `popping.csv` and `frames/` go (default `build/TestingOutput/tree_lod_popping`) |
+
+`scripts/tree/make_lod_popping_video.sh` runs it and encodes `tree_lod_popping.mp4` with labels and the residuals
+of both runs below the frames:
+
+```bash
+scripts/tree/make_lod_popping_video.sh                     # build/TestingOutput/tree_lod_popping/
+```

@@ -145,3 +145,14 @@ target_link_libraries(tree_bonsai_explore_example
 )
 
 add_dependencies(tree_bonsai_explore_example Shaders)
+
+# Popping of a single Gaussian tree's levels of detail, measured along a flight away from it and back
+add_executable(tree_lod_popping_example
+    tree_lod_popping_example.cpp
+)
+
+target_link_libraries(tree_lod_popping_example
+    klartraum_lib
+)
+
+add_dependencies(tree_lod_popping_example Shaders)
