@@ -11,7 +11,7 @@
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
 //                       [--ground X,Z,METERS,HEADING] [--no-grass] [--profile] [--budget MS]
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
-//                       [--turns 0.5] [--from 0] [--to N] [--moss-patches 250]
+//                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--moss-patches 250]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
 //
 // The trees are generated on the GPU every frame; per frame the CPU only sets
@@ -21,7 +21,9 @@
 // days of BonsaiDays (one season per day, changing in the night, sun and moon
 // moving with the season) go to <out-dir>/frames/<renderer>_<frame>.ppm while
 // the camera turns --turns times around the pot; --from and --to select a
-// range of frames.
+// range of frames. With --fly-in, the frames of a flight from the first view
+// down to the --ground place go to <out-dir>/frames/<renderer>_<frame>.ppm, at
+// noon of the season.
 
 #include <algorithm>
 #include <chrono>
@@ -76,6 +78,55 @@ void writePpm(const std::filesystem::path& path, const std::vector<uint8_t>& bgr
     }
 }
 
+float smootherstep(float x) {
+    x = std::clamp(x, 0.0f, 1.0f);
+    return x * x * x * (x * (6.0f * x - 15.0f) + 10.0f);
+}
+
+glm::vec3 slerpDirection(glm::vec3 a, glm::vec3 b, float t) {
+    const float angle = std::acos(std::clamp(glm::dot(a, b), -1.0f, 1.0f));
+    if (angle < 1e-4f) {
+        return b;
+    }
+    return (std::sin((1.0f - t) * angle) * a + std::sin(t * angle) * b) / std::sin(angle);
+}
+
+struct FlyInPose {
+    glm::vec3 eye;
+    glm::vec3 lookAt;
+    float nearPlane;
+};
+
+// The flight from `start` (looking at `focus`) down to `ground`, `above` units above the soil and looking along
+// `heading` (radians from -z towards +x), at u in [0, 1]. The camera's distance to the place shrinks
+// geometrically, so each halving of the distance takes the same time, while its direction from the place turns
+// from the start's to behind the heading. The camera looks at the place and, in the last quarter, turns to look
+// ahead; during the last quarter it pans slowly around. It stays above the soil, and the near plane follows its
+// height above it.
+FlyInPose flyInPose(const BonsaiScene& scene, glm::vec3 start, glm::vec3 focus, glm::vec2 ground, float above,
+                    float heading, float u) {
+    const float x = std::clamp(u / 0.8f, 0.0f, 1.0f);
+    const float descent = x * x * (3.0f - 2.0f * x);
+    const float pan = smootherstep((u - 0.75f) / 0.25f);
+    const glm::vec3 place(ground.x, scene.soilHeight(ground.x, ground.y) + above, ground.y);
+    const float h = heading + glm::radians(35.0f) * pan;
+    const glm::vec3 forward(std::sin(h), 0.0f, -std::cos(h));
+    const glm::vec3 behind = glm::normalize(-forward + glm::vec3(0.0f, 0.25f, 0.0f));
+    const float startDistance = glm::length(start - place);
+    const float endDistance = 2.0f * above;
+    const float d = startDistance * std::pow(endDistance / startDistance, descent);
+    const glm::vec3 dir = slerpDirection(glm::normalize(start - place), behind, descent);
+    glm::vec3 eye = place + d * dir;
+    const float soil = scene.soilHeight(eye.x, eye.z);
+    eye.y = std::max(eye.y, soil + above);
+
+    const float ahead = smootherstep((descent - 0.75f) / 0.25f);
+    const glm::vec3 toPlace = glm::normalize(glm::mix(focus, place, smootherstep(descent / 0.3f)) - eye);
+    const glm::vec3 lookAhead = glm::normalize(forward + glm::vec3(0.0f, -0.08f, 0.0f));
+    const glm::vec3 look = slerpDirection(toPlace, lookAhead, ahead);
+    return {eye, eye + look, std::clamp(0.5f * (eye.y - soil), 1e-5f, 0.05f)};
+}
+
 // `nearPlane` follows how close the camera is to the ground: from outside the pot 0.05 units, standing in a large
 // landscape a fraction of a metre.
 void setCamera(CameraMVP& ubo, glm::vec3 eye, glm::vec3 target, float aspect, float nearPlane = 0.05f) {
@@ -108,6 +159,7 @@ int main(int argc, char** argv) {
     float fps = 30.0f;
     float windStrength = 0.5f;
     float turns = 0.5f;
+    float flyInSeconds = 0.0f;
     uint32_t mossPatches = BonsaiRenderConfig{}.mossPatches;
     uint32_t fromFrame = 0;
     uint32_t toFrame = UINT32_MAX;
@@ -163,6 +215,8 @@ int main(int argc, char** argv) {
             windStrength = std::stof(argv[++i]);
         } else if (arg == "--turns" && hasValue) {
             turns = std::stof(argv[++i]);
+        } else if (arg == "--fly-in" && hasValue) {
+            flyInSeconds = std::stof(argv[++i]);
         } else if (arg == "--moss-patches" && hasValue) {
             mossPatches = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--from" && hasValue) {
@@ -182,6 +236,10 @@ int main(int argc, char** argv) {
     }
     if (backendName != "raster" && backendName != "compute") {
         std::cerr << "--backend must be raster or compute" << std::endl;
+        return 1;
+    }
+    if (flyInSeconds > 0.0f && !ground) {
+        std::cerr << "--fly-in needs --ground for the place it flies to" << std::endl;
         return 1;
     }
 
@@ -218,6 +276,36 @@ int main(int argc, char** argv) {
         bonsai.initialize(1);
         bonsai.setSeason(season);
 
+        if (flyInSeconds > 0.0f) {
+            const uint32_t frames = uint32_t(std::lround(flyInSeconds * fps));
+            const glm::vec3 start =
+                scene.focus + distance * glm::vec3(std::sin(azimuth) * std::cos(elevation), std::sin(elevation),
+                                                   std::cos(azimuth) * std::cos(elevation));
+            const float above = groundView.z / scene.config.scale.metersPerUnit();
+            for (uint32_t frame = fromFrame; frame < std::min(frames, toFrame); ++frame) {
+                const float seconds = float(frame) / fps;
+                const FlyInPose pose =
+                    flyInPose(scene, start, scene.focus, glm::vec2(groundView.x, groundView.y), above,
+                              glm::radians(groundView.w), float(frame) / float(std::max(frames - 1, 1u)));
+                setCamera(bonsai.getCamera()->ubo, pose.eye, pose.lookAt, float(extent.width) / float(extent.height),
+                          pose.nearPlane);
+                bonsai.getCamera()->update(0);
+                bonsai.setView(pose.eye);
+                bonsai.setTime(seconds, 0.5f, season,
+                               glm::vec4(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength));
+                // Tiles of the placement come a few per frame; a second frame lets them keep up with the flight.
+                graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                bonsai.setView(pose.eye);
+                graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                char name[64];
+                std::snprintf(name, sizeof(name), "%s_%04u.ppm", modeName, frame);
+                writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+                if (frame % 30 == 0) {
+                    std::cout << modeName << " frame " << frame << " / " << frames << std::endl;
+                }
+            }
+            continue;
+        }
         if (video) {
             const uint32_t frames = uint32_t(std::lround(days.duration() * fps));
             TreeDetailBudget budget(budgetMs > 0.0f ? budgetMs : 1e9f);
