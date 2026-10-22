@@ -7,3 +7,16 @@
 vec4 treeOutputColor(vec3 linearColor, TreeRenderSettings s) {
     return vec4(treeDisplayColor(linearColor, s.sky.w), 1.0f);
 }
+
+// What a surface of the trees writes: its displayed colour, or while baking impostors (TreeImpostorAtlas,
+// s.occlusion.y) 1 its albedo (square-rooted for precision, at least 1/255 so that it stands out from the black
+// background) or 2 its normal (mapped to [0, 1]).
+vec4 treeSurfaceOutput(vec3 linearColor, vec3 albedo, vec3 normal, TreeRenderSettings s) {
+    if (s.occlusion.y == 1.0f) {
+        return vec4(max(sqrt(clamp(albedo, vec3(0.0f), vec3(1.0f))), vec3(1.0f / 255.0f)), 1.0f);
+    }
+    if (s.occlusion.y == 2.0f) {
+        return vec4(0.5f * normal + vec3(0.5f), 1.0f);
+    }
+    return treeOutputColor(linearColor, s);
+}

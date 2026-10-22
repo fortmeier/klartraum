@@ -185,6 +185,10 @@ TREE_FN void treeGenerateStem(StemRecord s, uint t TREE_CTX_PARAM) {
     int level = treeLevel(s.ids);
     TreeTypeParams p = TREE_PARAMS(type);
     vec3 up = vec3(TREE_FRAME.worldUp.x, TREE_FRAME.worldUp.y, TREE_FRAME.worldUp.z);
+    if (TREE_FRAME.reserved.x > 0.5f) {
+        // Each tree's own up, along its instance's trunk axis (turned copies baked for impostors).
+        up = qforward(TREE_INSTANCE(s.ids.z).rot);
+    }
     bool lastLevel = level >= int(p.ratios.x) - 1 || level >= TREE_MAX_LEVELS - 1;
 
     float stemLength = s.posLength.w;

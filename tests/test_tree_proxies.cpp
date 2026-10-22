@@ -381,7 +381,7 @@ TEST_F(TreeProxiesTest, canopyAndProxiesCrossfade) {
             }
         }
         // The view's content changes with the distance too: steps of 20 % in distance change the mean by at most
-        // a little, also where the canopy takes over (measured 0.034 classically, 0.065 as Gaussians).
+        // a little, also where the canopy takes over (measured 0.024 classically with impostors, 0.045 as Gaussians).
         EXPECT_LT(largest, 0.08f) << gaussian;
     }
 }

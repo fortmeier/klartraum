@@ -4,8 +4,9 @@
 
 #version 450
 
-// After tree_place_cull.comp: the indirect draw of the visible proxy trees and
-// the dispatch of their Gaussians (64 trees per workgroup).
+// After tree_place_cull.comp: the indirect draws of the visible trees as
+// proxies and as impostors (a card each), and the dispatch of their Gaussians
+// (64 trees per workgroup).
 
 layout(local_size_x = 1) in;
 
@@ -13,7 +14,7 @@ layout(std430, binding = 0) readonly buffer Counter {
     uint counter[];
 };
 layout(std430, binding = 1) writeonly buffer DrawArgs {
-    uint drawArgs[4];
+    uint drawArgs[8];
 };
 layout(std430, binding = 2) writeonly buffer DispatchArgs {
     uint dispatchArgs[3];
@@ -31,6 +32,10 @@ void main() {
     drawArgs[1] = count;
     drawArgs[2] = 0u;
     drawArgs[3] = 0u;
+    drawArgs[4] = 6u;
+    drawArgs[5] = count;
+    drawArgs[6] = 0u;
+    drawArgs[7] = 0u;
     dispatchArgs[0] = (count + 63u) / 64u;
     dispatchArgs[1] = 1u;
     dispatchArgs[2] = 1u;

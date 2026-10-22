@@ -52,6 +52,8 @@ public:
     std::shared_ptr<StorageDrawComponent> getDrawComponent() const { return draw; }
     BufferRef getVisible() const { return {cull, 6}; }
     BufferRef getCounter() const { return {cull, 7}; }
+    /// Two indirect draws of the visible trees: [0] the proxies (kVertices each), [1] impostors (6 each).
+    BufferRef getDrawArgs() const { return {args, 1}; }
     std::shared_ptr<DispatchIndirectCommandBufferElement> getDispatchArgs() const { return dispatchArgs; }
     const TreeProxyConfig& getConfig() const { return config; }
     /// Trees whose foot is at most `radius` from the camera are left out: they are generated in full.
