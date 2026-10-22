@@ -403,6 +403,13 @@ default it starts where that example's forest fly-in ends, standing 1.7 m above 
 The window's title shows the frame rate, the mode, the speed and the height above the ground. Resizing the
 window rebuilds the renderer, which takes a few seconds.
 
+On macOS, run it with the KosmicKrisp driver. With MoltenVK the window flickers black once the swapchain is
+recreated, about a second after the start:
+
+```bash
+VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json ./build/examples/tree_bonsai_explore_example
+```
+
 | Option | Meaning |
 |---|---|
 | `--renderer gaussian\|classical` | Which renderer draws the landscape (default `gaussian`) |

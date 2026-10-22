@@ -19,7 +19,9 @@
 // With --start forest (the default at scales from 0.6 on) the walk starts
 // where tree_bonsai_example's fly-in ends, deep in a forest; with --start pot
 // the camera floats outside the pot. --frames N closes the window after N
-// frames.
+// frames. On macOS it runs with KosmicKrisp
+// (VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json); with
+// MoltenVK the window flickers black once the swapchain has been recreated.
 
 #include <algorithm>
 #include <chrono>
