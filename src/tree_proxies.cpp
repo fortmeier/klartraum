@@ -33,8 +33,19 @@ TreeProxies::TreeProxies(VulkanContext& vulkanContext, TreePlacementTiles& tiles
     near = std::make_shared<HostValues<glm::vec4>>(vulkanContext, std::vector<glm::vec4>{glm::vec4(-1.0f)});
     near->setName("TreeProxyNear");
     cull->setInput(near, 8);
+    sizeState = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, TreeSizeCut::kStateSize);
+    sizeState->setName("TreeProxySizeCut");
+    // The bins are counted anew every frame; the cut-off before them carries over.
+    sizeState->setRecordToZeroRange(4 * sizeof(uint32_t), TREE_SIZE_BINS * sizeof(uint32_t));
+    cull->setInput(sizeState, 9);
     cull->setGroupCountX(tiles.getTileConfig().tiles.y);
-    cull->setPushConstants({TreeProxyCullPush{config.capacity, config.minPixels, config.fadeAbove, 0.0f}});
+    cull->setPushConstants(
+        {TreeProxyCullPush{config.capacity, config.minPixels, config.fadeAbove, config.bySize ? 1u : 0u}});
+    sizeCut = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_size_cut.comp.spv");
+    sizeCut->setName("TreeProxySizeCut");
+    sizeCut->setInput(cull, 0, 9);
+    sizeCut->setGroupCountX(1);
+    sizeCut->setPushConstants({uint32_t(config.headroom * float(config.capacity))});
 
     auto drawArgs = std::make_shared<DrawIndirectCommandBufferElement>(
         vulkanContext, 2u,
@@ -49,6 +60,8 @@ TreeProxies::TreeProxies(VulkanContext& vulkanContext, TreePlacementTiles& tiles
     args = std::make_shared<GeneralComputation<glm::uvec2>>(vulkanContext, "shaders/tree/tree_place_args.comp.spv");
     args->setName("TreeProxyArgs");
     args->setInput(cull, 0, 7);
+    // The cut-off for the next frame, after the cull has counted this one's trees.
+    args->addDependency(sizeCut);
     args->setInput(drawArgs, 1);
     args->setInput(dispatchArgs, 2);
     args->setGroupCountX(1);
@@ -72,6 +85,46 @@ std::vector<uint32_t> TreeProxies::readCounter(uint32_t pathId) {
     std::vector<uint32_t> values(4, 0u);
     counter->getBuffer(pathId).memcopyTo(values);
     return values;
+}
+
+void TreeProxies::initialize(uint32_t numberPaths) {
+    for (uint32_t path = 0; path < numberPaths; ++path) {
+        sizeState->getBuffer(path).memcopyFrom(TreeSizeCut::initialState());
+    }
+}
+
+TreeSizeCut TreeProxies::readCut(uint32_t pathId) {
+    std::vector<uint32_t> values(TreeSizeCut::kStateSize, 0u);
+    sizeState->getBuffer(pathId).memcopyTo(values);
+    return TreeSizeCut::fromState(values);
+}
+
+TreeSizeCut TreeSizeCut::fromState(const std::vector<uint32_t>& state) {
+    TreeSizeCut cut;
+    cut.cut = glm::uintBitsToFloat(state[0]);
+    cut.target = glm::uintBitsToFloat(state[1]);
+    cut.taken = state[2];
+    cut.bins.assign(state.begin() + 4, state.end());
+    return cut;
+}
+
+std::vector<uint32_t> TreeSizeCut::initialState() {
+    std::vector<uint32_t> state(kStateSize, 0u);
+    state[0] = state[1] = glm::floatBitsToUint(TREE_SIZE_LOG_MIN);
+    return state;
+}
+
+float treeSizeCutTarget(const std::vector<uint32_t>& bins, uint32_t capacity, uint32_t* taken) {
+    uint32_t sum = 0;
+    uint32_t bin = uint32_t(bins.size());
+    while (bin > 0 && sum + bins[bin - 1] <= capacity) {
+        --bin;
+        sum += bins[bin];
+    }
+    if (taken) {
+        *taken = sum;
+    }
+    return tree::treeSizeBinEdge(bin);
 }
 
 std::vector<TreeSite> TreeProxies::readVisible(uint32_t pathId) {

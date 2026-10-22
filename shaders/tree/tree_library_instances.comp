@@ -9,7 +9,7 @@
 // the patch of its type and of the season sample nearest to the current
 // season, its foot, turn and scale, and how far it has faded out. Trees whose
 // size on screen times treeCopyPriority() lies below the cut-off
-// (tree_library_cut.comp) fade out above it (treeCopyFade());
+// (tree_size_cut.comp) fade out above it (treeCopyFade());
 // they and the slots beyond the visible trees get scale 0 and are skipped.
 
 #define TREE_CAMERA_SET 0
@@ -37,7 +37,7 @@ layout(std430, binding = 3) readonly buffer Library {
 layout(std430, binding = 4) writeonly buffer Instances {
     TreeLodInstance instances[];
 };
-// [0] the cut-off in log2 pixels (float bits); see tree_library_cut.comp.
+// [0] the cut-off in log2 pixels (float bits); see tree_size_cut.comp.
 layout(std430, binding = 6) readonly buffer State {
     uint state[];
 };

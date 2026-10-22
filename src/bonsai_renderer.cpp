@@ -131,6 +131,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         canopy.noneAbove = config.canopyPixels.y * float(supersample);
         proxyConfig.minPixels = canopy.fullBelow;
         proxyConfig.fadeAbove = canopy.noneAbove;
+        proxyConfig.bySize = !classical;
         canopyBand = glm::vec2(canopy.fullBelow, canopy.noneAbove);
         TreeRenderSettings band = settings->values().at(0);
         band.canopyBand = glm::vec4(canopyBand, 0.0f, 0.0f);
@@ -371,7 +372,8 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     TreeRenderSettings values = settings->values().at(0);
     glm::vec2 band(values.canopyBand);
     const glm::vec2 before = band;
-    if (visible > target || visible < 0.25f * target) {
+    // A list by size keeps itself within its capacity (TreeProxyConfig::bySize).
+    if (!proxies->getConfig().bySize && (visible > target || visible < 0.25f * target)) {
         band = glm::max(band * std::clamp(std::sqrt(std::max(visible, 1.0f) / target), 0.92f, 1.1f), canopyBand);
     }
     // Before a frame showed the trees of every tile, the band cannot be judged yet.
@@ -435,6 +437,9 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
 
 void BonsaiRenderer::initialize(uint32_t numberPaths) {
     gaussians->initializeBuffers(numberPaths);
+    if (proxies) {
+        proxies->initialize(numberPaths);
+    }
     if (forest) {
         forest->initialize(numberPaths);
     }

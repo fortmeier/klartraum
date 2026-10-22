@@ -6,14 +6,18 @@
  * TESTS:
  * - sizeBinsSpanTheScreen: treeSizeBin() puts 0.5 px into the first bin, 4096 px and more into the last, and a size
  *   just above a bin's lower edge into that bin
- * - cutTargetKeepsTheLargestTrees: treeForestCutTarget() keeps all trees when they fit, else the bins from the top
+ * - cutTargetKeepsTheLargestTrees: treeSizeCutTarget() keeps all trees when they fit, else the bins from the top
  *   down (empty ones included) as long as they fit the copies
  * - copiesAreTheLargestTrees: at R2 the GPU's histogram is the CPU's of the visible trees (sizes times
- *   treeCopyPriority()), its target is treeForestCutTarget() of it, and exactly the trees above the cut-off are copied
+ *   treeCopyPriority()), its target is treeSizeCutTarget() of it, and exactly the trees above the cut-off are copied
  * (fading in above it), at most TreeGaussianForestConfig::trees and more than 80 % of them; a second frame copies the
  * same trees
  * - cutoffMovesSlowly: flying from R1 towards the place by 1 % of the distance per frame for 30 frames moves the
  *   cut-off by at most a fade width per frame
+ * - listHoldsTheLargestTrees: at R1 the proxies' list holds only trees at or above its cut-off (sizes times
+ *   treeCopyPriority()), within its capacity and none left out, and the copies' cut-off lies above it
+ * - noTreeLeftOutAlongTheFlight: flying from R0 to past R2 at twice the speed of the 16 s fly-in, the proxies'
+ *   list never runs out of room
  * - overflowAlongTheFlight: at the reference views R0-R3 of the fly-in at scale 1 and 1920 x 1080, the visible
  *   trees of the proxies, the library copies taken of them and the forest pool's Gaussians, each with what was
  *   left out, and the GPU time of a frame
@@ -393,16 +397,16 @@ TEST(TreeGaussianQualityCpuTest, sizeBinsSpanTheScreen) {
 TEST(TreeGaussianQualityCpuTest, cutTargetKeepsTheLargestTrees) {
     std::vector<uint32_t> bins(TREE_SIZE_BINS, 0u);
     uint32_t taken = 1;
-    EXPECT_FLOAT_EQ(treeForestCutTarget(bins, 10, &taken), TREE_SIZE_LOG_MIN);
+    EXPECT_FLOAT_EQ(treeSizeCutTarget(bins, 10, &taken), TREE_SIZE_LOG_MIN);
     EXPECT_EQ(taken, 0u);
     bins[10] = bins[20] = bins[30] = 5;
-    EXPECT_FLOAT_EQ(treeForestCutTarget(bins, 15, &taken), TREE_SIZE_LOG_MIN);
+    EXPECT_FLOAT_EQ(treeSizeCutTarget(bins, 15, &taken), TREE_SIZE_LOG_MIN);
     EXPECT_EQ(taken, 15u);
-    EXPECT_FLOAT_EQ(treeForestCutTarget(bins, 14, &taken), tree::treeSizeBinEdge(11));
+    EXPECT_FLOAT_EQ(treeSizeCutTarget(bins, 14, &taken), tree::treeSizeBinEdge(11));
     EXPECT_EQ(taken, 10u);
-    EXPECT_FLOAT_EQ(treeForestCutTarget(bins, 9, &taken), tree::treeSizeBinEdge(21));
+    EXPECT_FLOAT_EQ(treeSizeCutTarget(bins, 9, &taken), tree::treeSizeBinEdge(21));
     EXPECT_EQ(taken, 5u);
-    EXPECT_FLOAT_EQ(treeForestCutTarget(bins, 4, &taken), tree::treeSizeBinEdge(31));
+    EXPECT_FLOAT_EQ(treeSizeCutTarget(bins, 4, &taken), tree::treeSizeBinEdge(31));
     EXPECT_EQ(taken, 0u);
 }
 
@@ -415,7 +419,7 @@ TEST_F(TreeGaussianQualityTest, copiesAreTheLargestTrees) {
     r.frame(pose);
     TreeGaussianForest& forest = *r.renderer->getForest();
     const std::vector<TreeSite> visible = r.renderer->getProxies()->readVisible();
-    const TreeForestCut cut = forest.readCut();
+    const TreeSizeCut cut = forest.readCut();
     const std::vector<TreeLodInstance> copies = forest.readInstances();
     ASSERT_GE(copies.size(), visible.size());
     const float focal = std::abs(r.renderer->getCamera()->ubo.proj[1][1]) * 0.5f * float(r.extent.height);
@@ -436,7 +440,7 @@ TEST_F(TreeGaussianQualityTest, copiesAreTheLargestTrees) {
     }
     EXPECT_LE(binDifference, visible.size() / 1000 + 2);
     uint32_t taken = 0;
-    EXPECT_FLOAT_EQ(cut.target, treeForestCutTarget(cut.bins, r.config.forest.trees, &taken));
+    EXPECT_FLOAT_EQ(cut.target, treeSizeCutTarget(cut.bins, r.config.forest.trees, &taken));
     EXPECT_EQ(cut.taken, taken);
     EXPECT_GE(cut.cut, cut.target);
     uint32_t copied = 0, wrong = 0;
@@ -496,6 +500,61 @@ TEST_F(TreeGaussianQualityTest, cutoffMovesSlowly) {
     EXPECT_LE(largest, TREE_COPY_FADE_WIDTH * 1.001f);
 }
 
+TEST_F(TreeGaussianQualityTest, listHoldsTheLargestTrees) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const ReferenceFlight flight(scene);
+    FlightRenderer r(*vc, scene, {1920, 1080});
+    ASSERT_TRUE(r.renderer->getProxies()->getConfig().bySize);
+    const FlyInPose pose = flight.at(kReferenceU[1]);
+    r.settle(pose);
+    r.frame(pose);
+    TreeProxies& proxies = *r.renderer->getProxies();
+    const std::vector<uint32_t> counter = proxies.readCounter();
+    const std::vector<TreeSite> visible = proxies.readVisible();
+    // The cull of the last frame used the cut-off from before it; the frame just before is the same view.
+    const TreeSizeCut cut = proxies.readCut();
+    const float focal = std::abs(r.renderer->getCamera()->ubo.proj[1][1]) * 0.5f * float(r.extent.height);
+    uint32_t below = 0;
+    for (const TreeSite& site : visible) {
+        const float h = site.posHeight.w;
+        const float pixels =
+            tree::treePixelDiameter(pose.eye, glm::vec3(site.posHeight) + glm::vec3(0.0f, 0.5f * h, 0.0f), 0.5f * h,
+                                    focal) *
+            tree::treeCopyPriority(tree::treeLandCover(scene.terrain, site.posHeight.x, site.posHeight.z).vegetation.x);
+        // The CPU's forest weight may differ slightly from the placement's on the GPU.
+        below += std::log2(pixels) < cut.cut - 0.02f ? 1 : 0;
+    }
+    uint32_t counted = 0;
+    for (uint32_t n : cut.bins) {
+        counted += n;
+    }
+    const TreeSizeCut copies = r.renderer->getForest()->readCut();
+    std::printf("R1: %u trees in view, %u in the list of %u above %.1f px, none of %u left out; copies above %.1f px\n",
+                counted, counter[0], proxies.getConfig().capacity, std::exp2(cut.cut), counter[1],
+                std::exp2(copies.cut));
+    EXPECT_EQ(below, 0u);
+    EXPECT_EQ(counter[1], 0u);
+    EXPECT_LE(counter[0], proxies.getConfig().capacity);
+    EXPECT_GE(copies.cut, cut.cut);
+}
+
+TEST_F(TreeGaussianQualityTest, noTreeLeftOutAlongTheFlight) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const ReferenceFlight flight(scene);
+    FlightRenderer r(*vc, scene, {1920, 1080});
+    uint32_t frames = 0, overflowing = 0, leftOut = 0, largest = 0;
+    for (float u = 0.0f; u <= 0.75f; u += 2.0f / 479.0f, ++frames) {
+        r.frame(flight.at(u));
+        const std::vector<uint32_t> counter = r.renderer->getProxies()->readCounter();
+        overflowing += counter[1] > 0 ? 1 : 0;
+        leftOut += counter[1];
+        largest = std::max(largest, counter[0]);
+    }
+    std::printf("%u frames: at most %u trees in the list; %u frames left %u trees out\n", frames, largest, overflowing,
+                leftOut);
+    EXPECT_EQ(leftOut, 0u);
+}
+
 TEST_F(TreeGaussianQualityTest, overflowAlongTheFlight) {
     const BonsaiScene& scene = sceneAtScale1();
     const ReferenceFlight flight(scene);
@@ -513,12 +572,13 @@ TEST_F(TreeGaussianQualityTest, overflowAlongTheFlight) {
         }
         const std::vector<uint32_t> proxies = r.renderer->getProxies()->readCounter();
         const std::vector<uint32_t> pool = r.renderer->getForest()->getLod().readCounter();
-        const TreeForestCut cut = r.renderer->getForest()->readCut();
+        const TreeSizeCut cut = r.renderer->getForest()->readCut();
         std::printf("R%d (u = %.2f): proxies %u visible of %u (%u left out); copies %u of %u above %.1f px; "
                     "forest pool %u of %u Gaussians (%u copies left out); %.1f ms\n",
                     view, kReferenceU[view], proxies[0], r.config.proxies.capacity, proxies[1], cut.taken, copies,
                     std::exp2(cut.cut), pool[0], r.config.forestPool, pool[1], r.graph->getGpuSpanMs() / 2.0);
         EXPECT_LE(cut.taken, copies);
+        EXPECT_EQ(proxies[1], 0u);
         writeImage("flight_R" + std::to_string(view), image, r.extent);
         EXPECT_GT(proxies[0], 0u);
     }
