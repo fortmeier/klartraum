@@ -196,7 +196,15 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         }
         if (proxies) {
             pass->addComputeDependency(proxies->getElement());
-            pass->addDrawComponent(proxies->getDrawComponent());
+            if (config.impostors) {
+                atlas = std::make_unique<TreeImpostorAtlas>(vulkanContext, scene.types, config.impostorAtlas);
+                impostors = std::make_unique<TreeImpostorRenderer>(
+                    vulkanContext, proxies->getVisible(), proxies->getDrawArgs(), sizeof(VkDrawIndirectCommand), *atlas,
+                    settings, renderExtent, inputs);
+                pass->addDrawComponent(impostors->getDrawComponent());
+            } else {
+                pass->addDrawComponent(proxies->getDrawComponent());
+            }
         }
         pass->addDrawComponent(stems->getDrawComponent());
         pass->addDrawComponent(leaves->getDrawComponent());

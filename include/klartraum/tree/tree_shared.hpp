@@ -124,7 +124,7 @@ struct TreeFrame {
     vec4 worldUp;    // xyz unit vector up, w unused
     vec4 wind;       // xyz direction the wind blows to, w strength
     vec4 timeSeason; // x time in seconds, y season in [0, 4), zw unused
-    vec4 reserved;
+    vec4 reserved;   // x 1: up is each instance's trunk axis instead of worldUp (for baking impostors), yzw unused
 };
 
 // Per-frame values of the tree renderers.
@@ -138,7 +138,8 @@ struct TreeRenderSettings {
     // of leaves kept at the farthest distance.
     vec4 leafLod;
     // x: 1 to hide fragments behind the scene depth buffer (Gaussians drawn before, e.g. the lantern),
-    // 0 to ignore it; yzw unused.
+    // 0 to ignore it; y: what the trees' surfaces write (0 their colour; while baking impostors 1 their albedo,
+    // 2 their normal, see treeSurfaceOutput()); zw unused.
     vec4 occlusion;
     // The light volume (TreeLightVolume): a grid of sun transmittance and sky visibility over the scene.
     vec4 lightGridMin;    // xyz the grid's lower corner, w the voxel size
@@ -204,6 +205,15 @@ struct TreeTerrainConfig {
 struct TreeSite {
     vec4 posHeight; // xyz the stem's foot on the ground, w the height in units (0: no tree in this cell)
     vec4 kind;      // x species (TREE_SITE_*), y turn about +y in radians, z forest weight there, w unused
+};
+
+// The layout of the impostor atlases (TreeImpostorAtlas): per tree type and season sample, views x views views
+// of pixels x pixels texels each, rows from the top.
+struct TreeImpostorParams {
+    uvec4 grid;     // x views per side of the hemi-octahedral grid, y texels per view side, z season samples, w types
+    vec4 seasons;   // the seasons S of the samples, ascending (up to 4)
+    vec4 bounds[2]; // per type: xyz the centre of the baked tree at scale 1 (its foot at the origin), w its radius
+    vec4 heights;   // per type (x, y) the baked tree's height at scale 1, zw unused
 };
 
 // What the tile passes of the placement read (TreePlacementTiles).
@@ -540,6 +550,33 @@ TREE_FN float treeTerrainHeight(TreeTerrainParams t, float x, float z) {
 TREE_FN float treeTerrainAltitude(TreeTerrainParams t, vec3 pos) {
     return (pos.y - treeTerrainSoil(t, pos.x, pos.z)) / t.cover.w * t.cover.y;
 }
+
+// --- impostors -------------------------------------------------------------------
+
+// Hemi-octahedral map of the directions of the upper hemisphere (y up) to [-1, 1]^2; directions below the
+// horizon are taken at the horizon.
+TREE_FN vec2 treeHemiOctEncode(vec3 d) {
+    float y = max(d.y, 0.0f);
+    float n = abs(d.x) + y + abs(d.z);
+    float px = d.x / n;
+    float pz = d.z / n;
+    return vec2(px + pz, px - pz);
+}
+
+TREE_FN vec3 treeHemiOctDecode(vec2 uv) {
+    float px = 0.5f * (uv.x + uv.y);
+    float pz = 0.5f * (uv.x - uv.y);
+    return normalize(vec3(px, max(1.0f - abs(px) - abs(pz), 0.0f), pz));
+}
+
+// The axes of an impostor's card seen from direction d (towards the viewer): right and up on the screen, up as
+// close to +y as d allows (+z looking straight down).
+TREE_FN vec3 treeImpostorRight(vec3 d) {
+    vec3 hint = abs(d.y) > 0.999f ? vec3(0.0f, 0.0f, -1.0f) : vec3(0.0f, 1.0f, 0.0f);
+    return normalize(cross(hint, d));
+}
+
+TREE_FN vec3 treeImpostorUp(vec3 d) { return cross(d, treeImpostorRight(d)); }
 
 // --- terrain level of detail ---------------------------------------------------
 
@@ -1028,9 +1065,9 @@ TREE_FN vec3 treeCanopyAlbedo(TreeTerrainParams t, TreePlacementParams p, vec3 p
     float conifers = treeConiferShare(p, altitude);
     vec3 albedo = mix(broadleaf, conifer, clamp(conifers + 0.6f * (tone - 0.5f), 0.0f, 1.0f));
     albedo *= 0.75f + 0.5f * smoothstep(0.3f, 0.7f, gaps);
-    // Far away the canopy is its mean colour (as the mean of the crowns and gaps above). Crowns shade each other
-    // and the ground between them, which a surface facing up does not: 0.55, matched to the trees' proxies.
-    return 0.55f * mix(mean, albedo, resolved);
+    // Far away the canopy is its mean colour (as the mean of the crowns and gaps above), as bright as the trees'
+    // impostors it takes over from.
+    return mix(mean, albedo, resolved);
 }
 
 // The snow line in metres above the valley floors in season S: 1,300 m in summer, 1,050 m in spring and fall,

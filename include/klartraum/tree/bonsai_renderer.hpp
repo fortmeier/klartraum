@@ -22,6 +22,7 @@
 #include "klartraum/tree/tree_leaf_renderer.hpp"
 #include "klartraum/tree/tree_light_volume.hpp"
 #include "klartraum/tree/tree_moss_lod.hpp"
+#include "klartraum/tree/tree_impostors.hpp"
 #include "klartraum/tree/tree_proxies.hpp"
 #include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
@@ -63,6 +64,10 @@ struct BonsaiRenderConfig {
     /// x output pixels, the proxies take over from y (crossfading between); proxies.minPixels and fadeAbove
     /// follow from these.
     glm::vec2 canopyPixels{4.0f, 8.0f};
+    /// The classical renderer draws the trees beyond the near ones as impostors (baked from the scene's tree types
+    /// when the renderer is made) instead of proxies.
+    bool impostors = true;
+    TreeImpostorConfig impostorAtlas;
     TreeTerrainLodConfig terrain;
 };
 
@@ -139,6 +144,8 @@ private:
     std::unique_ptr<TreePlacementTiles> tiles;
     std::unique_ptr<TreeProxies> proxies;
     std::unique_ptr<TreeProxyGaussians> proxyGaussians;
+    std::unique_ptr<TreeImpostorAtlas> atlas;
+    std::unique_ptr<TreeImpostorRenderer> impostors;
     // The placement, its seed and the tree types, for setView().
     TreeTerrainParams terrainParams{};
     TreePlacementParams placement{};

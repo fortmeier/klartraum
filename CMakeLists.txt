@@ -329,6 +329,7 @@ add_executable(
   tests/test_tree_placement.cpp
   tests/test_tree_tiles.cpp
   tests/test_tree_proxies.cpp
+  tests/test_tree_impostors.cpp
   tests/test_gaussian_lod.cpp
   tests/test_tree_moss_lod.cpp
 )
@@ -386,6 +387,7 @@ set(KLARTRAUM_LIB_SRC
   src/tree_placement.cpp
   src/tree_tiles.cpp
   src/tree_proxies.cpp
+  src/tree_impostors.cpp
   src/storage_draw_component.cpp
   ${SPZ_SRC}
   )
