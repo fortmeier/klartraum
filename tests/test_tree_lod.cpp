@@ -14,6 +14,10 @@
  *   reported, its Gaussians within the tree's reach, the broadleaf's crown sparse in winter
  * - gaussianForestCopiesTheVisibleTrees: at scale 0.75 the Gaussian renderer copies the library for the visible
  *   trees within its pool, none left out
+ * - detailBudgetConverges: with frame times growing with the detail, TreeDetailBudget settles within a few frames
+ *   at the detail whose frame time meets the budget, without overshooting, and keeps full detail under budget
+ * - lessDetailGeneratesFewerTrees: with half the detail the renderer generates about half as many segments, and
+ *   more trees become impostors
  **/
 
 #include <gtest/gtest.h>
@@ -207,4 +211,63 @@ TEST_F(TreeLodTest, gaussianForestCopiesTheVisibleTrees) {
     EXPECT_GT(visible, 1000u);
     EXPECT_GT(copies[0], 10u * visible);
     EXPECT_EQ(copies[1], 0u);
+}
+
+TEST(TreeLod, detailBudgetConverges) {
+    // A frame of 10 ms plus 50 ms at full detail; 33 ms are met at a detail of 0.46.
+    auto frame = [](float detail) { return 10.0f + 50.0f * detail; };
+    TreeDetailBudget budget(33.0f);
+    float detail = 1.0f;
+    std::vector<float> times;
+    for (int k = 0; k < 20; ++k) {
+        times.push_back(frame(detail));
+        detail = budget.update(times.back());
+    }
+    EXPECT_NEAR(frame(detail), 33.0f, 1.0f);
+    for (size_t k = 1; k < times.size(); ++k) {
+        // Approaching from above, never far below the budget.
+        EXPECT_GT(times[k], 30.0f) << k;
+    }
+    EXPECT_LT(times[8], 35.0f);
+    TreeDetailBudget relaxed(100.0f);
+    EXPECT_EQ(relaxed.update(frame(1.0f)), 1.0f);
+    // At most the minimum.
+    TreeDetailBudget tight(5.0f);
+    for (int k = 0; k < 30; ++k) {
+        tight.update(frame(tight.getDetail()));
+    }
+    EXPECT_EQ(tight.getDetail(), 0.25f);
+}
+
+TEST_F(TreeLodTest, lessDetailGeneratesFewerTrees) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.scale.s = 0.75f;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{320, 180};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    BonsaiRenderer renderer(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(renderer.getOutput());
+    renderer.initialize(1);
+    const glm::vec3 eye(0.9f, 1.2f, 1.6f);
+    setCamera(renderer.getCamera()->ubo, eye, glm::vec3(0.0f, 0.4f, 0.0f), 40.0f, 16.0f / 9.0f);
+    renderer.getCamera()->update(0);
+    uint32_t segments[2], impostors[2];
+    for (int k = 0; k < 2; ++k) {
+        renderer.setDetail(k == 0 ? 1.0f : 0.5f);
+        renderer.setView(eye);
+        for (int frame = 0; frame < 8 && renderer.getPendingTiles() > 0; ++frame) {
+            graph.submitAndWait(vc->getGraphicsQueue(), 0);
+            renderer.setView(eye);
+        }
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        segments[k] = renderer.getGenerator().readCounters()[kTreeCounterSegments] +
+                      renderer.getReducedGenerator()->readCounters()[kTreeCounterSegments];
+        impostors[k] = renderer.getProxies()->readCounter()[0];
+    }
+    std::printf("segments %u -> %u, impostors %u -> %u\n", segments[0], segments[1], impostors[0], impostors[1]);
+    EXPECT_NEAR(double(segments[1]), 0.5 * segments[0], 0.2 * segments[0]);
+    EXPECT_GT(impostors[1], impostors[0]);
 }

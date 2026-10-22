@@ -5,6 +5,7 @@
 #ifndef KLARTRAUM_TREE_BONSAI_RENDERER_HPP
 #define KLARTRAUM_TREE_BONSAI_RENDERER_HPP
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -36,6 +37,27 @@ namespace klartraum {
 enum class BonsaiRenderMode {
     Classical, ///< rasterized trees and pot; the lantern splatted, the two composited by depth
     Gaussian,  ///< everything as Gaussians, sorted and splatted together
+};
+
+/**
+ * @brief Keeps the frame time near a budget by the detail of the trees (BonsaiRenderer::setDetail(), after Kuth et
+ *        al. Sec. 3.9): after each frame, update() scales the detail by the square root of budget / frame time,
+ *        at most 25 % per frame, within [minimum, 1].
+ */
+class TreeDetailBudget {
+public:
+    explicit TreeDetailBudget(float budgetMs, float minimum = 0.25f)
+        : budget(budgetMs),
+          minimum(minimum) {}
+
+    /// The detail for the next frame after one that took `frameMs`.
+    float update(float frameMs);
+    float getDetail() const { return detail; }
+
+private:
+    float budget;
+    float minimum;
+    float detail = 1.0f;
 };
 
 struct BonsaiRenderConfig {
@@ -114,6 +136,10 @@ public:
      *        proxies). Does nothing for a planting.
      */
     void setView(glm::vec3 eye);
+    /// The share in [0.25, 1] of the near and reduced trees generated (the others become impostors or library
+    /// copies) from the next setView() on; see TreeDetailBudget.
+    void setDetail(float detail) { this->detail = std::clamp(detail, 0.25f, 1.0f); }
+    float getDetail() const { return detail; }
     /// The generator of the reduced trees (L1), or nullptr.
     TreeGenerator* getReducedGenerator() { return reducedGenerator.get(); }
     /// Tiles in range of the last setView() still to be generated (they come a few per frame); 0 for a planting.
@@ -162,6 +188,7 @@ private:
     std::unique_ptr<TreeLeafRenderer> reducedLeaves;
     std::vector<TreeTypeParams> reducedTypes;
     uint32_t reducedCount = 0;
+    float detail = 1.0f;
     std::unique_ptr<TreeImpostorRenderer> impostors;
     // The placement, its seed and the tree types, for setView().
     TreeTerrainParams terrainParams{};

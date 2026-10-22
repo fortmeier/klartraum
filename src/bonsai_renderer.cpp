@@ -89,12 +89,15 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians));
     // Patches of the captured moss, placed over the soil with a level of detail each; too flat to cast shadows.
     const std::vector<MossPatch> mossPatches = extractMossPatches(loadGaussiansSpz(config.lanternPath, true));
+    // As many copies as cover the soil at the lantern's scale, the moss scaled with the lantern; none where the
+    // trees follow the placement, where a patch of moss is far smaller than a pixel.
     const std::vector<TreeLodInstance> mossCopies =
-        // As many copies as cover the soil at the lantern's scale, the moss scaled with the lantern.
-        placeMossPatches(
-            scene, uint32_t(mossPatches.size()),
-            uint32_t(std::min(float(config.mossPatches) / (scene.lanternScale * scene.lanternScale), 20000.0f)),
-            scene.config.seed, 1.3f * scene.lanternScale);
+        scene.placed
+            ? std::vector<TreeLodInstance>{}
+            : placeMossPatches(
+                  scene, uint32_t(mossPatches.size()),
+                  uint32_t(std::min(float(config.mossPatches) / (scene.lanternScale * scene.lanternScale), 20000.0f)),
+                  scene.config.seed, 1.3f * scene.lanternScale);
     TreeGaussianSources sources;
     sources.captured = std::move(lanternGaussians);
     sources.light = lightVolume->getLight();
@@ -288,30 +291,42 @@ void BonsaiRenderer::setTime(float seconds, float timeOfDay, float season, glm::
     settings->set(0, values);
 }
 
+float TreeDetailBudget::update(float frameMs) {
+    if (frameMs > 0.0f) {
+        detail *= std::clamp(std::sqrt(budget / frameMs), 0.8f, 1.25f);
+        detail = std::clamp(detail, minimum, 1.0f);
+    }
+    return detail;
+}
+
 void BonsaiRenderer::setView(glm::vec3 eye) {
     if (!tiles) {
         return;
     }
     tiles->update(eye);
     // The nearest trees in full, the next ones reduced (L1).
-    const std::vector<TreeSite> sites = nearestTreeSites(terrainParams, placement, eye, nearTrees + reducedCount);
-    auto instancesOf = [&](size_t from, size_t count, const std::vector<TreeTypeParams>& of) {
+    // With less detail fewer of them, the farther ones left to the impostors or library copies.
+    const size_t activeNear = std::max<size_t>(1, size_t(std::lround(detail * nearTrees)));
+    const size_t activeReduced = size_t(std::lround(detail * reducedCount));
+    const std::vector<TreeSite> sites =
+        nearestTreeSites(terrainParams, placement, eye, uint32_t(activeNear + activeReduced));
+    auto instancesOf = [&](size_t from, size_t active, size_t count, const std::vector<TreeTypeParams>& of) {
         std::vector<TreeInstance> instances;
-        for (size_t i = from; i < std::min(sites.size(), from + count); ++i) {
+        for (size_t i = from; i < std::min(sites.size(), from + active); ++i) {
             instances.push_back(treeInstanceFor(sites[i], of, seed));
         }
-        // Over open land fewer trees are near; the rest are tiny and far below the pot.
+        // Over open land fewer trees are near, and with less detail fewer generated: the rest have scale 0, no tree.
         while (instances.size() < count) {
             TreeInstance hidden{};
-            hidden.posScale = glm::vec4(0.0f, -100.0f, 0.0f, 1e-4f);
+            hidden.posScale = glm::vec4(0.0f);
             hidden.rot = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
             instances.push_back(hidden);
         }
         return instances;
     };
-    generator->getInstances().set(instancesOf(0, nearTrees, types));
+    generator->getInstances().set(instancesOf(0, activeNear, nearTrees, types));
     if (reducedGenerator) {
-        reducedGenerator->getInstances().set(instancesOf(nearTrees, reducedCount, reducedTypes));
+        reducedGenerator->getInstances().set(instancesOf(activeNear, activeReduced, reducedCount, reducedTypes));
     }
     proxies->setNearRadius(sites.empty() ? -1.0f : glm::length(glm::vec3(sites.back().posHeight) - eye));
 }
