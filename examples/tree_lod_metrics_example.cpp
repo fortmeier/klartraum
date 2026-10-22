@@ -20,10 +20,10 @@
 // where the renderer hands its trees over to the library. The copy is never squeezed by its pool here (one tree).
 //
 // Writes <out-dir>/metrics.csv (per frame: distance, what draws the tree, the copy's level and crossfade, the
-// crown's diameter in pixels, the four runs' popping residuals and the fidelity errors of the static and the
-// dynamic run) and <out-dir>/frames/frame_NNNN.ppm (with levels of detail above, without below; static left,
-// dynamic right; each at 3/4 of the measured size), and prints a summary. scripts/tree/make_lod_metrics_video.sh
-// labels the frames and encodes the video.
+// crown's diameter in pixels, the four runs' popping residuals, the fidelity errors of the static and the dynamic
+// run and the four runs' GPU times) and <out-dir>/frames/frame_NNNN.ppm (with levels of detail above, without below;
+// static left, dynamic right; each at 3/4 of the measured size), and prints a summary.
+// scripts/tree/make_lod_metrics_video.sh labels the frames and encodes the video.
 
 #include <algorithm>
 #include <cmath>
@@ -138,7 +138,8 @@ struct TreeView {
             generator =
                 std::make_shared<TreeGenerator>(vc, types, trees, TreeCapacity::fromReference(types, trees, frame));
             sources.trees = false;
-            sources.extraSlots = 65536;
+            // The splatting runs over every slot, used or not: room for level 0 and level 1 while crossfading.
+            sources.extraSlots = 4096;
         } else {
             const std::vector<TreeInstance> trees = {
                 treeInstanceFor(site, scene.types, scene.config.seed, forest.variants)};
@@ -165,6 +166,7 @@ struct TreeView {
         target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         splatting = createGaussianSplatting(vc, GsplatBackend::Raster, target, camera, splats);
         graph = std::make_unique<ComputeGraph>(vc, 1);
+        graph->enableProfiling();
         graph->compileFrom(splatting);
         gaussians->initializeBuffers(1);
     }
@@ -174,13 +176,16 @@ struct TreeView {
         frame.timeSeason = glm::vec4(seconds, kSeason, 0.0f, 0.0f);
         frame.wind = wind;
         generator->getFrame().set(0, frame);
+        graph->resetProfiling();
         graph->submitAndWait(vc.getGraphicsQueue(), 0);
+        gpuMs = float(graph->getGpuSpanMs());
         return readImage(vc, target->getImage(0), extent);
     }
 
     VulkanContext& vc;
     VkExtent2D extent;
     float crownRadius = 0.0f; ///< of the copy, as TreeMossLod measures it for its levels
+    float gpuMs = 0.0f;       ///< GPU time of the last render(), from generation to splatting
     std::shared_ptr<HostValues<TreeRenderSettings>> settings;
     std::shared_ptr<TreeGenerator> generator;
     std::unique_ptr<TreeGaussians> gaussians;
@@ -227,12 +232,14 @@ void printPopping(const char* name, const std::vector<float>& residuals, const s
     }
 }
 
-// The fidelity of a run: its mean and largest error over the frames drawn by each representation.
-void printFidelity(const char* name, const std::vector<float>& errors, const std::vector<float>& distances,
-                   const std::vector<std::string>& drawnBy) {
+// Per-frame values of a run (fidelity errors, GPU times): their mean and largest over all frames and over the
+// frames drawn by each representation.
+void printByRepresentation(const char* name, const std::vector<float>& values, const std::vector<float>& distances,
+                           const std::vector<std::string>& drawnBy) {
+    const std::vector<float>& errors = values;
     const SeriesSummary all = summarizeSeries(errors);
-    std::printf("%s fidelity: mean error %.4f, max %.4f at %.1f m (%s)\n", name, all.mean, all.max,
-                distances[all.worst], drawnBy[all.worst].c_str());
+    std::printf("%s: mean %.4f, max %.4f at %.1f m (%s)\n", name, all.mean, all.max, distances[all.worst],
+                drawnBy[all.worst].c_str());
     std::vector<std::string> order;
     for (const std::string& by : drawnBy) {
         if (std::find(order.begin(), order.end(), by) == order.end()) {
@@ -352,7 +359,8 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(outDir / "frames");
     std::ofstream csv(outDir / "metrics.csv");
     csv << "frame,distance_m,drawn_by,level,fade,crown_px,residual_static,residual_dynamic,residual_free_static,"
-           "residual_free_dynamic,fidelity_static,fidelity_dynamic\n";
+           "residual_free_dynamic,fidelity_static,fidelity_dynamic,gpu_ms_static,gpu_ms_dynamic,gpu_ms_free_static,"
+           "gpu_ms_free_dynamic\n";
 
     const glm::vec3 middle = glm::vec3(site.posHeight) + glm::vec3(0.0f, 0.5f * treeHeight, 0.0f);
     const glm::vec4 wind(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength);
@@ -360,6 +368,7 @@ int main(int argc, char** argv) {
     std::vector<PoppingMeter> poppingMeters(4, PoppingMeter(width, height));
     std::vector<std::vector<float>> residuals(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> fidelity(2, std::vector<float>(size_t(frames) + 1, 0.0f));
+    std::vector<std::vector<float>> gpuMs(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<float> distances(size_t(frames) + 1);
     std::vector<std::string> drawnBy(size_t(frames) + 1);
     std::vector<glm::vec3> lods(size_t(frames) + 1); // level, fade, crown pixels
@@ -399,9 +408,12 @@ int main(int argc, char** argv) {
 
         const float seconds = float(k) / 30.0f;
         TreeView& view = near ? generated : copy;
-        const std::vector<uint8_t> images[4] = {
-            view.render(seconds, glm::vec4(glm::vec3(wind), 0.0f)), view.render(seconds, wind),
-            reference.render(seconds, glm::vec4(glm::vec3(wind), 0.0f)), reference.render(seconds, wind)};
+        std::vector<uint8_t> images[4];
+        for (int run = 0; run < 4; ++run) {
+            TreeView& drawing = run < 2 ? view : reference;
+            images[run] = drawing.render(seconds, run % 2 == 0 ? glm::vec4(glm::vec3(wind), 0.0f) : wind);
+            gpuMs[run][k] = drawing.gpuMs;
+        }
         for (int run = 0; run < 4; ++run) {
             if (const std::optional<float> r = poppingMeters[run].push(imageLuminance(images[run]))) {
                 residuals[run][k - 1] = *r;
@@ -427,12 +439,15 @@ int main(int argc, char** argv) {
     for (int k = 0; k <= frames; ++k) {
         csv << k << "," << distances[k] << "," << drawnBy[k] << "," << lods[k].x << "," << lods[k].y << "," << lods[k].z
             << "," << residuals[0][k] << "," << residuals[1][k] << "," << residuals[2][k] << "," << residuals[3][k]
-            << "," << fidelity[0][k] << "," << fidelity[1][k] << "\n";
+            << "," << fidelity[0][k] << "," << fidelity[1][k] << "," << gpuMs[0][k] << "," << gpuMs[1][k] << ","
+            << gpuMs[2][k] << "," << gpuMs[3][k] << "\n";
     }
     printPopping("static ", residuals[0], residuals[2], distances, drawnBy);
     printPopping("dynamic", residuals[1], residuals[3], distances, drawnBy);
-    printFidelity("static ", fidelity[0], distances, drawnBy);
-    printFidelity("dynamic", fidelity[1], distances, drawnBy);
+    printByRepresentation("static  fidelity error", fidelity[0], distances, drawnBy);
+    printByRepresentation("dynamic fidelity error", fidelity[1], distances, drawnBy);
+    printByRepresentation("dynamic GPU ms", gpuMs[1], distances, drawnBy);
+    printByRepresentation("dynamic GPU ms without levels of detail", gpuMs[3], distances, drawnBy);
     std::cout << "frames and metrics.csv in " << outDir.string() << std::endl;
     return 0;
 }
