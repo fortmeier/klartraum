@@ -86,7 +86,8 @@ std::vector<TreeTerrainNode> selectTerrainNodesReference(const TreeTerrainConfig
  */
 class TreeTerrain {
 public:
-    /// `settings` (for the viewport) is needed with a canopy.
+    /// `settings` (for the viewport) is needed with a canopy; with them the terrain also shadows itself in the
+    /// settings' sun (getExtras().y).
     TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& terrain, std::shared_ptr<CameraUboType> camera,
                 const TreeTerrainLodConfig& lodConfig = {}, const TreeCanopy& canopy = {},
                 std::shared_ptr<HostValues<TreeRenderSettings>> settings = nullptr);
@@ -100,7 +101,8 @@ public:
     BufferRef getVertices() const { return {vertices, 3}; }
     /// The same vertices' land cover (TreeLandCover::vegetation; rock is the rest to 1).
     BufferRef getCovers() const { return {vertices, 4}; }
-    /// The same vertices' canopy weight in x (the share of the surface that is forest canopy).
+    /// The same vertices' canopy weight in x (the share of the surface that is forest canopy) and the sun's
+    /// visibility over the terrain in y.
     BufferRef getExtras() const { return {vertices, 6}; }
     /// The selected nodes (TreeTerrainNode), the indirect draw arguments and the configuration buffer.
     BufferRef getNodes() const { return {vertices, 0}; }

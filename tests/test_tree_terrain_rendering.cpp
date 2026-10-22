@@ -19,6 +19,8 @@
  * - snowLiesAboveTheSnowLine: in fall only gentle ground above the snow line is white; in winter most ground is
  * - distantDetailDoesNotAlias: from outside the pot at scale 1 the image varies between neighbouring pixels about as
  *   much as one rendered at twice the resolution and filtered down
+ * - terrainShadowsMatchTheCpu: with the settings' sun, every vertex's sun visibility is treeTerrainSunVisibility()
+ *   at its position; a render under a low sun is written to build/TestingOutput/tree/
  * - terrainFitsTheFrameBudget: from the example's view at scale 1 the terrain (selection, vertices, drawing) takes
  *   at most 8 ms of GPU time at 1080p
  **/
@@ -566,4 +568,52 @@ TEST_F(TreeTerrainRenderingTest, terrainFitsTheFrameBudget) {
                 ms[0], ms[1]);
     EXPECT_GT(ms[0], 0.0);
     EXPECT_LE(ms[0], 8.0);
+}
+
+TEST_F(TreeTerrainRenderingTest, terrainShadowsMatchTheCpu) {
+    const BonsaiScene scene = sceneAt(1.0f);
+    const VkExtent2D extent{640, 360};
+    auto camera = std::make_shared<CameraUboType>();
+    TreeRenderSettings values = defaultTreeRenderSettings(extent);
+    values.sun = glm::vec4(glm::normalize(glm::vec3(-1.0f, 0.25f, 0.3f)), 1.6f);
+    auto settings = std::make_shared<HostValues<TreeRenderSettings>>(*vc, std::vector<TreeRenderSettings>{values});
+    TreeTerrain terrain(*vc, scene.terrain, camera, {}, {}, settings);
+    TreeTerrainRenderer renderer(*vc, terrain, settings, extent);
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    auto pass = std::make_shared<RenderPass>(vc->getSwapChainImageFormat(), extent);
+    pass->setInput(target, 0);
+    pass->setInput(camera, 1);
+    pass->setDepthAttachment(true);
+    pass->addComputeDependency(terrain.getElement());
+    pass->addComputeDependency(settings);
+    pass->addDrawComponent(renderer.getDrawComponent());
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(pass);
+    const Eye e = outsideEye();
+    setCamera(camera->ubo, e.eye, e.target, 40.0f, float(extent.width) / float(extent.height), 1e-5f, 100.0f);
+    camera->update(0);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    writePpm("terrain_low_sun", readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent),
+             extent);
+    const std::vector<TreeTerrainNode> nodes = terrain.readNodes();
+    const std::vector<glm::vec4> vertices = terrain.readVertices();
+    const std::vector<glm::vec4> extras = terrain.readExtras();
+    const int quads = 32, row = quads + 1;
+    int shadowed = 0, checked = 0;
+    float worst = 0.0f;
+    for (size_t k = 0; k < nodes.size(); ++k) {
+        for (int v = 0; v < row * row; v += 7) {
+            const TreeTerrainNode& n = nodes[k];
+            const glm::vec3 p(n.x + n.z * float(v % row) / quads, vertices[k * row * row + v].w,
+                              n.y + n.z * float(v / row) / quads);
+            const float cpu = tree::treeTerrainSunVisibility(scene.terrain, p, glm::vec3(values.sun));
+            worst = std::max(worst, std::abs(extras[k * row * row + v].y - cpu));
+            shadowed += cpu < 0.5f ? 1 : 0;
+            ++checked;
+        }
+    }
+    std::printf("%d of %d vertices in shadow, largest difference %.4f\n", shadowed, checked, worst);
+    EXPECT_GT(shadowed, checked / 20);
+    // The GPU's sines and cosines move heights by about 1e-5 units, which a soft edge turns into this much.
+    EXPECT_LT(worst, 0.02f);
 }

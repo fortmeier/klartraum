@@ -72,14 +72,16 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
                 if (length <= 0.0f) {
                     continue;
                 }
-                // A flat Gaussian over the blade: along +z, as wide as the leaf, thin along its normal (+y).
+                // A flat Gaussian over the blade: along +z, thin along its normal (+y); it stands for a cluster of
+                // the full tree's leaves (or needles), so it is at least half as wide as long.
                 const glm::vec3 center = glm::vec3(l.posScale) + 0.5f * length * tree::qforward(l.rot);
                 glm::vec3 normal = tree::qrot(l.rot, glm::vec3(0.0f, 1.0f, 0.0f));
                 normal = normal.y < 0.0f ? -normal : normal;
                 const glm::vec3 albedo = tree::treeLeafSeasonAlbedo(p, l.ids.y, 1u, l.ids.w);
-                patch.push_back(litGaussian(center, l.rot,
-                                            glm::vec3(0.3f * length * p.leafCount.z, 0.03f * length, 0.35f * length),
-                                            albedo, normal, settings, 0.9f));
+                patch.push_back(litGaussian(
+                    center, l.rot,
+                    glm::vec3(0.35f * length * std::max(p.leafCount.z, 0.6f), 0.04f * length, 0.4f * length), albedo,
+                    normal, settings, 0.9f));
             }
             for (const SegmentRecord& s : records.segments) {
                 const glm::vec3 a(s.fromPosRadius), b(s.toPosRadius);

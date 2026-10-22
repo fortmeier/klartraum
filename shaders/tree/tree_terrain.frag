@@ -32,6 +32,7 @@ layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec4 inCover;
 layout(location = 3) in float inCanopy;
+layout(location = 4) in float inSunlight;
 
 layout(location = 0) out vec4 outColor;
 
@@ -74,6 +75,7 @@ void main() {
     albedo = mix(albedo, vec3(0.8f),
                  (1.0f - 0.5f * canopy) * treeTerrainSnow(t, inWorldPos, surface, s.season.x, s.season.y));
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
+    light.x *= clamp(inSunlight, 0.0f, 1.0f);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
     outColor = treeOutputColor(color, s);
 }

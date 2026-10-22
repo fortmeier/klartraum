@@ -8,7 +8,8 @@
 // workgroup per slot. A tile outside the view is skipped at once by its
 // bounds; of the others, each tree whose box is in the view and whose crown
 // spans at least pc.minPixels pixels is appended to the visible instances
-// with how far it has faded in (kind.w, where the forest canopy fades out),
+// with how far it has faded in (kind.w, where the forest canopy fades out)
+// and how much sun the terrain lets through to its crown (kind.z),
 // unless it is one of the near trees generated in full (within the near
 // radius). Trees beyond the capacity are counted.
 
@@ -91,6 +92,7 @@ void main() {
         if (pixels < pc.minPixels) {
             continue;
         }
+        site.kind.z = treeTerrainSunVisibility(config.terrain, foot + vec3(0.0f, 0.6f * h, 0.0f), settings[0].sun.xyz);
         site.kind.w = pc.fadeAbove > pc.minPixels ? treeProxyFade(vec4(pc.minPixels, pc.fadeAbove, 0.0f, 0.0f), pixels)
                                                   : 1.0f;
         uint k = atomicAdd(counter[0], 1u);

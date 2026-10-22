@@ -32,7 +32,7 @@ layout(location = 4) flat out vec3 outRight;
 layout(location = 5) flat out vec3 outUp;
 layout(location = 6) flat out vec3 outToward;
 layout(location = 7) flat out uvec2 outLayers;
-layout(location = 8) flat out vec3 outBlend; // x weight of the second season layer, y fade, z tint
+layout(location = 8) flat out vec4 outBlend; // x weight of the second season layer, y fade, z tint, w sunlight
 
 const vec2 corners[6] = vec2[6](vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f), vec2(1.0f, 1.0f), vec2(-1.0f, -1.0f),
                                 vec2(1.0f, 1.0f), vec2(-1.0f, 1.0f));
@@ -80,6 +80,6 @@ void main() {
     vec3 world = center + radius * (c.x * outRight + c.y * outUp);
     outWorldPos = world;
     outCard = c;
-    outBlend = vec3(t, site.kind.w, 0.9f + 0.2f * treeRand(floatBitsToUint(site.kind.y), 0x55u));
+    outBlend = vec4(t, site.kind.w, 0.9f + 0.2f * treeRand(floatBitsToUint(site.kind.y), 0x55u), site.kind.z);
     gl_Position = camera.proj * camera.view * vec4(world, 1.0f);
 }

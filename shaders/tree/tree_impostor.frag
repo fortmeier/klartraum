@@ -41,7 +41,7 @@ layout(location = 4) flat in vec3 inRight;
 layout(location = 5) flat in vec3 inUp;
 layout(location = 6) flat in vec3 inToward;
 layout(location = 7) flat in uvec2 inLayers;
-layout(location = 8) flat in vec3 inBlend;
+layout(location = 8) flat in vec4 inBlend;
 
 layout(location = 0) out vec4 outColor;
 
@@ -92,6 +92,7 @@ void main() {
     vec3 local = length(n) > 1e-4f ? normalize(n) : vec3(0.0f, 0.0f, 1.0f);
     vec3 normal = normalize(local.x * inRight + local.y * inUp + local.z * inToward);
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
+    light.x *= inBlend.w;
     vec3 color = treeShadeLit(albedoColor, normal, s, light) + treePointLight(albedoColor, normal, inWorldPos, s);
     color += 0.25f * albedoColor * max(dot(-normal, s.sun.xyz), 0.0f) * s.sun.w * light.x * s.lightColor.rgb;
     outColor = treeOutputColor(color, s);

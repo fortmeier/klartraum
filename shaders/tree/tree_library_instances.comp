@@ -62,7 +62,8 @@ void main() {
         }
         inst.posYaw = vec4(site.posHeight.xyz, site.kind.y);
         inst.plane = vec4(0.0f, 0.0f, site.posHeight.w / heights[type], 0.0f);
-        inst.ids = uvec4(type * counts.x + nearest, floatBitsToUint(1.0f - site.kind.w), 0u, 0u);
+        inst.ids = uvec4(type * counts.x + nearest, floatBitsToUint(1.0f - site.kind.w),
+                         floatBitsToUint(1.0f - site.kind.z), 0u);
     }
     instances[i] = inst;
 }
