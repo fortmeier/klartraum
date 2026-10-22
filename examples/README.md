@@ -460,7 +460,7 @@ frames around it and the run without levels of detail), and the fidelity and GPU
 | `--fov F` | Vertical field of view in degrees (default 50, the explorer's) |
 | `--start M`, `--far M` | Nearest and farthest distance in metres (default 5 and 300) |
 | `--frames N` | Frames of the flight out and back (default 800) |
-| `--near-radius M` | Generated nearer than this; by default the distance of the 24th nearest tree at the explorer's start in the forest |
+| `--near-radius M` | Generated nearer than this; by default the renderer's near radius at the explorer's start in the forest (0.8 times the distance of the 24th nearest tree) |
 | `--wind S` | Strength of the wind in the dynamic run (default 0.5) |
 | `--leaf-lod X,Y,Z,W` | `TreeRenderSettings::leafLod` of the tree with levels of detail (default the renderer's) |
 | `--stem-round P`, `--stem-fade P` | `gaussianLod.x` and `.y` of the tree with levels of detail: the stem radius in pixels below which a tube is drawn round, and below which stems fade out (default the renderer's) |

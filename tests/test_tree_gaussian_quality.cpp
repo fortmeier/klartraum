@@ -31,6 +31,10 @@
  *   GPU time of a frame
  * - generatedTreesCost: at R3 at 1920 x 1080, the GPU time of a frame with 1 and 24 trees generated every frame (the
  *   rest library copies), its share per kind of pass and the cost of a generated tree; more trees cost more
+ * - walkingSwitchesTreesByTheirOwnDistance: walking 15 m at eye height through the forest from where the explorer
+ *   starts (the densest heading that keeps 0.7 m from the trunks), a tree only starts or stops being generated in full
+ * as its own distance crosses the near radius: none leaves while it comes nearer or joins while it moves away; the
+ * popping residual's spikes are measured
  * - flickerAtAFixedCamera: at R3 and R2 without wind, the largest and mean difference between consecutive frames
  * - flickerWhileDollying: from R2 along the flight by 0.2 % of the distance to the place per frame, the mean over
  *   16 px blocks of how far a frame lies from the mean of its neighbours
@@ -61,6 +65,7 @@
 
 #include "klartraum/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/lod_metrics.hpp"
 #include "klartraum/tree/bonsai_flight.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
 #include "klartraum/tree/tree_library.hpp"
@@ -764,6 +769,108 @@ TEST_F(TreeGaussianQualityTest, generatedTreesCost) {
             }
         }
     }
+}
+
+TEST_F(TreeGaussianQualityTest, walkingSwitchesTreesByTheirOwnDistance) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const ReferenceFlight flight(scene);
+    const float m = 1.0f / scene.config.scale.metersPerUnit();
+    // Where the explorer starts, deep in the forest.
+    const std::vector<ForestApproach> approaches = findForestApproach(scene);
+    ASSERT_FALSE(approaches.empty());
+    const glm::vec2 place = approaches.front().end;
+    const glm::vec3 start(place.x, scene.soilHeight(place.x, place.y) + 1.7f * m, place.y);
+    // Among the headings whose 15 m keep 0.7 m from every trunk, the one through the densest forest (most trees
+    // within 5 m of the way).
+    const std::vector<TreeSite> around = nearestTreeSites(scene.terrain, scene.placement, start, 400);
+    glm::vec3 direction(0.0f);
+    int densest = -1;
+    float kept = 0.0f;
+    for (int k = 0; k < 64; ++k) {
+        const float heading = 2.0f * glm::pi<float>() * float(k) / 64.0f;
+        const glm::vec3 d(std::sin(heading), 0.0f, -std::cos(heading));
+        float clearance = 1e30f;
+        int near = 0;
+        for (const TreeSite& site : around) {
+            const glm::vec2 foot(site.posHeight.x - start.x, site.posHeight.z - start.z);
+            const float along = std::clamp(glm::dot(foot, glm::vec2(d.x, d.z)), 0.0f, 15.0f * m);
+            const float off = glm::length(foot - along * glm::vec2(d.x, d.z));
+            clearance = std::min(clearance, off);
+            near += off < 5.0f * m;
+        }
+        if (clearance > 0.7f * m && near > densest) {
+            densest = near;
+            direction = d;
+            kept = clearance;
+        }
+    }
+    std::printf("walking past %d trees within 5 m, the trunks %.2f m away at the nearest\n", densest, kept / m);
+    ASSERT_GE(densest, 0);
+
+    FlightRenderer r(*vc, scene, {640, 360});
+    // The generated trees by their foot (rounded, as a key), with the foot itself.
+    auto generatedTrees = [&]() {
+        std::map<std::pair<int, int>, glm::vec3> trees;
+        for (const TreeInstance& inst : r.renderer->getGenerator().getInstances().values()) {
+            if (inst.posScale.w > 0.0f) {
+                const glm::vec3 foot(inst.posScale);
+                trees[{int(std::lround(foot.x * 1e4f)), int(std::lround(foot.z * 1e4f))}] = foot;
+            }
+        }
+        return trees;
+    };
+    PoppingMeter meter(r.extent.width, r.extent.height);
+    std::vector<float> residuals;
+    int switches = 0, byRank = 0;
+    std::map<std::pair<int, int>, glm::vec3> previous;
+    glm::vec3 lastEye(0.0f);
+    for (int k = 0; k <= 150; ++k) {
+        glm::vec3 eye = start + float(k) * 0.1f * m * direction;
+        eye.y = scene.soilHeight(eye.x, eye.z) + 1.7f * m;
+        const FlyInPose pose{eye, eye + direction, 0.05f * m};
+        if (k == 0) {
+            r.settle(pose);
+        }
+        if (const std::optional<float> residual = meter.push(imageLuminance(r.frame(pose)))) {
+            residuals.push_back(*residual);
+        }
+        const auto current = generatedTrees();
+        if (k > 0) {
+            // A tree that stops being generated while it comes nearer, or starts while it moves away, switched
+            // because of the others.
+            for (const auto& [key, foot] : previous) {
+                if (!current.count(key)) {
+                    ++switches;
+                    byRank += glm::length(foot - eye) < glm::length(foot - lastEye);
+                }
+            }
+            for (const auto& [key, foot] : current) {
+                if (!previous.count(key)) {
+                    ++switches;
+                    byRank += glm::length(foot - eye) > glm::length(foot - lastEye);
+                }
+            }
+        }
+        previous = current;
+        lastEye = eye;
+    }
+    // Spikes: frames whose residual is more than 3 times the median of the frames up to 10 away.
+    int spikes = 0;
+    for (size_t t = 0; t < residuals.size(); ++t) {
+        std::vector<float> around;
+        for (size_t j = t >= 10 ? t - 10 : 0; j < std::min(residuals.size(), t + 11); ++j) {
+            if (j + 1 < t || j > t + 1) {
+                around.push_back(residuals[j]);
+            }
+        }
+        spikes += residuals[t] > 3.0f * summarizeSeries(around).median;
+    }
+    const SeriesSummary walk = summarizeSeries(residuals);
+    std::printf("walking 15 m: %d trees switched, %d of them because of other trees; popping median %.5f, max %.5f, "
+                "%d spikes\n",
+                switches, byRank, walk.median, walk.max, spikes);
+    EXPECT_GT(switches, 0);
+    EXPECT_EQ(byRank, 0);
 }
 
 TEST_F(TreeGaussianQualityTest, flickerAtAFixedCamera) {

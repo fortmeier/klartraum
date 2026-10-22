@@ -17,8 +17,9 @@
 // to
 // --far metres from the trunk and back, the logarithm of the distance following a cosine, so the motion is smooth
 // everywhere and slow at both ends. The tree is generated while the camera is nearer than --near-radius; by default
-// that is the distance of the scene's nearTrees-th nearest tree at the bonsai explorer's start in the forest, which is
-// where the renderer hands its trees over to the library. The copy is never squeezed by its pool here (one tree).
+// that is the near radius at which the renderer hands its trees over to the library at the bonsai explorer's start
+// in the forest (0.8 times the distance of the scene's nearTrees-th nearest tree there). The copy is never squeezed
+// by its pool here (one tree).
 //
 // Writes <out-dir>/metrics.csv (per frame: distance, what draws the tree, the copy's level and crossfade, the
 // crown's diameter in pixels, the four runs' popping residuals, the fidelity errors of the static and the dynamic
@@ -354,7 +355,8 @@ int main(int argc, char** argv) {
         const glm::vec3 eye(place.x, scene.soilHeight(place.x, place.y) + 1.7f * m, place.y);
         const std::vector<TreeSite> sites =
             nearestTreeSites(scene.terrain, scene.placement, eye, scene.config.nearTrees);
-        nearRadiusMeters = glm::length(glm::vec3(sites.back().posHeight) - eye) / m;
+        // As BonsaiRenderer::setView() settles there: 0.8 times the distance of the nearTrees-th nearest tree.
+        nearRadiusMeters = 0.8f * glm::length(glm::vec3(sites.back().posHeight) - eye) / m;
     }
 
     TreeSite site{};
