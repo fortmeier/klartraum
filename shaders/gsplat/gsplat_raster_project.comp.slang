@@ -32,6 +32,8 @@ struct PushConstants {
     float screenHeight;
     float splatScale;
     int shDegree;
+    float frustumDilation; // the cull's (gsplat_cull_and_compact.slang): splats it drops are never drawn
+    float alphaThreshold;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -80,6 +82,15 @@ void main(uint3 globalId: SV_DispatchThreadID) {
 
     float4 clip = mul(mul(mul(ubo.proj, ubo.view), ubo.model), float4(position, 1.0));
     float2 ndcCenter = clip.xy / clip.w;
+
+    // The cull's test (visibleSplat() of gsplat_cull_and_compact.slang): only the splats it keeps are drawn, so the
+    // others need no record.
+    float3 ndc = clip.xyz / clip.w;
+    float bound = 1.0 + pc.frustumDilation;
+    if (abs(ndc.x) > bound || abs(ndc.y) > bound || ndc.z < -pc.frustumDilation || ndc.z > 1.0 ||
+        colorAlpha.a < pc.alphaThreshold) {
+        return;
+    }
 
     float swh = pc.screenWidth  * 0.5;
     float shh = pc.screenHeight * 0.5;

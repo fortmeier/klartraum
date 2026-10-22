@@ -228,6 +228,8 @@ struct RasterProjectPushConstants {
     float screenHeight;
     float splatScale;
     int32_t shDegree;
+    float frustumDilation = 0.0f; // the cull's (CullAndCompactPushConstants): splats it drops are not projected
+    float alphaThreshold = 0.0f;
 };
 typedef GeneralComputation<RasterProjectPushConstants> GaussianRasterProject;
 

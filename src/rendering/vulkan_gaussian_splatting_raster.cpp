@@ -116,7 +116,8 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     buffers.colAlpha.connectTo(*cullAndCompact, 5); // alpha for the opacity cull
     cullAndCompact->setInput(workgroupOffsets, 7);
     cullAndCompact->setGroupCountX(numCullAndCompactWGs);
-    cullAndCompact->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
+    const float frustumDilation = 0.1f;
+    cullAndCompact->setPushConstants({{N, frustumDilation, config.alphaCullThreshold}});
 
     // --- Stage A2: per-splat 2D attribute precompute (perf plan R1+R2) ---
     // Projects covariance, eigendecomposes, and evaluates SH once per splat into
@@ -140,8 +141,10 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     project->setInput(cameraUBO, 7);
     project->setInput(splat2D, 8);
     project->setGroupCountX((N + 255) / 256);
-    project->setPushConstants({{N, (float)imageViewSrc->getImageExtent(0).width,
-                                (float)imageViewSrc->getImageExtent(0).height, 3.0f, config.shDegree}});
+    // Only the splats the cull keeps are drawn, so the others are not projected.
+    project->setPushConstants(
+        {{N, (float)imageViewSrc->getImageExtent(0).width, (float)imageViewSrc->getImageExtent(0).height, 3.0f,
+          config.shDegree, frustumDilation, config.alphaCullThreshold}});
 
     // --- Stage B: radix sort over the visible count (perf plan R3). The reused
     // sort operates on plain (uint key, uint index) pairs; 8 passes x 4 bits
