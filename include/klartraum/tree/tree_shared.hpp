@@ -160,6 +160,11 @@ struct TreeRenderSettings {
     // per frame, so that the visible trees fit their buffers. 0: the terrain's own (TreeTerrainConfig). z, w the
     // same for the library copies' cut-off (TreeGaussianForest; 0: none): the canopy covers the larger band.
     vec4 canopyBand;
+    // The generated trees' Gaussians (tree_gaussians.comp): x the stem radius in pixels below which a tube becomes
+    // one round Gaussian per step along it (0: never), y the radius below which stems fade out (0: never), z the
+    // leaf length in pixels below which leaves thin out (0: never), w the share of leaves kept at the farthest.
+    // Their leaves merge their lobes as leafLod.xy.
+    vec4 gaussianLod;
 };
 
 // The ground in the pot (treeTerrainHeight()): the soil with its mound, and the relief of a landscape that the

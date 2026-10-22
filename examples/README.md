@@ -433,7 +433,9 @@ Measures a single Gaussian tree's levels of detail while the camera moves away f
 renderer of `tree_bonsai_example` draws it: generated every frame while it is among the near trees, beyond that as
 its library copy with the copy's levels of detail by size on screen. It runs headless and renders four runs over
 the same flight: a static tree (no wind) and a dynamic one (in the wind), each with the levels of detail and
-without them (generated every frame at every distance, no stems culled by size).
+without them (generated every frame at every distance without any reduction by size). With a large
+`--near-radius` the tree is generated at every distance, which measures the generated trees' own levels of detail
+(`TreeRenderSettings::gaussianLod`, `leafLod`).
 
 The camera stays level with the tree's middle and moves from `--start` to `--far` metres from the trunk and back.
 The logarithm of the distance follows a cosine, so the motion is smooth everywhere and slow at both ends. Two
@@ -460,6 +462,8 @@ frames around it and the run without levels of detail), and the fidelity and GPU
 | `--frames N` | Frames of the flight out and back (default 800) |
 | `--near-radius M` | Generated nearer than this; by default the distance of the 24th nearest tree at the explorer's start in the forest |
 | `--wind S` | Strength of the wind in the dynamic run (default 0.5) |
+| `--leaf-lod X,Y,Z,W` | `TreeRenderSettings::leafLod` of the tree with levels of detail (default the renderer's) |
+| `--stem-round P`, `--stem-fade P` | `gaussianLod.x` and `.y` of the tree with levels of detail: the stem radius in pixels below which a tube is drawn round, and below which stems fade out (default the renderer's) |
 | `--out-dir D` | Where `metrics.csv` and `frames/` go (default `build/TestingOutput/tree_lod_metrics`) |
 
 `scripts/tree/make_lod_metrics_video.sh` runs it and encodes `tree_lod_metrics.mp4`: the four runs (with levels of

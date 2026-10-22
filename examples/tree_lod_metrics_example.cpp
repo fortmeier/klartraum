@@ -12,8 +12,9 @@
 //                            [--out-dir build/TestingOutput/tree_lod_metrics]
 //
 // Four runs over the same flight: a static tree (no wind) and a dynamic one (wind of --wind, as the bonsai explorer
-// blows it), each with the levels of detail and without them (generated every frame at every distance, its stems
-// never culled by size), the reference of the fidelity. The camera, level with the tree's middle, moves from --start to
+// blows it), each with the levels of detail and without them (generated every frame at every distance without
+// any reduction by size), the reference of the fidelity. The camera, level with the tree's middle, moves from --start
+// to
 // --far metres from the trunk and back, the logarithm of the distance following a cosine, so the motion is smooth
 // everywhere and slow at both ends. The tree is generated while the camera is nearer than --near-radius; by default
 // that is the distance of the scene's nearTrees-th nearest tree at the bonsai explorer's start in the forest, which is
@@ -104,20 +105,32 @@ void resampleInto(const std::vector<uint8_t>& bgra, VkExtent2D from, uint8_t* rg
 
 // One tree over black, drawn by the raster splatting into its own target: either generated every frame as the
 // near trees are (TreeGaussians) or as its library copy (TreeMossLod), lit the same way, in season kSeason.
-// Without `cullStems` the generated tree keeps the stems thinner than the renderer draws (TreeRenderSettings::
-// viewport.w), its only reduction by size.
+// With `lodFree` the generated tree has no level of detail: no stems culled or drawn round by size
+// (TreeRenderSettings::viewport.w, gaussianLod) and its leaves in full (leafLod).
 struct TreeView {
     TreeView(VulkanContext& vc, const BonsaiScene& scene, const TreeSite& site, bool copy, VkExtent2D extent,
              std::shared_ptr<CameraUboType> camera, const std::vector<GaussianLods>& library, uint32_t variant,
-             const TreeGaussianForestConfig& forest, bool cullStems = true)
+             const TreeGaussianForestConfig& forest, bool lodFree = false, glm::vec4 leafLod = glm::vec4(-1.0f),
+             float stemRound = -1.0f, float stemFade = -1.0f)
         : vc(vc),
           extent(extent) {
         settings = std::make_shared<HostValues<TreeRenderSettings>>(
             vc, std::vector<TreeRenderSettings>{defaultTreeRenderSettings(extent)});
         TreeRenderSettings values = settings->values().at(0);
         values.season = glm::vec4(kSeason, tree::treeSnowCover(kSeason), 0.0f, 0.0f);
-        if (!cullStems) {
+        if (leafLod.x >= 0.0f) {
+            values.leafLod = leafLod;
+        }
+        if (stemRound >= 0.0f) {
+            values.gaussianLod.x = stemRound;
+        }
+        if (stemFade >= 0.0f) {
+            values.gaussianLod.y = stemFade;
+        }
+        if (lodFree) {
             values.viewport.w = 0.0f;
+            values.gaussianLod = glm::vec4(0.0f);
+            values.leafLod = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
         }
         settings->set(0, values);
         TreeFrame frame = defaultTreeFrame();
@@ -272,6 +285,9 @@ int main(int argc, char** argv) {
     int frames = 800;
     float nearRadiusMeters = 0.0f; // 0: from the forest at the explorer's start
     float windStrength = 0.5f;
+    glm::vec4 leafLod(-1.0f); // < 0: the renderer's default
+    float stemRound = -1.0f;
+    float stemFade = -1.0f;
     std::filesystem::path outDir = "build/TestingOutput/tree_lod_metrics";
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -294,6 +310,15 @@ int main(int argc, char** argv) {
             frames = std::stoi(argv[++i]);
         } else if (arg == "--near-radius" && hasValue) {
             nearRadiusMeters = std::stof(argv[++i]);
+        } else if (arg == "--leaf-lod" && hasValue) {
+            if (std::sscanf(argv[++i], "%f,%f,%f,%f", &leafLod.x, &leafLod.y, &leafLod.z, &leafLod.w) != 4) {
+                std::cerr << "--leaf-lod takes x,y,z,w" << std::endl;
+                return 1;
+            }
+        } else if (arg == "--stem-round" && hasValue) {
+            stemRound = std::stof(argv[++i]);
+        } else if (arg == "--stem-fade" && hasValue) {
+            stemFade = std::stof(argv[++i]);
         } else if (arg == "--wind" && hasValue) {
             windStrength = std::stof(argv[++i]);
         } else if (arg == "--out-dir" && hasValue) {
@@ -351,9 +376,10 @@ int main(int argc, char** argv) {
     VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
     const VkExtent2D extent{width, height};
     auto camera = std::make_shared<CameraUboType>();
-    TreeView generated(vc, scene, site, false, extent, camera, library, variant, forest);
+    TreeView generated(vc, scene, site, false, extent, camera, library, variant, forest, false, leafLod, stemRound,
+                       stemFade);
     TreeView copy(vc, scene, site, true, extent, camera, library, variant, forest);
-    TreeView reference(vc, scene, site, false, extent, camera, library, variant, forest, false);
+    TreeView reference(vc, scene, site, false, extent, camera, library, variant, forest, true);
 
     const VkExtent2D panel{width * 3 / 4, height * 3 / 4};
     std::filesystem::create_directories(outDir / "frames");

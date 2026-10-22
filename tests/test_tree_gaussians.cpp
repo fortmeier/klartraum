@@ -5,12 +5,16 @@
 /**
  * TESTS:
  * - unusedSlotsAreTransparent: the Gaussian count covers the capacities; slots of generated records are
- *   opaque (with no minimum stem radius), the others have opacity 0
+ *   opaque (without level of detail), the others have opacity 0
  * - stemGaussiansLieOnTheTube: the Gaussians of a straight trunk sit just inside its surface, around and
  *   along each segment
  * - leafGaussiansLieOnTheLeaf: the Gaussians of a leaf on the z = 0 plane lie in the plane, inside the leaf
  * - silhouetteMatchesClassical: a preset tree splatted with either backend covers nearly the same pixels as
  *   its classical rendering
+ * - farLeavesAreOneGaussian: with the level of detail, seen from far away (leaves shorter than leafLod.y pixels),
+ *   each generated leaf is one Gaussian (its first slot, opacity in (0, 0.95]) and its other slots are transparent
+ * - thinStemsAreRound: with the level of detail, the segments thinner than half of gaussianLod.x pixels draw
+ *   only the first Gaussian around each step along them, a round one as wide as the tube both ways
  **/
 
 #include <gtest/gtest.h>
@@ -46,17 +50,22 @@ TreeTypeParams straightTrunk() {
 
 // Generator and TreeGaussians in a graph of their own, for reading the Gaussians back.
 struct GaussianScene {
-    GaussianScene(VulkanContext& vc, std::vector<TreeTypeParams> types, std::vector<TreeInstance> instances)
+    // Without `levelOfDetail` every Gaussian is drawn in full: no stem too thin, none round, every leaf in full.
+    GaussianScene(VulkanContext& vc, std::vector<TreeTypeParams> types, std::vector<TreeInstance> instances,
+                  bool levelOfDetail = false, glm::vec3 eye = glm::vec3(0.0f, 1.0f, 0.5f))
         : vc(vc) {
         const TreeFrame frame = defaultTreeFrame();
         generator = std::make_shared<TreeGenerator>(vc, types, instances,
                                                     TreeCapacity::fromReference(types, instances, frame), frame);
-        // No stem is too thin to be drawn.
         TreeRenderSettings values = defaultTreeRenderSettings({256, 256});
-        values.viewport.w = 0.0f;
+        if (!levelOfDetail) {
+            values.viewport.w = 0.0f;
+            values.gaussianLod = glm::vec4(0.0f);
+            values.leafLod = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        }
         settings = std::make_shared<HostValues<TreeRenderSettings>>(vc, std::vector<TreeRenderSettings>{values});
         camera = std::make_shared<CameraUboType>();
-        setCamera(camera->ubo, glm::vec3(0.0f, 1.0f, 0.5f), glm::vec3(0.0f, 1.0f, 0.0f), 40.0f, 1.0f);
+        setCamera(camera->ubo, eye, glm::vec3(0.0f, 1.0f, 0.0f), 40.0f, 1.0f);
         gaussians = std::make_unique<TreeGaussians>(vc, *generator, camera, settings);
         graph = std::make_unique<ComputeGraph>(vc, 1);
         graph->compileFrom(gaussians->getElement());
@@ -204,4 +213,67 @@ TEST_F(TreeGaussiansTest, silhouetteMatchesClassical) {
         // classical leaves' level of detail account for the rest.
         EXPECT_GT(double(both) / double(either), 0.8);
     }
+}
+
+TEST_F(TreeGaussiansTest, farLeavesAreOneGaussian) {
+    // A tree 0.6 units tall, 60 units away: 256 pixels show 44 units, its leaves are well below a pixel.
+    GaussianScene scene(*vc, {tree_presets::sassafras()}, {makeInstance(0, 2, glm::vec3(0.0f), 0.1f)}, true,
+                        glm::vec3(0.0f, 1.0f, 60.0f));
+    const TreeCapacity& capacity = scene.generator->getCapacity();
+    const std::vector<uint32_t> counters = scene.generator->readCounters();
+    const std::vector<glm::vec4> colAlpha = scene.read<glm::vec4>(scene.gaussians->getGaussians().colAlpha);
+    const uint32_t leafSlots = capacity.segments * TreeGaussians::kStemGaussians;
+    ASSERT_GT(counters[kTreeCounterLeaves], 100u);
+    for (uint32_t leaf = 0; leaf < counters[kTreeCounterLeaves]; ++leaf) {
+        const uint32_t first = leafSlots + leaf * TreeGaussians::kLeafGaussians;
+        EXPECT_GT(colAlpha[first].w, 0.0f) << leaf;
+        EXPECT_LE(colAlpha[first].w, 0.95f) << leaf;
+        for (uint32_t k = 1; k < TreeGaussians::kLeafGaussians; ++k) {
+            ASSERT_EQ(colAlpha[first + k].w, 0.0f) << leaf << " " << k;
+        }
+    }
+}
+
+TEST_F(TreeGaussiansTest, thinStemsAreRound) {
+    // Far enough that the twigs are thin and the trunk is not.
+    GaussianScene scene(*vc, {tree_presets::sassafras()}, {makeInstance(0, 2, glm::vec3(0.0f), 0.1f)}, true,
+                        glm::vec3(0.0f, 1.0f, 3.0f));
+    const std::vector<uint32_t> counters = scene.generator->readCounters();
+    const std::vector<SegmentRecord> segments = scene.generator->readRecords().segments;
+    const GaussianSoABuffers& g = scene.gaussians->getGaussians();
+    const std::vector<glm::vec4> colAlpha = scene.read<glm::vec4>(g.colAlpha);
+    const std::vector<glm::vec3> scale = scene.read<glm::vec3>(g.scale);
+    const TreeRenderSettings values = scene.settings->values().at(0);
+    const CameraMVP& ubo = scene.camera->ubo;
+    const float focal = std::abs(ubo.proj[1][1]) * 0.5f * values.viewport.y;
+    auto pixels = [&](glm::vec4 posRadius) {
+        const glm::vec4 view = ubo.view * glm::vec4(glm::vec3(posRadius), 1.0f);
+        return posRadius.w * focal / std::max(-view.z, 1e-4f);
+    };
+    uint32_t thin = 0, thick = 0;
+    for (uint32_t s = 0; s < counters[kTreeCounterSegments]; ++s) {
+        const float radius = std::max(pixels(segments[s].fromPosRadius), pixels(segments[s].toPosRadius));
+        const uint32_t first = s * TreeGaussians::kStemGaussians;
+        if (radius < 0.5f * values.gaussianLod.x) {
+            ++thin;
+            for (uint32_t local = 0; local < TreeGaussians::kStemGaussians; ++local) {
+                const bool roundOne = local % 12u == 0u;
+                if (roundOne) {
+                    ASSERT_GT(colAlpha[first + local].w, 0.5f) << s << " " << local;
+                    // As wide both ways (0.84 of the radius).
+                    EXPECT_NEAR(scale[first + local].x, scale[first + local].y, 1e-6f) << s;
+                } else {
+                    ASSERT_EQ(colAlpha[first + local].w, 0.0f) << s << " " << local;
+                }
+            }
+        } else if (radius > values.gaussianLod.x) {
+            ++thick;
+            for (uint32_t local = 0; local < TreeGaussians::kStemGaussians; ++local) {
+                ASSERT_GT(colAlpha[first + local].w, 0.5f) << s << " " << local;
+            }
+        }
+    }
+    std::printf("%u thin segments drawn round, %u thick ones in full\n", thin, thick);
+    EXPECT_GT(thin, 10u);
+    EXPECT_GT(thick, 0u);
 }

@@ -67,7 +67,7 @@ static_assert(sizeof(StemRecord) == 64, "StemRecord must match its std430 layout
 static_assert(sizeof(SegmentRecord) == 96, "SegmentRecord must match its std430 layout");
 static_assert(sizeof(LeafRecord) == 48, "LeafRecord must match its std430 layout");
 static_assert(sizeof(TreeFrame) == 64, "TreeFrame must match its std430 layout");
-static_assert(sizeof(TreeRenderSettings) == 272, "TreeRenderSettings must match its std430 layout");
+static_assert(sizeof(TreeRenderSettings) == 288, "TreeRenderSettings must match its std430 layout");
 static_assert(sizeof(TreeTerrainParams) == 80, "TreeTerrainParams must match its std430 layout");
 static_assert(sizeof(TreeTerrainLod) == 64, "TreeTerrainLod must match its std430 layout");
 static_assert(sizeof(TreePlacementParams) == 64, "TreePlacementParams must match its std430 layout");
