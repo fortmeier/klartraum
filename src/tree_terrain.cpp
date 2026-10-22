@@ -123,6 +123,8 @@ TreeTerrain::TreeTerrain(VulkanContext& vulkanContext, const TreeTerrainParams& 
         config.placement = canopy.placement;
         config.canopy = glm::vec4(canopy.fullBelow, canopy.noneAbove, 0.0f, 0.0f);
     }
+    // With the settings' sun, the terrain shadows itself where it has relief.
+    config.canopy.w = settings && terrain.relief.x > 0.0f ? 1.0f : 0.0f;
     bounds = buildTerrainBounds(config);
 
     auto configBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<TreeTerrainConfig>>>(vulkanContext, 1u);

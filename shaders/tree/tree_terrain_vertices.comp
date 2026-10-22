@@ -17,7 +17,9 @@
 // The land cover (treeLandCover()) of each vertex is morphed the same way.
 // Where the forest canopy stands in for trees too small to draw
 // (treeCanopyWeight()), the surface rises to the canopy's top: the vertices'
-// heights include it, so normals, morphing and silhouettes follow it.
+// heights include it, so normals, morphing and silhouettes follow it. With
+// the sun of the settings, each vertex also gets how much of the sun the
+// terrain lets through (treeTerrainSunVisibility()) at its morphed position.
 
 #define TREE_CAMERA_SET 0
 #define TREE_CAMERA_BINDING 2
@@ -44,7 +46,8 @@ layout(std430, binding = 4) writeonly buffer Covers {
 layout(std430, binding = 5) readonly buffer Settings {
     TreeRenderSettings settings[];
 };
-// The same vertices' x canopy weight (the share of the surface that is forest canopy), yzw unused.
+// The same vertices' x canopy weight (the share of the surface that is forest canopy), y the sun's visibility
+// over the terrain, zw unused.
 layout(std430, binding = 6) writeonly buffer Extras {
     vec4 extras[];
 };
@@ -80,9 +83,11 @@ void main() {
     int gz = int(round((node.y - config.lod.root.y) / node.z)) * quads * step;
     int row = quads + 1;
     vec3 eye = camera.cameraWorldPos.xyz;
-    // The settings are bound only with a canopy.
+    // The settings are bound only with a canopy or the terrain's shadows.
     bool withCanopy = config.canopy.x > 0.0f;
+    bool withShadows = config.canopy.w > 0.0f;
     float focal = withCanopy ? treeFocalPixels(settings[0]) : 0.0f;
+    vec3 sun = withShadows ? settings[0].sun.xyz : vec3(0.0f, 1.0f, 0.0f);
     for (int k = int(gl_LocalInvocationID.x); k < side * side; k += 256) {
         int i = k % side - 2;
         int j = k / side - 2;
@@ -147,6 +152,8 @@ void main() {
         }
         vertices[base + uint(v)] = vec4(normalize(mix(fine, normalize(coarse), k)), mix(h, coarseHeight, k));
         covers[base + uint(v)] = mix(cover[v], coarseCover, k);
-        extras[base + uint(v)] = vec4(mix(C(i, j), coarseCanopy, k), 0.0f, 0.0f, 0.0f);
+        float morphed = mix(h, coarseHeight, k);
+        float sunlight = withShadows ? treeTerrainSunVisibility(config.terrain, vec3(x, morphed, z), sun) : 1.0f;
+        extras[base + uint(v)] = vec4(mix(C(i, j), coarseCanopy, k), sunlight, 0.0f, 0.0f);
     }
 }

@@ -24,6 +24,8 @@
  * - landCoverFollowsTheTerrain: fields lie mostly on slopes below 10 degrees and low ground; rock on steep
  *   ground or above the tree line; no forest above the tree line
  * - landCoverIsDeterministicPerSeed: the same seed gives the same land cover, another seed another one
+ * - terrainShadowsItself: without relief nothing is in shadow, under an overhead sun nothing either; under a low
+ *   sun ground facing away from it is in shadow, ground facing it mostly lit, with soft edges between
  **/
 
 #include <gtest/gtest.h>
@@ -440,4 +442,42 @@ TEST(TreeTerrain, landCoverIsDeterministicPerSeed) {
     });
     // Two independent half-forested maps disagree on about half of the soil.
     EXPECT_GT(differ, count / 4);
+}
+
+TEST(TreeTerrain, terrainShadowsItself) {
+    const glm::vec3 low = glm::normalize(glm::vec3(-1.0f, 0.25f, 0.3f));
+    const BonsaiScene flat = sceneAt(0.21f);
+    forSoilGrid(flat, 21, [&](float x, float z, float) {
+        EXPECT_EQ(tree::treeTerrainSunVisibility(flat.terrain, glm::vec3(x, flat.soilHeight(x, z), z), low), 1.0f);
+    });
+    const BonsaiScene scene = sceneAt(1.0f);
+    int away = 0, awayShadowed = 0, facing = 0, facingLit = 0, soft = 0;
+    forSoilGrid(scene, 81, [&](float x, float z, float r) {
+        if (r > 0.7f) {
+            return;
+        }
+        const glm::vec3 p(x, scene.soilHeight(x, z), z);
+        EXPECT_GT(tree::treeTerrainSunVisibility(scene.terrain, p, glm::vec3(0.0f, 1.0f, 0.0f)), 0.999f);
+        const float e = 0.004f;
+        const glm::vec3 n = glm::normalize(glm::vec3(scene.soilHeight(x - e, z) - scene.soilHeight(x + e, z), 2.0f * e,
+                                                     scene.soilHeight(x, z - e) - scene.soilHeight(x, z + e)));
+        const float v = tree::treeTerrainSunVisibility(scene.terrain, p, low);
+        EXPECT_GE(v, 0.0f);
+        EXPECT_LE(v, 1.0f);
+        soft += (v > 0.05f && v < 0.95f) ? 1 : 0;
+        if (glm::dot(n, low) < -0.1f) {
+            ++away;
+            awayShadowed += v < 0.5f ? 1 : 0;
+        } else if (glm::dot(n, low) > 0.3f) {
+            ++facing;
+            facingLit += v > 0.5f ? 1 : 0;
+        }
+    });
+    std::printf("facing away: %d of %d in shadow; facing: %d of %d lit; %d soft\n", awayShadowed, away, facingLit,
+                facing, soft);
+    ASSERT_GT(away, 100);
+    ASSERT_GT(facing, 100);
+    EXPECT_GT(awayShadowed, away * 9 / 10);
+    EXPECT_GT(facingLit, facing * 7 / 10);
+    EXPECT_GT(soft, 20);
 }

@@ -24,6 +24,7 @@ layout(location = 0) out vec3 outWorldPos;
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec3 outAlbedo;
 layout(location = 3) out float outCoverage; // of the crown: bare broadleaves are sparse
+layout(location = 4) out float outSunlight; // the sun's visibility over the terrain
 
 vec3 ring(float angle, float radius, float y) {
     return vec3(radius * cos(angle), y, radius * sin(angle));
@@ -83,6 +84,7 @@ void main() {
     outAlbedo = trunk ? vec3(0.09f, 0.07f, 0.05f) : vec3(crown) * shade;
     // Fading in where the canopy fades out (kind.w).
     outCoverage = (trunk ? 1.0f : crown.w) * site.kind.w;
+    outSunlight = site.kind.z;
     outWorldPos = world;
     outNormal = normal;
     gl_Position = camera.proj * camera.view * vec4(world, 1.0f);

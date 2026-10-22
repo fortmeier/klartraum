@@ -116,7 +116,8 @@ struct TreeLodPatch {
 struct TreeLodInstance {
     vec4 posYaw; // xyz the patch origin's position, w the turn about +y in radians
     vec4 plane;  // x dy/dx and y dy/dz of the ground, z scale, w unused
-    uvec4 ids;   // x patch, y how far the copy has faded out (float bits; 0: not at all), zw unused
+    uvec4 ids;   // x patch, y how far the copy has faded out, z how much of the sun the terrain takes away (both float
+                 // bits; 0: nothing), w unused
 };
 
 // Values the whole generation reads.
@@ -197,14 +198,16 @@ struct TreeTerrainConfig {
     TreeTerrainParams terrain;
     TreeTerrainLod lod;
     TreePlacementParams placement; // of the trees whose canopy the terrain carries
-    vec4 canopy; // x tree size in pixels below which the canopy stands in fully, y above which not at all, zw unused;
+    vec4 canopy; // x tree size in pixels below which the canopy stands in fully, y above which not at all, z unused,
+                 // w 1 for the terrain's shadows of the settings' sun (treeTerrainSunVisibility());
                  // the canopy is off where x <= 0
 };
 
 // A cell's tree, if any.
 struct TreeSite {
     vec4 posHeight; // xyz the stem's foot on the ground, w the height in units (0: no tree in this cell)
-    vec4 kind;      // x species (TREE_SITE_*), y turn about +y in radians, z forest weight there, w unused
+    vec4 kind;      // x species (TREE_SITE_*), y turn about +y in radians, z forest weight there (of a visible tree:
+                    // the sun's visibility over the terrain), w unused (of a visible tree: how far it has faded in)
 };
 
 // The layout of the impostor atlases (TreeImpostorAtlas): per tree type and season sample, views x views views
@@ -544,6 +547,30 @@ TREE_FN float treeTerrainSoil(TreeTerrainParams t, float x, float z) {
 // Height of the ground at (x, z) inside the pot: the soil with its mound and bumps, and the landscape's relief.
 TREE_FN float treeTerrainHeight(TreeTerrainParams t, float x, float z) {
     return treeTerrainSoil(t, x, z) + treeTerrainRelief(t, x, z);
+}
+
+// How much of the sun reaches pos over the terrain: 1 in the open, 0 behind a ridge, soft between (a penumbra
+// widening with the distance to what casts it, about 5 degrees). Marches 16 steps towards the sun, from 0.004 to
+// about 1 unit away, comparing the ray's height with the ground's.
+TREE_FN float treeTerrainSunVisibility(TreeTerrainParams t, vec3 pos, vec3 sun) {
+    float across = sqrt(sun.x * sun.x + sun.z * sun.z);
+    if (t.relief.x <= 0.0f || sun.y <= 0.0f || across < 1e-4f) {
+        return 1.0f;
+    }
+    vec2 dir = vec2(sun.x, sun.z) / across;
+    float rise = sun.y / across;
+    float visibility = 1.0f;
+    float d = 0.004f;
+    for (int i = 0; i < 16; ++i) {
+        vec2 p = vec2(pos.x, pos.z) + d * dir;
+        if (treeTerrainRadius(t, p.x, p.y) >= 1.0f) {
+            break;
+        }
+        float above = pos.y + d * rise - treeTerrainHeight(t, p.x, p.y);
+        visibility = min(visibility, clamp(0.5f + above / (0.09f * d), 0.0f, 1.0f));
+        d *= 1.45f;
+    }
+    return visibility;
 }
 
 // Altitude in metres above the valley floors, at true proportions, of a point on the ground.
