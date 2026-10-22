@@ -16,6 +16,8 @@
  *   trees within its pool, none left out
  * - detailBudgetConverges: with frame times growing with the detail, TreeDetailBudget settles within a few frames
  *   at the detail whose frame time meets the budget, without overshooting, and keeps full detail under budget
+ * - lightGridFollowsTheNearTrees: where the trees follow the placement, the light grid surrounds the near trees
+ *   with voxels a fraction of a tree; below their crowns less sun arrives than above them; it moves with the camera
  * - lessDetailGeneratesFewerTrees: with half the detail the renderer generates about half as many segments, and
  *   more trees become impostors
  **/
@@ -270,4 +272,56 @@ TEST_F(TreeLodTest, lessDetailGeneratesFewerTrees) {
     std::printf("segments %u -> %u, impostors %u -> %u\n", segments[0], segments[1], impostors[0], impostors[1]);
     EXPECT_NEAR(double(segments[1]), 0.5 * segments[0], 0.2 * segments[0]);
     EXPECT_GT(impostors[1], impostors[0]);
+}
+
+TEST_F(TreeLodTest, lightGridFollowsTheNearTrees) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.scale.s = 0.5f;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{320, 180};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    BonsaiRenderer renderer(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(renderer.getOutput());
+    renderer.initialize(1);
+    glm::vec4 mins[2];
+    for (int k = 0; k < 2; ++k) {
+        const glm::vec3 eye = k == 0 ? glm::vec3(0.9f, 1.2f, 1.6f) : glm::vec3(-1.3f, 1.0f, -1.2f);
+        setCamera(renderer.getCamera()->ubo, eye, glm::vec3(0.0f, 0.4f, 0.0f), 40.0f, 16.0f / 9.0f);
+        renderer.getCamera()->update(0);
+        renderer.setView(eye);
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const TreeRenderSettings& s = renderer.getSettings().values().at(0);
+        mins[k] = s.lightGridMin;
+        const std::vector<TreeInstance>& near = renderer.getGenerator().getInstances().values();
+        const float height = scene.config.scale.treeHeightUnits();
+        // Voxels a fraction of a tree; the grid holds every near tree.
+        EXPECT_LT(s.lightGridMin.w, 0.2f * height);
+        const glm::vec3 lo(s.lightGridMin), hi = lo + s.lightGridMin.w * glm::vec3(s.lightGridSize);
+        double below = 0.0, above = 0.0;
+        int count = 0;
+        const std::vector<glm::vec4> light = renderer.getLightVolume().readLight();
+        auto at = [&](glm::vec3 p) {
+            const glm::ivec3 v = glm::clamp(glm::ivec3((p - lo) / s.lightGridMin.w), glm::ivec3(0),
+                                            glm::ivec3(s.lightGridSize) - glm::ivec3(1));
+            return light[tree::treeLightIndex(uint32_t(v.x), uint32_t(v.y), uint32_t(v.z), s.lightGridSize)];
+        };
+        for (const TreeInstance& inst : near) {
+            if (inst.posScale.w <= 0.0f) {
+                continue;
+            }
+            const glm::vec3 foot(inst.posScale);
+            EXPECT_TRUE(glm::all(glm::greaterThanEqual(foot, lo)) && glm::all(glm::lessThanEqual(foot, hi)));
+            below += at(foot + glm::vec3(0.0f, 0.2f * height, 0.0f)).x;
+            above += at(foot + glm::vec3(0.0f, 1.15f * height, 0.0f)).x;
+            ++count;
+        }
+        ASSERT_GT(count, 10);
+        std::printf("view %d: voxel %.4f, sun below the crowns %.2f, above %.2f\n", k, s.lightGridMin.w, below / count,
+                    above / count);
+        EXPECT_LT(below / count, 0.8 * above / count);
+    }
+    EXPECT_GT(glm::length(glm::vec3(mins[0]) - glm::vec3(mins[1])), 0.1f);
 }

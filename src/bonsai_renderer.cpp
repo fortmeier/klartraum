@@ -74,6 +74,10 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                                      std::max(1.0f, 1.6f * scene.config.scale.treeHeightUnits() + 0.4f),
                                      pot.halfWidth + 0.15f),
                            config.lightVoxel);
+    if (scene.placed) {
+        // A grid of fixed size that follows the near trees (setView()), with voxels a fraction of a tree.
+        values.lightGridSize = glm::uvec4(kFollowGrid, 1u);
+    }
     if (scene.terrain.relief.x > 0.0f) {
         // Haze in the world above the soil, up to its peaks and the trees on them.
         values.atmosphere =
@@ -92,9 +96,12 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             potMesh.push_back(v);
         }
     }
+    // The pot and the lantern cast shadows in the grid over the pot; a grid following the trees has none.
     lightVolume = std::make_unique<TreeLightVolume>(
         vulkanContext, *generator, settings,
-        treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians));
+        scene.placed
+            ? std::vector<float>{}
+            : treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians));
     // Patches of the captured moss, placed over the soil with a level of detail each; too flat to cast shadows.
     const std::vector<MossPatch> mossPatches = extractMossPatches(loadGaussiansSpz(config.lanternPath, true));
     // As many copies as cover the soil at the lantern's scale, the moss scaled with the lantern; none where the
@@ -356,6 +363,25 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
         return instances;
     };
     generator->getInstances().set(instancesOf(0, activeNear, nearTrees, types));
+    // The light grid around the near trees: their crowns and a margin of empty voxels, so that what lies outside
+    // reads the light of an empty edge.
+    if (!sites.empty()) {
+        glm::vec3 lo(1e30f), hi(-1e30f);
+        for (size_t i = 0; i < std::min(sites.size(), activeNear); ++i) {
+            const glm::vec3 foot(sites[i].posHeight);
+            const float h = sites[i].posHeight.w;
+            lo = glm::min(lo, foot - glm::vec3(0.4f * h, 0.1f * h, 0.4f * h));
+            hi = glm::max(hi, foot + glm::vec3(0.4f * h, 1.1f * h, 0.4f * h));
+        }
+        const glm::vec3 extent = hi - lo;
+        const glm::vec3 counts(kFollowGrid);
+        // Two voxels of margin on every side.
+        const float voxel = std::max(extent.x / (counts.x - 4.0f),
+                                     std::max(extent.y / (counts.y - 4.0f), extent.z / (counts.z - 4.0f)));
+        TreeRenderSettings grid = settings->values().at(0);
+        grid.lightGridMin = glm::vec4(0.5f * (lo + hi) - 0.5f * voxel * counts, voxel);
+        settings->set(0, grid);
+    }
     if (reducedGenerator) {
         reducedGenerator->getInstances().set(instancesOf(activeNear, activeReduced, reducedCount, reducedTypes));
     }
