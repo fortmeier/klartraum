@@ -16,11 +16,30 @@
 namespace klartraum {
 
 /// Push constants of `tree_place_cull.comp`.
+/// The cut-off (log2 pixels, the lower edge of a size bin) from which on the trees counted in `bins` (TREE_SIZE_BINS,
+/// treeSizeBin()) fit `capacity`: the lowest bin edge for which the bins at or above it hold at most `capacity`
+/// trees. `taken` receives that number. What tree_size_cut.comp computes as its target.
+float treeSizeCutTarget(const std::vector<uint32_t>& bins, uint32_t capacity, uint32_t* taken = nullptr);
+
+/// A cut-off by size after a frame (TreeProxies::readCut(), TreeGaussianForest::readCut()): the state that
+/// tree_size_cut.comp keeps, [0..3] as below, then the bins.
+struct TreeSizeCut {
+    float cut = 0.0f;    ///< log2 pixels
+    float target = 0.0f; ///< this frame's target (treeSizeCutTarget()), which the cut-off follows
+    uint32_t taken = 0;  ///< trees at or above the target's bin
+    std::vector<uint32_t> bins;
+
+    static constexpr uint32_t kStateSize = 4u + TREE_SIZE_BINS;
+    static TreeSizeCut fromState(const std::vector<uint32_t>& state);
+    /// The state before the first frame: no cut-off.
+    static std::vector<uint32_t> initialState();
+};
+
 struct TreeProxyCullPush {
     uint32_t capacity = 0;
     float minPixels = 0.0f;
     float fadeAbove = 0.0f;
-    float pad = 0.0f;
+    uint32_t bySize = 0;
 };
 
 struct TreeProxyConfig {
@@ -28,6 +47,11 @@ struct TreeProxyConfig {
     float minPixels = 4.0f;    ///< trees smaller on screen are left out
     /// Trees fade in from minPixels to this size (treeProxyFade()), where a canopy fades out; 0: no fading.
     float fadeAbove = 0.0f;
+    /// The list holds the largest trees (their sizes times treeCopyPriority()), down to a cut-off that
+    /// tree_size_cut.comp keeps on the GPU so that they fill `headroom` of the capacity; otherwise the trees come in
+    /// the order the cull finds them, and those beyond the capacity are left out.
+    bool bySize = false;
+    float headroom = 0.6f;
 };
 
 /**
@@ -38,7 +62,10 @@ struct TreeProxyConfig {
  * pixels) into a list of visible TreeSite; `tree_place_args.comp` writes the
  * indirect draw of the classical proxies (getDrawComponent(): a trunk and a
  * crown of two cones, 72 vertices each) and the dispatch of their Gaussians
- * (TreeProxyGaussians). Add getElement() as a compute dependency.
+ * (TreeProxyGaussians). Add getElement() as a compute dependency. With
+ * TreeProxyConfig::bySize, the cull also counts the trees by size and
+ * `tree_size_cut.comp` sets the cut-off for the next frame; call initialize()
+ * once after the graph is compiled.
  */
 class TreeProxies {
 public:
@@ -65,11 +92,17 @@ public:
     std::vector<uint32_t> readCounter(uint32_t pathId = 0);
     /// After a submission of `pathId`: the visible trees.
     std::vector<TreeSite> readVisible(uint32_t pathId = 0);
+    /// Starts the cut-off by size anew in every path; call after compiling.
+    void initialize(uint32_t numberPaths);
+    /// After a submission of `pathId`: the list's cut-off by size (TreeProxyConfig::bySize).
+    TreeSizeCut readCut(uint32_t pathId = 0);
 
 private:
     TreeProxyConfig config;
     BufferRef tileConfig;
     std::shared_ptr<GeneralComputation<TreeProxyCullPush>> cull;
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sizeState;
+    std::shared_ptr<GeneralComputation<uint32_t>> sizeCut;
     std::shared_ptr<GeneralComputation<glm::uvec2>> args;
     std::shared_ptr<BufferElement<VulkanBuffer<TreeSite>>> visible;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> counter;

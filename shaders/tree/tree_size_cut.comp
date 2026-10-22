@@ -4,9 +4,10 @@
 
 #version 450
 
-// The cut-off of the library copies (TreeGaussianForest) for this frame: the
-// lower edge of the smallest size bin from which on the larger trees fit the
-// copies (treeForestCutTarget() on the CPU). It rises at once when it must, and
+// A cut-off by size (TreeSizeCut: TreeGaussianForest's copies, TreeProxies'
+// list) after a frame's histogram: the lower edge of the smallest size bin
+// from which on the larger trees fit the capacity (treeSizeCutTarget() on the
+// CPU). It rises at once when it must, and
 // falls by at most a quarter of the fade width per frame, so trees come back
 // gradually.
 //
@@ -26,14 +27,14 @@ layout(std430, binding = 0) buffer State {
 };
 
 layout(push_constant) uniform Push {
-    uint copies; // at most
+    uint capacity;
 }
 pc;
 
 void main() {
     uint sum = 0u;
     uint bin = TREE_SIZE_BINS;
-    while (bin > 0u && sum + state[4u + bin - 1u] <= pc.copies) {
+    while (bin > 0u && sum + state[4u + bin - 1u] <= pc.capacity) {
         bin -= 1u;
         sum += state[4u + bin];
     }

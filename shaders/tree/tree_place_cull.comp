@@ -11,7 +11,10 @@
 // with how far it has faded in (kind.w, where the forest canopy fades out)
 // and how much sun the terrain lets through to its crown (kind.z),
 // unless it is one of the near trees generated in full (within the near
-// radius). Trees beyond the capacity are counted.
+// radius). Trees beyond the capacity are counted. With pc.bySize, every tree
+// in the view is counted by its size times treeCopyPriority() into the bins
+// of `sizes`, and only those at or above the last frame's cut-off
+// (tree_size_cut.comp) are appended.
 
 #define TREE_CAMERA_SET 0
 #define TREE_CAMERA_BINDING 4
@@ -47,11 +50,16 @@ layout(std430, binding = 8) readonly buffer Near {
     vec4 near[];
 };
 
+// [0] the cut-off in log2 pixels (float bits), then the bins from [4] on; see tree_size_cut.comp.
+layout(std430, binding = 9) buffer Sizes {
+    uint sizes[];
+};
+
 layout(push_constant) uniform Push {
     uint capacity;
     float minPixels;
     float fadeAbove; // the trees fade in up to this size (kind.w of the visible sites), 0: no fading
-    float pad;
+    uint bySize;     // 1: the list holds the largest trees, down to the cut-off in `sizes`
 }
 pc;
 
@@ -94,6 +102,14 @@ void main() {
         float fadeAbove = settings[0].canopyBand.x > 0.0f && pc.fadeAbove > 0.0f ? settings[0].canopyBand.y : pc.fadeAbove;
         if (pixels < minPixels) {
             continue;
+        }
+        if (pc.bySize != 0u) {
+            // The site's forest weight, before kind.z carries the sun's visibility.
+            float rank = pixels * treeCopyPriority(site.kind.z);
+            atomicAdd(sizes[4u + treeSizeBin(rank)], 1u);
+            if (log2(rank) < uintBitsToFloat(sizes[0])) {
+                continue;
+            }
         }
         site.kind.z = treeTerrainSunVisibility(config.terrain, foot + vec3(0.0f, 0.6f * h, 0.0f), settings[0].sun.xyz);
         site.kind.w = fadeAbove > minPixels ? treeProxyFade(vec4(minPixels, fadeAbove, 0.0f, 0.0f), pixels)

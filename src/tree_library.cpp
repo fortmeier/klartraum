@@ -127,7 +127,7 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
     // Read back by the tests, so host visible.
     instances = std::make_shared<BufferElement<VulkanBuffer<TreeLodInstance>>>(vulkanContext, visibleCapacity);
     instances->setName("TreeLibraryInstances");
-    state = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 4u + TREE_SIZE_BINS);
+    state = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, TreeSizeCut::kStateSize);
     state->setName("TreeLibraryCut");
     // The bins are counted anew every frame; the cut-off before them carries over.
     state->setRecordToZeroRange(4 * sizeof(uint32_t), TREE_SIZE_BINS * sizeof(uint32_t));
@@ -145,8 +145,8 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
     histogram->setGroupCountX((visibleCapacity + 255) / 256);
     histogram->setPushConstants({visibleCapacity});
 
-    cutoff = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_library_cut.comp.spv");
-    cutoff->setName("TreeLibraryCut");
+    cutoff = std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_size_cut.comp.spv");
+    cutoff->setName("TreeLibraryCutoff");
     cutoff->setInput(histogram, 0, 4);
     cutoff->setGroupCountX(1);
     cutoff->setPushConstants({config.trees});
@@ -172,38 +172,20 @@ TreeGaussianForest::TreeGaussianForest(VulkanContext& vulkanContext, TreeProxies
 
 void TreeGaussianForest::initialize(uint32_t numberPaths) {
     for (uint32_t path = 0; path < numberPaths; ++path) {
-        state->getBuffer(path).memcopyFrom(std::vector<uint32_t>(4u + TREE_SIZE_BINS, 0u));
+        state->getBuffer(path).memcopyFrom(TreeSizeCut::initialState());
     }
 }
 
-TreeForestCut TreeGaussianForest::readCut(uint32_t pathId) {
-    std::vector<uint32_t> values(4u + TREE_SIZE_BINS, 0u);
+TreeSizeCut TreeGaussianForest::readCut(uint32_t pathId) {
+    std::vector<uint32_t> values(TreeSizeCut::kStateSize, 0u);
     state->getBuffer(pathId).memcopyTo(values);
-    TreeForestCut cut;
-    cut.cut = glm::uintBitsToFloat(values[0]);
-    cut.target = glm::uintBitsToFloat(values[1]);
-    cut.taken = values[2];
-    cut.bins.assign(values.begin() + 4, values.end());
-    return cut;
+    return TreeSizeCut::fromState(values);
 }
 
 std::vector<TreeLodInstance> TreeGaussianForest::readInstances(uint32_t pathId) {
     std::vector<TreeLodInstance> values(instances->getBuffer(pathId).getBufferMemSize() / sizeof(TreeLodInstance));
     instances->getBuffer(pathId).memcopyTo(values);
     return values;
-}
-
-float treeForestCutTarget(const std::vector<uint32_t>& bins, uint32_t copies, uint32_t* taken) {
-    uint32_t sum = 0;
-    uint32_t bin = uint32_t(bins.size());
-    while (bin > 0 && sum + bins[bin - 1] <= copies) {
-        --bin;
-        sum += bins[bin];
-    }
-    if (taken) {
-        *taken = sum;
-    }
-    return tree::treeSizeBinEdge(bin);
 }
 
 } // namespace klartraum
