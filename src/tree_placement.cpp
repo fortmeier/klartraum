@@ -71,7 +71,8 @@ std::vector<TreeSite> nearestTreeSites(const TreeTerrainParams& terrain, const T
     return sites;
 }
 
-TreeInstance treeInstanceFor(const TreeSite& site, const std::vector<TreeTypeParams>& types, uint32_t seed) {
+TreeInstance treeInstanceFor(const TreeSite& site, const std::vector<TreeTypeParams>& types, uint32_t seed,
+                             uint32_t variants) {
     const uint32_t type = site.kind.x == TREE_SITE_CONIFER && types.size() > 1 ? 1u : 0u;
     const glm::vec4 up = treeUpRotation(glm::vec3(0.0f, 1.0f, 0.0f));
     const glm::quat rotation =
@@ -79,7 +80,7 @@ TreeInstance treeInstanceFor(const TreeSite& site, const std::vector<TreeTypePar
     TreeInstance inst{};
     inst.posScale = glm::vec4(glm::vec3(site.posHeight), site.posHeight.w / types[type].shapeBase.z);
     inst.rot = glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
-    inst.ids = glm::uvec4(type, tree::treeHash2(seed, glm::floatBitsToUint(site.kind.y)), 0u, 0u);
+    inst.ids = glm::uvec4(type, tree::treeSiteSeed(seed, site.kind.y, variants), 0u, 0u);
     return inst;
 }
 

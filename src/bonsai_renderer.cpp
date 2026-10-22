@@ -192,6 +192,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                                                 TreeRenderInputs{BufferRef{}, lightVolume->getLight()}, proxyConfig);
         TreeGaussianForestConfig forestConfig = config.forest;
         forestConfig.trees = std::min(forestConfig.trees, proxyConfig.capacity);
+        forestConfig.seed = seed;
         forest = std::make_unique<TreeGaussianForest>(
             vulkanContext, *proxies, splats, gaussians->getExtraOffset() + sources.extraSlots - proxySlots, proxySlots,
             scene.types, camera, settings, lightVolume->getLight(), forestConfig);
@@ -398,7 +399,8 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     auto instancesOf = [&](size_t from, size_t active, size_t count, const std::vector<TreeTypeParams>& of) {
         std::vector<TreeInstance> instances;
         for (size_t i = from; i < std::min(sites.size(), from + active); ++i) {
-            instances.push_back(treeInstanceFor(sites[i], of, seed));
+            // The Gaussian renderer's near trees are the library's (TreeGaussianForestConfig::variants).
+            instances.push_back(treeInstanceFor(sites[i], of, seed, forest ? config.forest.variants : 0u));
         }
         // Over open land fewer trees are near, and with less detail fewer generated: the rest have scale 0, no tree.
         while (instances.size() < count) {

@@ -16,21 +16,24 @@ namespace klartraum {
 /**
  * @brief Gaussians of each tree type per season sample, for drawing trees far away as copies (TreeGaussianForest).
  *
- * Patch `type * seasons.size() + k` is a tree of type `type` (reduced, treeReducedType() with 8 % of the leaves,
- * when `reduced`) at scale
- * 1 grown in season seasons[k], upright with its foot at the origin: a flat Gaussian per leaf, coloured with its
- * seasonal albedo, and Gaussians along the stems thicker than a thousandth of the tree's height, all lit by
- * their colours are albedos (Gaussian3D::color), lit every frame like the trees (TreeLodInstance::ids.w). `heights`
- * receives each type's height.
+ * Patch `(type * variants + v) * seasons.size() + k` is a tree of type `type` (reduced, treeReducedType() with 8 %
+ * of the leaves, when `reduced`) grown from seed v + 1 at scale 1 in season seasons[k], upright with its foot at
+ * the origin: a flat Gaussian per leaf, coloured with its seasonal albedo, and Gaussians along the stems thicker
+ * than a thousandth of the tree's height. Their colours are albedos (Gaussian3D::color), lit every frame like the
+ * trees (TreeLodInstance::ids.w). `heights` receives each type's height, the largest of its variants.
  */
 std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams>& types,
                                                 const std::vector<float>& seasons, std::vector<float>& heights,
-                                                bool reduced = true);
+                                                bool reduced = true, uint32_t variants = 1);
 
 struct TreeGaussianForestConfig {
     std::vector<float> seasons{0.2f, 1.2f, 2.0f, 3.0f}; ///< at most 4
     /// Copies per frame, at most: the largest visible trees (TreeSizeCut), the others fade out by size.
     uint32_t trees = 32768;
+    /// Trees per type, grown from the seeds 1 to `variants`; the near trees take the same seeds (treeSiteSeed()),
+    /// so that a tree keeps its shape as it becomes a copy.
+    uint32_t variants = 8;
+    uint32_t seed = 7; ///< of the scene, for treeSiteSeed()
     /// Pixel diameters (of the crown) below which a tree uses its library levels 1, 2 and 3, and the crossfade band.
     glm::vec4 boundaries{480.0f, 160.0f, 60.0f, 0.15f};
 };
@@ -72,7 +75,7 @@ private:
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> state;
     std::shared_ptr<BufferElement<VulkanBuffer<TreeLodInstance>>> instances;
     std::shared_ptr<GeneralComputation<uint32_t>> histogram;
-    std::shared_ptr<GeneralComputation<uint32_t>> cutoff;
+    std::shared_ptr<GeneralComputation<glm::uvec2>> cutoff;
     std::shared_ptr<GeneralComputation<uint32_t>> convert;
     std::unique_ptr<TreeMossLod> lod;
 };

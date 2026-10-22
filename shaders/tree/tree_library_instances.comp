@@ -27,12 +27,13 @@ layout(std430, binding = 1) readonly buffer Counter {
 layout(std430, binding = 2) readonly buffer Settings {
     TreeRenderSettings settings[];
 };
-// x the season samples (up to 4), y the types' heights at scale 1 (x, y), z x the number of season samples, y of
-// types, z of copies at most.
+// The season samples (up to 4); the types' heights at scale 1 (x, y); x the number of season samples, y of types,
+// z of copies at most; x the variants per type, y the scene's seed (treeSiteSeed()).
 layout(std430, binding = 3) readonly buffer Library {
     vec4 seasons;
     vec4 heights;
     uvec4 counts;
+    uvec4 variants;
 };
 layout(std430, binding = 4) writeonly buffer Instances {
     TreeLodInstance instances[];
@@ -81,7 +82,8 @@ void main() {
         }
         inst.posYaw = vec4(site.posHeight.xyz, site.kind.y);
         inst.plane = vec4(0.0f, 0.0f, site.posHeight.w / heights[type], 0.0f);
-        inst.ids = uvec4(type * counts.x + nearest, floatBitsToUint(1.0f - shown),
+        uint variant = treeSiteSeed(variants.y, site.kind.y, variants.x) - 1u;
+        inst.ids = uvec4((type * variants.x + variant) * counts.x + nearest, floatBitsToUint(1.0f - shown),
                          floatBitsToUint(1.0f - site.kind.z), 1u);
     }
     instances[i] = inst;

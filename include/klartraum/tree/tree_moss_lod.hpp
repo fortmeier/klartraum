@@ -71,9 +71,13 @@ public:
     struct Fit {
         uint32_t step = 0;
         float factor = 1.0f;
+        float leaveOut = 0.0f; ///< the share of the copies to leave out from the next frame on
         std::vector<uint32_t> sums;
     };
     Fit readFit(uint32_t pathId = 0);
+    /// The fitting's state (tree_lod_fit.comp), or nullptr without `fitPool`: [2] the share of the copies that
+    /// should be left out because even the coarsest levels do not fit (float bits), for the next frame.
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> getFitState() const { return fitState; }
     /// Starts the fitting at the finest step in every path; call after compiling.
     void resetFit() {
         if (fitState) {
