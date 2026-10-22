@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include <cmath>
 #include "klartraum/tree/tree_model.hpp"
 
 namespace klartraum {
@@ -79,6 +80,18 @@ TreeRenderSettings defaultTreeRenderSettings(VkExtent2D extent) {
     settings.lightColor = glm::vec4(1.0f);
     settings.capturedTint = glm::vec4(1.0f);
     return settings;
+}
+
+TreeTypeParams treeReducedType(const TreeTypeParams& type, float leafShare) {
+    const int levels = int(type.ratios.x);
+    if (levels <= 1) {
+        return type;
+    }
+    TreeTypeParams reduced = type;
+    reduced.ratios.x = float(levels - 1);
+    reduced.leafCount.x = type.leafCount.x * type.nBranches[levels - 1] * leafShare;
+    reduced.leafCount.y = type.leafCount.y / std::sqrt(leafShare);
+    return reduced;
 }
 
 glm::vec4 treeUpRotation(const glm::vec3& up) {

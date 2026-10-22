@@ -95,6 +95,16 @@ TreeFrame defaultTreeFrame();
 /// bluish sky and a brownish ground.
 TreeRenderSettings defaultTreeRenderSettings(VkExtent2D extent);
 
+/**
+ * @brief A tree type for trees farther away (the level of detail L1): one stem level less, its leaves on the stems
+ *        of the new last level instead.
+ *
+ * Each of those stems carries the leaves its dropped children carried,
+ * `leafShare` of their number and accordingly larger (the leaves' area stays),
+ * so the tree's foliage keeps its extent and density with far fewer records.
+ */
+TreeTypeParams treeReducedType(const TreeTypeParams& type, float leafShare = 0.25f);
+
 /// Rotation (x, y, z, w) that turns the tree's +z growth direction to `up`.
 glm::vec4 treeUpRotation(const glm::vec3& up);
 

@@ -68,6 +68,9 @@ struct BonsaiRenderConfig {
     /// when the renderer is made) instead of proxies.
     bool impostors = true;
     TreeImpostorConfig impostorAtlas;
+    /// The classical renderer generates this many trees beyond the near ones with one stem level less
+    /// (treeReducedType(), the level of detail L1); the impostors start beyond them.
+    uint32_t reducedTrees = 96;
     TreeTerrainLodConfig terrain;
 };
 
@@ -106,6 +109,8 @@ public:
      *        proxies). Does nothing for a planting.
      */
     void setView(glm::vec3 eye);
+    /// The generator of the reduced trees (L1), or nullptr.
+    TreeGenerator* getReducedGenerator() { return reducedGenerator.get(); }
     /// Tiles in range of the last setView() still to be generated (they come a few per frame); 0 for a planting.
     uint32_t getPendingTiles() const { return tiles ? tiles->getCache().getMissing() : 0u; }
 
@@ -145,6 +150,11 @@ private:
     std::unique_ptr<TreeProxies> proxies;
     std::unique_ptr<TreeProxyGaussians> proxyGaussians;
     std::unique_ptr<TreeImpostorAtlas> atlas;
+    std::shared_ptr<TreeGenerator> reducedGenerator;
+    std::unique_ptr<TreeStemRenderer> reducedStems;
+    std::unique_ptr<TreeLeafRenderer> reducedLeaves;
+    std::vector<TreeTypeParams> reducedTypes;
+    uint32_t reducedCount = 0;
     std::unique_ptr<TreeImpostorRenderer> impostors;
     // The placement, its seed and the tree types, for setView().
     TreeTerrainParams terrainParams{};
