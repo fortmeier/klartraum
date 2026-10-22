@@ -479,6 +479,10 @@ void GlfwFrontend::keyCallback(GLFWwindow* window, int key, int scancode, int ac
     if (wantCaptureKeyboard()) {
         return;
     }
+    // A held key stays pressed until its release; the repeats in between carry no change.
+    if (action == GLFW_REPEAT) {
+        return;
+    }
     auto& eventQueue = klartraumEngine->getEventQueue();
     EventKey::Key klartraumKey = translateKey(key);
 
