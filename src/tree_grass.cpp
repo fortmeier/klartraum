@@ -133,4 +133,51 @@ std::vector<TreeGrassVisible> TreeGrass::readVisible(uint32_t pathId) {
     return values;
 }
 
+TreeGrassGaussians::TreeGrassGaussians(VulkanContext& vulkanContext, TreeGrass& grass, const GaussianSoABuffers& source,
+                                       uint32_t poolOffset, uint32_t poolSlots,
+                                       std::shared_ptr<HostValues<TreeRenderSettings>> settings,
+                                       std::shared_ptr<CameraUboType> camera, BufferRef light) {
+    clear = std::make_shared<GeneralComputation<glm::uvec2>>(vulkanContext, "shaders/tree/tree_lod_clear.comp.spv");
+    clear->setName("TreeGrassGaussianClear");
+    source.colAlpha.connectTo(*clear, 0);
+    clear->setGroupCountX((poolSlots + 255u) / 256u);
+    clear->setPushConstants({glm::uvec2(poolOffset, poolSlots)});
+
+    taken = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, 4);
+    taken->setName("TreeGrassGaussianSlots");
+    taken->setRecordToZero(true);
+
+    write =
+        std::make_shared<GeneralComputation<glm::uvec4>>(vulkanContext, "shaders/tree/tree_grass_gaussians.comp.spv");
+    write->setName("TreeGrassGaussians");
+    source.pos.connectTo(*write, 0);
+    source.rot.connectTo(*write, 1);
+    source.scale.connectTo(*write, 2);
+    write->setInput(clear, 3, 0);
+    grass.getVisible().connectTo(*write, 4);
+    grass.getCounter().connectTo(*write, 5);
+    write->setInput(settings, 6);
+    const BufferRef lightRef = bufferOrPlaceholder(vulkanContext, light);
+    write->setInput(lightRef.element, 7, lightRef.slot);
+    write->setInput(camera, 8);
+    grass.getSetup().connectTo(*write, 9);
+    grass.getFrame().connectTo(*write, 10);
+    write->setInput(taken, 11);
+    write->addDependency(grass.getElement());
+    write->setDynamicGroupDispatchParams(grass.getDispatchArgs());
+    write->setPushConstants({glm::uvec4(poolOffset, poolSlots, grass.getParams().counts.y, 0u)});
+
+    gaussians = source;
+    gaussians.pos = BufferRef{write, 0};
+    gaussians.rot = BufferRef{write, 1};
+    gaussians.scale = BufferRef{write, 2};
+    gaussians.colAlpha = BufferRef{write, 3};
+}
+
+uint32_t TreeGrassGaussians::readTaken(uint32_t pathId) {
+    std::vector<uint32_t> values(4, 0u);
+    taken->getBuffer(pathId).memcopyTo(values);
+    return values[0];
+}
+
 } // namespace klartraum

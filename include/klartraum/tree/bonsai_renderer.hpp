@@ -25,6 +25,7 @@
 #include "klartraum/tree/tree_moss_lod.hpp"
 #include "klartraum/tree/tree_impostors.hpp"
 #include "klartraum/tree/tree_library.hpp"
+#include "klartraum/tree/tree_grass.hpp"
 #include "klartraum/tree/tree_proxies.hpp"
 #include "klartraum/tree/tree_sky.hpp"
 #include "klartraum/tree/tree_stem_renderer.hpp"
@@ -102,6 +103,11 @@ struct BonsaiRenderConfig {
     /// and how much thicker the haze lies in the valleys (0: not at all).
     float visibilityMeters = 15000.0f;
     float valleyFog = 0.0f;
+    /// When the trees follow the placement, both renderers draw blades of grass near the camera; the Gaussian
+    /// renderer with this many Gaussians per frame at most.
+    bool grass = true;
+    TreeGrassConfig grassBlades;
+    uint32_t grassPool = 262144;
     TreeTerrainLodConfig terrain;
 };
 
@@ -168,6 +174,10 @@ public:
     /// The placement's tiles and proxies, or nullptr for a planting.
     TreePlacementTiles* getTiles() { return tiles.get(); }
     TreeProxies* getProxies() { return proxies.get(); }
+    /// The grass near the camera, or nullptr.
+    TreeGrass* getGrass() { return grass.get(); }
+    /// The grass's Gaussians in the Gaussian renderer, or nullptr.
+    TreeGrassGaussians* getGrassGaussians() { return grassGaussians.get(); }
     /// The Gaussian renderer's library copies of the trees, or nullptr.
     TreeGaussianForest* getForest() { return forest.get(); }
 
@@ -191,6 +201,8 @@ private:
     std::unique_ptr<TreeTerrainGaussians> terrainGaussians;
     std::unique_ptr<TreePlacementTiles> tiles;
     std::unique_ptr<TreeProxies> proxies;
+    std::unique_ptr<TreeGrass> grass;
+    std::unique_ptr<TreeGrassGaussians> grassGaussians;
     std::unique_ptr<TreeGaussianForest> forest;
     std::unique_ptr<TreeImpostorAtlas> atlas;
     std::shared_ptr<TreeGenerator> reducedGenerator;

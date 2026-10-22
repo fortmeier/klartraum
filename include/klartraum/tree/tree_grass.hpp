@@ -59,6 +59,9 @@ public:
     std::shared_ptr<StorageDrawComponent> getDrawComponent() const { return draw; }
     BufferRef getVisible() const { return {cull, 3}; }
     BufferRef getCounter() const { return {cull, 4}; }
+    BufferRef getSetup() const { return {cull, 0}; }
+    /// [0] the wind, [1] x 1 while grass is in reach of the camera.
+    BufferRef getFrame() const { return {cull, 5}; }
     /// Clumps whose dispatch (64 per workgroup) follows the visible ones.
     std::shared_ptr<DispatchIndirectCommandBufferElement> getDispatchArgs() const { return dispatchArgs; }
     const TreeGrassParams& getParams() const { return params; }
@@ -83,6 +86,29 @@ private:
     std::shared_ptr<DispatchIndirectCommandBufferElement> dispatchArgs;
     std::shared_ptr<HostValues<glm::vec4>> frame; ///< [0] the wind, [1] x 1 while grass is in reach
     std::shared_ptr<StorageDrawComponent> draw;
+};
+
+/**
+ * @brief The visible clumps of TreeGrass as Gaussians, into `poolSlots` slots from `poolOffset` of `gaussians`,
+ *        cleared every frame: a Gaussian per blade near the camera, a tuft per clump beyond a third of the radius.
+ */
+class TreeGrassGaussians {
+public:
+    TreeGrassGaussians(VulkanContext& vulkanContext, TreeGrass& grass, const GaussianSoABuffers& gaussians,
+                       uint32_t poolOffset, uint32_t poolSlots,
+                       std::shared_ptr<HostValues<TreeRenderSettings>> settings, std::shared_ptr<CameraUboType> camera,
+                       BufferRef light = {});
+
+    const GaussianSoABuffers& getGaussians() const { return gaussians; }
+    ComputeGraphElementPtr getElement() const { return write; }
+    /// After a submission of `pathId`: the slots the clumps asked for (also beyond the pool).
+    uint32_t readTaken(uint32_t pathId = 0);
+
+private:
+    std::shared_ptr<GeneralComputation<glm::uvec2>> clear;
+    std::shared_ptr<GeneralComputation<glm::uvec4>> write;
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> taken;
+    GaussianSoABuffers gaussians;
 };
 
 } // namespace klartraum

@@ -23,6 +23,11 @@
  *   holds the capacity
  * - noGrassFromHighAbove: once the camera is told to be 100 m above the ground (setView()), no clump is evaluated;
  *   back down at 1.7 m the grass returns
+ * - grassRendersBothWays: from 1.7 m above open land in summer, the Gaussian grass puts as much light into blocks of
+ *   the image below the horizon as the classical blades (mean of all pixels, green within 0.05 per block and the
+ *   colour within 0.03 overall); images and GPU times are written
+ * - theRenderersDrawGrass: standing in a meadow at scale 0.75 both renderers find grass in the view (the Gaussian
+ *   renderer within its pool), none from 100 m above; a planting has no grass
  * - bladesCoverTheGround: drawn alone over black from 1.7 m above open land, the blades cover much of the ground
  *   in the view and none of the sky, green in summer and lighter under snow; images and the GPU times are written
  *   (build/TestingOutput/tree/)
@@ -34,7 +39,10 @@
 #include <cmath>
 #include <memory>
 
+#include "klartraum/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/tree/bonsai_renderer.hpp"
+#include "klartraum/tree/tree_gaussians.hpp"
 #include "klartraum/tree/tree_grass.hpp"
 
 #include "tree_test_helpers.hpp"
@@ -125,6 +133,37 @@ struct GrassScene {
         graph->compileFrom(pass);
     }
 
+    // The same grass as Gaussians, drawn alone into a second black target.
+    void addGaussians(uint32_t slots = 262144) {
+        TreeTypeParams p = tree_presets::quakingAspen();
+        p.ratios.x = 1.0f;
+        p.leafCount.x = 0.0f;
+        const std::vector<TreeTypeParams> types = {p};
+        const std::vector<TreeInstance> trees = {makeInstance(0, 1, glm::vec3(10.0f, 0.0f, 0.0f), 0.01f)};
+        generator = std::make_shared<TreeGenerator>(vc, types, trees,
+                                                    TreeCapacity::fromReference(types, trees, defaultTreeFrame()));
+        TreeGaussianSources sources;
+        sources.trees = false;
+        sources.extraSlots = slots;
+        gaussians = std::make_unique<TreeGaussians>(vc, *generator, camera, settings, std::move(sources));
+        grassGaussians = std::make_unique<TreeGrassGaussians>(vc, *grass, gaussians->getGaussians(),
+                                                              gaussians->getExtraOffset(), slots, settings, camera);
+        gaussianTarget = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        splatting =
+            createGaussianSplatting(vc, GsplatBackend::Raster, gaussianTarget, camera, grassGaussians->getGaussians());
+        gaussianGraph = std::make_unique<ComputeGraph>(vc, 1);
+        gaussianGraph->enableProfiling();
+        gaussianGraph->compileFrom(splatting);
+        gaussians->initializeBuffers(1);
+    }
+
+    std::vector<uint8_t> renderGaussians(const Eye& e) {
+        setCamera(camera->ubo, e.eye, e.target, 50.0f, float(extent.width) / float(extent.height), 1e-5f, 100.0f);
+        camera->update(0);
+        gaussianGraph->submitAndWait(vc.getGraphicsQueue(), 0);
+        return readImage(vc, gaussianTarget->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    }
+
     std::vector<uint8_t> render(const Eye& e) {
         setCamera(camera->ubo, e.eye, e.target, 50.0f, float(extent.width) / float(extent.height), 1e-5f, 100.0f);
         camera->update(0);
@@ -159,6 +198,12 @@ struct GrassScene {
     std::shared_ptr<OffscreenTarget> target;
     std::shared_ptr<RenderPass> pass;
     std::unique_ptr<ComputeGraph> graph;
+    std::shared_ptr<TreeGenerator> generator;
+    std::unique_ptr<TreeGaussians> gaussians;
+    std::unique_ptr<TreeGrassGaussians> grassGaussians;
+    std::shared_ptr<OffscreenTarget> gaussianTarget;
+    std::shared_ptr<ComputeGraphElement> splatting;
+    std::unique_ptr<ComputeGraph> gaussianGraph;
 };
 
 // The share of non-black pixels in rows [y0, y1) and their mean colour.
@@ -402,6 +447,62 @@ TEST_F(TreeGrassTest, noGrassFromHighAbove) {
     EXPECT_GT(g.grass->readCounter()[0], 5000u);
 }
 
+TEST_F(TreeGrassTest, grassRendersBothWays) {
+    const BonsaiScene scene = sceneAt(0.75f);
+    const VkExtent2D extent{960, 540};
+    GrassScene g(*vc, scene, extent);
+    g.addGaussians();
+    const Eye e = standingInTheMeadow(scene);
+    setSeason(*g.settings, kSummer);
+    const std::vector<uint8_t> classical = g.render(e);
+    const std::vector<uint8_t> gaussian = g.renderGaussians(e);
+    writePpm("grass_classical", classical, extent);
+    writePpm("grass_gaussian", gaussian, extent);
+    std::printf("grass: %u clumps, %u Gaussian slots\n", g.grass->readCounter()[0], g.grassGaussians->readTaken());
+    for (const auto& [name, ms] : g.gaussianGraph->getProfilingResults()) {
+        std::printf("  %s: %.2f ms\n", name.c_str(), ms);
+    }
+    EXPECT_LE(g.grassGaussians->readTaken(), 262144u);
+
+    // Below the horizon of the grass (rows from the middle down to 4/5 of the height), in blocks of 16 x 16 pixels:
+    // the mean colour of all pixels, black ones included, i.e. the light the grass puts there, as the blades are
+    // placed alike but shaped differently (hard-edged strips, soft Gaussians).
+    auto blockMean = [&](const std::vector<uint8_t>& bgra, uint32_t bx, uint32_t by) {
+        glm::vec3 sum(0.0f);
+        for (uint32_t y = by; y < by + 16; ++y) {
+            for (uint32_t x = bx; x < bx + 16; ++x) {
+                const uint8_t* p = &bgra[4 * (size_t(y) * extent.width + x)];
+                sum += glm::vec3(p[2], p[1], p[0]) / 255.0f;
+            }
+        }
+        return sum / 256.0f;
+    };
+    double difference = 0.0;
+    glm::vec3 meanClassical(0.0f), meanGaussian(0.0f);
+    int blocks = 0;
+    for (uint32_t by = extent.height / 2; by + 16 <= extent.height * 4 / 5; by += 16) {
+        for (uint32_t bx = 0; bx + 16 <= extent.width; bx += 16) {
+            const glm::vec3 a = blockMean(classical, bx, by), b = blockMean(gaussian, bx, by);
+            difference += std::abs(a.y - b.y);
+            meanClassical += a;
+            meanGaussian += b;
+            ++blocks;
+        }
+    }
+    difference /= blocks;
+    meanClassical /= float(blocks);
+    meanGaussian /= float(blocks);
+    std::printf("mean of all pixels: classical (%.3f, %.3f, %.3f), Gaussian (%.3f, %.3f, %.3f); green %.3f apart per "
+                "block\n",
+                meanClassical.x, meanClassical.y, meanClassical.z, meanGaussian.x, meanGaussian.y, meanGaussian.z,
+                difference);
+    EXPECT_GT(meanClassical.y, 0.1f);
+    EXPECT_LT(difference, 0.05);
+    EXPECT_LT(glm::length(meanGaussian - meanClassical), 0.03f);
+    EXPECT_GT(meanGaussian.y, meanGaussian.x);
+    EXPECT_GT(meanGaussian.y, meanGaussian.z);
+}
+
 TEST_F(TreeGrassTest, bladesCoverTheGround) {
     const BonsaiScene scene = sceneAt(0.75f);
     const VkExtent2D extent{960, 540};
@@ -476,4 +577,48 @@ TEST(TreeGrass, cropsFollowTheSeason) {
     EXPECT_LT(grainWinter, 0.1f);
     EXPECT_NEAR(meadowWinter, meadowSummer, 0.02f);
     EXPECT_EQ(ploughed, 0);
+}
+
+TEST_F(TreeGrassTest, theRenderersDrawGrass) {
+    const BonsaiScene scene = sceneAt(0.75f);
+    const VkExtent2D extent{480, 270};
+    const Eye low = standingInTheMeadow(scene);
+    const glm::vec3 up(0.0f, 100.0f / scene.config.scale.metersPerUnit(), 0.0f);
+    for (BonsaiRenderMode mode : {BonsaiRenderMode::Classical, BonsaiRenderMode::Gaussian}) {
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig config;
+        config.extent = extent;
+        config.mode = mode;
+        BonsaiRenderer renderer(*vc, scene, target, config);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(renderer.getOutput());
+        renderer.initialize(1);
+        ASSERT_NE(renderer.getGrass(), nullptr);
+        ASSERT_EQ(renderer.getGrassGaussians() != nullptr, mode == BonsaiRenderMode::Gaussian);
+        for (const glm::vec3 lift : {glm::vec3(0.0f), up}) {
+            const glm::vec3 eye = low.eye + lift;
+            setCamera(renderer.getCamera()->ubo, eye, low.target + lift, 50.0f, 16.0f / 9.0f, 1e-5f, 100.0f);
+            renderer.getCamera()->update(0);
+            renderer.setView(eye);
+            graph.submitAndWait(vc->getGraphicsQueue(), 0);
+            const uint32_t clumps = renderer.getGrass()->readCounter()[0];
+            if (lift == glm::vec3(0.0f)) {
+                EXPECT_GT(clumps, 5000u);
+                if (renderer.getGrassGaussians()) {
+                    EXPECT_GT(renderer.getGrassGaussians()->readTaken(), clumps);
+                    EXPECT_LE(renderer.getGrassGaussians()->readTaken(), config.grassPool);
+                }
+                writePpm(mode == BonsaiRenderMode::Classical ? "grass_renderer_classical" : "grass_renderer_gaussian",
+                         readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent), extent);
+            } else {
+                EXPECT_EQ(clumps, 0u);
+            }
+        }
+    }
+    const BonsaiScene planting = sceneAt(0.21f);
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    BonsaiRenderer renderer(*vc, planting, target, config);
+    EXPECT_EQ(renderer.getGrass(), nullptr);
 }
