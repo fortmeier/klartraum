@@ -448,7 +448,8 @@ metrics from `klartraum/lod_metrics.hpp` are taken every frame:
 - **Fidelity** (`fidelityError()`), of each run with levels of detail against the same run without: the mean
   absolute difference of the RGB means of 4 px blocks, over the blocks lit in either image.
 
-Each frame also records the GPU time of every run, from the tree's generation to its splatting. The program prints
+Each frame also records the GPU time of every run, from the tree's generation to its splatting, and the number of
+Gaussians it draws (those opaque enough for the splatting's cull). The program prints
 the popping of each run (largest, median, and where what draws the tree changes, against the run's median, the
 frames around it and the run without levels of detail), and the fidelity and GPU time per representation.
 
