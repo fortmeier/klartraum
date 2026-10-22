@@ -34,8 +34,8 @@ std::vector<MossPatch> buildTreeGaussianLibrary(const std::vector<TreeTypeParams
  * A level spends up to a quarter of its budget on the stems thicker than a thousandth of the tree's height,
  * thickest first, with fewer, longer Gaussians on coarser levels. The rest goes to the leaves: those in a cell of
  * the finest grid whose occupied cells fit become one Gaussian at their middle, as wide as their spread (at most
- * three times as wide one way as the other, so nothing streaks), flat towards the outside of the crown (its
- * normal, for the lighting), with their mean albedo and as opaque as their area covers its face.
+ * three times as wide one way as the other, so nothing streaks), half as thick towards the outside of the crown
+ * (its normal, for the lighting), with their mean albedo and as opaque as their area covers its face.
  */
 GaussianLods buildTreeGaussianLevels(const TreeRecords& records, const TreeTypeParams& type,
                                      std::array<uint32_t, 4> budgets);

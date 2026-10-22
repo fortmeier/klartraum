@@ -92,10 +92,6 @@ void main() {
         light.x *= 1.0f - uintBitsToFloat(inst.ids.z);
         vec3 displayed;
         if (inst.ids.w == 1u) {
-            // Lit from the side the sun shines on, as the near trees light their leaves (tree_gaussians.comp).
-            if (dot(normal, s.sun.xyz) < 0.0f) {
-                normal = -normal;
-            }
             // A tree's albedo, lit like the trees' Gaussians, with snow in winter and through the haze.
             vec3 albedo = mix(g.color.rgb, vec3(0.8f), 0.7f * treeSnowOn(normal, pos, s.season.y));
             vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
