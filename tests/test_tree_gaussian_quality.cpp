@@ -31,6 +31,9 @@
  *   16 px blocks of how far a frame lies from the mean of its neighbours
  * - nearAndFarTreeAgree: a site drawn as a near tree (TreeGaussians) and as its library copy (TreeMossLod) at the
  *   same camera, 30 to 300 px tall: height and width of the bounding box, covered area and mean colour
+ * - smallTreesKeepTheirCoverage: a near tree and its copy drawn 12 to 60 px tall, against the near tree drawn at 4
+ *   times the resolution and box-filtered down: how much more light they carry (the splatting's dilation widens
+ *   sub-pixel Gaussians); measured only
  * - farTreesAreSharp: the copy at 20, 60 and 200 px against the near tree's Gaussians drawn at 4 times the
  *   resolution and box-filtered down: the mean absolute error per 4 px block and the Laplacian energy ratio
  **/
@@ -757,6 +760,35 @@ TEST_F(TreeGaussianQualityTest, nearAndFarTreeAgree) {
         std::printf("%s mean copy/near: height %.2f, width %.2f, area %.2f; colour difference %.3f\n",
                     species == TREE_SITE_CONIFER ? "conifer" : "broadleaf", ratioSum.x / cases, ratioSum.y / cases,
                     ratioSum.z / cases, colorSum / cases);
+    }
+}
+
+TEST_F(TreeGaussianQualityTest, smallTreesKeepTheirCoverage) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const VkExtent2D extent{128, 128}, fine{512, 512};
+    const float height = scene.config.scale.treeHeightUnits();
+    auto light = [](const std::vector<uint8_t>& bgra) {
+        double sum = 0.0;
+        for (float l : luminance(bgra)) {
+            sum += l;
+        }
+        return sum;
+    };
+    for (float species : {TREE_SITE_BROADLEAF, TREE_SITE_CONIFER}) {
+        const TreeSite site = siteOf(species, 0.3f, height);
+        SingleTree nearTree(*vc, scene, site, false, extent);
+        SingleTree reference(*vc, scene, site, false, fine);
+        SingleTree copy(*vc, scene, site, true, extent);
+        const glm::vec3 foot(site.posHeight);
+        for (float pixels : {12.0f, 20.0f, 35.0f, 60.0f}) {
+            const double ref = light(downsample(reference.render(4.0f * pixels, foot), fine, 4));
+            const double n = light(nearTree.render(pixels, foot)) / ref;
+            const double c = light(copy.render(pixels, foot)) / ref;
+            std::printf("%-9s %2.0f px: light of the near tree %.2f, of the copy %.2f times the reference's\n",
+                        species == TREE_SITE_CONIFER ? "conifer" : "broadleaf", pixels, n, c);
+            EXPECT_GT(n, 0.0) << species << " " << pixels;
+            EXPECT_GT(c, 0.0) << species << " " << pixels;
+        }
     }
 }
 
