@@ -26,6 +26,9 @@
  *   projection, sort and draw buffers with correct culling and depth order on every path
  * - deviceLocalMeshWorkingBuffersRenderOrFallBack: requesting mesh shaders retains device-local
  *   working storage and visible output, including the vertex fallback on unsupported devices
+ * - slotsDoNotChangeTheImage: 40 to 5000 overlapping splats at shuffled depths (pairs of equal depth) render the
+ *   same image wherever they sit in a buffer of 4096 to 200000 slots whose other slots are transparent (as the
+ *   unused slots of a pool), also when fewer splats are visible than the sort has workgroups
  **/
 #include <gtest/gtest.h>
 
@@ -39,12 +42,16 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/rendering/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/offscreen_target.hpp"
+#include "klartraum/gaussian_splatting_factory.hpp"
 
 #include "test_scene.hpp"
 
@@ -357,4 +364,90 @@ TEST(GaussianSplattingRaster, deviceLocalWorkingBuffersRenderAcrossPaths) { expe
 
 TEST(GaussianSplattingRaster, deviceLocalMeshWorkingBuffersRenderOrFallBack) {
     expectDeviceLocalProceduralRender(true);
+}
+
+TEST(GaussianSplattingRaster, slotsDoNotChangeTheImage) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const VkExtent2D extent{256, 256};
+    auto camera = std::make_shared<CameraUboType>();
+    camera->ubo.model = glm::mat4(1.0f);
+    camera->ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 6.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    camera->ubo.proj = glm::perspective(glm::radians(40.0f), 1.0f, 0.1f, 50.0f);
+    camera->ubo.proj[1][1] *= -1.0f;
+    camera->ubo.cameraWorldPos = glm::vec4(0.0f, 0.0f, 6.0f, 1.0f);
+
+    // Overlapping splats of different colours at distinct depths, so the image depends on their order.
+    for (uint32_t count : {40u, 142u, 200u, 300u, 800u, 5000u}) {
+        std::vector<Gaussian3D> visible(count);
+        for (size_t i = 0; i < visible.size(); ++i) {
+            const float t = float(i) / float(visible.size());
+            Gaussian3D& g = visible[i];
+            // Depths in a shuffled order, so the sort has to move them; pairs share their depth exactly, so the
+            // sort's order of equal keys shows too.
+            const float tz = float((i / 2 * 7919u) % ((visible.size() + 1) / 2)) / float(visible.size());
+            g.position = {0.6f * std::sin(37.0f * t), 0.6f * std::cos(23.0f * t), -1.0f + 2.0f * tz};
+            g.rotation = {0, 0, 0, 1};
+            g.scale = {0.3f, 0.25f, 0.2f};
+            g.color = {std::sin(11.0f * t), std::cos(7.0f * t), std::sin(5.0f * t + 1.0f)};
+            g.alpha = 0.6f;
+        }
+        auto render = [&](uint32_t slots, uint32_t first) {
+            // Transparent slots: half of them scattered through the view, as a pool's used slots keep their old
+            // positions, the other half all zero (at the origin, scale 0, rotation 0), as never-written slots.
+            std::vector<Gaussian3D> points(slots);
+            for (uint32_t i = 0; i < slots; ++i) {
+                const float t = float(i % 977) / 977.0f;
+                if (i % 2 == 0) {
+                    points[i].position = {2.0f * t - 1.0f, std::sin(13.0f * t), 0.5f - t};
+                    points[i].rotation = {0, 0, 0, 1};
+                    points[i].scale = {0.1f, 0.1f, 0.1f};
+                } else {
+                    points[i].position = {0, 0, 0};
+                    points[i].rotation = {0, 0, 0, 0};
+                    points[i].scale = {0, 0, 0};
+                }
+                points[i].alpha = 0.0f;
+            }
+            std::copy(visible.begin(), visible.end(), points.begin() + first);
+            GaussianDataStandard model(vc, points);
+            auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
+            auto splatting = createGaussianSplatting(vc, GsplatBackend::Raster, target, camera, model.buffers());
+            ComputeGraph graph(vc, 1);
+            graph.compileFrom(splatting);
+            camera->update(0);
+            graph.submitAndWait(vc.getGraphicsQueue(), 0);
+            return readImageToHost(vc, target->getImage(0), extent.width, extent.height);
+        };
+        const std::vector<uint8_t> reference = render(std::max(4096u, count), 0);
+        size_t lit = 0;
+        for (size_t i = 0; i < reference.size(); i += 4) {
+            lit += reference[i] || reference[i + 1] || reference[i + 2];
+        }
+        ASSERT_GT(lit, 1000u);
+        for (const auto& [slots, first] : std::vector<std::pair<uint32_t, uint32_t>>{{4096, 2000},
+                                                                                     {36256, 0},
+                                                                                     {36352, 0},
+                                                                                     {65536, 0},
+                                                                                     {65536, 640},
+                                                                                     {66560, 1024},
+                                                                                     {66560, 1664},
+                                                                                     {200000, 0},
+                                                                                     {200000, 150000}}) {
+            if (first + count > slots) {
+                continue;
+            }
+            const std::vector<uint8_t> image = render(slots, first);
+            int largest = 0;
+            size_t differing = 0;
+            for (size_t i = 0; i < image.size(); ++i) {
+                const int d = std::abs(int(image[i]) - int(reference[i]));
+                largest = std::max(largest, d);
+                differing += d > 2;
+            }
+            std::printf("%u splats in %u slots from slot %u: largest difference %d, %zu values differ by more than 2\n",
+                        count, slots, first, largest, differing);
+            EXPECT_LE(largest, 2) << count << " splats in " << slots << " slots from " << first;
+        }
+    }
 }
