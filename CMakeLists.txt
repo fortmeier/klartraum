@@ -330,6 +330,7 @@ add_executable(
   tests/test_tree_grass.cpp
   tests/test_bonsai_flight.cpp
   tests/test_tree_floor.cpp
+  tests/test_tree_gaussian_quality.cpp
   tests/test_tree_tiles.cpp
   tests/test_tree_proxies.cpp
   tests/test_tree_impostors.cpp
