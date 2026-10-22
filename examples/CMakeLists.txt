@@ -134,3 +134,14 @@ target_link_libraries(tree_bonsai_example
 )
 
 add_dependencies(tree_bonsai_example Shaders)
+
+# Walking or flying through the bonsai landscape in a window
+add_executable(tree_bonsai_explore_example
+    tree_bonsai_explore_example.cpp
+)
+
+target_link_libraries(tree_bonsai_explore_example
+    klartraum_lib
+)
+
+add_dependencies(tree_bonsai_explore_example Shaders)

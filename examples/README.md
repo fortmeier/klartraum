@@ -381,3 +381,41 @@ scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_flyin --scale 
 scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_forest --scale 1 --fly-in 24 \
     --azimuth -2.09               # over a field into the forest, among the trunks
 ```
+
+### `tree_bonsai_explore_example`
+
+Walks or flies through the bonsai landscape of `tree_bonsai_example` in a window, with an ego camera. By
+default it starts where that example's forest fly-in ends, standing 1.7 m above the ground deep in a forest
+(scale 1).
+
+| Input | Does |
+|---|---|
+| left mouse button + drag | look around |
+| Tab | capture the mouse and look without a button (again: release) |
+| W, A, S, D | move forwards, left, back, right |
+| Shift | move ten times faster |
+| scroll wheel | scale the speed |
+| F | switch between walking (1.7 m above the ground) and flying |
+| Space or E, Q | rise, sink (flying) |
+| R | back to the start |
+| Esc | release the mouse; quit when it is free |
+
+The window's title shows the frame rate, the mode, the speed and the height above the ground. Resizing the
+window rebuilds the renderer, which takes a few seconds.
+
+| Option | Meaning |
+|---|---|
+| `--renderer gaussian\|classical` | Which renderer draws the landscape (default `gaussian`) |
+| `--scale S` | Scale of the scene as in `tree_bonsai_example` (default 1, a landscape) |
+| `--seed N` | Seed of the scene (default 7) |
+| `--season S` | Season in [0, 4) (default 2, summer) |
+| `--width W`, `--height H` | Size of the window (default 1280 x 720) |
+| `--render-scale F` | Render at F times the window's pixels and scale up (default 0.5; a high-density display has twice as many pixels as the window's size) |
+| `--start forest\|pot` | Start in the forest (default at scales from 0.6 on) or outside the pot |
+| `--speed M` | Speed in metres per second (default 4 in the forest, 400 outside the pot) |
+| `--frames N` | Close the window after N frames |
+
+```bash
+./build/examples/tree_bonsai_explore_example                      # walk in the forest
+./build/examples/tree_bonsai_explore_example --start pot          # fly in from outside the pot
+```
