@@ -255,6 +255,15 @@ struct TreeGrassSetup {
     TreeGrassParams grass;
 };
 
+// The forest floor near the camera (treeFloorCell(), TreeForestFloor): a copy of a captured moss patch per cell of a
+// grid in units where the forest grows.
+struct TreeFloorSetup {
+    TreeTerrainParams terrain;
+    vec4 grid;    // x cell size in units, y radius in units beyond which there are no copies, z the copies' scale, w
+                  // the share of the radius from which they fade out
+    uvec4 counts; // x cells per side of the grid around the camera, y patches, z seed, w unused
+};
+
 // What the tile passes of the placement read (TreePlacementTiles).
 struct TreeTileConfig {
     TreeTerrainParams terrain;
@@ -1243,6 +1252,37 @@ TREE_FN TreeGrassClump treeGrassCell(TreeTerrainParams t, TreeGrassParams g, int
     clump.posHeight = vec4(x, treeTerrainHeight(t, x, z), z, meters / g.grid.w);
     clump.kind = vec4(blades, 2.0f * TREE_PI * treeRand(key, 5u), 1.0f, treeRand(key, 6u));
     return clump;
+}
+
+// --- forest floor ----------------------------------------------------------------
+
+// The copy of a moss patch in cell (cx, cz) seen from eye: where the forest grows, with the probability of its
+// weight, jittered in its cell, turned at random, on the plane of the ground; fading out (ids.y) from grid.w of the
+// radius on, none beyond it. Hashing the cell's indices keeps a copy the same while the camera moves. No copy:
+// scale (plane.z) 0.
+TREE_FN TreeLodInstance treeFloorCell(TreeFloorSetup f, int cx, int cz, vec3 eye) {
+    TreeLodInstance inst;
+    inst.posYaw = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    inst.plane = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    inst.ids = uvec4(0u, 0u, 0u, 0u);
+    uint key = treeHash2(treeHash2(uint(cx), uint(cz)), f.counts.z);
+    float x = (float(cx) + 0.2f + 0.6f * treeRand(key, 1u)) * f.grid.x;
+    float z = (float(cz) + 0.2f + 0.6f * treeRand(key, 2u)) * f.grid.x;
+    float d = length(vec2(x - eye.x, z - eye.z));
+    if (d > f.grid.y || treeTerrainRadius(f.terrain, x, z) >= 0.98f) {
+        return inst;
+    }
+    if (treeRand(key, 3u) >= treeLandCover(f.terrain, x, z).vegetation.x) {
+        return inst;
+    }
+    float y = treeTerrainHeight(f.terrain, x, z);
+    float e = 0.5f * f.grid.x;
+    inst.posYaw = vec4(x, y, z, 2.0f * TREE_PI * treeRand(key, 4u));
+    inst.plane = vec4((treeTerrainHeight(f.terrain, x + e, z) - y) / e,
+                      (treeTerrainHeight(f.terrain, x, z + e) - y) / e, f.grid.z, 0.0f);
+    float fade = smoothstep(f.grid.w * f.grid.y, f.grid.y, d);
+    inst.ids = uvec4(treeHash2(key, 5u) % max(f.counts.y, 1u), floatBitsToUint(fade), 0u, 0u);
+    return inst;
 }
 
 // The normal of a flat Gaussian: its thinnest axis, turned up.

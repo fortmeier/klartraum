@@ -25,6 +25,7 @@
 #include "klartraum/tree/tree_moss_lod.hpp"
 #include "klartraum/tree/tree_impostors.hpp"
 #include "klartraum/tree/tree_library.hpp"
+#include "klartraum/tree/tree_floor.hpp"
 #include "klartraum/tree/tree_grass.hpp"
 #include "klartraum/tree/tree_proxies.hpp"
 #include "klartraum/tree/tree_sky.hpp"
@@ -107,7 +108,14 @@ struct BonsaiRenderConfig {
     /// renderer with this many Gaussians per frame at most.
     bool grass = true;
     TreeGrassConfig grassBlades;
-    uint32_t grassPool = 262144;
+    uint32_t grassPool = 131072;
+    /// When the trees follow the placement, both renderers draw copies of the captured moss on the forest floor
+    /// near the camera (TreeForestFloor) with this many Gaussians at most, their levels of detail chosen by
+    /// floorLod (as mossLod) in output pixels: the copies are near and large, coarser levels keep them in the pool.
+    bool forestFloor = true;
+    TreeFloorConfig floor;
+    uint32_t floorPool = 196608;
+    glm::vec4 floorLod{640.0f, 192.0f, 48.0f, 0.15f};
     TreeTerrainLodConfig terrain;
 };
 
@@ -178,6 +186,8 @@ public:
     TreeGrass* getGrass() { return grass.get(); }
     /// The grass's Gaussians in the Gaussian renderer, or nullptr.
     TreeGrassGaussians* getGrassGaussians() { return grassGaussians.get(); }
+    /// The moss on the forest floor near the camera, or nullptr.
+    TreeForestFloor* getForestFloor() { return forestFloor.get(); }
     /// The Gaussian renderer's library copies of the trees, or nullptr.
     TreeGaussianForest* getForest() { return forest.get(); }
 
@@ -203,6 +213,7 @@ private:
     std::unique_ptr<TreeProxies> proxies;
     std::unique_ptr<TreeGrass> grass;
     std::unique_ptr<TreeGrassGaussians> grassGaussians;
+    std::unique_ptr<TreeForestFloor> forestFloor;
     std::unique_ptr<TreeGaussianForest> forest;
     std::unique_ptr<TreeImpostorAtlas> atlas;
     std::shared_ptr<TreeGenerator> reducedGenerator;

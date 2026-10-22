@@ -39,6 +39,7 @@ using namespace glm;
 using tree::LeafRecord;
 using tree::SegmentRecord;
 using tree::StemRecord;
+using tree::TreeFloorSetup;
 using tree::TreeFrame;
 using tree::TreeGrassClump;
 using tree::TreeGrassParams;
@@ -77,6 +78,7 @@ static_assert(sizeof(TreeGrassParams) == 48, "TreeGrassParams must match its std
 static_assert(sizeof(TreeGrassClump) == 32, "TreeGrassClump must match its std430 layout");
 static_assert(sizeof(TreeGrassVisible) == 64, "TreeGrassVisible must match its std430 layout");
 static_assert(sizeof(TreeGrassSetup) == 128, "TreeGrassSetup must match its std430 layout");
+static_assert(sizeof(TreeFloorSetup) == 112, "TreeFloorSetup must match its std430 layout");
 static_assert(sizeof(TreeTerrainConfig) == 224, "TreeTerrainConfig must match its std430 layout");
 
 /// The records the generation writes for a set of trees.
