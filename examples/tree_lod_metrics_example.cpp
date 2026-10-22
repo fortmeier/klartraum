@@ -23,8 +23,8 @@
 //
 // Writes <out-dir>/metrics.csv (per frame: distance, what draws the tree, the copy's level and crossfade, the
 // crown's diameter in pixels, the four runs' popping residuals, the fidelity errors of the static and the dynamic
-// run and the four runs' GPU times) and <out-dir>/frames/frame_NNNN.ppm (with levels of detail above, without below;
-// static left, dynamic right; each at 3/4 of the measured size), and prints a summary.
+// run, the four runs' GPU times and Gaussians drawn) and <out-dir>/frames/frame_NNNN.ppm (with levels of detail above,
+// without below; static left, dynamic right; each at 3/4 of the measured size), and prints a summary.
 // scripts/tree/make_lod_metrics_video.sh labels the frames and encodes the video.
 
 #include <algorithm>
@@ -193,6 +193,16 @@ struct TreeView {
         graph->resetProfiling();
         graph->submitAndWait(vc.getGraphicsQueue(), 0);
         gpuMs = float(graph->getGpuSpanMs());
+        // The Gaussians drawn: those the splatting's cull keeps for their opacity.
+        const GaussianSoABuffers& drawn = lod ? lod->getGaussians() : gaussians->getGaussians();
+        std::vector<glm::vec4> colAlpha(drawn.count);
+        std::dynamic_pointer_cast<BufferElement<VulkanBuffer<glm::vec4>>>(drawn.colAlpha.buffer())
+            ->getBuffer(0)
+            .memcopyTo(colAlpha);
+        splats = 0;
+        for (const glm::vec4& c : colAlpha) {
+            splats += c.w >= 1.0f / 255.0f;
+        }
         return readImage(vc, target->getImage(0), extent);
     }
 
@@ -200,6 +210,7 @@ struct TreeView {
     VkExtent2D extent;
     float crownRadius = 0.0f; ///< of the copy, as TreeMossLod measures it for its levels
     float gpuMs = 0.0f;       ///< GPU time of the last render(), from generation to splatting
+    uint32_t splats = 0;      ///< Gaussians drawn in the last render()
     std::shared_ptr<HostValues<TreeRenderSettings>> settings;
     std::shared_ptr<TreeGenerator> generator;
     std::unique_ptr<TreeGaussians> gaussians;
@@ -388,7 +399,7 @@ int main(int argc, char** argv) {
     std::ofstream csv(outDir / "metrics.csv");
     csv << "frame,distance_m,drawn_by,level,fade,crown_px,residual_static,residual_dynamic,residual_free_static,"
            "residual_free_dynamic,fidelity_static,fidelity_dynamic,gpu_ms_static,gpu_ms_dynamic,gpu_ms_free_static,"
-           "gpu_ms_free_dynamic\n";
+           "gpu_ms_free_dynamic,splats_static,splats_dynamic,splats_free_static,splats_free_dynamic\n";
 
     const glm::vec3 middle = glm::vec3(site.posHeight) + glm::vec3(0.0f, 0.5f * treeHeight, 0.0f);
     const glm::vec4 wind(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength);
@@ -397,6 +408,7 @@ int main(int argc, char** argv) {
     std::vector<std::vector<float>> residuals(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> fidelity(2, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> gpuMs(4, std::vector<float>(size_t(frames) + 1, 0.0f));
+    std::vector<std::vector<float>> splats(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<float> distances(size_t(frames) + 1);
     std::vector<std::string> drawnBy(size_t(frames) + 1);
     std::vector<glm::vec3> lods(size_t(frames) + 1); // level, fade, crown pixels
@@ -441,6 +453,7 @@ int main(int argc, char** argv) {
             TreeView& drawing = run < 2 ? view : reference;
             images[run] = drawing.render(seconds, run % 2 == 0 ? glm::vec4(glm::vec3(wind), 0.0f) : wind);
             gpuMs[run][k] = drawing.gpuMs;
+            splats[run][k] = float(drawing.splats);
         }
         for (int run = 0; run < 4; ++run) {
             if (const std::optional<float> r = poppingMeters[run].push(imageLuminance(images[run]))) {
@@ -468,7 +481,8 @@ int main(int argc, char** argv) {
         csv << k << "," << distances[k] << "," << drawnBy[k] << "," << lods[k].x << "," << lods[k].y << "," << lods[k].z
             << "," << residuals[0][k] << "," << residuals[1][k] << "," << residuals[2][k] << "," << residuals[3][k]
             << "," << fidelity[0][k] << "," << fidelity[1][k] << "," << gpuMs[0][k] << "," << gpuMs[1][k] << ","
-            << gpuMs[2][k] << "," << gpuMs[3][k] << "\n";
+            << gpuMs[2][k] << "," << gpuMs[3][k] << "," << splats[0][k] << "," << splats[1][k] << "," << splats[2][k]
+            << "," << splats[3][k] << "\n";
     }
     printPopping("static ", residuals[0], residuals[2], distances, drawnBy);
     printPopping("dynamic", residuals[1], residuals[3], distances, drawnBy);
@@ -476,6 +490,8 @@ int main(int argc, char** argv) {
     printByRepresentation("dynamic fidelity error", fidelity[1], distances, drawnBy);
     printByRepresentation("dynamic GPU ms", gpuMs[1], distances, drawnBy);
     printByRepresentation("dynamic GPU ms without levels of detail", gpuMs[3], distances, drawnBy);
+    printByRepresentation("dynamic Gaussians drawn", splats[1], distances, drawnBy);
+    printByRepresentation("dynamic Gaussians drawn without levels of detail", splats[3], distances, drawnBy);
     std::cout << "frames and metrics.csv in " << outDir.string() << std::endl;
     return 0;
 }
