@@ -9,8 +9,8 @@
 //   tree_bonsai_example [--renderer classical|gaussian|both] [--backend raster|compute]
 //                       [--views 4] [--scale 0.21] [--relief 1.5] [--trees N] [--seed 7] [--width 1280] [--height 720]
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
-//                       [--ground X,Z,METERS,HEADING] [--profile] [--budget MS] [--video] [--days 4] [--seconds-per-day
-//                       10] [--fps 30] [--wind 0.5]
+//                       [--ground X,Z,METERS,HEADING] [--profile] [--budget MS]
+//                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--from 0] [--to N] [--moss-patches 250]
 //                       [--out-dir build/TestingOutput/tree_bonsai]
 //
