@@ -10,8 +10,8 @@
 """Labels the frames of tree_lod_metrics_example and encodes them into a video.
 
 The frames hold four panels: with levels of detail above, without below; static left, dynamic right. Each panel gets
-its run's name, the distance, what draws the tree and its popping residual (and fidelity error, with levels of
-detail). Below the panels two strips plot the whole flight with a cursor at the current frame: the popping residual
+its run's name, the distance, what draws the tree, its popping residual and GPU time (and fidelity error, with
+levels of detail). Below the panels two strips plot the whole flight with a cursor at the current frame: the popping residual
 of the four runs and the fidelity error of the two runs with levels of detail. The frames are piped into ffmpeg,
 nothing is written besides the video.
 
@@ -84,6 +84,8 @@ def main() -> None:
     popping = [column("residual_static"), column("residual_dynamic"), column("residual_free_static"),
                column("residual_free_dynamic")]
     fidelity = [column("fidelity_static"), column("fidelity_dynamic")]
+    gpu_ms = [column("gpu_ms_static"), column("gpu_ms_dynamic"), column("gpu_ms_free_static"),
+              column("gpu_ms_free_dynamic")]
     big, small = font(26), font(19)
 
     popping_strip, x_of = plot(rows, width, [(popping[2], STATIC_FREE), (popping[3], DYNAMIC_FREE),
@@ -111,7 +113,7 @@ def main() -> None:
             drawn = row["drawn_by"] if run < 2 else "generated"
             draw.text((x, y), name, font=big, fill=colour)
             draw.text((x, y + 34), f"{float(row['distance_m']):6.1f} m   {drawn}", font=small, fill=(230, 230, 230))
-            line = f"popping {popping[run][k]:.4f}"
+            line = f"popping {popping[run][k]:.4f}   GPU {gpu_ms[run][k]:.1f} ms"
             if run < 2:
                 line += f"   fidelity error {fidelity[run][k]:.4f}"
             draw.text((x, y + 58), line, font=small, fill=(230, 230, 230))
