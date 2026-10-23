@@ -368,6 +368,7 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--fps F` | Frames per second of the video (default 30) |
 | `--wind W` | Strength of the wind (default 0.5) |
 | `--turns T` | Turns of the camera around the pot during the video (default 0.5) |
+| `--enhancer M` | The Gaussian renderer also runs the neural enhancer of distant trees (`TreeEnhancer`, an ONNX model of `scripts/neural/train_tree_enhancer.py` at the image's size) and writes its images as `enhanced_NNNN.ppm` beside the Gaussian ones |
 | `--fly-in S` | Render a flight of S seconds instead of views or days: from the first view outside the pot down to the `--ground` place at noon of the season, ending with a slow pan; takes precedence over `--video`. Without `--ground` (scale 0.6 or more), the flight goes low over a field into a dense forest and ends at 1.7 m among the trunks |
 | `--from N`, `--to M` | Render only the video frames N to M - 1 |
 | `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
