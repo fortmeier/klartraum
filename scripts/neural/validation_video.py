@@ -27,7 +27,9 @@ import torch
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).parent))
-from train_tree_enhancer import Enhancer, block_error, detail_error, load_view, to_tensors  # noqa: E402
+import json  # noqa: E402
+
+from train_tree_enhancer import ARCHITECTURES, block_error, detail_error, load_view, to_tensors  # noqa: E402
 
 
 def main() -> None:
@@ -36,7 +38,9 @@ def main() -> None:
     parser.add_argument("weights", type=Path)
     parser.add_argument("video", type=Path)
     args = parser.parse_args()
-    model = Enhancer()
+    config = args.weights.parent / "config.json"
+    arch = json.loads(config.read_text())["arch"] if config.exists() else "v1"
+    model = ARCHITECTURES[arch]()
     model.load_state_dict(torch.load(args.weights, map_location="cpu"))
     model.eval()
     names = [p.stem[3:] for p in sorted(args.dataset.glob("hf_*.ppm")) if int(p.stem[3:]) % 10 == 9]

@@ -4,9 +4,10 @@
 
 /**
  * TESTS:
- * - matchesPyTorch: the enhancer fixture (scripts/neural/make_enhancer_fixture.py: the network with fixed random
- *   weights and three random 96 x 64 images) run by TreeEnhancer gives PyTorch's output within 1e-3, and writes it
- *   clamped to [0, 1] into its output image within one step of 255
+ * - matchesPyTorch: the enhancer fixtures (scripts/neural/make_enhancer_fixture.py: each network, v1 with transposed
+ *   convolutions and v2 with nearest-neighbour resizes, with fixed random weights and three random 96 x 64 images)
+ *   run by TreeEnhancer give PyTorch's output within 1e-3, and write it clamped to [0, 1] into the output image
+ *   within one step of 255
  **/
 
 #include <gtest/gtest.h>
@@ -83,44 +84,46 @@ void upload(VulkanContext& vc, VkImage image, const uint8_t* bgra) {
 TEST(TreeEnhancerTest, matchesPyTorch) {
     HeadlessFrontend frontend;
     VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
-    const size_t pixels = size_t(kWidth) * kHeight;
-    const std::vector<uint8_t> images = readFile<uint8_t>("data/onnx/tree_enhancer_fixture_images.bin", 3 * pixels * 4);
-    const std::vector<float> expected = readFile<float>("data/onnx/tree_enhancer_fixture_output.bin", 3 * pixels);
+    for (const std::string stem : {"data/onnx/tree_enhancer_fixture", "data/onnx/tree_enhancer_v2_fixture"}) {
+        const size_t pixels = size_t(kWidth) * kHeight;
+        const std::vector<uint8_t> images = readFile<uint8_t>(stem + "_images.bin", 3 * pixels * 4);
+        const std::vector<float> expected = readFile<float>(stem + "_output.bin", 3 * pixels);
 
-    std::shared_ptr<OffscreenTarget> inputs[3];
-    for (int k = 0; k < 3; ++k) {
-        inputs[k] = std::make_shared<OffscreenTarget>(vc, VkExtent2D{kWidth, kHeight}, 1);
-        inputs[k]->setClear(false);
-        upload(vc, inputs[k]->getImage(0), images.data() + size_t(k) * pixels * 4);
-    }
-    auto output = std::make_shared<OffscreenTarget>(vc, VkExtent2D{kWidth, kHeight}, 1);
-    TreeEnhancer enhancer(vc, "data/onnx/tree_enhancer_fixture.onnx", inputs[0], inputs[1], inputs[2], output,
-                          inputs[0]);
-    ComputeGraph graph(vc, 1);
-    graph.compileFrom(enhancer.getOutput());
-    graph.submitAndWait(vc.getGraphicsQueue(), 0);
-
-    auto tensor = std::dynamic_pointer_cast<TensorElement<float>>(enhancer.getNetwork()->getOutputElement("output"));
-    ASSERT_NE(tensor, nullptr);
-    std::vector<float> values(tensor->getDataElementCount());
-    tensor->getDataBuffer(0).memcopyTo(values);
-    ASSERT_EQ(values.size(), expected.size());
-    float largest = 0.0f;
-    for (size_t i = 0; i < values.size(); ++i) {
-        largest = std::max(largest, std::abs(values[i] - expected[i]));
-    }
-    std::printf("largest difference to PyTorch: %g\n", largest);
-    EXPECT_LT(largest, 1e-3f);
-
-    const std::vector<uint8_t> image =
-        readImage(vc, output->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VkExtent2D{kWidth, kHeight});
-    int worst = 0;
-    for (size_t p = 0; p < pixels; ++p) {
-        for (int c = 0; c < 3; ++c) {
-            const float want = std::clamp(expected[size_t(c) * pixels + p], 0.0f, 1.0f) * 255.0f;
-            worst = std::max(worst, int(std::lround(std::abs(float(image[4 * p + 2 - c]) - want))));
+        std::shared_ptr<OffscreenTarget> inputs[3];
+        for (int k = 0; k < 3; ++k) {
+            inputs[k] = std::make_shared<OffscreenTarget>(vc, VkExtent2D{kWidth, kHeight}, 1);
+            inputs[k]->setClear(false);
+            upload(vc, inputs[k]->getImage(0), images.data() + size_t(k) * pixels * 4);
         }
+        auto output = std::make_shared<OffscreenTarget>(vc, VkExtent2D{kWidth, kHeight}, 1);
+        TreeEnhancer enhancer(vc, stem + ".onnx", inputs[0], inputs[1], inputs[2], output, inputs[0]);
+        ComputeGraph graph(vc, 1);
+        graph.compileFrom(enhancer.getOutput());
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+
+        auto tensor =
+            std::dynamic_pointer_cast<TensorElement<float>>(enhancer.getNetwork()->getOutputElement("output"));
+        ASSERT_NE(tensor, nullptr);
+        std::vector<float> values(tensor->getDataElementCount());
+        tensor->getDataBuffer(0).memcopyTo(values);
+        ASSERT_EQ(values.size(), expected.size());
+        float largest = 0.0f;
+        for (size_t i = 0; i < values.size(); ++i) {
+            largest = std::max(largest, std::abs(values[i] - expected[i]));
+        }
+        std::printf("%s: largest difference to PyTorch: %g\n", stem.c_str(), largest);
+        EXPECT_LT(largest, 1e-3f) << stem;
+
+        const std::vector<uint8_t> image =
+            readImage(vc, output->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VkExtent2D{kWidth, kHeight});
+        int worst = 0;
+        for (size_t p = 0; p < pixels; ++p) {
+            for (int c = 0; c < 3; ++c) {
+                const float want = std::clamp(expected[size_t(c) * pixels + p], 0.0f, 1.0f) * 255.0f;
+                worst = std::max(worst, int(std::lround(std::abs(float(image[4 * p + 2 - c]) - want))));
+            }
+        }
+        std::printf("%s: largest difference of the output image: %d\n", stem.c_str(), worst);
+        EXPECT_LE(worst, 1) << stem;
     }
-    std::printf("largest difference of the output image: %d\n", worst);
-    EXPECT_LE(worst, 1);
 }

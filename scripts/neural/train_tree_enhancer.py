@@ -128,6 +128,59 @@ def constants_as_initializers(model):
     return model
 
 
+class EnhancerV2(nn.Module):
+    """Cheaper at full resolution: two strided 3 x 3 convolutions down to a quarter, nearest-neighbour resizes up
+    (OnnxNetwork's Resize), and at full resolution one 3 x 3 convolution of 16 to 8 channels and a 1 x 1 to RGB;
+    the output is added to the input image."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down1 = nn.Sequential(nn.Conv2d(INPUT_CHANNELS, 24, 3, stride=2, padding=1), nn.ReLU(),
+                                   nn.Conv2d(24, 24, 3, padding=1), nn.ReLU())
+        self.down2 = nn.Sequential(nn.Conv2d(24, 32, 3, stride=2, padding=1), nn.ReLU(),
+                                   nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(),
+                                   nn.Conv2d(32, 32, 3, padding=1), nn.ReLU())
+        self.mid = nn.Sequential(nn.Conv2d(32 + 24, 16, 3, padding=1), nn.ReLU(), nn.Conv2d(16, 8, 1), nn.ReLU())
+        self.full = nn.Sequential(nn.Conv2d(8 + INPUT_CHANNELS, 8, 3, padding=1), nn.ReLU())
+        self.out = nn.Conv2d(8, 3, 1)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+        self.pick = nn.Conv2d(INPUT_CHANNELS, 3, 1)
+        with torch.no_grad():
+            self.pick.weight.zero_()
+            self.pick.bias.zero_()
+            for c in range(3):
+                self.pick.weight[c, c] = 1.0
+        self.pick.requires_grad_(False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        d1 = self.down1(x)
+        d2 = self.down2(d1)
+        m = self.mid(torch.cat([F.interpolate(d2, scale_factor=2, mode="nearest"), d1], dim=1))
+        f = self.full(torch.cat([F.interpolate(m, scale_factor=2, mode="nearest"), x], dim=1))
+        return self.pick(x) + self.out(f)
+
+
+ARCHITECTURES = {"v1": Enhancer, "v2": EnhancerV2}
+
+
+def detail_loss(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor, block: int = 8,
+                floor: float = 1e-4) -> torch.Tensor:
+    """detail_error() as a loss: the mean |log2| of the ratio of the blocks' Laplacian energies, over the blocks
+    of the far trees."""
+    weights = torch.tensor([0.2126, 0.7152, 0.0722], device=a.device).view(1, 3, 1, 1)
+    kernel = torch.tensor([[0.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 0.0]], device=a.device).view(1, 1, 3, 3)
+
+    def energy(x: torch.Tensor) -> torch.Tensor:
+        luminance = (x * weights).sum(dim=1, keepdim=True)
+        laplacian = F.conv2d(F.pad(luminance, (1, 1, 1, 1), mode="replicate"), kernel)
+        return F.avg_pool2d(laplacian * laplacian, block)
+
+    keep = (F.avg_pool2d(mask, block) > 0.25).float()
+    ratio = torch.log2((energy(a) + floor) / (energy(b) + floor)).abs()
+    return (ratio * keep).sum() / keep.sum().clamp(min=1.0)
+
+
 def block_error(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor) -> float:
     """The mean absolute difference of 4 px block means (RGB averaged), over the blocks the mask touches."""
     da = F.avg_pool2d(a, 4) - F.avg_pool2d(b, 4)
@@ -190,6 +243,8 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=12)
     parser.add_argument("--crop", type=int, default=256)
     parser.add_argument("--lr", type=float, default=2e-3)
+    parser.add_argument("--arch", choices=sorted(ARCHITECTURES), default="v1")
+    parser.add_argument("--detail", type=float, default=0.0, help="weight of the detail loss")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -205,23 +260,27 @@ def main() -> None:
     tx, ty, tm = load(train)
     vx, vy, vm = load(val)
 
-    model = Enhancer().to(device)
+    model = ARCHITECTURES[args.arch]().to(device)
+    (args.out_dir / "config.json").write_text(json.dumps({"arch": args.arch, "detail": args.detail}))
     print(f"{sum(p.numel() for p in model.parameters())} parameters")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.LambdaLR(
         optimizer, lambda s: min(1.0, s / 500) * 0.5 * (1.0 + math.cos(math.pi * s / args.steps)))
     rng = np.random.default_rng(1)
 
-    def validate() -> tuple[float, float]:
+    def validate() -> tuple[float, float, float, float]:
         model.eval()
-        before = after = 0.0
+        before = after = detail_before = detail_after = 0.0
         with torch.no_grad():
             for x, y, m in zip(vx, vy, vm):
                 out = model(x.unsqueeze(0).to(device)).clamp(0.0, 1.0).cpu()
                 before += block_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
                 after += block_error(out, y.unsqueeze(0), m.unsqueeze(0))
+                detail_before += detail_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
+                detail_after += detail_error(out, y.unsqueeze(0), m.unsqueeze(0))
         model.train()
-        return before / max(len(vx), 1), after / max(len(vx), 1)
+        n = max(len(vx), 1)
+        return before / n, after / n, detail_before / n, detail_after / n
 
     history = []
     start = time.time()
@@ -232,16 +291,19 @@ def main() -> None:
         # The far trees weigh most; elsewhere the network learns to leave the image alone.
         weight = 0.2 + m
         loss = ((out - y).abs() * weight).mean() + 0.5 * gradient_l1(out, y)
+        if args.detail > 0.0:
+            loss = loss + args.detail * detail_loss(out, y, m)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         schedule.step()
         if step % 500 == 0 or step == args.steps:
-            before, after = validate()
-            history.append({"step": step, "loss": loss.item(), "val_input": before, "val_output": after})
+            before, after, detail_before, detail_after = validate()
+            history.append({"step": step, "loss": loss.item(), "val_input": before, "val_output": after,
+                            "val_detail_input": detail_before, "val_detail_output": detail_after})
             print(f"step {step}: loss {loss.item():.4f}; validation block error input {before:.4f}, "
-                  f"output {after:.4f} ({100.0 * (1.0 - after / max(before, 1e-9)):.1f} % lower); "
-                  f"{time.time() - start:.0f} s", flush=True)
+                  f"output {after:.4f} ({100.0 * (1.0 - after / max(before, 1e-9)):.1f} % lower); detail error "
+                  f"input {detail_before:.3f}, output {detail_after:.3f}; {time.time() - start:.0f} s", flush=True)
 
     torch.save(model.state_dict(), args.out_dir / "enhancer.pt")
     (args.out_dir / "history.json").write_text(json.dumps(history, indent=1))
