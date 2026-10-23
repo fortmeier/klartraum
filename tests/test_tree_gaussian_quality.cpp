@@ -32,7 +32,9 @@
  * - featuresDescribeTheView: with BonsaiRenderConfig::features at R2 and R3 the image is the same as without; the
  *   feature images cover what the image shows (coverage about 1 where it is lit, 0 on the empty background), mark
  *   trees, and tell generated trees (level of detail 1) from library copies (0.5); their noise channel varies over
- *   the trees (standard deviation above 0.03, mean between 0.3 and 0.7) and is the same when a view is rendered again
+ *   the trees (standard deviation above 0.03, mean between 0.3 and 0.7), from pixel to pixel (mean difference of
+ *   horizontal neighbours above 0.04, not only from Gaussian to Gaussian) and is the same when a view is rendered
+ *   again
  * - generatedTreesCost: at R3 at 1920 x 1080, the GPU time of a frame with 1 and 24 trees generated every frame (the
  *   rest library copies), its share per kind of pass and the cost of a generated tree; more trees cost more
  * - walkingSwitchesTreesByTheirOwnDistance: walking 15 m at eye height through the forest from where the explorer
@@ -750,8 +752,8 @@ TEST_F(TreeGaussianQualityTest, featuresDescribeTheView) {
         const std::vector<uint8_t> fa = read(0), fb = read(1);
         withFeatures.frame(pose);
         const std::vector<uint8_t> fbAgain = read(1);
-        double noiseSum = 0.0, noiseSquares = 0.0;
-        size_t noiseChanged = 0;
+        double noiseSum = 0.0, noiseSquares = 0.0, neighbourSum = 0.0;
+        size_t noiseChanged = 0, neighbours = 0;
         size_t lit = 0, litCovered = 0, dark = 0, darkEmpty = 0, trees = 0, copies = 0, generated = 0, sized = 0;
         for (size_t p = 0; p < a.size() / 4; ++p) {
             const int coverage = fa[4 * p + 2], tree = fa[4 * p + 1], lod = fa[4 * p];
@@ -771,12 +773,19 @@ TEST_F(TreeGaussianQualityTest, featuresDescribeTheView) {
                 noiseSquares += noise * noise;
             }
             noiseChanged += std::abs(int(fb[4 * p]) - int(fbAgain[4 * p])) > 1;
+            if (tree > 128 && (p + 1) % extent.width != 0 && fa[4 * (p + 1) + 1] > 128) {
+                neighbourSum += std::abs(int(fb[4 * p]) - int(fb[4 * (p + 1)])) / 255.0;
+                ++neighbours;
+            }
         }
         const double noiseMean = noiseSum / double(std::max<size_t>(trees, 1));
         const double noiseDeviation =
             std::sqrt(std::max(0.0, noiseSquares / double(std::max<size_t>(trees, 1)) - noiseMean * noiseMean));
-        std::printf("R%d: noise over the trees mean %.3f, deviation %.3f; %zu pixels changed when rendered again\n",
-                    view, noiseMean, noiseDeviation, noiseChanged);
+        const double neighbourDifference = neighbourSum / double(std::max<size_t>(neighbours, 1));
+        std::printf("R%d: noise over the trees mean %.3f, deviation %.3f, neighbour difference %.3f; %zu pixels "
+                    "changed when rendered again\n",
+                    view, noiseMean, noiseDeviation, neighbourDifference, noiseChanged);
+        EXPECT_GT(neighbourDifference, 0.04) << view;
         EXPECT_GT(noiseDeviation, 0.03) << view;
         EXPECT_GT(noiseMean, 0.3) << view;
         EXPECT_LT(noiseMean, 0.7) << view;
