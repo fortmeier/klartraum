@@ -5,8 +5,8 @@
 /**
  * TESTS:
  * - matchesPyTorch: the enhancer fixtures (scripts/neural/make_enhancer_fixture.py: each network, v1 with transposed
- *   convolutions, v2 with nearest-neighbour and v3 with bilinear resizes, with fixed random weights and three random
- *   96 x 64 images)
+ *   convolutions, v2 with nearest-neighbour and v3 with bilinear resizes, v6 with ELU and the splatted noise of feature
+ *   B's third channel as a ninth input plane, with fixed random weights and three random 96 x 64 images)
  *   run by TreeEnhancer give PyTorch's output within 1e-3, and write it clamped to [0, 1] into the output image
  *   within one step of 255
  **/
@@ -86,7 +86,7 @@ TEST(TreeEnhancerTest, matchesPyTorch) {
     HeadlessFrontend frontend;
     VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
     for (const std::string stem : {"data/onnx/tree_enhancer_fixture", "data/onnx/tree_enhancer_v2_fixture",
-                                   "data/onnx/tree_enhancer_v3_fixture"}) {
+                                   "data/onnx/tree_enhancer_v3_fixture", "data/onnx/tree_enhancer_v6_fixture"}) {
         const size_t pixels = size_t(kWidth) * kHeight;
         const std::vector<uint8_t> images = readFile<uint8_t>(stem + "_images.bin", 3 * pixels * 4);
         const std::vector<float> expected = readFile<float>(stem + "_output.bin", 3 * pixels);

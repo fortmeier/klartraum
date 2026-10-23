@@ -1333,6 +1333,17 @@ void OnnxNetwork::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {
     // In practice, this would record the actual Vulkan commands for neural network execution
 }
 
+std::vector<uint32_t> OnnxNetwork::getInputDimensions(const std::string& name) const {
+    const auto element = graphDataElements.find(name);
+    auto tensor = element == graphDataElements.end()
+                      ? nullptr
+                      : std::dynamic_pointer_cast<TensorElementInterface>(element->second);
+    if (!tensor) {
+        throw std::runtime_error("ONNX graph input " + name + " not found");
+    }
+    return tensor->getDimensions();
+}
+
 std::vector<float> OnnxNetwork::getFloatInitializerData(const std::string& name) const {
     /**
      * @brief this method retrieves the data associated to a given (tensor) initializer

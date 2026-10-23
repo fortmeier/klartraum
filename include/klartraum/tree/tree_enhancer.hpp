@@ -23,7 +23,8 @@ namespace klartraum {
  *        rendering: its colour image and feature images (BonsaiRenderer::getFeatureTarget()) in, the enhanced
  *        image out.
  *
- * `tree_enhancer_input.comp` packs the three images into the network's input tensor (8 planes), the ONNX network
+ * `tree_enhancer_input.comp` packs the three images into the network's input tensor (8 planes, or 9 with feature B's
+ * third channel, the splatted noise, for networks whose input has 9 channels), the ONNX network
  * runs, and `tensor_to_image.comp` writes its output into `output`. The images are OffscreenTargets of the
  * network's input size; after the enhancer they are all in TRANSFER_SRC_OPTIMAL again. `producer` is the element
  * that last writes the images (BonsaiRenderer::getOutput()); compile a graph from getOutput().
@@ -42,10 +43,16 @@ public:
         uint32_t width;
         uint32_t height;
     };
+    struct InputPush {
+        uint32_t width;
+        uint32_t height;
+        uint32_t channels;
+        uint32_t pad;
+    };
 
 private:
     std::shared_ptr<TensorElement<float>> tensor;
-    std::shared_ptr<GeneralComputation<Push>> input;
+    std::shared_ptr<GeneralComputation<InputPush>> input;
     std::shared_ptr<OnnxNetwork> network;
     std::shared_ptr<GeneralComputation<Push>> toImage;
     ComputeGraphElementPtr done;
