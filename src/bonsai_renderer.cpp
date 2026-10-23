@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "klartraum/tree/bonsai_renderer.hpp"
+#include "klartraum/tree/tree_gaussian_features.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -316,45 +317,18 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         if (config.features) {
             // The same Gaussians with feature colours (tree_gaussian_features.comp), splatted into targets of their
             // own; the output joins all three splattings.
-            const uint32_t count = splats.count;
-            auto features = std::make_shared<GeneralComputation<GaussianFeaturePush>>(
-                vulkanContext, "shaders/tree/tree_gaussian_features.comp.spv");
-            features->setName("GaussianFeatures");
-            splats.pos.connectTo(*features, 0);
-            splats.scale.connectTo(*features, 1);
-            splats.colAlpha.connectTo(*features, 2);
-            features->setInput(camera, 3);
-            auto featureBuffer = [&]() {
-                return std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(
-                    vulkanContext, count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            };
-            features->setInput(featureBuffer(), 4);
-            features->setInput(featureBuffer(), 5);
-            features->setGroupCountX((count + 255) / 256);
-            GaussianFeaturePush push{};
-            push.count = count;
-            push.treeBegin = gaussians->getTreeOffset();
-            push.treeEnd = gaussians->getExtraOffset();
+            GaussianFeaturePush ranges{};
+            ranges.treeBegin = gaussians->getTreeOffset();
+            ranges.treeEnd = gaussians->getExtraOffset();
             if (forest) {
-                push.copyBegin = gaussians->getExtraOffset() + gaussians->getExtraSlots() - config.forestPool;
-                push.copyEnd = gaussians->getExtraOffset() + gaussians->getExtraSlots();
+                ranges.copyBegin = gaussians->getExtraOffset() + gaussians->getExtraSlots() - config.forestPool;
+                ranges.copyEnd = gaussians->getExtraOffset() + gaussians->getExtraSlots();
             }
-            push.halfHeight = 0.5f * float(renderExtent.height);
-            push.depthUnit = 1.0f / scene.config.scale.metersPerUnit();
-            features->setPushConstants({push});
-            GsplatConfig featureConfig;
-            featureConfig.shDegree = 0;
-            std::shared_ptr<ComputeGraphElement> previous = splatting;
-            for (int k = 0; k < 2; ++k) {
-                featureTargets[k] = std::make_shared<OffscreenTarget>(vulkanContext, config.extent, config.numberPaths);
-                GaussianSoABuffers featureSplats = splats;
-                featureSplats.colAlpha = BufferRef{features, 4 + k};
-                auto featureSplatting = createGaussianSplatting(vulkanContext, config.backend, featureTargets[k],
-                                                                camera, featureSplats, featureConfig);
-                featureSplatting->addDependency(previous);
-                previous = featureSplatting;
-            }
-            output = previous;
+            ranges.depthUnit = 1.0f / scene.config.scale.metersPerUnit();
+            const GaussianFeatures features = splatGaussianFeatures(
+                vulkanContext, splats, camera, config.extent, config.numberPaths, ranges, splatting, config.backend);
+            featureTargets = features.targets;
+            output = features.done;
         }
     }
 }

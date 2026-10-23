@@ -1,0 +1,45 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// The input of the neural enhancer of distant trees (scripts/neural/train_tree_enhancer.py): the Gaussian image's
+// RGB and its feature images (BonsaiRenderer::getFeatureTarget(): coverage, tree, level of detail; Gaussian size,
+// depth) as an NCHW tensor of 8 planes in [0, 1], in the order the network was trained with.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+}
+pc;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D colorImage;
+layout(set = 0, binding = 1, rgba8) uniform readonly image2D featureA;
+layout(set = 0, binding = 2, rgba8) uniform readonly image2D featureB;
+
+layout(set = 0, binding = 3) restrict writeonly buffer OutputTensor {
+    float outputData[];
+};
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= pc.width || pixel.y >= pc.height) {
+        return;
+    }
+    vec3 color = imageLoad(colorImage, ivec2(pixel)).rgb;
+    vec3 a = imageLoad(featureA, ivec2(pixel)).rgb;
+    vec2 b = imageLoad(featureB, ivec2(pixel)).rg;
+    uint plane = pc.width * pc.height;
+    uint offset = pixel.y * pc.width + pixel.x;
+    outputData[offset] = color.r;
+    outputData[plane + offset] = color.g;
+    outputData[2u * plane + offset] = color.b;
+    outputData[3u * plane + offset] = a.r;
+    outputData[4u * plane + offset] = a.g;
+    outputData[5u * plane + offset] = a.b;
+    outputData[6u * plane + offset] = b.r;
+    outputData[7u * plane + offset] = b.g;
+}

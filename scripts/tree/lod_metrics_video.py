@@ -83,6 +83,14 @@ def main() -> None:
 
     popping = [column("residual_static"), column("residual_dynamic"), column("residual_free_static"),
                column("residual_free_dynamic")]
+    names_file = args.out_dir / "panels.txt"
+    names = names_file.read_text().split("\n")[:4] if names_file.exists() else [
+        "with LOD, static", "with LOD, wind", "without LOD, static", "without LOD, wind"]
+    # With an enhancer (tree_lod_metrics_example --enhancer) the runs are: with LOD, enhanced, the classical
+    # reference and without LOD, and the fidelity is against the reference.
+    enhancing = names[1] == "enhanced"
+    fidelity_of = ({0: column("fidelity_static"), 1: column("fidelity_dynamic"), 3: column("fidelity_free")}
+                   if enhancing else {0: column("fidelity_static"), 1: column("fidelity_dynamic")})
     fidelity = [column("fidelity_static"), column("fidelity_dynamic")]
     gpu_ms = [column("gpu_ms_static"), column("gpu_ms_dynamic"), column("gpu_ms_free_static"),
               column("gpu_ms_free_dynamic")]
@@ -92,16 +100,18 @@ def main() -> None:
                                               (popping[0], STATIC), (popping[1], DYNAMIC)],
                                "popping residual (dark: without levels of detail; grey lines: what draws the tree "
                                "changes)", small)
-    fidelity_strip, _ = plot(rows, width, [(fidelity[0], STATIC), (fidelity[1], DYNAMIC)],
-                             "fidelity error against the tree without levels of detail", small)
+    fidelity_curves = [(fidelity_of[run], colour) for run, colour in ((0, STATIC), (1, DYNAMIC), (3, STATIC_FREE))
+                       if run in fidelity_of]
+    fidelity_strip, _ = plot(rows, width, fidelity_curves,
+                             "fidelity error against the classical reference" if enhancing
+                             else "fidelity error against the tree without levels of detail", small)
 
     encoder = subprocess.Popen(
         ["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
          f"{width}x{height + 2 * PLOT}", "-r", str(args.fps), "-i", "-", "-c:v", "libx264", "-crf", "20", "-pix_fmt",
          "yuv420p", str(args.out_dir / "tree_lod_metrics.mp4")],
         stdin=subprocess.PIPE)
-    panels = (("with LOD, static", STATIC, 0), ("with LOD, wind", DYNAMIC, 1),
-              ("without LOD, static", STATIC, 2), ("without LOD, wind", DYNAMIC, 3))
+    panels = ((names[0], STATIC, 0), (names[1], DYNAMIC, 1), (names[2], STATIC, 2), (names[3], DYNAMIC, 3))
     for k, (path, row) in enumerate(zip(frames, rows)):
         canvas = Image.new("RGB", (width, height + 2 * PLOT))
         canvas.paste(Image.open(path), (0, 0))
@@ -110,12 +120,12 @@ def main() -> None:
         draw = ImageDraw.Draw(canvas)
         for name, colour, run in panels:
             x, y = (run % 2) * panel_w + 16, (run // 2) * panel_h + 10
-            drawn = row["drawn_by"] if run < 2 else "generated"
+            drawn = row["drawn_by"] if run < 2 else ("classical" if enhancing and run == 2 else "generated")
             draw.text((x, y), name, font=big, fill=colour)
             draw.text((x, y + 34), f"{float(row['distance_m']):6.1f} m   {drawn}", font=small, fill=(230, 230, 230))
             line = f"popping {popping[run][k]:.4f}   GPU {gpu_ms[run][k]:.1f} ms"
-            if run < 2:
-                line += f"   fidelity error {fidelity[run][k]:.4f}"
+            if run in fidelity_of:
+                line += f"   fidelity error {fidelity_of[run][k]:.4f}"
             draw.text((x, y + 58), line, font=small, fill=(230, 230, 230))
         draw.line([(0, panel_h), (width, panel_h)], fill=(70, 70, 70), width=2)
         draw.line([(panel_w, 0), (panel_w, height)], fill=(70, 70, 70), width=2)
