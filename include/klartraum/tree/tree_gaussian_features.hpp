@@ -30,14 +30,16 @@ struct GaussianFeaturePush {
 };
 
 struct GaussianFeatures {
-    /// 0: coverage, tree, level of detail; 1: Gaussian size, depth (see tree_gaussian_features.comp).
+    /// 0: coverage, tree, level of detail; 1: Gaussian size, depth, noise (see tree_gaussian_features.comp; the
+    /// noise is at the scale of a pixel where the splatting finds a surface, tree_pixel_noise.comp).
     std::array<std::shared_ptr<OffscreenTarget>, 2> targets;
     ComputeGraphElementPtr done; ///< the last feature splatting, after `after`
 };
 
 /**
  * @brief Splats `splats` again with feature colours (tree_gaussian_features.comp) into two images of `extent`,
- *        after the element `after` (e.g. the splatting of their colours).
+ *        after the element `after` (e.g. the splatting of their colours), and writes noise of the world position
+ *        of every pixel with a surface into the second one's third channel (tree_pixel_noise.comp).
  *
  * `ranges` gives the slots of the generated trees and the library copies and the depth unit; its count and
  * halfHeight are filled in.
