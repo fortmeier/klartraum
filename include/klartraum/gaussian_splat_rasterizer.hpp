@@ -16,7 +16,7 @@
 
 namespace klartraum {
 
-// Layout must match the GLSL `push_constant` block in gsplat_raster.vert
+// Layout must match the GLSL `push_constant` block in gsplat_raster_fragment.glsl
 // (std430 scalar rules: vec2/vec2/float/int pack tightly, no padding).
 struct GaussianSplatRasterPushConstants {
     glm::vec2 resolution;
@@ -24,6 +24,7 @@ struct GaussianSplatRasterPushConstants {
     float splatScale;
     int32_t shDegree;
     uint32_t numSplats;
+    float depthOpacity = 0.5f; ///< with the depth output, see GsplatConfig::depthOpacity
 };
 
 /**

@@ -66,6 +66,10 @@ struct GsplatConfig {
     // the pixel with an opacity of at least 0.5; it uses the vertex path then. Both agree
     // on opaque surfaces. Off by default; the colour image is the same either way.
     bool outputDepth = false;
+
+    // Raster backend with outputDepth: the opacity with which a single Gaussian must cover a pixel for its depth to
+    // count. Lower values also give translucent surfaces (e.g. distant foliage) a depth.
+    float depthOpacity = 0.5f;
 };
 
 /**

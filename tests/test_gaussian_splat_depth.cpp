@@ -14,6 +14,8 @@
  * - translucentStackDepthDiffersByBackend: behind three Gaussians of opacity 0.32 the compute backend reports the
  *   depth where transmittance first falls to 0.5 (the second Gaussian), the raster backend no surface, as no single
  *   Gaussian is opaque enough
+ * - rasterDepthOpacityIsConfigurable: with GsplatConfig::depthOpacity 0.3 the raster backend reports the nearest of
+ *   the same three Gaussians
  * - backendsAgreeOnLantern: on the lantern scene both backends find a surface at nearly the same pixels and depths
  **/
 
@@ -108,13 +110,14 @@ protected:
     }
 
     Render render(GsplatBackend backend, std::vector<Gaussian3D> gaussians, bool outputDepth,
-                  VkExtent2D extent = kExtent) {
+                  VkExtent2D extent = kExtent, float depthOpacity = GsplatConfig{}.depthOpacity) {
         auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
         auto cameraUbo = std::make_shared<CameraUboType>();
         cameraUbo->ubo = camera(extent);
         auto model = std::make_shared<GaussianDataStandard>(*vc, std::move(gaussians));
         GsplatConfig config;
         config.outputDepth = outputDepth;
+        config.depthOpacity = depthOpacity;
         // The compute backend's binned buffer holds maxMod entries per Gaussian on average; a scene of a few small
         // Gaussians that each overlap up to four bins needs more.
         config.maxMod = 16;
@@ -201,6 +204,14 @@ TEST_F(GaussianSplatDepthTest, translucentStackDepthDiffersByBackend) {
     const auto [expected, pixel] = project(camera(kExtent), second, kExtent);
     EXPECT_NEAR(depthAt(render(GsplatBackend::Compute, stack, true), pixel), expected, 1e-5f);
     EXPECT_EQ(depthAt(render(GsplatBackend::Raster, stack, true), pixel), kInfinity);
+}
+
+TEST_F(GaussianSplatDepthTest, rasterDepthOpacityIsConfigurable) {
+    const glm::vec3 first(0.0f, 0.0f, 0.2f), second(0.0f, 0.0f, 0.0f), third(0.0f, 0.0f, -0.2f);
+    const std::vector<Gaussian3D> stack = {gaussianAt(first, 0.32f, 0.04f), gaussianAt(second, 0.32f, 0.04f),
+                                           gaussianAt(third, 0.32f, 0.04f)};
+    const auto [expected, pixel] = project(camera(kExtent), first, kExtent);
+    EXPECT_NEAR(depthAt(render(GsplatBackend::Raster, stack, true, kExtent, 0.3f), pixel), expected, 1e-5f);
 }
 
 TEST_F(GaussianSplatDepthTest, backendsAgreeOnLantern) {

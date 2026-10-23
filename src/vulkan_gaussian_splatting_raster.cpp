@@ -272,6 +272,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
         pushConstants.splatScale = 3.0f;
         pushConstants.shDegree = 0;
         pushConstants.numSplats = N;
+        pushConstants.depthOpacity = config.depthOpacity;
         rasterizer->setPushConstants(pushConstants);
         if (config.outputDepth) {
             addDepthOutput(vulkanContext, extent);

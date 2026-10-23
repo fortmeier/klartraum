@@ -4,7 +4,8 @@
 
 // Body of gsplat_raster.frag and gsplat_raster_depth.frag. With OUTPUT_DEPTH
 // defined, a fragment whose splat covers the pixel with an opacity of at least
-// 0.5 also lowers the pixel's depth to the splat's: an atomicMin on an
+// pc.depthOpacity (GsplatConfig::depthOpacity, 0.5 by default) also lowers the
+// pixel's depth to the splat's: an atomicMin on an
 // order-preserving uint encoding of the NDC depth, decoded by
 // gsplat_depth_resolve.comp. The splats arrive back to front, so where the
 // transmittance crosses 0.5 is not known here; the nearest opaque-enough splat
@@ -23,9 +24,12 @@ layout(location = 0) out vec4 outFragColor;
 layout(set = 1, binding = 2) buffer DepthBits { uint depthBits[]; };
 layout(push_constant) uniform PushConstants {
     vec2 resolution;
+    vec2 focal;
+    float splatScale;
+    int shDegree;
+    uint numSplats;
+    float depthOpacity;
 } pc;
-
-const float CORE_OPACITY = 0.5;
 #endif
 
 void main() {
@@ -41,7 +45,7 @@ void main() {
     }
 
 #ifdef OUTPUT_DEPTH
-    if (inColor.a * falloff >= CORE_OPACITY) {
+    if (inColor.a * falloff >= pc.depthOpacity) {
         uint pixel = uint(gl_FragCoord.y) * uint(pc.resolution.x) + uint(gl_FragCoord.x);
         atomicMin(depthBits[pixel], encodeDepth(inDepth));
     }
