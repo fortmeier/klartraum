@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Per-pixel features of a Gaussian rendering, for a network that enhances it: every Gaussian gets two feature
+// colours instead of its own, with its opacity, so that splatting them blends each feature as the colours are
+// blended. A: coverage (1), tree (1 for the generated trees' and the library copies' Gaussians, else 0), level of
+// detail (1 generated, 0.5 copy, 0 else). B: the Gaussian's size on screen, log2(1 + its largest sigma in pixels)
+// / 8, and its depth below the camera, log2(1 + view depth / pc.depthUnit) / 16. The colours are written as degree 0
+// spherical harmonics, as the splatting reads them.
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_CAMERA_SET 0
+#define TREE_CAMERA_BINDING 3
+#include "tree_render_common.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(scalar, binding = 0) readonly buffer Positions {
+    vec3 positions[];
+};
+layout(scalar, binding = 1) readonly buffer Scales {
+    vec3 scales[];
+};
+layout(scalar, binding = 2) readonly buffer ColAlpha {
+    vec4 colAlpha[];
+};
+layout(scalar, binding = 4) writeonly buffer FeatureA {
+    vec4 featureA[];
+};
+layout(scalar, binding = 5) writeonly buffer FeatureB {
+    vec4 featureB[];
+};
+
+layout(push_constant) uniform Push {
+    uint count;
+    uint treeBegin; // the generated trees' slots [treeBegin, treeEnd)
+    uint treeEnd;
+    uint copyBegin; // the library copies' slots [copyBegin, copyEnd)
+    uint copyEnd;
+    float halfHeight; // half the image's height in pixels
+    float depthUnit; // units in which the depth is encoded (a metre)
+    uint pad;
+}
+pc;
+
+const float SH_C0 = 0.28209479f;
+
+vec4 asColour(vec3 feature, float alpha) { return vec4((feature - vec3(0.5f)) / SH_C0, alpha); }
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) {
+        return;
+    }
+    float alpha = colAlpha[i].w;
+    bool generated = i >= pc.treeBegin && i < pc.treeEnd;
+    bool copy = i >= pc.copyBegin && i < pc.copyEnd;
+    float lod = generated ? 1.0f : (copy ? 0.5f : 0.0f);
+    featureA[i] = asColour(vec3(1.0f, generated || copy ? 1.0f : 0.0f, lod), alpha);
+    vec3 s = scales[i];
+    float depth = max(treeViewDepth(positions[i]), 1e-6f);
+    float sigmaPixels = max(s.x, max(s.y, s.z)) * abs(camera.proj[1][1]) * pc.halfHeight / depth;
+    featureB[i] = asColour(vec3(clamp(log2(1.0f + sigmaPixels) / 8.0f, 0.0f, 1.0f),
+                                clamp(log2(1.0f + depth / pc.depthUnit) / 16.0f, 0.0f, 1.0f), 0.0f),
+                           alpha);
+}

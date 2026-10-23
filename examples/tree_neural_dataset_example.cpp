@@ -15,8 +15,9 @@
 // supersampled pixels they cover). The views are drawn from --seed: at eye height on open land looking towards
 // forest, and 30, 120 and 400 m above the soil looking down onto forest. --first skips views, to continue a database.
 //
-// Writes <out-dir>/lr_NNNN.ppm, hf_NNNN.ppm, mask_NNNN.pgm and appends to <out-dir>/views.csv (pose, far trees,
-// batches, seconds per rendering).
+// Writes <out-dir>/lr_NNNN.ppm, its features fa_NNNN.ppm (coverage, tree, level of detail) and fb_NNNN.ppm
+// (Gaussian size, depth; BonsaiRenderConfig::features), hf_NNNN.ppm, mask_NNNN.pgm, and appends to
+// <out-dir>/views.csv (pose, far trees, batches, seconds per rendering).
 
 #include <algorithm>
 #include <chrono>
@@ -188,6 +189,7 @@ int main(int argc, char** argv) {
     BonsaiRenderConfig lowConfig;
     lowConfig.extent = extent;
     lowConfig.mode = BonsaiRenderMode::Gaussian;
+    lowConfig.features = true;
     BonsaiRenderer low(vc, scene, lowTarget, lowConfig);
     ComputeGraph lowGraph(vc, 1);
     lowGraph.compileFrom(low.getOutput());
@@ -232,6 +234,8 @@ int main(int argc, char** argv) {
             lowGraph.submitAndWait(vc.getGraphicsQueue(), 0);
         }
         const std::vector<uint8_t> lowImage = readImage(vc, lowTarget->getImage(0), extent);
+        const std::vector<uint8_t> featureA = readImage(vc, low.getFeatureTarget(0)->getImage(0), extent);
+        const std::vector<uint8_t> featureB = readImage(vc, low.getFeatureTarget(1)->getImage(0), extent);
         const double lowSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - lowStart).count();
 
         const auto highStart = std::chrono::steady_clock::now();
@@ -242,6 +246,8 @@ int main(int argc, char** argv) {
         char name[32];
         std::snprintf(name, sizeof(name), "%04u", v);
         writePpm(outDir / (std::string("lr_") + name + ".ppm"), lowImage, extent);
+        writePpm(outDir / (std::string("fa_") + name + ".ppm"), featureA, extent);
+        writePpm(outDir / (std::string("fb_") + name + ".ppm"), featureB, extent);
         writePpm(outDir / (std::string("hf_") + name + ".ppm"), boxDown(frame.image, fine, supersample, 4), extent);
         writePgm(outDir / (std::string("mask_") + name + ".pgm"), boxDown(frame.mask, fine, supersample, 1), extent);
         csv << v << "," << pose.kind << "," << pose.eye.x << "," << pose.eye.y << "," << pose.eye.z << ","

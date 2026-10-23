@@ -29,6 +29,9 @@
  * - overflowAlongTheFlight: at the reference views R0-R3 of the fly-in at scale 1 and 1920 x 1080, the visible
  *   trees of the proxies, the library copies taken of them and the forest pool's Gaussians, none left out, and the
  *   GPU time of a frame
+ * - featuresDescribeTheView: with BonsaiRenderConfig::features at R2 and R3 the image is the same as without; the
+ *   feature images cover what the image shows (coverage about 1 where it is lit, 0 on the empty background), mark
+ *   trees, and tell generated trees (level of detail 1) from library copies (0.5)
  * - generatedTreesCost: at R3 at 1920 x 1080, the GPU time of a frame with 1 and 24 trees generated every frame (the
  *   rest library copies), its share per kind of pass and the cost of a generated tree; more trees cost more
  * - walkingSwitchesTreesByTheirOwnDistance: walking 15 m at eye height through the forest from where the explorer
@@ -135,12 +138,13 @@ constexpr float kReferenceU[4] = {0.0f, 0.19f, 0.7f, 1.0f};
 
 // The Gaussian BonsaiRenderer, driven per frame as tree_bonsai_example --fly-in drives it.
 struct FlightRenderer {
-    FlightRenderer(VulkanContext& vc, const BonsaiScene& scene, VkExtent2D extent)
+    FlightRenderer(VulkanContext& vc, const BonsaiScene& scene, VkExtent2D extent, bool features = false)
         : vc(vc),
           extent(extent) {
         target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         config.extent = extent;
         config.mode = BonsaiRenderMode::Gaussian;
+        config.features = features;
         renderer = std::make_unique<BonsaiRenderer>(vc, scene, target, config);
         graph = std::make_unique<ComputeGraph>(vc, 1);
         graph->enableProfiling();
@@ -718,6 +722,57 @@ TEST_F(TreeGaussianQualityTest, overflowAlongTheFlight) {
         writeImage("flight_R" + std::to_string(view), image, r.extent);
         EXPECT_GT(proxies[0], 0u);
     }
+}
+
+TEST_F(TreeGaussianQualityTest, featuresDescribeTheView) {
+    const BonsaiScene& scene = sceneAtScale1();
+    const ReferenceFlight flight(scene);
+    const VkExtent2D extent{640, 360};
+    FlightRenderer plain(*vc, scene, extent);
+    FlightRenderer withFeatures(*vc, scene, extent, true);
+    ASSERT_NE(withFeatures.renderer->getFeatureTarget(0), nullptr);
+    bool sawCopies = false, sawGenerated = false;
+    for (int view : {2, 3}) {
+        const FlyInPose pose = flight.at(kReferenceU[view]);
+        plain.settle(pose);
+        withFeatures.settle(pose);
+        const std::vector<uint8_t> a = plain.frame(pose), b = withFeatures.frame(pose);
+        int largest = 0;
+        for (size_t i = 0; i < a.size(); ++i) {
+            largest = std::max(largest, std::abs(int(a[i]) - int(b[i])));
+        }
+        EXPECT_LE(largest, 1) << view;
+        const auto read = [&](int k) {
+            return readImage(*vc, withFeatures.renderer->getFeatureTarget(k)->getImage(0),
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+        };
+        const std::vector<uint8_t> fa = read(0), fb = read(1);
+        size_t lit = 0, litCovered = 0, dark = 0, darkEmpty = 0, trees = 0, copies = 0, generated = 0, sized = 0;
+        for (size_t p = 0; p < a.size() / 4; ++p) {
+            const int coverage = fa[4 * p + 2], tree = fa[4 * p + 1], lod = fa[4 * p];
+            const bool shown = a[4 * p] + a[4 * p + 1] + a[4 * p + 2] > 30;
+            lit += shown;
+            litCovered += shown && coverage > 240;
+            const bool empty = a[4 * p] + a[4 * p + 1] + a[4 * p + 2] == 0;
+            dark += empty;
+            darkEmpty += empty && coverage < 5;
+            trees += tree > 128;
+            copies += tree > 128 && std::abs(lod - 128) < 24;
+            generated += tree > 128 && lod > 230;
+            sized += fb[4 * p + 2] > 0;
+        }
+        std::printf("R%d: %zu of %zu lit pixels covered, %zu of %zu empty ones not; trees %zu (copies %zu, generated "
+                    "%zu); %zu pixels sized\n",
+                    view, litCovered, lit, darkEmpty, dark, trees, copies, generated, sized);
+        EXPECT_GT(double(litCovered), 0.9 * double(lit)) << view;
+        EXPECT_GE(double(darkEmpty), 0.99 * double(dark)) << view;
+        EXPECT_GT(trees, a.size() / 4 / 20) << view;
+        sawCopies |= copies > 1000;
+        sawGenerated |= generated > 1000;
+        EXPECT_GT(sized, lit / 2) << view;
+    }
+    EXPECT_TRUE(sawCopies);
+    EXPECT_TRUE(sawGenerated);
 }
 
 TEST_F(TreeGaussianQualityTest, generatedTreesCost) {

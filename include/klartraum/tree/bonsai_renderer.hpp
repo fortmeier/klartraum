@@ -6,6 +6,7 @@
 #define KLARTRAUM_TREE_BONSAI_RENDERER_HPP
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 
@@ -97,6 +98,10 @@ struct BonsaiRenderConfig {
     bool farTrees = true;
     /// The classical renderer's pass keeps its depth buffer for later passes (getPass(), RenderPass::setDepthFrom()).
     bool storeDepth = false;
+    /// The Gaussian renderer also splats per-pixel features (tree_gaussian_features.comp) into getFeatureTarget(0)
+    /// (coverage, tree, level of detail) and getFeatureTarget(1) (Gaussian size, depth), each at the image's
+    /// resolution, e.g. for a network that enhances the image.
+    bool features = false;
     TreeImpostorConfig impostorAtlas;
     /// The classical renderer generates this many trees beyond the near ones with one stem level less
     /// (treeReducedType(), the level of detail L1); the impostors start beyond them.
@@ -133,6 +138,18 @@ struct BonsaiRenderConfig {
  * the GPU. Compile a graph from getOutput(), then call
  * initialize() once before the first submission.
  */
+/// The push constants of tree_gaussian_features.comp.
+struct GaussianFeaturePush {
+    uint32_t count = 0;
+    uint32_t treeBegin = 0;
+    uint32_t treeEnd = 0;
+    uint32_t copyBegin = 0;
+    uint32_t copyEnd = 0;
+    float halfHeight = 0.0f;
+    float depthUnit = 1.0f;
+    uint32_t pad = 0;
+};
+
 class BonsaiRenderer {
 public:
     /// The light grid's voxels per axis when it follows the near trees (scenes whose trees follow the placement).
@@ -180,6 +197,8 @@ public:
     bool isSettled() const { return getPendingTiles() == 0 && !bandChanged; }
 
     std::shared_ptr<CameraUboType> getCamera() const { return camera; }
+    /// The feature image k (BonsaiRenderConfig::features), or nullptr.
+    std::shared_ptr<OffscreenTarget> getFeatureTarget(int k) const { return featureTargets[k]; }
     /// The classical renderer's render pass (its image and depth buffer), or nullptr.
     std::shared_ptr<RenderPass> getPass() const { return pass; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
@@ -253,6 +272,7 @@ private:
     std::unique_ptr<TreeTerrain> terrain;
     std::unique_ptr<TreeTerrainRenderer> terrainRenderer;
     std::shared_ptr<RenderPass> pass;
+    std::array<std::shared_ptr<OffscreenTarget>, 2> featureTargets;
 
     ComputeGraphElementPtr output;
 };
