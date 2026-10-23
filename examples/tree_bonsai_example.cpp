@@ -12,7 +12,7 @@
 //                       [--ground X,Z,METERS,HEADING] [--no-grass] [--profile] [--budget MS]
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--moss-patches 250]
-//                       [--out-dir build/TestingOutput/tree_bonsai]
+//                       [--enhancer MODEL.onnx] [--out-dir build/TestingOutput/tree_bonsai]
 //
 // The trees are generated on the GPU every frame; per frame the CPU only sets
 // the camera, the time, the season and the wind. Without --video, view i is
@@ -23,7 +23,11 @@
 // the camera turns --turns times around the pot; --from and --to select a
 // range of frames. With --fly-in, the frames of a flight from the first view
 // down to the --ground place (without --ground: over a field into a forest)
-// go to <out-dir>/frames/<renderer>_<frame>.ppm, at noon of the season.
+// go to <out-dir>/frames/<renderer>_<frame>.ppm, at noon of the season. With
+// --enhancer, the Gaussian renderer also splats its feature images and runs the
+// neural enhancer of distant trees (TreeEnhancer, a model of
+// scripts/neural/train_tree_enhancer.py at the image's size) after it; its
+// images go to <out-dir>/frames/enhanced_<frame>.ppm beside the Gaussian ones.
 
 #include <algorithm>
 #include <chrono>
@@ -44,6 +48,7 @@
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/tree/bonsai_flight.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
+#include "klartraum/tree/tree_enhancer.hpp"
 
 using namespace klartraum;
 
@@ -117,6 +122,7 @@ int main(int argc, char** argv) {
     uint32_t fromFrame = 0;
     uint32_t toFrame = UINT32_MAX;
     std::filesystem::path outDir = "build/TestingOutput/tree_bonsai";
+    std::string enhancerPath;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -176,6 +182,8 @@ int main(int argc, char** argv) {
             fromFrame = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--to" && hasValue) {
             toFrame = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--enhancer" && hasValue) {
+            enhancerPath = argv[++i];
         } else if (arg == "--out-dir" && hasValue) {
             outDir = argv[++i];
         } else {
@@ -236,14 +244,23 @@ int main(int argc, char** argv) {
         config.backend = backendName == "raster" ? GsplatBackend::Raster : GsplatBackend::Compute;
         config.mossPatches = mossPatches;
         config.grass = grass;
+        const bool enhancing = !enhancerPath.empty() && mode == BonsaiRenderMode::Gaussian;
+        config.features = enhancing;
 
         auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderer bonsai(vc, scene, target, config);
+        std::shared_ptr<OffscreenTarget> enhancedTarget;
+        std::unique_ptr<TreeEnhancer> enhancer;
+        if (enhancing) {
+            enhancedTarget = std::make_shared<OffscreenTarget>(vc, extent, 1);
+            enhancer = std::make_unique<TreeEnhancer>(vc, enhancerPath, target, bonsai.getFeatureTarget(0),
+                                                      bonsai.getFeatureTarget(1), enhancedTarget, bonsai.getOutput());
+        }
         ComputeGraph graph(vc, 1);
         if (profile) {
             graph.enableProfiling();
         }
-        graph.compileFrom(bonsai.getOutput());
+        graph.compileFrom(enhancer ? enhancer->getOutput() : bonsai.getOutput());
         bonsai.initialize(1);
         bonsai.setSeason(season);
 
@@ -273,6 +290,10 @@ int main(int argc, char** argv) {
                 char name[64];
                 std::snprintf(name, sizeof(name), "%s_%04u.ppm", modeName, frame);
                 writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+                if (enhancer) {
+                    std::snprintf(name, sizeof(name), "enhanced_%04u.ppm", frame);
+                    writePpm(outDir / "frames" / name, readImage(vc, enhancedTarget->getImage(0), extent), extent);
+                }
                 if (frame % 30 == 0) {
                     std::cout << modeName << " frame " << frame << " / " << frames << std::endl;
                 }
