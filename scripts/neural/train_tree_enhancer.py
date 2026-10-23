@@ -129,12 +129,13 @@ def constants_as_initializers(model):
 
 
 class EnhancerV2(nn.Module):
-    """Cheaper at full resolution: two strided 3 x 3 convolutions down to a quarter, nearest-neighbour resizes up
-    (OnnxNetwork's Resize), and at full resolution one 3 x 3 convolution of 16 to 8 channels and a 1 x 1 to RGB;
+    """Cheaper at full resolution: two strided 3 x 3 convolutions down to a quarter, resizes up (nearest neighbour
+    or bilinear, `upsample`), and at full resolution one 3 x 3 convolution of 16 to 8 channels and a 1 x 1 to RGB;
     the output is added to the input image."""
 
-    def __init__(self) -> None:
+    def __init__(self, upsample: str = "nearest") -> None:
         super().__init__()
+        self.upsample = upsample
         self.down1 = nn.Sequential(nn.Conv2d(INPUT_CHANNELS, 24, 3, stride=2, padding=1), nn.ReLU(),
                                    nn.Conv2d(24, 24, 3, padding=1), nn.ReLU())
         self.down2 = nn.Sequential(nn.Conv2d(24, 32, 3, stride=2, padding=1), nn.ReLU(),
@@ -156,12 +157,19 @@ class EnhancerV2(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         d1 = self.down1(x)
         d2 = self.down2(d1)
-        m = self.mid(torch.cat([F.interpolate(d2, scale_factor=2, mode="nearest"), d1], dim=1))
-        f = self.full(torch.cat([F.interpolate(m, scale_factor=2, mode="nearest"), x], dim=1))
+        m = self.mid(torch.cat([self.up(d2), d1], dim=1))
+        f = self.full(torch.cat([self.up(m), x], dim=1))
         return self.pick(x) + self.out(f)
 
+    def up(self, x: torch.Tensor) -> torch.Tensor:
+        if self.upsample == "nearest":
+            return F.interpolate(x, scale_factor=2, mode="nearest")
+        return F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
 
-ARCHITECTURES = {"v1": Enhancer, "v2": EnhancerV2}
+
+# v3: v2 with bilinear upsampling, which leaves no blocks of 2 x 2 or 4 x 4 pixels for an adversarial loss to
+# sharpen into a grid.
+ARCHITECTURES = {"v1": Enhancer, "v2": EnhancerV2, "v3": lambda: EnhancerV2(upsample="bilinear")}
 
 
 def texture(x: torch.Tensor) -> torch.Tensor:
@@ -173,21 +181,53 @@ def texture(x: torch.Tensor) -> torch.Tensor:
     return (luminance - blurred) / (luminance.mean(dim=(2, 3), keepdim=True) + 0.05)
 
 
-class PatchDiscriminator(nn.Module):
-    """Judges 64 x 64 crops as real photographs of vegetation or enhanced renderings by their texture alone
-    (texture()): a logit per patch of about 16 px, so colour stays with the other losses. Spectral normalisation
-    keeps its training stable."""
+def diff_augment(x: torch.Tensor) -> torch.Tensor:
+    """DiffAugment's colour, translation (1/8) and cutout (1/2) on a batch, differentiable and per sample."""
+    b = x.shape[0]
+    dev = x.device
+    x = x + (torch.rand(b, 1, 1, 1, device=dev) - 0.5)
+    mean = x.mean(dim=1, keepdim=True)
+    x = (x - mean) * (torch.rand(b, 1, 1, 1, device=dev) * 2) + mean
+    mean = x.mean(dim=[1, 2, 3], keepdim=True)
+    x = (x - mean) * (torch.rand(b, 1, 1, 1, device=dev) + 0.5) + mean
+    # Translation by up to 1/8 of the size, padding with zeros.
+    h, w = x.shape[2:]
+    sx, sy = w // 8, h // 8
+    tx = torch.randint(-sx, sx + 1, (b, 1, 1), device=dev)
+    ty = torch.randint(-sy, sy + 1, (b, 1, 1), device=dev)
+    gy, gx = torch.meshgrid(torch.arange(h, device=dev), torch.arange(w, device=dev), indexing="ij")
+    gx = torch.clamp(gx.unsqueeze(0) + tx + 1, 0, w + 1)
+    gy = torch.clamp(gy.unsqueeze(0) + ty + 1, 0, h + 1)
+    padded = F.pad(x, (1, 1, 1, 1))
+    x = padded.permute(0, 2, 3, 1)[torch.arange(b, device=dev).view(b, 1, 1), gy, gx].permute(0, 3, 1, 2)
+    # Cutout: a square of half the size set to zero.
+    ch, cw = h // 2, w // 2
+    ox = torch.randint(0, w + (1 - cw % 2), (b, 1, 1), device=dev)
+    oy = torch.randint(0, h + (1 - ch % 2), (b, 1, 1), device=dev)
+    gy, gx = torch.meshgrid(torch.arange(ch, device=dev), torch.arange(cw, device=dev), indexing="ij")
+    gx = torch.clamp(gx.unsqueeze(0) + ox - cw // 2, 0, w - 1)
+    gy = torch.clamp(gy.unsqueeze(0) + oy - ch // 2, 0, h - 1)
+    mask = torch.ones(b, h, w, device=dev)
+    mask[torch.arange(b, device=dev).view(b, 1, 1), gy, gx] = 0
+    return x * mask.unsqueeze(1)
 
-    def __init__(self) -> None:
+
+class PatchDiscriminator(nn.Module):
+    """Judges 64 x 64 crops as real photographs of vegetation or enhanced renderings, on RGB or on their texture
+    alone (texture(), so colour stays with the other losses): a logit per patch of about 16 px, averaged into the
+    crop's score. The setup train_texture_gan.py learns vegetation with from noise."""
+
+    def __init__(self, input: str = "rgb") -> None:
         super().__init__()
-        sn = nn.utils.spectral_norm
-        self.net = nn.Sequential(sn(nn.Conv2d(1, 32, 4, stride=2, padding=1)), nn.LeakyReLU(0.2),
-                                 sn(nn.Conv2d(32, 64, 4, stride=2, padding=1)), nn.LeakyReLU(0.2),
-                                 sn(nn.Conv2d(64, 128, 4, stride=2, padding=1)), nn.LeakyReLU(0.2),
-                                 sn(nn.Conv2d(128, 1, 3, padding=1)))
+        self.input = input
+        channels = 3 if input == "rgb" else 1
+        self.net = nn.Sequential(nn.Conv2d(channels, 64, 4, stride=2, padding=1), nn.LeakyReLU(0.2),
+                                 nn.Conv2d(64, 128, 4, stride=2, padding=1), nn.LeakyReLU(0.2),
+                                 nn.Conv2d(128, 256, 4, stride=2, padding=1), nn.LeakyReLU(0.2),
+                                 nn.Conv2d(256, 1, 3, padding=1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(texture(x))
+        return self.net(x * 2.0 - 1.0 if self.input == "rgb" else texture(x)).mean(dim=(1, 2, 3))
 
 
 class RealCrops:
@@ -337,6 +377,9 @@ def main() -> None:
     parser.add_argument("--real", type=Path, help="directory of real photographs for the adversarial loss")
     parser.add_argument("--adversarial", type=float, default=0.0, help="weight of the adversarial loss")
     parser.add_argument("--adversarial-start", type=int, default=2000, help="step from which it counts")
+    parser.add_argument("--discriminator", choices=["rgb", "texture"], default="rgb",
+                        help="what the discriminator sees of a crop")
+    parser.add_argument("--r1", type=float, default=1.0, help="weight of the discriminator's R1 penalty")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -354,12 +397,13 @@ def main() -> None:
 
     model = ARCHITECTURES[args.arch]().to(device)
     (args.out_dir / "config.json").write_text(json.dumps({"arch": args.arch, "detail": args.detail,
-                                                          "adversarial": args.adversarial}))
+                                                          "adversarial": args.adversarial,
+                                                          "discriminator": args.discriminator}))
     discriminator = real = None
     if args.adversarial > 0.0:
         real = RealCrops(args.real)
-        discriminator = PatchDiscriminator().to(device)
-        d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
+        discriminator = PatchDiscriminator(args.discriminator).to(device)
+        d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.0, 0.99))
     print(f"{sum(p.numel() for p in model.parameters())} parameters")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.LambdaLR(
@@ -393,15 +437,22 @@ def main() -> None:
             loss = loss + args.detail * detail_loss(out, y, m)
         adversarial = 0.0
         if discriminator is not None and step >= args.adversarial_start:
-            # The discriminator learns real vegetation from enhanced far trees (hinge loss); the enhancer learns to
-            # make its far trees look real to it.
+            # The discriminator learns real vegetation from enhanced far trees (non-saturating loss, both seen through
+            # the same DiffAugment, R1 on real crops every 16 steps); the enhancer learns to make its far trees look
+            # real to it.
             fake = fake_crops(out, m, 2 * args.batch, rng)
             real_batch = real.sample(2 * args.batch, rng).to(device)
-            d_loss = F.relu(1.0 - discriminator(real_batch)).mean() + F.relu(1.0 + discriminator(fake.detach())).mean()
+            d_loss = (F.softplus(-discriminator(diff_augment(real_batch))).mean()
+                      + F.softplus(discriminator(diff_augment(fake.detach()))).mean())
+            if step % 16 == 0:
+                real_batch.requires_grad_(True)
+                (grad,) = torch.autograd.grad(discriminator(diff_augment(real_batch)).sum(), real_batch,
+                                              create_graph=True)
+                d_loss = d_loss + args.r1 * 16 * 0.5 * grad.pow(2).sum(dim=(1, 2, 3)).mean()
             d_optimizer.zero_grad()
             d_loss.backward()
             d_optimizer.step()
-            adversarial = -discriminator(fake).mean()
+            adversarial = F.softplus(-discriminator(diff_augment(fake))).mean()
             loss = loss + args.adversarial * adversarial
         optimizer.zero_grad()
         loss.backward()
