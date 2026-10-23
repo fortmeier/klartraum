@@ -507,7 +507,8 @@ int main(int argc, char** argv) {
     }
     csv << "frame,distance_m,drawn_by,level,fade,crown_px,residual_static,residual_dynamic,residual_free_static,"
            "residual_free_dynamic,fidelity_static,fidelity_dynamic,gpu_ms_static,gpu_ms_dynamic,gpu_ms_free_static,"
-           "gpu_ms_free_dynamic,splats_static,splats_dynamic,splats_free_static,splats_free_dynamic,fidelity_free\n";
+           "gpu_ms_free_dynamic,splats_static,splats_dynamic,splats_free_static,splats_free_dynamic,fidelity_free,"
+           "detail_static,detail_dynamic,detail_free\n";
 
     const glm::vec3 middle = glm::vec3(site.posHeight) + glm::vec3(0.0f, 0.5f * treeHeight, 0.0f);
     const glm::vec4 wind(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength);
@@ -515,6 +516,8 @@ int main(int argc, char** argv) {
     std::vector<PoppingMeter> poppingMeters(4, PoppingMeter(width, height));
     std::vector<std::vector<float>> residuals(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> fidelity(3, std::vector<float>(size_t(frames) + 1, 0.0f));
+    // The detail error (detailError()) of the same pairs as the fidelity.
+    std::vector<std::vector<float>> detail(3, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> gpuMs(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> splats(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<float> distances(size_t(frames) + 1);
@@ -586,9 +589,14 @@ int main(int argc, char** argv) {
             fidelity[0][k] = fidelityError(images[0], images[2], width, height);
             fidelity[1][k] = fidelityError(images[1], images[2], width, height);
             fidelity[2][k] = fidelityError(images[3], images[2], width, height);
+            detail[0][k] = detailError(images[0], images[2], width, height);
+            detail[1][k] = detailError(images[1], images[2], width, height);
+            detail[2][k] = detailError(images[3], images[2], width, height);
         } else {
             fidelity[0][k] = fidelityError(images[0], images[2], width, height);
             fidelity[1][k] = fidelityError(images[1], images[3], width, height);
+            detail[0][k] = detailError(images[0], images[2], width, height);
+            detail[1][k] = detailError(images[1], images[3], width, height);
         }
 
         // With levels of detail above, without below; static left, dynamic right.
@@ -610,7 +618,8 @@ int main(int argc, char** argv) {
             << "," << residuals[0][k] << "," << residuals[1][k] << "," << residuals[2][k] << "," << residuals[3][k]
             << "," << fidelity[0][k] << "," << fidelity[1][k] << "," << gpuMs[0][k] << "," << gpuMs[1][k] << ","
             << gpuMs[2][k] << "," << gpuMs[3][k] << "," << splats[0][k] << "," << splats[1][k] << "," << splats[2][k]
-            << "," << splats[3][k] << "," << fidelity[2][k] << "\n";
+            << "," << splats[3][k] << "," << fidelity[2][k] << "," << detail[0][k] << "," << detail[1][k] << ","
+            << detail[2][k] << "\n";
     }
     if (enhancing) {
         printPopping("with LOD", residuals[0], residuals[3], distances, drawnBy);
@@ -621,11 +630,17 @@ int main(int argc, char** argv) {
                               drawnBy);
         printByRepresentation("fidelity error against the classical reference, without LOD", fidelity[2], distances,
                               drawnBy);
+        printByRepresentation("detail error against the classical reference, with LOD", detail[0], distances, drawnBy);
+        printByRepresentation("detail error against the classical reference, enhanced", detail[1], distances, drawnBy);
+        printByRepresentation("detail error against the classical reference, without LOD", detail[2], distances,
+                              drawnBy);
     } else {
         printPopping("static ", residuals[0], residuals[2], distances, drawnBy);
         printPopping("dynamic", residuals[1], residuals[3], distances, drawnBy);
         printByRepresentation("static  fidelity error", fidelity[0], distances, drawnBy);
         printByRepresentation("dynamic fidelity error", fidelity[1], distances, drawnBy);
+        printByRepresentation("static  detail error", detail[0], distances, drawnBy);
+        printByRepresentation("dynamic detail error", detail[1], distances, drawnBy);
     }
     printByRepresentation("dynamic GPU ms", gpuMs[1], distances, drawnBy);
     printByRepresentation("dynamic GPU ms without levels of detail", gpuMs[3], distances, drawnBy);

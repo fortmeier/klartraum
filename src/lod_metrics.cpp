@@ -120,4 +120,44 @@ float fidelityError(const std::vector<uint8_t>& image, const std::vector<uint8_t
     return blocks > 0 ? float(sum / double(blocks)) : 0.0f;
 }
 
+float detailError(const std::vector<uint8_t>& image, const std::vector<uint8_t>& reference, uint32_t width,
+                  uint32_t height, DetailConfig config) {
+    const size_t bytes = size_t(width) * height * 4;
+    if (image.size() != bytes || reference.size() != bytes || config.block == 0) {
+        throw std::invalid_argument("detailError: images must have width x height BGRA pixels");
+    }
+    const std::vector<float> a = imageLuminance(image), b = imageLuminance(reference);
+    // The 4-neighbour Laplacian at (x, y), edges clamped.
+    auto laplacian = [&](const std::vector<float>& l, uint32_t x, uint32_t y) {
+        const uint32_t x0 = x > 0 ? x - 1 : x, x1 = x + 1 < width ? x + 1 : x;
+        const uint32_t y0 = y > 0 ? y - 1 : y, y1 = y + 1 < height ? y + 1 : y;
+        const size_t i = size_t(y) * width + x;
+        return 4.0f * l[i] - l[size_t(y) * width + x0] - l[size_t(y) * width + x1] - l[size_t(y0) * width + x] -
+               l[size_t(y1) * width + x];
+    };
+    const uint32_t blockSize = config.block;
+    const double area = double(blockSize) * blockSize;
+    double sum = 0.0;
+    size_t blocks = 0;
+    for (uint32_t by = 0; by + blockSize <= height; by += blockSize) {
+        for (uint32_t bx = 0; bx + blockSize <= width; bx += blockSize) {
+            double energyA = 0.0, energyB = 0.0, lightA = 0.0, lightB = 0.0;
+            for (uint32_t y = by; y < by + blockSize; ++y) {
+                for (uint32_t x = bx; x < bx + blockSize; ++x) {
+                    const float la = laplacian(a, x, y), lb = laplacian(b, x, y);
+                    energyA += double(la) * la;
+                    energyB += double(lb) * lb;
+                    lightA += a[size_t(y) * width + x];
+                    lightB += b[size_t(y) * width + x];
+                }
+            }
+            if (std::max(lightA, lightB) / area > config.minLight) {
+                sum += std::abs(std::log2((energyA / area + config.floor) / (energyB / area + config.floor)));
+                ++blocks;
+            }
+        }
+    }
+    return blocks > 0 ? float(sum / double(blocks)) : 0.0f;
+}
+
 } // namespace klartraum

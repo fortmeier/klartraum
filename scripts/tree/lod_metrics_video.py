@@ -92,6 +92,8 @@ def main() -> None:
     fidelity_of = ({0: column("fidelity_static"), 1: column("fidelity_dynamic"), 3: column("fidelity_free")}
                    if enhancing else {0: column("fidelity_static"), 1: column("fidelity_dynamic")})
     fidelity = [column("fidelity_static"), column("fidelity_dynamic")]
+    detail_of = ({0: column("detail_static"), 1: column("detail_dynamic"), 3: column("detail_free")}
+                 if enhancing else {0: column("detail_static"), 1: column("detail_dynamic")})
     gpu_ms = [column("gpu_ms_static"), column("gpu_ms_dynamic"), column("gpu_ms_free_static"),
               column("gpu_ms_free_dynamic")]
     big, small = font(26), font(19)
@@ -125,7 +127,7 @@ def main() -> None:
             draw.text((x, y + 34), f"{float(row['distance_m']):6.1f} m   {drawn}", font=small, fill=(230, 230, 230))
             line = f"popping {popping[run][k]:.4f}   GPU {gpu_ms[run][k]:.1f} ms"
             if run in fidelity_of:
-                line += f"   fidelity error {fidelity_of[run][k]:.4f}"
+                line += f"   fidelity error {fidelity_of[run][k]:.4f}   detail {detail_of[run][k]:.2f}"
             draw.text((x, y + 58), line, font=small, fill=(230, 230, 230))
         draw.line([(0, panel_h), (width, panel_h)], fill=(70, 70, 70), width=2)
         draw.line([(panel_w, 0), (panel_w, height)], fill=(70, 70, 70), width=2)
