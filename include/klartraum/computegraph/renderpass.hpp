@@ -31,6 +31,7 @@ public:
         for (auto framebuffer : framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
+        // A pass that draws with another's depth buffer does not own it.
         for (size_t i = 0; i < depthImages.size(); i++) {
             vkDestroyImageView(device, depthViews[i], nullptr);
             vkDestroyImage(device, depthImages[i], nullptr);
@@ -95,15 +96,21 @@ public:
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
 
-        // The depth buffer only lives during the pass: cleared at its start, not stored.
+        // The depth buffer is cleared at the start of the pass and, unless it is stored for another pass
+        // (setStoreDepth()), lives only during it; with another pass's depth (setDepthFrom()) it is loaded instead.
+        if (depthFrom) {
+            useDepth = true;
+        }
         VkAttachmentDescription depthAttachment{};
         depthAttachment.format = kDepthFormat;
         depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.loadOp = depthFrom ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.storeOp =
+            storeDepth || depthFrom ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depthAttachment.initialLayout =
+            depthFrom ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
         depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkAttachmentReference depthAttachmentRef{};
@@ -138,6 +145,9 @@ public:
             dependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
             dependency.srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            if (depthFrom) {
+                dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            }
         }
 
         renderPassInfo.dependencyCount = 1;
@@ -148,7 +158,12 @@ public:
         }
 
         framebuffers.resize(numberPaths);
-        if (useDepth) {
+        if (depthFrom) {
+            if (depthFrom->depthViews.size() != numberPaths) {
+                throw std::runtime_error("RenderPass: the depth source must be compiled first, with as many paths");
+            }
+            depthViews = depthFrom->depthViews;
+        } else if (useDepth) {
             createDepthImages(numberPaths);
         }
 
@@ -247,7 +262,23 @@ public:
      * before the pass is compiled.
      */
     void setDepthAttachment(bool depth) { useDepth = depth; }
-    bool hasDepthAttachment() const { return useDepth; }
+    bool hasDepthAttachment() const { return useDepth || depthFrom != nullptr; }
+
+    /**
+     * @brief Keeps the depth buffer's contents after the pass, for a pass that draws with it (setDepthFrom()).
+     *
+     * Call before the pass is compiled.
+     */
+    void setStoreDepth(bool store) { storeDepth = store; }
+
+    /**
+     * @brief Draws with the depth buffer of `source` (which keeps it, setStoreDepth()), loading what it holds
+     *        instead of clearing it, and keeps the result: e.g. a scene drawn in batches, each its own submission.
+     *
+     * The source must be compiled first, with as many paths; this pass then has a depth attachment. Call before
+     * the pass is compiled.
+     */
+    void setDepthFrom(std::shared_ptr<RenderPass> source) { depthFrom = std::move(source); }
 
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
@@ -320,6 +351,8 @@ private:
     bool loadExisting = false;
 
     bool useDepth = false;
+    bool storeDepth = false;
+    std::shared_ptr<RenderPass> depthFrom;
     std::vector<VkImage> depthImages;
     std::vector<VkDeviceMemory> depthMemories;
     std::vector<VkImageView> depthViews;
