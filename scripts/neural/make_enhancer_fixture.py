@@ -8,7 +8,8 @@
 # ///
 
 """Writes the fixtures of the tree enhancer test (tests/test_tree_enhancer.cpp) to data/onnx/, one per network
-of train_tree_enhancer.py (v1: tree_enhancer_fixture*, v2: tree_enhancer_v2_fixture*, v3: tree_enhancer_v3_fixture*):
+of train_tree_enhancer.py (v1: tree_enhancer_fixture*, v2: tree_enhancer_v2_fixture*, v3: tree_enhancer_v3_fixture*,
+v6: tree_enhancer_v6_fixture*, which also reads feature B's third channel, the splatted noise):
 
 - *.onnx: the network at 96 x 64 with fixed random weights (the output layer too, so that it changes the image);
 - *_images.bin: its input as three BGRA8 images of 96 x 64 (colour, feature A, feature B), random bytes;
@@ -41,9 +42,10 @@ def write(arch: str, stem: str) -> None:
     rng = np.random.default_rng(5)
     images = rng.integers(0, 256, size=(3, HEIGHT, WIDTH, 4), dtype=np.uint8)
     images[..., 3] = 255
-    # BGRA bytes to the network's planes: colour RGB, feature A RGB, feature B RG.
+    # BGRA bytes to the network's planes: colour RGB, feature A RGB, feature B RG (and B for the splatted noise).
     rgb = images[..., [2, 1, 0]].astype(np.float32) / 255.0
-    planes = np.concatenate([rgb[0], rgb[1], rgb[2][..., :2]], axis=-1).transpose(2, 0, 1)[None]
+    feature_b = rgb[2] if getattr(model, "splatted_noise", False) else rgb[2][..., :2]
+    planes = np.concatenate([rgb[0], rgb[1], feature_b], axis=-1).transpose(2, 0, 1)[None]
     with torch.no_grad():
         output = model(torch.from_numpy(planes)).numpy().astype(np.float32)
     torch.onnx.export(model, torch.from_numpy(planes), out / f"{stem}.onnx", input_names=["input"],
@@ -57,7 +59,8 @@ def write(arch: str, stem: str) -> None:
     print(f"{stem} in {out}; output range [{output.min():.3f}, {output.max():.3f}]")
 
 
-FIXTURES = {"v1": "tree_enhancer_fixture", "v2": "tree_enhancer_v2_fixture", "v3": "tree_enhancer_v3_fixture"}
+FIXTURES = {"v1": "tree_enhancer_fixture", "v2": "tree_enhancer_v2_fixture", "v3": "tree_enhancer_v3_fixture",
+            "v6": "tree_enhancer_v6_fixture"}
 
 
 def main() -> None:

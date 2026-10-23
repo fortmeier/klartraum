@@ -6,13 +6,16 @@
 
 // The input of the neural enhancer of distant trees (scripts/neural/train_tree_enhancer.py): the Gaussian image's
 // RGB and its feature images (BonsaiRenderer::getFeatureTarget(): coverage, tree, level of detail; Gaussian size,
-// depth) as an NCHW tensor of 8 planes in [0, 1], in the order the network was trained with.
+// depth; and for networks of 9 input channels the splatted noise in feature B's third channel) as an NCHW tensor of
+// pc.channels planes in [0, 1], in the order the network was trained with.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(push_constant) uniform PushConstants {
     uint width;
     uint height;
+    uint channels;
+    uint pad;
 }
 pc;
 
@@ -31,7 +34,7 @@ void main() {
     }
     vec3 color = imageLoad(colorImage, ivec2(pixel)).rgb;
     vec3 a = imageLoad(featureA, ivec2(pixel)).rgb;
-    vec2 b = imageLoad(featureB, ivec2(pixel)).rg;
+    vec3 b = imageLoad(featureB, ivec2(pixel)).rgb;
     uint plane = pc.width * pc.height;
     uint offset = pixel.y * pc.width + pixel.x;
     outputData[offset] = color.r;
@@ -42,4 +45,7 @@ void main() {
     outputData[5u * plane + offset] = a.b;
     outputData[6u * plane + offset] = b.r;
     outputData[7u * plane + offset] = b.g;
+    if (pc.channels > 8u) {
+        outputData[8u * plane + offset] = b.b;
+    }
 }

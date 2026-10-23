@@ -7,13 +7,15 @@
 //
 //   tree_neural_dataset_example [--views 4] [--first 0] [--width 1280] [--height 720] [--supersample 2]
 //                               [--batch 256] [--range 1500] [--season 2] [--seed 1]
-//                               [--out-dir build/TestingOutput/neural_dataset]
+//                               [--out-dir build/TestingOutput/neural_dataset] [--features-only]
 //
 // For every view: the Gaussian BonsaiRenderer's image as it runs (low fidelity), and the same view by
 // TreeReferenceRenderer (every far tree generated in full by the classical renderer) at --supersample times the
 // resolution, box-filtered down (high fidelity), with the mask of the far trees' pixels (the share of the
 // supersampled pixels they cover). The views are drawn from --seed: at eye height on open land looking towards
 // forest, and 30, 120 and 400 m above the soil looking down onto forest. --first skips views, to continue a database.
+// --features-only renders again only the Gaussian image and its features of existing views (after a change of the
+// features), leaving hf, mask and views.csv alone.
 //
 // Writes <out-dir>/lr_NNNN.ppm, its features fa_NNNN.ppm (coverage, tree, level of detail) and fb_NNNN.ppm
 // (Gaussian size, depth; BonsaiRenderConfig::features), hf_NNNN.ppm, mask_NNNN.pgm, and appends to
@@ -147,6 +149,7 @@ int main(int argc, char** argv) {
     uint32_t views = 4, first = 0, width = 1280, height = 720, supersample = 2, batch = 256, seed = 1;
     float range = 1500.0f, season = 2.0f;
     std::filesystem::path outDir = "build/TestingOutput/neural_dataset";
+    bool featuresOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -170,6 +173,8 @@ int main(int argc, char** argv) {
             seed = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--out-dir" && hasValue) {
             outDir = argv[++i];
+        } else if (arg == "--features-only") {
+            featuresOnly = true;
         } else {
             std::cerr << "unknown option " << arg << std::endl;
             return 1;
@@ -200,12 +205,18 @@ int main(int argc, char** argv) {
     referenceConfig.batch = batch;
     referenceConfig.rangeMeters = range;
     const VkExtent2D fine{width * supersample, height * supersample};
-    TreeReferenceRenderer high(vc, scene, fine, referenceConfig);
+    std::unique_ptr<TreeReferenceRenderer> high;
+    if (!featuresOnly) {
+        high = std::make_unique<TreeReferenceRenderer>(vc, scene, fine, referenceConfig);
+    }
 
     std::filesystem::create_directories(outDir);
     const bool fresh = !std::filesystem::exists(outDir / "views.csv");
-    std::ofstream csv(outDir / "views.csv", std::ios::app);
-    if (fresh) {
+    std::ofstream csv;
+    if (!featuresOnly) {
+        csv.open(outDir / "views.csv", std::ios::app);
+    }
+    if (fresh && !featuresOnly) {
         csv << "view,kind,eye_x,eye_y,eye_z,look_x,look_y,look_z,near,far_trees,batches,low_s,high_s\n";
     }
     const float fov = 50.0f, farPlane = 50.0f;
@@ -237,17 +248,21 @@ int main(int argc, char** argv) {
         const std::vector<uint8_t> featureA = readImage(vc, low.getFeatureTarget(0)->getImage(0), extent);
         const std::vector<uint8_t> featureB = readImage(vc, low.getFeatureTarget(1)->getImage(0), extent);
         const double lowSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - lowStart).count();
-
-        const auto highStart = std::chrono::steady_clock::now();
-        const TreeReferenceRenderer::Frame frame =
-            high.render(pose.eye, pose.lookAt, fov, pose.nearPlane, farPlane, season, 0.5f);
-        const double highSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - highStart).count();
-
         char name[32];
         std::snprintf(name, sizeof(name), "%04u", v);
         writePpm(outDir / (std::string("lr_") + name + ".ppm"), lowImage, extent);
         writePpm(outDir / (std::string("fa_") + name + ".ppm"), featureA, extent);
         writePpm(outDir / (std::string("fb_") + name + ".ppm"), featureB, extent);
+        if (featuresOnly) {
+            std::printf("view %u (kind %d): low %.1f s\n", v, pose.kind, lowSeconds);
+            continue;
+        }
+
+        const auto highStart = std::chrono::steady_clock::now();
+        const TreeReferenceRenderer::Frame frame =
+            high->render(pose.eye, pose.lookAt, fov, pose.nearPlane, farPlane, season, 0.5f);
+        const double highSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - highStart).count();
+
         writePpm(outDir / (std::string("hf_") + name + ".ppm"), boxDown(frame.image, fine, supersample, 4), extent);
         writePgm(outDir / (std::string("mask_") + name + ".pgm"), boxDown(frame.mask, fine, supersample, 1), extent);
         csv << v << "," << pose.kind << "," << pose.eye.x << "," << pose.eye.y << "," << pose.eye.z << ","

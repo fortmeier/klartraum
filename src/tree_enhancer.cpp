@@ -4,6 +4,8 @@
 
 #include "klartraum/tree/tree_enhancer.hpp"
 
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace klartraum {
@@ -14,10 +16,18 @@ TreeEnhancer::TreeEnhancer(VulkanContext& vulkanContext, const std::string& mode
                            ComputeGraphElementPtr producer) {
     const VkExtent2D extent = color->extent();
     const Push push{extent.width, extent.height};
-    tensor = vulkanContext.create<TensorElement<float>>(std::vector<uint32_t>{1, 8, extent.height, extent.width});
-    input = vulkanContext.create<GeneralComputation<Push>>("shaders/tree/tree_enhancer_input.comp.spv");
+    network = vulkanContext.create<OnnxNetwork>(modelPath);
+    network->setName("TreeEnhancer");
+    const uint32_t channels = network->getInputDimensions("input").at(1);
+    if (channels != 8 && channels != 9) {
+        throw std::runtime_error("TreeEnhancer: the network takes " + std::to_string(channels) +
+                                 " input channels, not 8 or 9");
+    }
+    tensor =
+        vulkanContext.create<TensorElement<float>>(std::vector<uint32_t>{1, channels, extent.height, extent.width});
+    input = vulkanContext.create<GeneralComputation<InputPush>>("shaders/tree/tree_enhancer_input.comp.spv");
     input->setName("TreeEnhancerInput");
-    input->setPushConstants({push});
+    input->setPushConstants({InputPush{extent.width, extent.height, channels, 0}});
     input->setGroupCount((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
     const std::shared_ptr<OffscreenTarget> images[3] = {color, featureA, featureB};
     for (int k = 0; k < 3; ++k) {
@@ -29,8 +39,6 @@ TreeEnhancer::TreeEnhancer(VulkanContext& vulkanContext, const std::string& mode
     input->setInput(tensor, 3);
     input->addDependency(producer);
 
-    network = vulkanContext.create<OnnxNetwork>(modelPath);
-    network->setName("TreeEnhancer");
     network->setInputTensor("input", input, 3);
 
     toImage = vulkanContext.create<GeneralComputation<Push>>("shaders/onnx/tensor_to_image.comp.spv");
