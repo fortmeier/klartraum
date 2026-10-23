@@ -33,6 +33,7 @@ public:
         for (auto framebuffer : framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
+        // A pass that draws with another's depth buffer does not own it.
         for (size_t i = 0; i < depthImages.size(); i++) {
             vkDestroyImageView(device, depthViews[i], nullptr);
             vkDestroyImage(device, depthImages[i], nullptr);
@@ -103,17 +104,23 @@ public:
         subpass.pColorAttachments = &colorAttachmentRef;
 
         // An external depth attachment (setDepthAttachment(attachment)) is loaded and stored, so depth composes
-        // across passes; a transient one (setDepthAttachment(true)) lives only during the pass: cleared at its
-        // start, not stored.
+        // across passes. A transient one (setDepthAttachment(true)) is cleared at the start of the pass and, unless
+        // stored for another pass (setStoreDepth()), lives only during it; with another pass's transient depth
+        // (setDepthFrom()) it is loaded instead.
+        if (depthFrom) {
+            useDepth = true;
+        }
+        const bool loadDepth = depthAttachment || depthFrom;
         VkAttachmentDescription depthDescription{};
         depthDescription.format = depthAttachment ? DepthAttachment::format() : kDepthFormat;
         depthDescription.samples = VK_SAMPLE_COUNT_1_BIT;
-        depthDescription.loadOp = depthAttachment ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depthDescription.storeOp = depthAttachment ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthDescription.loadOp = loadDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthDescription.storeOp =
+            loadDepth || storeDepth ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depthDescription.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depthDescription.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depthDescription.initialLayout =
-            depthAttachment ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+            loadDepth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
         depthDescription.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         VkAttachmentReference depthReference{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
         if (hasDepthAttachment())
@@ -151,6 +158,9 @@ public:
             dependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
             dependency.srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            if (depthFrom) {
+                dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            }
         }
 
         renderPassInfo.dependencyCount = 1;
@@ -161,7 +171,12 @@ public:
         }
 
         framebuffers.resize(numberPaths);
-        if (useDepth) {
+        if (depthFrom) {
+            if (depthFrom->depthViews.size() != numberPaths) {
+                throw std::runtime_error("RenderPass: the depth source must be compiled first, with as many paths");
+            }
+            depthViews = depthFrom->depthViews;
+        } else if (useDepth) {
             createDepthImages(numberPaths);
         }
 
@@ -285,7 +300,23 @@ public:
      */
     void setDepthAttachment(bool depth) { useDepth = depth; }
     /** @brief Whether the pass has a depth buffer, external or transient. */
-    bool hasDepthAttachment() const { return depthAttachment != nullptr || useDepth; }
+    bool hasDepthAttachment() const { return depthAttachment != nullptr || useDepth || depthFrom != nullptr; }
+
+    /**
+     * @brief Keeps the depth buffer's contents after the pass, for a pass that draws with it (setDepthFrom()).
+     *
+     * Call before the pass is compiled.
+     */
+    void setStoreDepth(bool store) { storeDepth = store; }
+
+    /**
+     * @brief Draws with the depth buffer of `source` (which keeps it, setStoreDepth()), loading what it holds
+     *        instead of clearing it, and keeps the result: e.g. a scene drawn in batches, each its own submission.
+     *
+     * The source must be compiled first, with as many paths; this pass then has a depth attachment. Call before
+     * the pass is compiled.
+     */
+    void setDepthFrom(std::shared_ptr<RenderPass> source) { depthFrom = std::move(source); }
 
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
@@ -361,6 +392,8 @@ private:
     VkImageLayout outputLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     bool useDepth = false;
+    bool storeDepth = false;
+    std::shared_ptr<RenderPass> depthFrom;
     std::vector<VkImage> depthImages;
     std::vector<VkDeviceMemory> depthMemories;
     std::vector<VkImageView> depthViews;

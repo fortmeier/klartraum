@@ -92,6 +92,11 @@ struct BonsaiRenderConfig {
     /// The classical renderer draws the trees beyond the near ones as impostors (baked from the scene's tree types
     /// when the renderer is made) instead of proxies.
     bool impostors = true;
+    /// false: the classical renderer draws no trees beyond the near ones (neither impostors nor proxies), e.g. for
+    /// TreeReferenceRenderer, which adds them in full.
+    bool farTrees = true;
+    /// The classical renderer's pass keeps its depth buffer for later passes (getPass(), RenderPass::setDepthFrom()).
+    bool storeDepth = false;
     TreeImpostorConfig impostorAtlas;
     /// The classical renderer generates this many trees beyond the near ones with one stem level less
     /// (treeReducedType(), the level of detail L1); the impostors start beyond them.
@@ -175,6 +180,8 @@ public:
     bool isSettled() const { return getPendingTiles() == 0 && !bandChanged; }
 
     std::shared_ptr<CameraUboType> getCamera() const { return camera; }
+    /// The classical renderer's render pass (its image and depth buffer), or nullptr.
+    std::shared_ptr<RenderPass> getPass() const { return pass; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
     TreeGenerator& getGenerator() { return *generator; }
     TreeStemRenderer* getStems() { return stems.get(); }

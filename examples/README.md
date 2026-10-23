@@ -474,3 +474,30 @@ plotted below:
 ```bash
 scripts/tree/make_lod_metrics_video.sh                     # build/TestingOutput/tree_lod_metrics/
 ```
+
+### `tree_neural_dataset_example`
+
+Renders a database of view pairs of the bonsai landscape (scale 1) for training a network that enhances the
+Gaussian renderer's distant trees. For every view it writes the Gaussian renderer's image as it runs (low
+fidelity) and the same view by `TreeReferenceRenderer` (high fidelity): the classical renderer with every far tree
+in view generated in full, batch by batch over one depth buffer, at `--supersample` times the resolution and
+box-filtered down, with the mask of the far trees' pixels. The far trees are seeded as the Gaussian renderer's,
+so both images show the same trees. Views are drawn from `--seed`: at eye height on open land looking towards
+forest, and 30, 120 and 400 m above the soil looking down onto forest.
+
+| Option | Meaning |
+|---|---|
+| `--views N`, `--first F` | Render N views, starting at view F (to continue a database) |
+| `--width W`, `--height H` | Size of the images (default 1280 x 720, the explorer's) |
+| `--supersample S` | The reference's resolution factor before the box filter (default 2) |
+| `--batch N` | Far trees generated per batch (default 256) |
+| `--range M` | Far trees beyond M metres are left out (default 1500) |
+| `--season S` | Season (default 2, summer) |
+| `--seed N` | Seed of the views (default 1) |
+| `--out-dir D` | Where `lr_NNNN.ppm`, `hf_NNNN.ppm`, `mask_NNNN.pgm` and `views.csv` go (default `build/TestingOutput/neural_dataset`) |
+
+A view takes about 2-3 s for the Gaussian image and 12-25 s for the reference.
+
+```bash
+./build/examples/tree_neural_dataset_example --views 200
+```

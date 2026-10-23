@@ -156,3 +156,14 @@ target_link_libraries(tree_lod_metrics_example
 )
 
 add_dependencies(tree_lod_metrics_example Shaders)
+
+# A database of view pairs (Gaussian renderer, classical reference) for training a neural enhancer of distant trees
+add_executable(tree_neural_dataset_example
+    tree_neural_dataset_example.cpp
+)
+
+target_link_libraries(tree_neural_dataset_example
+    klartraum_lib
+)
+
+add_dependencies(tree_neural_dataset_example Shaders)

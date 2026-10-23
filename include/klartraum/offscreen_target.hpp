@@ -131,6 +131,31 @@ private:
 };
 
 /**
+ * @brief The images of an OffscreenTarget for another graph that draws over what they hold: never cleared, and
+ *        left in the target's final layout (TRANSFER_SRC_OPTIMAL) like the target itself.
+ */
+class OffscreenTargetView : public ImageViewSrc {
+public:
+    explicit OffscreenTargetView(std::shared_ptr<OffscreenTarget> target)
+        : target(std::move(target)) {
+        setClear(false);
+    }
+
+    const char* getType() const override { return "OffscreenTargetView"; }
+
+    VkImageView& getImageView(uint32_t pathId) override { return target->getImageView(pathId); }
+    VkImage& getImage(uint32_t pathId) override { return target->getImage(pathId); }
+    VkExtent2D& getImageExtent(uint32_t pathId) override { return target->getImageExtent(pathId); }
+
+    std::optional<VkImageLayout> getFinalLayoutOverride() const override {
+        return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    }
+
+private:
+    std::shared_ptr<OffscreenTarget> target;
+};
+
+/**
  * @brief One image that every path of a graph reads: a result computed once,
  *        e.g. by another graph, made available to a graph with several paths.
  *

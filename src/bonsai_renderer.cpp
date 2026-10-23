@@ -248,7 +248,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                                                     renderExtent, inputs);
         meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, config.terrainLod ? potMesh : scene.mesh, settings,
                                                      renderExtent, inputs);
-        if (tiles) {
+        if (tiles && config.farTrees) {
             proxies = std::make_unique<TreeProxies>(vulkanContext, *tiles, camera, settings, renderExtent, inputs,
                                                     proxyConfig);
         }
@@ -262,6 +262,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         pass->setInput(camera, 1);
         pass->setLoadExisting(true);
         pass->setDepthAttachment(true);
+        pass->setStoreDepth(config.storeDepth);
         pass->addComputeDependency(stems->getClassify());
         pass->addComputeDependency(leaves->getClassify());
         pass->addComputeDependency(settings);
@@ -368,13 +369,13 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     // hands them back down to its configured band when they are few: the band grows by up to 10 % or shrinks by up
     // to 8 % per frame (where many trees have about the same size on screen, their number changes steeply with
     // it), left alone between 25 and 100 % of the target.
-    const float visible = float(proxies->readCounter()[0]);
-    const float target = 0.8f * float(proxies->getConfig().capacity);
+    const float visible = proxies ? float(proxies->readCounter()[0]) : 0.0f;
+    const float target = proxies ? 0.8f * float(proxies->getConfig().capacity) : 0.0f;
     TreeRenderSettings values = settings->values().at(0);
     glm::vec2 band(values.canopyBand);
     const glm::vec2 before = band;
     // A list by size keeps itself within its capacity (TreeProxyConfig::bySize).
-    if (!proxies->getConfig().bySize && (visible > target || visible < 0.25f * target)) {
+    if (proxies && !proxies->getConfig().bySize && (visible > target || visible < 0.25f * target)) {
         band = glm::max(band * std::clamp(std::sqrt(std::max(visible, 1.0f) / target), 0.92f, 1.1f), canopyBand);
     }
     // Before a frame showed the trees of every tile, the band cannot be judged yet.
@@ -445,6 +446,9 @@ void BonsaiRenderer::setView(glm::vec3 eye) {
     }
     if (reducedGenerator) {
         reducedGenerator->getInstances().set(instancesOf(activeNear, activeReduced, reducedCount, reducedTypes));
+    }
+    if (!proxies) {
+        return;
     }
     proxies->setNearRadius(sites.empty() ? -1.0f
                            : forest      ? nearRadius
