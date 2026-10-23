@@ -1,0 +1,46 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Bilinear Resize of an NCHW tensor with half-pixel centres (ONNX half_pixel / pytorch_half_pixel, PyTorch's
+// align_corners=False): output pixel x samples the input at (x + 0.5) * inputWidth / outputWidth - 0.5, clamped
+// to the border pixels.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform PushConstants {
+    uint batch;
+    uint channels;
+    uint inputHeight;
+    uint inputWidth;
+    uint outputHeight;
+    uint outputWidth;
+} pc;
+layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+layout(set = 0, binding = 1) restrict readonly buffer ScalesBuffer { float scales[]; };
+layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint total = pc.batch * pc.channels * pc.outputHeight * pc.outputWidth;
+    if (index >= total) return;
+    uint x = index % pc.outputWidth;
+    uint value = index / pc.outputWidth;
+    uint y = value % pc.outputHeight;
+    uint plane = value / pc.outputHeight;
+    float sx = clamp((float(x) + 0.5) * float(pc.inputWidth) / float(pc.outputWidth) - 0.5, 0.0,
+                     float(pc.inputWidth - 1));
+    float sy = clamp((float(y) + 0.5) * float(pc.inputHeight) / float(pc.outputHeight) - 0.5, 0.0,
+                     float(pc.inputHeight - 1));
+    uint x0 = uint(sx);
+    uint y0 = uint(sy);
+    uint x1 = min(x0 + 1, pc.inputWidth - 1);
+    uint y1 = min(y0 + 1, pc.inputHeight - 1);
+    float fx = sx - float(x0);
+    float fy = sy - float(y0);
+    uint base = plane * pc.inputHeight * pc.inputWidth;
+    float top = mix(inputData[base + y0 * pc.inputWidth + x0], inputData[base + y0 * pc.inputWidth + x1], fx);
+    float bottom = mix(inputData[base + y1 * pc.inputWidth + x0], inputData[base + y1 * pc.inputWidth + x1], fx);
+    outputData[index] = mix(top, bottom, fy);
+}

@@ -13,6 +13,8 @@
  * - SliceChannelRange: Slice extracts a FLOAT channel range on an arbitrary tensor axis
  * - SliceInt64ShapeValue: Slice extracts a value from an INT64 shape tensor
  * - ResizeNearest: Resize performs nearest-neighbor spatial upsampling
+ * - ResizeLinear: Resize in linear mode interpolates bilinearly with half-pixel centres,
+ *   clamped at the borders
  * - TransposeRankThree: Transpose supports the rank-three permutation used by SD 1.5
  *   attention
  * - DivBroadcast: Div applies ONNX right-aligned broadcasting
@@ -380,6 +382,30 @@ TEST_F(OnnxOperationsTest, ResizeNearest) {
     std::vector<float> result(16);
     output->getDataBuffer(0).memcopyTo(result);
     EXPECT_EQ(result, (std::vector<float>{1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4}));
+}
+
+TEST_F(OnnxOperationsTest, ResizeLinear) {
+    auto input = context->create<TensorElement<float>>(std::vector<uint32_t>{1, 1, 2, 2});
+    auto scales = context->create<TensorElement<float>>(std::vector<uint32_t>{4});
+    auto output = context->create<TensorElement<float>>(std::vector<uint32_t>{1, 1, 4, 4});
+    ResizePushConstants constants{1, 1, 2, 2, 4, 4};
+    auto computation = context->create<GeneralComputation<ResizePushConstants>>("shaders/onnx/resize_linear.comp.spv");
+    computation->setPushConstants({constants});
+    computation->setGroupCount(1, 1, 1);
+    computation->setInput(input, 0);
+    computation->setInput(scales, 1);
+    computation->setInput(output, 2);
+    ComputeGraph graph(*context, 1);
+    graph.compileFrom(computation);
+    input->setData(0, {1, 2, 3, 4});
+    scales->setData(0, {1, 1, 2, 2});
+    graph.submitAndWait(context->getGraphicsQueue(), 0);
+    std::vector<float> result(16);
+    output->getDataBuffer(0).memcopyTo(result);
+    const std::vector<float> expected{1.0f, 1.25f, 1.75f, 2.0f, 1.5f, 1.75f, 2.25f, 2.5f,
+                                      2.5f, 2.75f, 3.25f, 3.5f, 3.0f, 3.25f, 3.75f, 4.0f};
+    for (size_t i = 0; i < expected.size(); ++i)
+        EXPECT_FLOAT_EQ(result[i], expected[i]) << "element " << i;
 }
 
 TEST_F(OnnxOperationsTest, TransposeRankThree) {

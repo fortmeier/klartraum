@@ -8,13 +8,13 @@
 # ///
 
 """Writes the fixtures of the tree enhancer test (tests/test_tree_enhancer.cpp) to data/onnx/, one per network
-of train_tree_enhancer.py (v1: tree_enhancer_fixture*, v2: tree_enhancer_v2_fixture*):
+of train_tree_enhancer.py (v1: tree_enhancer_fixture*, v2: tree_enhancer_v2_fixture*, v3: tree_enhancer_v3_fixture*):
 
 - *.onnx: the network at 96 x 64 with fixed random weights (the output layer too, so that it changes the image);
 - *_images.bin: its input as three BGRA8 images of 96 x 64 (colour, feature A, feature B), random bytes;
 - *_output.bin: PyTorch's output for them, float32 NCHW (1 x 3 x 64 x 96).
 
-    uv run scripts/neural/make_enhancer_fixture.py
+    uv run scripts/neural/make_enhancer_fixture.py [v1 v2 v3]   # default all
 """
 
 from __future__ import annotations
@@ -57,9 +57,12 @@ def write(arch: str, stem: str) -> None:
     print(f"{stem} in {out}; output range [{output.min():.3f}, {output.max():.3f}]")
 
 
+FIXTURES = {"v1": "tree_enhancer_fixture", "v2": "tree_enhancer_v2_fixture", "v3": "tree_enhancer_v3_fixture"}
+
+
 def main() -> None:
-    write("v1", "tree_enhancer_fixture")
-    write("v2", "tree_enhancer_v2_fixture")
+    for arch in sys.argv[1:] or FIXTURES:
+        write(arch, FIXTURES[arch])
 
 
 if __name__ == "__main__":

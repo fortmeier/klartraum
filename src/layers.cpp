@@ -676,6 +676,15 @@ ComputeGraphElementPtr resizeNearest(VulkanContext& vulkanContext, const Shape& 
     return operation;
 }
 
+ComputeGraphElementPtr resizeLinear(VulkanContext& vulkanContext, const Shape& input, const Shape& output) {
+    if (input.size() != 4 || output.size() != 4)
+        throw std::runtime_error("Resize requires rank four");
+    ResizePushConstants constants{input[0], input[1], input[2], input[3], output[2], output[3]};
+    auto operation = computation(vulkanContext, "shaders/onnx/resize_linear.comp.spv", constants);
+    operation->setGroupCountX((elementCount(output) + 63) / 64);
+    return operation;
+}
+
 ComputeGraphElementPtr transpose(VulkanContext& vulkanContext, const Shape& input, const Shape& output,
                                  const std::vector<uint32_t>& permutation) {
     if (input.size() > 8 || output.size() != input.size() || permutation.size() > 8) {
