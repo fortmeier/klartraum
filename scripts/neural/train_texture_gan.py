@@ -40,38 +40,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
-from train_tree_enhancer import RealCrops  # noqa: E402
-
-
-def diff_augment(x: torch.Tensor) -> torch.Tensor:
-    """DiffAugment's colour, translation (1/8) and cutout (1/2) on a batch, differentiable and per sample."""
-    b = x.shape[0]
-    dev = x.device
-    x = x + (torch.rand(b, 1, 1, 1, device=dev) - 0.5)
-    mean = x.mean(dim=1, keepdim=True)
-    x = (x - mean) * (torch.rand(b, 1, 1, 1, device=dev) * 2) + mean
-    mean = x.mean(dim=[1, 2, 3], keepdim=True)
-    x = (x - mean) * (torch.rand(b, 1, 1, 1, device=dev) + 0.5) + mean
-    # Translation by up to 1/8 of the size, padding with zeros.
-    h, w = x.shape[2:]
-    sx, sy = w // 8, h // 8
-    tx = torch.randint(-sx, sx + 1, (b, 1, 1), device=dev)
-    ty = torch.randint(-sy, sy + 1, (b, 1, 1), device=dev)
-    gy, gx = torch.meshgrid(torch.arange(h, device=dev), torch.arange(w, device=dev), indexing="ij")
-    gx = torch.clamp(gx.unsqueeze(0) + tx + 1, 0, w + 1)
-    gy = torch.clamp(gy.unsqueeze(0) + ty + 1, 0, h + 1)
-    padded = F.pad(x, (1, 1, 1, 1))
-    x = padded.permute(0, 2, 3, 1)[torch.arange(b, device=dev).view(b, 1, 1), gy, gx].permute(0, 3, 1, 2)
-    # Cutout: a square of half the size set to zero.
-    ch, cw = h // 2, w // 2
-    ox = torch.randint(0, w + (1 - cw % 2), (b, 1, 1), device=dev)
-    oy = torch.randint(0, h + (1 - ch % 2), (b, 1, 1), device=dev)
-    gy, gx = torch.meshgrid(torch.arange(ch, device=dev), torch.arange(cw, device=dev), indexing="ij")
-    gx = torch.clamp(gx.unsqueeze(0) + ox - cw // 2, 0, w - 1)
-    gy = torch.clamp(gy.unsqueeze(0) + oy - ch // 2, 0, h - 1)
-    mask = torch.ones(b, h, w, device=dev)
-    mask[torch.arange(b, device=dev).view(b, 1, 1), gy, gx] = 0
-    return x * mask.unsqueeze(1)
+from train_tree_enhancer import RealCrops, diff_augment  # noqa: E402
 
 
 class NoiseInjection(nn.Module):
