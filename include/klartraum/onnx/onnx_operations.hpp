@@ -498,8 +498,22 @@ ComputeGraphElementPtr createSplit(VulkanContext* vulkanContext, const onnx::Nod
 
 ComputeGraphElementPtr createResize(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                     const onnx::GraphProto& graph) {
-    return layers::resizeNearest(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
-                                 getTensorDimensions(node.output(0), infos, graph));
+    std::string mode = "nearest";
+    std::string coordinates = "half_pixel";
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == "mode")
+            mode = attribute.s();
+        else if (attribute.name() == "coordinate_transformation_mode")
+            coordinates = attribute.s();
+    }
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (mode == "nearest")
+        return layers::resizeNearest(*vulkanContext, input, output);
+    // pytorch_half_pixel differs from half_pixel only for outputs of size one.
+    if (mode == "linear" && (coordinates == "half_pixel" || coordinates == "pytorch_half_pixel"))
+        return layers::resizeLinear(*vulkanContext, input, output);
+    throw std::runtime_error("Unsupported Resize mode " + mode + " with coordinates " + coordinates);
 }
 
 ComputeGraphElementPtr createSlice(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
