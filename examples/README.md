@@ -494,7 +494,7 @@ forest, and 30, 120 and 400 m above the soil looking down onto forest.
 | `--range M` | Far trees beyond M metres are left out (default 1500) |
 | `--season S` | Season (default 2, summer) |
 | `--seed N` | Seed of the views (default 1) |
-| `--out-dir D` | Where `lr_NNNN.ppm`, `hf_NNNN.ppm`, `mask_NNNN.pgm` and `views.csv` go (default `build/TestingOutput/neural_dataset`) |
+| `--out-dir D` | Where `lr_NNNN.ppm`, its features `fa_NNNN.ppm` (coverage, tree, level of detail) and `fb_NNNN.ppm` (Gaussian size, depth), `hf_NNNN.ppm`, `mask_NNNN.pgm` and `views.csv` go (default `build/TestingOutput/neural_dataset`) |
 
 A view takes about 2-3 s for the Gaussian image and 12-25 s for the reference.
 
