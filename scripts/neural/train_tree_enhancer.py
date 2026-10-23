@@ -136,6 +136,24 @@ def block_error(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor) -> float:
     return float(per_block[weight].mean()) if weight.any() else 0.0
 
 
+def detail_error(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor, block: int = 8, floor: float = 1e-4) -> float:
+    """lod_metrics' detailError(): per 8 px block the energy of the luminance's Laplacian, compared as
+    |log2(a's / b's)|, averaged over the blocks the mask touches (and lit in either image)."""
+    weights = torch.tensor([0.2126, 0.7152, 0.0722], device=a.device).view(1, 3, 1, 1)
+    kernel = torch.tensor([[0.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 0.0]], device=a.device).view(1, 1, 3, 3)
+
+    def energy(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        luminance = (x * weights).sum(dim=1, keepdim=True)
+        laplacian = F.conv2d(F.pad(luminance, (1, 1, 1, 1), mode="replicate"), kernel)
+        return F.avg_pool2d(laplacian * laplacian, block), F.avg_pool2d(luminance, block)
+
+    ea, la = energy(a)
+    eb, lb = energy(b)
+    keep = (F.max_pool2d(mask, block) > 0.0) & (torch.maximum(la, lb) > 0.01)
+    ratio = torch.log2((ea + floor) / (eb + floor)).abs()
+    return float(ratio[keep].mean()) if keep.any() else 0.0
+
+
 def crops(inputs: list[torch.Tensor], targets: list[torch.Tensor], masks: list[torch.Tensor], size: int,
           count: int, rng: np.random.Generator) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """`count` crops of `size` px, three quarters of them centred on a far-tree pixel."""

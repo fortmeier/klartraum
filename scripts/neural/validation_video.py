@@ -9,7 +9,8 @@
 
 """Shows a trained tree enhancer on the held-out views of its dataset (every tenth), one view per two seconds:
 the Gaussian input, the enhanced image and the classical target (the reference on the far trees, the input
-elsewhere), each with its block error against the target on the far trees.
+elsewhere), each with its block error and detail error (lod_metrics' detailError()) against the target on the
+far trees.
 
     uv run scripts/neural/validation_video.py <dataset-dir> <enhancer.pt> <video.mp4>
 """
@@ -26,7 +27,7 @@ import torch
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).parent))
-from train_tree_enhancer import Enhancer, block_error, load_view, to_tensors  # noqa: E402
+from train_tree_enhancer import Enhancer, block_error, detail_error, load_view, to_tensors  # noqa: E402
 
 
 def main() -> None:
@@ -48,17 +49,20 @@ def main() -> None:
         ["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{3 * w}x{h}", "-r",
          "0.5", "-i", "-", "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30", str(args.video)],
         stdin=subprocess.PIPE)
-    totals = np.zeros(2)
+    totals = np.zeros(4)
     for name in names:
         x, y, m = to_tensors(load_view(args.dataset, name))
         with torch.no_grad():
             out = model(x.unsqueeze(0)).clamp(0.0, 1.0)[0]
         before = block_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
         after = block_error(out.unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
-        totals += (before, after)
+        detail_before = detail_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
+        detail_after = detail_error(out.unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
+        totals += (before, after, detail_before, detail_after)
         canvas = Image.new("RGB", (3 * w, h))
         draw = ImageDraw.Draw(canvas)
-        for k, (title, image) in enumerate(((f"Gaussian input  {before:.4f}", x[:3]), (f"enhanced  {after:.4f}", out),
+        for k, (title, image) in enumerate(((f"Gaussian input  {before:.4f}, detail {detail_before:.2f}", x[:3]),
+                                            (f"enhanced  {after:.4f}, detail {detail_after:.2f}", out),
                                             ("classical target", y))):
             pixels = (image.permute(1, 2, 0).numpy() * 255.0).round().astype(np.uint8)
             canvas.paste(Image.fromarray(pixels).resize((w, h)), (k * w, 0))
@@ -67,8 +71,9 @@ def main() -> None:
         encoder.stdin.write(canvas.tobytes())
     encoder.stdin.close()
     encoder.wait()
-    print(f"{len(names)} views: block error input {totals[0] / len(names):.4f}, enhanced "
-          f"{totals[1] / len(names):.4f}; video in {args.video}")
+    n = len(names)
+    print(f"{n} views: block error input {totals[0] / n:.4f}, enhanced {totals[1] / n:.4f}; detail error input "
+          f"{totals[2] / n:.3f}, enhanced {totals[3] / n:.3f}; video in {args.video}")
 
 
 if __name__ == "__main__":

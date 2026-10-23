@@ -25,10 +25,16 @@
  * - fidelityCountsBlocksLitInEitherImage: a block lit only in the reference (a part missing) or only in the image (a
  *   part too many) counts, blocks dark in both do not; both all dark gives 0
  * - fidelityImagesMustMatchTheSize: images of the wrong size are rejected
+ * - sameDetailIsNoError: an image against itself, and against a copy brighter by a constant, has a detail error of 0
+ * - blurLosesDetail: a fine checkerboard against its 3 x 3 box-blurred copy has a detail error above 2 (a quarter
+ *   of the energy or less), and the same both ways round
+ * - contrastScalesTheEnergy: doubling the contrast of a texture quadruples its detail energy: error 2
+ * - flatBlocksAreLeftOut: blocks dark in both images do not count; blocks flat in both count as equal
  **/
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include "klartraum/lod_metrics.hpp"
@@ -215,4 +221,68 @@ TEST(LodMetricsTest, fidelityCountsBlocksLitInEitherImage) {
 
 TEST(LodMetricsTest, fidelityImagesMustMatchTheSize) {
     EXPECT_THROW(fidelityError(grey(8, 4, 0.5f), grey(4, 4, 0.5f), 8, 4), std::invalid_argument);
+}
+
+namespace {
+
+// A width x height BGRA image of a checkerboard of `cell` px between grey `low` and `high`.
+std::vector<uint8_t> checker(uint32_t width, uint32_t height, uint32_t cell, float low, float high) {
+    std::vector<uint8_t> bgra(size_t(width) * height * 4, 255);
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const float v = ((x / cell + y / cell) % 2 == 0) ? low : high;
+            for (int c = 0; c < 3; ++c) {
+                bgra[(size_t(y) * width + x) * 4 + c] = uint8_t(std::lround(v * 255.0f));
+            }
+        }
+    }
+    return bgra;
+}
+
+// The 3 x 3 box filter of a BGRA image (edges clamped).
+std::vector<uint8_t> boxBlur(const std::vector<uint8_t>& bgra, uint32_t width, uint32_t height) {
+    std::vector<uint8_t> out = bgra;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            for (int c = 0; c < 3; ++c) {
+                int sum = 0;
+                for (int j = -1; j <= 1; ++j) {
+                    for (int i = -1; i <= 1; ++i) {
+                        const uint32_t xx = uint32_t(std::clamp(int(x) + i, 0, int(width) - 1));
+                        const uint32_t yy = uint32_t(std::clamp(int(y) + j, 0, int(height) - 1));
+                        sum += bgra[(size_t(yy) * width + xx) * 4 + c];
+                    }
+                }
+                out[(size_t(y) * width + x) * 4 + c] = uint8_t((sum + 4) / 9);
+            }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST(LodMetricsTest, sameDetailIsNoError) {
+    const std::vector<uint8_t> a = checker(64, 32, 2, 0.2f, 0.6f);
+    EXPECT_FLOAT_EQ(detailError(a, a, 64, 32), 0.0f);
+    EXPECT_NEAR(detailError(checker(64, 32, 2, 0.3f, 0.7f), a, 64, 32), 0.0f, 0.01f);
+}
+
+TEST(LodMetricsTest, blurLosesDetail) {
+    const std::vector<uint8_t> sharp = checker(64, 64, 1, 0.2f, 0.6f);
+    const std::vector<uint8_t> blurred = boxBlur(sharp, 64, 64);
+    const float lost = detailError(blurred, sharp, 64, 64);
+    std::printf("blurred against sharp: %.2f\n", lost);
+    EXPECT_GT(lost, 2.0f);
+    EXPECT_NEAR(detailError(sharp, blurred, 64, 64), lost, 1e-4f);
+}
+
+TEST(LodMetricsTest, contrastScalesTheEnergy) {
+    // 0.4 and 0.8 around 0.6, against 0.5 and 0.7: twice the contrast, four times the energy.
+    EXPECT_NEAR(detailError(checker(64, 32, 2, 0.4f, 0.8f), checker(64, 32, 2, 0.5f, 0.7f), 64, 32), 2.0f, 0.05f);
+}
+
+TEST(LodMetricsTest, flatBlocksAreLeftOut) {
+    EXPECT_FLOAT_EQ(detailError(grey(64, 32, 0.0f), grey(64, 32, 0.0f), 64, 32), 0.0f);
+    EXPECT_NEAR(detailError(grey(64, 32, 0.5f), grey(64, 32, 0.4f), 64, 32), 0.0f, 1e-6f);
 }

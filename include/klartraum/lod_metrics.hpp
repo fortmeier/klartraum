@@ -81,6 +81,24 @@ struct FidelityConfig {
 float fidelityError(const std::vector<uint8_t>& image, const std::vector<uint8_t>& reference, uint32_t width,
                     uint32_t height, FidelityConfig config = {});
 
+struct DetailConfig {
+    uint32_t block = 8;     ///< side of the square blocks in pixels; a partial block at the edges is left out
+    float minLight = 0.01f; ///< blocks darker than this (mean luminance) in both images are left out
+    float floor = 1e-4f;    ///< added to both energies (luminance squared), so that flat blocks compare as equal
+};
+
+/**
+ * @brief How far an image's detail lies from a reference's: per block, the energy of the luminance's Laplacian
+ *        (its mean square, the fine structure), compared as |log2(image's / reference's)|, averaged over the lit
+ *        blocks.
+ *
+ * 0 means as much fine structure as the reference, 1 twice or half as much (in energy), whichever way: a blurred
+ * image scores like a noisy one. Constant offsets do not count, so colour shifts are left to fidelityError(); the
+ * two together tell colour from sharpness. The images are BGRA8 of width x height pixels.
+ */
+float detailError(const std::vector<uint8_t>& image, const std::vector<uint8_t>& reference, uint32_t width,
+                  uint32_t height, DetailConfig config = {});
+
 } // namespace klartraum
 
 #endif // KLARTRAUM_LOD_METRICS_HPP

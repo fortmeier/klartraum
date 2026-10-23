@@ -448,6 +448,9 @@ metrics from `klartraum/lod_metrics.hpp` are taken every frame:
   the frames on both sides. The runs without levels of detail show what the motion alone leaves.
 - **Fidelity** (`fidelityError()`), of each run with levels of detail against the same run without: the mean
   absolute difference of the RGB means of 4 px blocks, over the blocks lit in either image.
+- **Detail** (`detailError()`), of the same pairs: per 8 px block the energy of the luminance's Laplacian, compared
+  as |log2(ratio)|. 0 means as much fine structure as the reference, 1 twice or half as much; blur and noise both
+  count, colour shifts do not.
 
 Each frame also records the GPU time of every run, from the tree's generation to its splatting, and the number of
 Gaussians it draws (those opaque enough for the splatting's cull). The program prints
