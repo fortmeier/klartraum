@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).parent))
 import json  # noqa: E402
 
-from train_tree_enhancer import ARCHITECTURES, block_error, detail_error, load_view, to_tensors  # noqa: E402
+from train_tree_enhancer import ARCHITECTURES, block_error, detail_error, load_view, to_tensors, with_noise  # noqa: E402
 
 
 def main() -> None:
@@ -57,7 +57,7 @@ def main() -> None:
     for name in names:
         x, y, m = to_tensors(load_view(args.dataset, name))
         with torch.no_grad():
-            out = model(x.unsqueeze(0)).clamp(0.0, 1.0)[0]
+            out = model(with_noise(model, x.unsqueeze(0), torch.Generator().manual_seed(0))).clamp(0.0, 1.0)[0]
         before = block_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
         after = block_error(out.unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
         detail_before = detail_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))

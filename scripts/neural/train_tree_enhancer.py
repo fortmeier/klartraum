@@ -51,10 +51,11 @@ def load_view(directory: Path, name: str) -> dict[str, np.ndarray]:
 
 
 def to_tensors(view: dict[str, np.ndarray]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """The network's input (8, H, W), its target (3, H, W) and the far trees' mask (1, H, W), all in [0, 1]."""
+    """The network's input (8, H, W) followed by the splatted noise (feature B's third channel), its target (3, H, W)
+    and the far trees' mask (1, H, W), all in [0, 1]."""
     lr = torch.from_numpy(view["lr"]).permute(2, 0, 1).float() / 255.0
     fa = torch.from_numpy(view["fa"]).permute(2, 0, 1).float() / 255.0
-    fb = torch.from_numpy(view["fb"][..., :2]).permute(2, 0, 1).float() / 255.0
+    fb = torch.from_numpy(view["fb"]).permute(2, 0, 1).float() / 255.0
     hf = torch.from_numpy(view["hf"]).permute(2, 0, 1).float() / 255.0
     mask = torch.from_numpy(view["mask"]).unsqueeze(0).float() / 255.0
     inputs = torch.cat([lr, fa, fb], dim=0)
@@ -133,20 +134,23 @@ class EnhancerV2(nn.Module):
     or bilinear, `upsample`), and at full resolution one 3 x 3 convolution of 16 to 8 channels and a 1 x 1 to RGB;
     the output is added to the input image."""
 
-    def __init__(self, upsample: str = "nearest") -> None:
+    def __init__(self, upsample: str = "nearest", noise: int = 0, activation: type[nn.Module] = nn.ReLU) -> None:
         super().__init__()
         self.upsample = upsample
-        self.down1 = nn.Sequential(nn.Conv2d(INPUT_CHANNELS, 24, 3, stride=2, padding=1), nn.ReLU(),
-                                   nn.Conv2d(24, 24, 3, padding=1), nn.ReLU())
-        self.down2 = nn.Sequential(nn.Conv2d(24, 32, 3, stride=2, padding=1), nn.ReLU(),
-                                   nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(),
-                                   nn.Conv2d(32, 32, 3, padding=1), nn.ReLU())
-        self.mid = nn.Sequential(nn.Conv2d(32 + 24, 16, 3, padding=1), nn.ReLU(), nn.Conv2d(16, 8, 1), nn.ReLU())
-        self.full = nn.Sequential(nn.Conv2d(8 + INPUT_CHANNELS, 8, 3, padding=1), nn.ReLU())
+        self.noise = noise
+        channels = INPUT_CHANNELS + noise
+        act = activation
+        self.down1 = nn.Sequential(nn.Conv2d(channels, 24, 3, stride=2, padding=1), act(),
+                                   nn.Conv2d(24, 24, 3, padding=1), act())
+        self.down2 = nn.Sequential(nn.Conv2d(24, 32, 3, stride=2, padding=1), act(),
+                                   nn.Conv2d(32, 32, 3, padding=1), act(),
+                                   nn.Conv2d(32, 32, 3, padding=1), act())
+        self.mid = nn.Sequential(nn.Conv2d(32 + 24, 16, 3, padding=1), act(), nn.Conv2d(16, 8, 1), act())
+        self.full = nn.Sequential(nn.Conv2d(8 + channels, 8, 3, padding=1), act())
         self.out = nn.Conv2d(8, 3, 1)
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
-        self.pick = nn.Conv2d(INPUT_CHANNELS, 3, 1)
+        self.pick = nn.Conv2d(channels, 3, 1)
         with torch.no_grad():
             self.pick.weight.zero_()
             self.pick.bias.zero_()
@@ -155,6 +159,7 @@ class EnhancerV2(nn.Module):
         self.pick.requires_grad_(False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """`x`: the input's channels followed by `noise` channels of uniform noise in [0, 1]."""
         d1 = self.down1(x)
         d2 = self.down2(d1)
         m = self.mid(torch.cat([self.up(d2), d1], dim=1))
@@ -169,7 +174,32 @@ class EnhancerV2(nn.Module):
 
 # v3: v2 with bilinear upsampling, which leaves no blocks of 2 x 2 or 4 x 4 pixels for an adversarial loss to
 # sharpen into a grid.
-ARCHITECTURES = {"v1": Enhancer, "v2": EnhancerV2, "v3": lambda: EnhancerV2(upsample="bilinear")}
+# v4: v3 with a channel of noise, so that it can draw detail the input does not determine (leaves below a pixel).
+# v5: v4 with ELU, whose units cannot die under the adversarial loss's large gradients as ReLUs do.
+ARCHITECTURES = {"v1": Enhancer, "v2": EnhancerV2, "v3": lambda: EnhancerV2(upsample="bilinear"),
+                 "v4": lambda: EnhancerV2(upsample="bilinear", noise=1),
+                 "v5": lambda: EnhancerV2(upsample="bilinear", noise=1, activation=nn.ELU)}
+# v6: v5 whose noise is the splatted noise of the Gaussians (value noise of their positions, which moves with the
+# trees and stays from frame to frame) instead of noise per pixel. Set below, after splatted_noise_enhancer().
+
+
+def with_noise(model: nn.Module, x: torch.Tensor, generator: torch.Generator | None = None) -> torch.Tensor:
+    """What `model` takes of `x` (to_tensors()' input and the splatted noise): the input, and as its noise channel
+    the splatted noise (models with `splatted_noise`) or uniform noise per pixel."""
+    count = getattr(model, "noise", 0)
+    if getattr(model, "splatted_noise", False):
+        return x[:, :INPUT_CHANNELS + 1]
+    x = x[:, :INPUT_CHANNELS]
+    if count == 0:
+        return x
+    noise = torch.rand((x.shape[0], count, x.shape[2], x.shape[3]), generator=generator)
+    return torch.cat([x, noise.to(x.device)], dim=1)
+
+
+def splatted_noise_enhancer() -> nn.Module:
+    model = EnhancerV2(upsample="bilinear", noise=1, activation=nn.ELU)
+    model.splatted_noise = True
+    return model
 
 
 def texture(x: torch.Tensor) -> torch.Tensor:
@@ -212,22 +242,27 @@ def diff_augment(x: torch.Tensor) -> torch.Tensor:
     return x * mask.unsqueeze(1)
 
 
+ARCHITECTURES["v6"] = lambda: splatted_noise_enhancer()
+
+
 class PatchDiscriminator(nn.Module):
-    """Judges 64 x 64 crops as real photographs of vegetation or enhanced renderings, on RGB or on their texture
-    alone (texture(), so colour stays with the other losses): a logit per patch of about 16 px, averaged into the
-    crop's score. The setup train_texture_gan.py learns vegetation with from noise."""
+    """Judges 64 x 64 crops as real or enhanced: on RGB or on their texture alone (texture(), so colour stays with
+    the other losses) against photographs of vegetation, or ("pair") on the network's input together with the
+    classical target or the enhanced image, as pix2pix does. A logit per patch of about 16 px, averaged into the
+    crop's score. The setup train_texture_gan.py learns vegetation from noise with."""
 
     def __init__(self, input: str = "rgb") -> None:
         super().__init__()
         self.input = input
-        channels = 3 if input == "rgb" else 1
+        channels = {"rgb": 3, "texture": 1, "pair": INPUT_CHANNELS + 3}[input]
         self.net = nn.Sequential(nn.Conv2d(channels, 64, 4, stride=2, padding=1), nn.LeakyReLU(0.2),
                                  nn.Conv2d(64, 128, 4, stride=2, padding=1), nn.LeakyReLU(0.2),
                                  nn.Conv2d(128, 256, 4, stride=2, padding=1), nn.LeakyReLU(0.2),
                                  nn.Conv2d(256, 1, 3, padding=1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x * 2.0 - 1.0 if self.input == "rgb" else texture(x)).mean(dim=(1, 2, 3))
+        """`x`: RGB crops, or for "pair" the input's channels followed by RGB."""
+        return self.net(texture(x) if self.input == "texture" else x * 2.0 - 1.0).mean(dim=(1, 2, 3))
 
 
 class RealCrops:
@@ -274,6 +309,24 @@ class RealCrops:
             crop = image[:, y0:y0 + size, x0:x0 + size].unsqueeze(0)
             out.append(F.interpolate(crop, size=(self.crop, self.crop), mode="area")[0])
         return torch.stack(out)
+
+
+def paired_crops(images: list[torch.Tensor], masks: torch.Tensor, count: int, rng: np.random.Generator,
+                 crop: int = 64) -> list[torch.Tensor]:
+    """`count` crops of `crop` px at the same places of each batch in `images`, centred on far trees."""
+    out: list[list[torch.Tensor]] = [[] for _ in images]
+    _, _, h, w = masks.shape
+    for _ in range(count):
+        k = int(rng.integers(masks.shape[0]))
+        idx = torch.nonzero(masks[k, 0] > 0.5)
+        if len(idx) == 0:
+            y, x = int(rng.integers(h - crop + 1)), int(rng.integers(w - crop + 1))
+        else:
+            cy, cx = idx[int(rng.integers(len(idx)))].tolist()
+            y, x = int(np.clip(cy - crop // 2, 0, h - crop)), int(np.clip(cx - crop // 2, 0, w - crop))
+        for o, image in zip(out, images):
+            o.append(image[k, :, y:y + crop, x:x + crop])
+    return [torch.stack(o) for o in out]
 
 
 def fake_crops(images: torch.Tensor, masks: torch.Tensor, count: int, rng: np.random.Generator,
@@ -377,9 +430,12 @@ def main() -> None:
     parser.add_argument("--real", type=Path, help="directory of real photographs for the adversarial loss")
     parser.add_argument("--adversarial", type=float, default=0.0, help="weight of the adversarial loss")
     parser.add_argument("--adversarial-start", type=int, default=2000, help="step from which it counts")
-    parser.add_argument("--discriminator", choices=["rgb", "texture"], default="rgb",
-                        help="what the discriminator sees of a crop")
+    parser.add_argument("--discriminator", choices=["rgb", "texture", "pair"], default="rgb",
+                        help="what the discriminator sees of a crop: photographs (--real) as RGB or texture, or "
+                             "the input with the classical target as real (pair)")
     parser.add_argument("--r1", type=float, default=1.0, help="weight of the discriminator's R1 penalty")
+    parser.add_argument("--pixel-loss", choices=["full", "lowpass"], default="full",
+                        help="L1 and gradient loss per pixel, or on the far trees per 4 px block only")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -398,10 +454,11 @@ def main() -> None:
     model = ARCHITECTURES[args.arch]().to(device)
     (args.out_dir / "config.json").write_text(json.dumps({"arch": args.arch, "detail": args.detail,
                                                           "adversarial": args.adversarial,
-                                                          "discriminator": args.discriminator}))
+                                                          "discriminator": args.discriminator,
+                                                          "pixel_loss": args.pixel_loss}))
     discriminator = real = None
     if args.adversarial > 0.0:
-        real = RealCrops(args.real)
+        real = RealCrops(args.real) if args.discriminator != "pair" else None
         discriminator = PatchDiscriminator(args.discriminator).to(device)
         d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.0, 0.99))
     print(f"{sum(p.numel() for p in model.parameters())} parameters")
@@ -413,9 +470,10 @@ def main() -> None:
     def validate() -> tuple[float, float, float, float]:
         model.eval()
         before = after = detail_before = detail_after = 0.0
+        noise_seed = torch.Generator().manual_seed(0)
         with torch.no_grad():
             for x, y, m in zip(vx, vy, vm):
-                out = model(x.unsqueeze(0).to(device)).clamp(0.0, 1.0).cpu()
+                out = model(with_noise(model, x.unsqueeze(0), noise_seed).to(device)).clamp(0.0, 1.0).cpu()
                 before += block_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
                 after += block_error(out, y.unsqueeze(0), m.unsqueeze(0))
                 detail_before += detail_error(x[:3].unsqueeze(0), y.unsqueeze(0), m.unsqueeze(0))
@@ -429,10 +487,18 @@ def main() -> None:
     for step in range(1, args.steps + 1):
         x, y, m = crops(tx, ty, tm, args.crop, args.batch, rng)
         x, y, m = x.to(device), y.to(device), m.to(device)
-        out = model(x)
+        out = model(with_noise(model, x))
         # The far trees weigh most; elsewhere the network learns to leave the image alone.
-        weight = 0.2 + m
-        loss = ((out - y).abs() * weight).mean() + 0.5 * gradient_l1(out, y)
+        if args.pixel_loss == "full":
+            weight = 0.2 + m
+            loss = ((out - y).abs() * weight).mean() + 0.5 * gradient_l1(out, y)
+        else:
+            # On the far trees only the means of 4 px blocks (what fidelityError() measures): their finer detail,
+            # leaves smaller than a pixel, is noise no network can place, which per-pixel losses average away.
+            # It is left to the adversarial loss.
+            low_out, low_y, low_m = F.avg_pool2d(out, 4), F.avg_pool2d(y, 4), F.avg_pool2d(m, 4)
+            loss = (((out - y).abs() * 0.2 * (1.0 - m)).mean() + ((low_out - low_y).abs() * low_m).mean()
+                    + 0.5 * gradient_l1(low_out, low_y))
         if args.detail > 0.0:
             loss = loss + args.detail * detail_loss(out, y, m)
         adversarial = 0.0
@@ -440,19 +506,27 @@ def main() -> None:
             # The discriminator learns real vegetation from enhanced far trees (non-saturating loss, both seen through
             # the same DiffAugment, R1 on real crops every 16 steps); the enhancer learns to make its far trees look
             # real to it.
-            fake = fake_crops(out, m, 2 * args.batch, rng)
-            real_batch = real.sample(2 * args.batch, rng).to(device)
-            d_loss = (F.softplus(-discriminator(diff_augment(real_batch))).mean()
-                      + F.softplus(discriminator(diff_augment(fake.detach()))).mean())
+            # Pairs are many (every view, every place), so they go without DiffAugment.
+            if args.discriminator == "pair":
+                condition, fake, real_batch = paired_crops([x[:, :INPUT_CHANNELS], out, y], m, 2 * args.batch, rng)
+                fake = torch.cat([condition, fake], dim=1)
+                real_batch = torch.cat([condition, real_batch], dim=1)
+                augment = lambda t: t  # noqa: E731
+            else:
+                fake = fake_crops(out, m, 2 * args.batch, rng)
+                real_batch = real.sample(2 * args.batch, rng).to(device)
+                augment = diff_augment
+            d_loss = (F.softplus(-discriminator(augment(real_batch))).mean()
+                      + F.softplus(discriminator(augment(fake.detach()))).mean())
             if step % 16 == 0:
                 real_batch.requires_grad_(True)
-                (grad,) = torch.autograd.grad(discriminator(diff_augment(real_batch)).sum(), real_batch,
+                (grad,) = torch.autograd.grad(discriminator(augment(real_batch)).sum(), real_batch,
                                               create_graph=True)
                 d_loss = d_loss + args.r1 * 16 * 0.5 * grad.pow(2).sum(dim=(1, 2, 3)).mean()
             d_optimizer.zero_grad()
             d_loss.backward()
             d_optimizer.step()
-            adversarial = F.softplus(-discriminator(diff_augment(fake))).mean()
+            adversarial = F.softplus(-discriminator(augment(fake))).mean()
             loss = loss + args.adversarial * adversarial
         optimizer.zero_grad()
         loss.backward()
@@ -470,7 +544,7 @@ def main() -> None:
     (args.out_dir / "history.json").write_text(json.dumps(history, indent=1))
     model.eval().cpu()
     for height, width in ((720, 1280),):
-        dummy = torch.zeros(1, INPUT_CHANNELS, height, width)
+        dummy = torch.zeros(1, INPUT_CHANNELS + getattr(model, "noise", 0), height, width)
         path = args.out_dir / f"enhancer_{width}x{height}.onnx"
         torch.onnx.export(model, dummy, path, input_names=["input"], output_names=["output"], opset_version=17,
                           dynamo=False)
