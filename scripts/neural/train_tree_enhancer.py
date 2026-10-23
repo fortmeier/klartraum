@@ -164,6 +164,95 @@ class EnhancerV2(nn.Module):
 ARCHITECTURES = {"v1": Enhancer, "v2": EnhancerV2}
 
 
+def texture(x: torch.Tensor) -> torch.Tensor:
+    """The fine structure of RGB crops: their luminance minus its 5 x 5 box blur, scaled by the crop's mean
+    luminance (so brightness and exposure do not count), without any colour."""
+    weights = torch.tensor([0.2126, 0.7152, 0.0722], device=x.device).view(1, 3, 1, 1)
+    luminance = (x * weights).sum(dim=1, keepdim=True)
+    blurred = F.avg_pool2d(F.pad(luminance, (2, 2, 2, 2), mode="replicate"), 5, stride=1)
+    return (luminance - blurred) / (luminance.mean(dim=(2, 3), keepdim=True) + 0.05)
+
+
+class PatchDiscriminator(nn.Module):
+    """Judges 64 x 64 crops as real photographs of vegetation or enhanced renderings by their texture alone
+    (texture()): a logit per patch of about 16 px, so colour stays with the other losses. Spectral normalisation
+    keeps its training stable."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        sn = nn.utils.spectral_norm
+        self.net = nn.Sequential(sn(nn.Conv2d(1, 32, 4, stride=2, padding=1)), nn.LeakyReLU(0.2),
+                                 sn(nn.Conv2d(32, 64, 4, stride=2, padding=1)), nn.LeakyReLU(0.2),
+                                 sn(nn.Conv2d(64, 128, 4, stride=2, padding=1)), nn.LeakyReLU(0.2),
+                                 sn(nn.Conv2d(128, 1, 3, padding=1)))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(texture(x))
+
+
+class RealCrops:
+    """Crops of vegetation from real photographs (a directory of JPEGs, e.g. download_real_forest.py's): each
+    photo scaled to 512 px wide, crops of 64 to 256 px resized to 64, centred where green dominates (green above
+    red and blue by a margin) and taken only where most of the crop is vegetation."""
+
+    def __init__(self, directory: Path, crop: int = 64) -> None:
+        self.crop = crop
+        self.images, self.centres = [], []
+        for path in sorted(directory.glob("*.jpg")):
+            try:
+                image = Image.open(path).convert("RGB")
+            except Exception:
+                continue
+            w, h = image.size
+            image = image.resize((512, max(int(512 * h / w), 130)))
+            pixels = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
+            r, g, b = pixels
+            green = (g > r + 0.02) & (g > b + 0.02)
+            if green.float().mean() < 0.3:
+                continue
+            centres = torch.nonzero(green[64:-64, 64:-64]) + 64
+            if len(centres) == 0:
+                continue
+            self.images.append(pixels)
+            self.centres.append((centres, green))
+        print(f"{len(self.images)} photographs with enough vegetation in {directory}")
+
+    def sample(self, count: int, rng: np.random.Generator) -> torch.Tensor:
+        out = []
+        while len(out) < count:
+            k = int(rng.integers(len(self.images)))
+            centres, green = self.centres[k]
+            # 64 to 256 px of a 512 px wide photograph: leaves a few pixels small or smaller, as far away.
+            size = int(rng.integers(self.crop, 4 * self.crop + 1))
+            cy, cx = centres[int(rng.integers(len(centres)))].tolist()
+            y0, x0 = max(0, cy - size // 2), max(0, cx - size // 2)
+            image = self.images[k]
+            if y0 + size > image.shape[1] or x0 + size > image.shape[2]:
+                continue
+            if green[y0:y0 + size, x0:x0 + size].float().mean() < 0.7:
+                continue
+            crop = image[:, y0:y0 + size, x0:x0 + size].unsqueeze(0)
+            out.append(F.interpolate(crop, size=(self.crop, self.crop), mode="area")[0])
+        return torch.stack(out)
+
+
+def fake_crops(images: torch.Tensor, masks: torch.Tensor, count: int, rng: np.random.Generator,
+               crop: int = 64) -> torch.Tensor:
+    """`count` crops of `crop` px of rendered images, centred on their far trees (where the mask is above 0.5)."""
+    out = []
+    _, _, h, w = images.shape
+    for _ in range(count):
+        k = int(rng.integers(images.shape[0]))
+        idx = torch.nonzero(masks[k, 0] > 0.5)
+        if len(idx) == 0:
+            y, x = int(rng.integers(h - crop + 1)), int(rng.integers(w - crop + 1))
+        else:
+            cy, cx = idx[int(rng.integers(len(idx)))].tolist()
+            y, x = int(np.clip(cy - crop // 2, 0, h - crop)), int(np.clip(cx - crop // 2, 0, w - crop))
+        out.append(images[k, :, y:y + crop, x:x + crop])
+    return torch.stack(out)
+
+
 def detail_loss(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor, block: int = 8,
                 floor: float = 1e-4) -> torch.Tensor:
     """detail_error() as a loss: the mean |log2| of the ratio of the blocks' Laplacian energies, over the blocks
@@ -245,6 +334,9 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=2e-3)
     parser.add_argument("--arch", choices=sorted(ARCHITECTURES), default="v1")
     parser.add_argument("--detail", type=float, default=0.0, help="weight of the detail loss")
+    parser.add_argument("--real", type=Path, help="directory of real photographs for the adversarial loss")
+    parser.add_argument("--adversarial", type=float, default=0.0, help="weight of the adversarial loss")
+    parser.add_argument("--adversarial-start", type=int, default=2000, help="step from which it counts")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -261,7 +353,13 @@ def main() -> None:
     vx, vy, vm = load(val)
 
     model = ARCHITECTURES[args.arch]().to(device)
-    (args.out_dir / "config.json").write_text(json.dumps({"arch": args.arch, "detail": args.detail}))
+    (args.out_dir / "config.json").write_text(json.dumps({"arch": args.arch, "detail": args.detail,
+                                                          "adversarial": args.adversarial}))
+    discriminator = real = None
+    if args.adversarial > 0.0:
+        real = RealCrops(args.real)
+        discriminator = PatchDiscriminator().to(device)
+        d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
     print(f"{sum(p.numel() for p in model.parameters())} parameters")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.LambdaLR(
@@ -293,6 +391,18 @@ def main() -> None:
         loss = ((out - y).abs() * weight).mean() + 0.5 * gradient_l1(out, y)
         if args.detail > 0.0:
             loss = loss + args.detail * detail_loss(out, y, m)
+        adversarial = 0.0
+        if discriminator is not None and step >= args.adversarial_start:
+            # The discriminator learns real vegetation from enhanced far trees (hinge loss); the enhancer learns to
+            # make its far trees look real to it.
+            fake = fake_crops(out, m, 2 * args.batch, rng)
+            real_batch = real.sample(2 * args.batch, rng).to(device)
+            d_loss = F.relu(1.0 - discriminator(real_batch)).mean() + F.relu(1.0 + discriminator(fake.detach())).mean()
+            d_optimizer.zero_grad()
+            d_loss.backward()
+            d_optimizer.step()
+            adversarial = -discriminator(fake).mean()
+            loss = loss + args.adversarial * adversarial
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
