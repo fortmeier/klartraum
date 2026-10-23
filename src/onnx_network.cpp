@@ -868,7 +868,12 @@ void OnnxNetwork::connectGraphElements() {
             if (outputName2GraphElementAndSlot.find(index) == outputName2GraphElementAndSlot.end()) {
                 // inde
                 // we have a direct input, so no compute node but a tensor/buffer
-                operation->setInput(graphDataElements.at(index), startIndex);
+                const auto found = graphDataElements.find(index);
+                if (found == graphDataElements.end()) {
+                    throw std::runtime_error("ONNX tensor " + index + " (input " + std::to_string(j) + " of " +
+                                             node.op_type() + " " + node.name() + ") not found");
+                }
+                operation->setInput(found->second, startIndex);
             } else {
                 auto [input, slot] = outputName2GraphElementAndSlot.at(index);
                 operation->setInput(input, startIndex, slot);
@@ -878,7 +883,12 @@ void OnnxNetwork::connectGraphElements() {
 
         for (int j = 0; j < node.output_size(); j++) {
             auto index = node.output(j);
-            auto output = graphDataElements.at(index);
+            const auto found = graphDataElements.find(index);
+            if (found == graphDataElements.end()) {
+                throw std::runtime_error("ONNX tensor " + index + " (output " + std::to_string(j) + " of " +
+                                         node.op_type() + " " + node.name() + ") not found");
+            }
+            auto output = found->second;
             if (output == nullptr) {
                 throw std::runtime_error("Output tensor is null for operation output " + std::to_string(j));
             }

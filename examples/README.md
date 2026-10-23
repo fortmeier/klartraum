@@ -464,6 +464,7 @@ frames around it and the run without levels of detail), and the fidelity and GPU
 | `--near-radius M` | Generated nearer than this; by default the renderer's near radius at the explorer's start in the forest (0.8 times the distance of the 24th nearest tree) |
 | `--wind S` | Strength of the wind in the dynamic run (default 0.5) |
 | `--leaf-lod X,Y,Z,W` | `TreeRenderSettings::leafLod` of the tree with levels of detail (default the renderer's) |
+| `--enhancer M` | Also run the neural enhancer of distant trees (`TreeEnhancer`, an ONNX model of `scripts/neural/train_tree_enhancer.py` at the image's size) and judge it: the four runs become the tree with levels of detail, enhanced, the classical reference (stems and leaves at twice the resolution, box-filtered) and without levels of detail, all without wind, with the fidelity against the classical reference |
 | `--stem-round P`, `--stem-fade P` | `gaussianLod.x` and `.y` of the tree with levels of detail: the stem radius in pixels below which a tube is drawn round, and below which stems fade out (default the renderer's) |
 | `--out-dir D` | Where `metrics.csv` and `frames/` go (default `build/TestingOutput/tree_lod_metrics`) |
 

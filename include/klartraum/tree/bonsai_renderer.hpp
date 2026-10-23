@@ -138,18 +138,6 @@ struct BonsaiRenderConfig {
  * the GPU. Compile a graph from getOutput(), then call
  * initialize() once before the first submission.
  */
-/// The push constants of tree_gaussian_features.comp.
-struct GaussianFeaturePush {
-    uint32_t count = 0;
-    uint32_t treeBegin = 0;
-    uint32_t treeEnd = 0;
-    uint32_t copyBegin = 0;
-    uint32_t copyEnd = 0;
-    float halfHeight = 0.0f;
-    float depthUnit = 1.0f;
-    uint32_t pad = 0;
-};
-
 class BonsaiRenderer {
 public:
     /// The light grid's voxels per axis when it follows the near trees (scenes whose trees follow the placement).

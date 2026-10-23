@@ -50,7 +50,11 @@
 #include "klartraum/tree/tree_generator.hpp"
 #include "klartraum/tree/tree_library.hpp"
 #include "klartraum/tree/tree_moss_lod.hpp"
+#include "klartraum/tree/tree_enhancer.hpp"
+#include "klartraum/tree/tree_gaussian_features.hpp"
+#include "klartraum/tree/tree_leaf_renderer.hpp"
 #include "klartraum/tree/tree_placement.hpp"
+#include "klartraum/tree/tree_stem_renderer.hpp"
 
 using namespace klartraum;
 
@@ -112,7 +116,7 @@ struct TreeView {
     TreeView(VulkanContext& vc, const BonsaiScene& scene, const TreeSite& site, bool copy, VkExtent2D extent,
              std::shared_ptr<CameraUboType> camera, const std::vector<GaussianLods>& library, uint32_t variant,
              const TreeGaussianForestConfig& forest, bool lodFree = false, glm::vec4 leafLod = glm::vec4(-1.0f),
-             float stemRound = -1.0f, float stemFade = -1.0f)
+             float stemRound = -1.0f, float stemFade = -1.0f, const std::string& enhancerPath = "", float metre = 1.0f)
         : vc(vc),
           extent(extent) {
         settings = std::make_shared<HostValues<TreeRenderSettings>>(
@@ -179,9 +183,27 @@ struct TreeView {
         }
         target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         splatting = createGaussianSplatting(vc, GsplatBackend::Raster, target, camera, splats);
+        ComputeGraphElementPtr last = splatting;
+        if (!enhancerPath.empty()) {
+            // The image's features and the network that enhances it (TreeEnhancer).
+            GaussianFeaturePush ranges{};
+            if (copy) {
+                ranges.copyBegin = gaussians->getExtraOffset();
+                ranges.copyEnd = gaussians->getExtraOffset() + gaussians->getExtraSlots();
+            } else {
+                ranges.treeBegin = gaussians->getTreeOffset();
+                ranges.treeEnd = gaussians->getExtraOffset();
+            }
+            ranges.depthUnit = metre;
+            const GaussianFeatures features = splatGaussianFeatures(vc, splats, camera, extent, 1, ranges, splatting);
+            enhancedTarget = std::make_shared<OffscreenTarget>(vc, extent, 1);
+            enhancer = std::make_unique<TreeEnhancer>(vc, enhancerPath, target, features.targets[0],
+                                                      features.targets[1], enhancedTarget, features.done);
+            last = enhancer->getOutput();
+        }
         graph = std::make_unique<ComputeGraph>(vc, 1);
         graph->enableProfiling();
-        graph->compileFrom(splatting);
+        graph->compileFrom(last);
         gaussians->initializeBuffers(1);
     }
 
@@ -203,11 +225,17 @@ struct TreeView {
         for (const glm::vec4& c : colAlpha) {
             splats += c.w >= 1.0f / 255.0f;
         }
+        if (enhancer) {
+            enhanced = readImage(vc, enhancedTarget->getImage(0), extent);
+        }
         return readImage(vc, target->getImage(0), extent);
     }
 
     VulkanContext& vc;
     VkExtent2D extent;
+    std::vector<uint8_t> enhanced; ///< the enhanced image of the last render(), with an enhancer
+    std::shared_ptr<OffscreenTarget> enhancedTarget;
+    std::unique_ptr<TreeEnhancer> enhancer;
     float crownRadius = 0.0f; ///< of the copy, as TreeMossLod measures it for its levels
     float gpuMs = 0.0f;       ///< GPU time of the last render(), from generation to splatting
     uint32_t splats = 0;      ///< Gaussians drawn in the last render()
@@ -217,6 +245,71 @@ struct TreeView {
     std::unique_ptr<TreeMossLod> lod;
     std::shared_ptr<OffscreenTarget> target;
     std::shared_ptr<ComputeGraphElement> splatting;
+    std::unique_ptr<ComputeGraph> graph;
+};
+
+// The same tree drawn by the classical renderer (stems and leaves, no leaf thinned out) at twice the resolution
+// and box-filtered down: the high-fidelity reference the enhancer is judged against.
+struct ClassicalView {
+    ClassicalView(VulkanContext& vc, const BonsaiScene& scene, const TreeSite& site, VkExtent2D extent,
+                  std::shared_ptr<CameraUboType> camera, uint32_t variants)
+        : vc(vc),
+          extent(extent),
+          fine{2 * extent.width, 2 * extent.height} {
+        TreeFrame frame = defaultTreeFrame();
+        frame.timeSeason.y = kSeason;
+        const std::vector<TreeInstance> trees = {treeInstanceFor(site, scene.types, scene.config.seed, variants)};
+        generator = std::make_shared<TreeGenerator>(vc, scene.types, trees,
+                                                    TreeCapacity::fromReference(scene.types, trees, frame), frame);
+        TreeRenderSettings values = defaultTreeRenderSettings(fine);
+        values.season = glm::vec4(kSeason, tree::treeSnowCover(kSeason), 0.0f, 0.0f);
+        values.leafLod.z = 0.0f;
+        values.leafLod.w = 1.0f;
+        settings = std::make_shared<HostValues<TreeRenderSettings>>(vc, std::vector<TreeRenderSettings>{values});
+        target = std::make_shared<OffscreenTarget>(vc, fine, 1);
+        pass = std::make_shared<RenderPass>(vc.getSwapChainImageFormat(), fine);
+        pass->setInput(target, 0);
+        pass->setInput(camera, 1);
+        pass->setDepthAttachment(true);
+        stems = std::make_unique<TreeStemRenderer>(vc, *generator, camera, settings, fine);
+        leaves = std::make_unique<TreeLeafRenderer>(vc, *generator, scene.types, camera, settings, fine);
+        pass->addComputeDependency(stems->getClassify());
+        pass->addComputeDependency(leaves->getClassify());
+        pass->addDrawComponent(stems->getDrawComponent());
+        pass->addDrawComponent(leaves->getDrawComponent());
+        graph = std::make_unique<ComputeGraph>(vc, 1);
+        graph->compileFrom(pass);
+    }
+
+    std::vector<uint8_t> render() {
+        graph->submitAndWait(vc.getGraphicsQueue(), 0);
+        const std::vector<uint8_t> large = readImage(vc, target->getImage(0), fine);
+        std::vector<uint8_t> out(size_t(extent.width) * extent.height * 4);
+        for (uint32_t y = 0; y < extent.height; ++y) {
+            for (uint32_t x = 0; x < extent.width; ++x) {
+                for (uint32_t c = 0; c < 4; ++c) {
+                    uint32_t sum = 0;
+                    for (uint32_t j = 0; j < 2; ++j) {
+                        for (uint32_t i = 0; i < 2; ++i) {
+                            sum += large[((size_t(2 * y + j)) * fine.width + 2 * x + i) * 4 + c];
+                        }
+                    }
+                    out[(size_t(y) * extent.width + x) * 4 + c] = uint8_t((sum + 2) / 4);
+                }
+            }
+        }
+        return out;
+    }
+
+    VulkanContext& vc;
+    VkExtent2D extent;
+    VkExtent2D fine;
+    std::shared_ptr<TreeGenerator> generator;
+    std::shared_ptr<HostValues<TreeRenderSettings>> settings;
+    std::unique_ptr<TreeStemRenderer> stems;
+    std::unique_ptr<TreeLeafRenderer> leaves;
+    std::shared_ptr<OffscreenTarget> target;
+    std::shared_ptr<RenderPass> pass;
     std::unique_ptr<ComputeGraph> graph;
 };
 
@@ -300,6 +393,7 @@ int main(int argc, char** argv) {
     glm::vec4 leafLod(-1.0f); // < 0: the renderer's default
     float stemRound = -1.0f;
     float stemFade = -1.0f;
+    std::string enhancerPath;
     std::filesystem::path outDir = "build/TestingOutput/tree_lod_metrics";
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -331,6 +425,8 @@ int main(int argc, char** argv) {
             stemRound = std::stof(argv[++i]);
         } else if (arg == "--stem-fade" && hasValue) {
             stemFade = std::stof(argv[++i]);
+        } else if (arg == "--enhancer" && hasValue) {
+            enhancerPath = argv[++i];
         } else if (arg == "--wind" && hasValue) {
             windStrength = std::stof(argv[++i]);
         } else if (arg == "--out-dir" && hasValue) {
@@ -390,23 +486,35 @@ int main(int argc, char** argv) {
     const VkExtent2D extent{width, height};
     auto camera = std::make_shared<CameraUboType>();
     TreeView generated(vc, scene, site, false, extent, camera, library, variant, forest, false, leafLod, stemRound,
-                       stemFade);
-    TreeView copy(vc, scene, site, true, extent, camera, library, variant, forest);
+                       stemFade, enhancerPath, m);
+    TreeView copy(vc, scene, site, true, extent, camera, library, variant, forest, false, glm::vec4(-1.0f), -1.0f,
+                  -1.0f, enhancerPath, m);
+    const bool enhancing = !enhancerPath.empty();
+    std::unique_ptr<ClassicalView> classical;
+    if (enhancing) {
+        classical = std::make_unique<ClassicalView>(vc, scene, site, extent, camera, forest.variants);
+    }
     TreeView reference(vc, scene, site, false, extent, camera, library, variant, forest, true);
 
     const VkExtent2D panel{width * 3 / 4, height * 3 / 4};
     std::filesystem::create_directories(outDir / "frames");
     std::ofstream csv(outDir / "metrics.csv");
+    {
+        // What the four runs are, for the video (scripts/tree/lod_metrics_video.py).
+        std::ofstream panels(outDir / "panels.txt");
+        panels << (enhancing ? "with LOD\nenhanced\nclassical reference\nwithout LOD\n"
+                             : "with LOD, static\nwith LOD, wind\nwithout LOD, static\nwithout LOD, wind\n");
+    }
     csv << "frame,distance_m,drawn_by,level,fade,crown_px,residual_static,residual_dynamic,residual_free_static,"
            "residual_free_dynamic,fidelity_static,fidelity_dynamic,gpu_ms_static,gpu_ms_dynamic,gpu_ms_free_static,"
-           "gpu_ms_free_dynamic,splats_static,splats_dynamic,splats_free_static,splats_free_dynamic\n";
+           "gpu_ms_free_dynamic,splats_static,splats_dynamic,splats_free_static,splats_free_dynamic,fidelity_free\n";
 
     const glm::vec3 middle = glm::vec3(site.posHeight) + glm::vec3(0.0f, 0.5f * treeHeight, 0.0f);
     const glm::vec4 wind(glm::normalize(glm::vec3(1.0f, 0.0f, 0.35f)), windStrength);
     // The runs: 0 static, 1 dynamic, 2 static without levels of detail, 3 dynamic without.
     std::vector<PoppingMeter> poppingMeters(4, PoppingMeter(width, height));
     std::vector<std::vector<float>> residuals(4, std::vector<float>(size_t(frames) + 1, 0.0f));
-    std::vector<std::vector<float>> fidelity(2, std::vector<float>(size_t(frames) + 1, 0.0f));
+    std::vector<std::vector<float>> fidelity(3, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> gpuMs(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<std::vector<float>> splats(4, std::vector<float>(size_t(frames) + 1, 0.0f));
     std::vector<float> distances(size_t(frames) + 1);
@@ -449,19 +557,39 @@ int main(int argc, char** argv) {
         const float seconds = float(k) / 30.0f;
         TreeView& view = near ? generated : copy;
         std::vector<uint8_t> images[4];
-        for (int run = 0; run < 4; ++run) {
-            TreeView& drawing = run < 2 ? view : reference;
-            images[run] = drawing.render(seconds, run % 2 == 0 ? glm::vec4(glm::vec3(wind), 0.0f) : wind);
-            gpuMs[run][k] = drawing.gpuMs;
-            splats[run][k] = float(drawing.splats);
+        if (enhancing) {
+            // Without wind: the tree with levels of detail, enhanced, the classical reference and without levels.
+            const glm::vec4 still(glm::vec3(wind), 0.0f);
+            images[0] = view.render(seconds, still);
+            images[1] = view.enhanced;
+            images[2] = classical->render();
+            images[3] = reference.render(seconds, still);
+            gpuMs[0][k] = gpuMs[1][k] = view.gpuMs;
+            gpuMs[3][k] = reference.gpuMs;
+            splats[0][k] = splats[1][k] = float(view.splats);
+            splats[3][k] = float(reference.splats);
+        } else {
+            for (int run = 0; run < 4; ++run) {
+                TreeView& drawing = run < 2 ? view : reference;
+                images[run] = drawing.render(seconds, run % 2 == 0 ? glm::vec4(glm::vec3(wind), 0.0f) : wind);
+                gpuMs[run][k] = drawing.gpuMs;
+                splats[run][k] = float(drawing.splats);
+            }
         }
         for (int run = 0; run < 4; ++run) {
             if (const std::optional<float> r = poppingMeters[run].push(imageLuminance(images[run]))) {
                 residuals[run][k - 1] = *r;
             }
         }
-        fidelity[0][k] = fidelityError(images[0], images[2], width, height);
-        fidelity[1][k] = fidelityError(images[1], images[3], width, height);
+        if (enhancing) {
+            // Against the classical reference: with levels of detail, enhanced, without levels of detail.
+            fidelity[0][k] = fidelityError(images[0], images[2], width, height);
+            fidelity[1][k] = fidelityError(images[1], images[2], width, height);
+            fidelity[2][k] = fidelityError(images[3], images[2], width, height);
+        } else {
+            fidelity[0][k] = fidelityError(images[0], images[2], width, height);
+            fidelity[1][k] = fidelityError(images[1], images[3], width, height);
+        }
 
         // With levels of detail above, without below; static left, dynamic right.
         for (int run = 0; run < 4; ++run) {
@@ -482,12 +610,23 @@ int main(int argc, char** argv) {
             << "," << residuals[0][k] << "," << residuals[1][k] << "," << residuals[2][k] << "," << residuals[3][k]
             << "," << fidelity[0][k] << "," << fidelity[1][k] << "," << gpuMs[0][k] << "," << gpuMs[1][k] << ","
             << gpuMs[2][k] << "," << gpuMs[3][k] << "," << splats[0][k] << "," << splats[1][k] << "," << splats[2][k]
-            << "," << splats[3][k] << "\n";
+            << "," << splats[3][k] << "," << fidelity[2][k] << "\n";
     }
-    printPopping("static ", residuals[0], residuals[2], distances, drawnBy);
-    printPopping("dynamic", residuals[1], residuals[3], distances, drawnBy);
-    printByRepresentation("static  fidelity error", fidelity[0], distances, drawnBy);
-    printByRepresentation("dynamic fidelity error", fidelity[1], distances, drawnBy);
+    if (enhancing) {
+        printPopping("with LOD", residuals[0], residuals[3], distances, drawnBy);
+        printPopping("enhanced", residuals[1], residuals[3], distances, drawnBy);
+        printByRepresentation("fidelity error against the classical reference, with LOD", fidelity[0], distances,
+                              drawnBy);
+        printByRepresentation("fidelity error against the classical reference, enhanced", fidelity[1], distances,
+                              drawnBy);
+        printByRepresentation("fidelity error against the classical reference, without LOD", fidelity[2], distances,
+                              drawnBy);
+    } else {
+        printPopping("static ", residuals[0], residuals[2], distances, drawnBy);
+        printPopping("dynamic", residuals[1], residuals[3], distances, drawnBy);
+        printByRepresentation("static  fidelity error", fidelity[0], distances, drawnBy);
+        printByRepresentation("dynamic fidelity error", fidelity[1], distances, drawnBy);
+    }
     printByRepresentation("dynamic GPU ms", gpuMs[1], distances, drawnBy);
     printByRepresentation("dynamic GPU ms without levels of detail", gpuMs[3], distances, drawnBy);
     printByRepresentation("dynamic Gaussians drawn", splats[1], distances, drawnBy);
