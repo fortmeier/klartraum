@@ -8,8 +8,8 @@
 // Fills the VkDrawMeshTasksIndirectCommandEXT buffer for the raster backend's
 // mesh-shader draw (perf plan R5): groupCountX = ceil(visible / WG_SPLATS),
 // matching gsplat_raster.mesh's WG_SPLATS splats per workgroup. Reads the
-// visible count from the sort's count buffer (the value dist wrote). Runs after
-// dist (via the dist -> this edge) and before the mesh draw (via the barrier).
+// visible count from the sort's count buffer (the value GaussianCullAndCompact wrote). Runs after
+// GaussianCullAndCompact (via its dependency edge) and before the mesh draw (via the barrier).
 #define WG_SPLATS 32u
 
 layout(local_size_x = 1) in;

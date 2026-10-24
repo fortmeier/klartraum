@@ -6,13 +6,13 @@
  * TESTS:
  * - classWithLanternScene: VulkanGaussianSplattingRaster (the sort-once +
  *   hardware-rasterization backend, guide §7 step 5 "Composite") loads the
- *   lantern SPZ scene, runs several frames through the full dist -> sort ->
+ *   lantern SPZ scene, runs several frames through the full cull-and-compact -> sort ->
  *   barrier -> rasterizer pipeline with the placeholder point-cloud shaders,
  *   and confirms it submits cleanly across all swapchain paths (no
  *   validation-layer errors — the debug callback throws on VK_ERROR severity)
  *   and that the rendered image is not all-black (the cull/sort/indirect-draw
  *   chain actually produced and drew visible splats end to end). Enables GPU
- *   timestamp profiling and prints the per-stage mean split (dist -> sort ->
+ *   timestamp profiling and prints the per-stage mean split (cull-and-compact -> sort ->
  *   render pass) so the raster backend's per-stage cost can be tracked across
  *   perf changes, mirroring GaussianSplattingTest.classWithLanternScene
  * - meshShaderPathMatchesVertexPath: renders the lantern scene through the

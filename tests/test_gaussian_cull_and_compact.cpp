@@ -4,8 +4,8 @@
 
 /**
  * TESTS:
- * - cullsAndCompactsVisibleSplatsInBackToFrontOrder: dispatches GaussianDist
- *   (gsplat_dist.comp) over a small set of splats placed along and off the
+ * - cullsAndCompactsVisibleSplatsInBackToFrontOrder: dispatches GaussianCullAndCompact
+ *   (gsplat_cull_and_compact_count.comp) over a small set of splats placed along and off the
  *   camera's view axis, and confirms drawArgs.instanceCount equals the number
  *   of splats inside the (dilated) frustum, that indices[0..instanceCount)
  *   contains exactly those splats' ids (compaction correctness), and that
@@ -13,7 +13,7 @@
  *   camera — farthest splat gets the smallest key, so the ascending sort in
  *   stage B draws back-to-front, the invariant premultiplied "over" blending
  *   relies on
- * - sortsCompactedSplatsBackToFrontViaRadixSort: chains GaussianDist into the
+ * - sortsCompactedSplatsBackToFrontViaRadixSort: chains GaussianCullAndCompact into the
  *   existing (reused, unmodified) RadixSort over keys/indices ping-pong
  *   buffers seeded each frame with the 0xFFFFFFFF sentinel (setRecordToFill),
  *   dispatched over the full splat count N, and confirms the sorted indices
@@ -47,21 +47,22 @@ using namespace klartraum;
 
 namespace {
 
-// GaussianDist with its three passes (count, scan, scatter) and the count and
+// GaussianCullAndCompact with its three passes (count, scan, scatter) and the count and
 // workgroup-offset buffers the passes exchange (bindings 6 and 7). Bindings 0-5
 // are left to the caller.
-std::shared_ptr<GaussianDist> makeDist(VulkanContext& vc, uint32_t numSplats) {
-    auto dist = std::make_shared<GaussianDist>(
-        vc, std::vector<std::string>{"shaders/gsplat/gsplat_dist.comp.spv", "shaders/gsplat/gsplat_dist_scan.comp.spv",
-                                     "shaders/gsplat/gsplat_dist_scatter.comp.spv"});
-    dist->setInput(std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, 1), 6);
-    dist->setInput(std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, (numSplats + 255) / 256), 7);
-    return dist;
+std::shared_ptr<GaussianCullAndCompact> makeCullAndCompact(VulkanContext& vc, uint32_t numSplats) {
+    auto cullAndCompact = std::make_shared<GaussianCullAndCompact>(
+        vc, std::vector<std::string>{"shaders/gsplat/gsplat_cull_and_compact_count.comp.spv",
+                                     "shaders/gsplat/gsplat_cull_and_compact_scan.comp.spv",
+                                     "shaders/gsplat/gsplat_cull_and_compact_scatter.comp.spv"});
+    cullAndCompact->setInput(std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, 1), 6);
+    cullAndCompact->setInput(std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, (numSplats + 255) / 256), 7);
+    return cullAndCompact;
 }
 
 } // namespace
 
-TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
+TEST(GaussianCullAndCompact, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
 
@@ -93,7 +94,7 @@ TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
         vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto indices = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
         vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    // dist binding 5: (r,g,b,alpha). The opacity cull is disabled here
+    // cullAndCompact binding 5: (r,g,b,alpha). The opacity cull is disabled here
     // (alphaThreshold 0), so alpha=1 keeps every splat — this test exercises
     // frustum culling only.
     auto colorsAlpha = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(
@@ -103,18 +104,18 @@ TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
-    auto dist = makeDist(vc, numSplats);
-    dist->setInput(positions, 0);
-    dist->setInput(cameraUBO, 1);
-    dist->setInput(keys, 2);
-    dist->setInput(indices, 3);
-    dist->setInput(drawArgs, 4);
-    dist->setInput(colorsAlpha, 5);
-    dist->setGroupCountX((numSplats + 255) / 256);
-    dist->setPushConstants({{numSplats, 0.0f}});
+    auto cullAndCompact = makeCullAndCompact(vc, numSplats);
+    cullAndCompact->setInput(positions, 0);
+    cullAndCompact->setInput(cameraUBO, 1);
+    cullAndCompact->setInput(keys, 2);
+    cullAndCompact->setInput(indices, 3);
+    cullAndCompact->setInput(drawArgs, 4);
+    cullAndCompact->setInput(colorsAlpha, 5);
+    cullAndCompact->setGroupCountX((numSplats + 255) / 256);
+    cullAndCompact->setPushConstants({{numSplats, 0.0f}});
 
     auto computegraph = ComputeGraph(vc, 1);
-    computegraph.compileFrom(dist);
+    computegraph.compileFrom(cullAndCompact);
 
     positions->getBuffer(0).memcopyFrom(positionData);
     colorsAlpha->getBuffer(0).memcopyFrom(std::vector<glm::vec4>(numSplats, glm::vec4(1.0f)));
@@ -159,7 +160,7 @@ TEST(GaussianDist, cullsAndCompactsVisibleSplatsInBackToFrontOrder) {
     EXPECT_GT(key1, key2) << "farther splat must get the smaller key (sorts first, back-to-front)";
 }
 
-TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
+TEST(GaussianCullAndCompact, sortsCompactedSplatsBackToFrontViaRadixSort) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
 
@@ -189,9 +190,9 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
     auto positions = std::make_shared<BufferElement<VulkanBuffer<glm::vec3>>>(
         vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
-    // keys/indices ping-pong pair A (read by dist, read+written by the sort)
+    // keys/indices ping-pong pair A (read by cullAndCompact, read+written by the sort)
     // and B (sort scratch only). The sort runs 8 passes (even), so the final
-    // sorted result lands back in A — the buffers dist already wrote into.
+    // sorted result lands back in A — the buffers cullAndCompact already wrote into.
     auto keysA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
         vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto indicesA = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
@@ -212,20 +213,20 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     drawArgs->setRecordToZeroRange(offsetof(VkDrawIndirectCommand, instanceCount), sizeof(uint32_t));
 
-    // dist binding 5: (r,g,b,alpha). Opacity cull disabled (alphaThreshold 0),
+    // cullAndCompact binding 5: (r,g,b,alpha). Opacity cull disabled (alphaThreshold 0),
     // alpha=1 keeps every visible splat — this test exercises the sort chain.
     auto colorsAlpha = std::make_shared<BufferElement<VulkanBuffer<glm::vec4>>>(
         vc, numSplats, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
-    auto dist = makeDist(vc, numSplats);
-    dist->setInput(positions, 0);
-    dist->setInput(cameraUBO, 1);
-    dist->setInput(keysA, 2);
-    dist->setInput(indicesA, 3);
-    dist->setInput(drawArgs, 4);
-    dist->setInput(colorsAlpha, 5);
-    dist->setGroupCountX((numSplats + 255) / 256);
-    dist->setPushConstants({{numSplats, 0.0f}});
+    auto cullAndCompact = makeCullAndCompact(vc, numSplats);
+    cullAndCompact->setInput(positions, 0);
+    cullAndCompact->setInput(cameraUBO, 1);
+    cullAndCompact->setInput(keysA, 2);
+    cullAndCompact->setInput(indicesA, 3);
+    cullAndCompact->setInput(drawArgs, 4);
+    cullAndCompact->setInput(colorsAlpha, 5);
+    cullAndCompact->setGroupCountX((numSplats + 255) / 256);
+    cullAndCompact->setPushConstants({{numSplats, 0.0f}});
 
     // Reused, unmodified radix sort (existing key/index parallel-buffer sort —
     // see RASTER_BACKEND_STATUS.md note that it already operates on plain
@@ -245,8 +246,8 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
         vc, std::vector<std::string>{"shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
                                      "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
                                      "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"});
-    sortOp->setInput(dist, 0, 2); // keysA    (dist's output index 2)
-    sortOp->setInput(dist, 1, 3); // indicesA (dist's output index 3)
+    sortOp->setInput(cullAndCompact, 0, 2); // keysA    (cullAndCompact's output index 2)
+    sortOp->setInput(cullAndCompact, 1, 3); // indicesA (cullAndCompact's output index 3)
     sortOp->setInput(keysB, 2);
     sortOp->setInput(indicesB, 3);
     sortOp->addScratchBufferElement(scratchCounts, true);
@@ -281,7 +282,7 @@ TEST(GaussianDist, sortsCompactedSplatsBackToFrontViaRadixSort) {
     EXPECT_EQ(actualOrder, expectedBackToFront);
 }
 
-TEST(GaussianDist, compactsVisibleSplatsInSplatIndexOrder) {
+TEST(GaussianCullAndCompact, compactsVisibleSplatsInSplatIndexOrder) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
 
@@ -317,19 +318,19 @@ TEST(GaussianDist, compactsVisibleSplatsInSplatIndexOrder) {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto count = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vc, 1);
 
-    auto dist = makeDist(vc, numSplats);
-    dist->setInput(positions, 0);
-    dist->setInput(cameraUBO, 1);
-    dist->setInput(keys, 2);
-    dist->setInput(indices, 3);
-    dist->setInput(drawArgs, 4);
-    dist->setInput(colorsAlpha, 5);
-    dist->setInput(count, 6);
-    dist->setGroupCountX((numSplats + 255) / 256);
-    dist->setPushConstants({{numSplats, 0.0f}});
+    auto cullAndCompact = makeCullAndCompact(vc, numSplats);
+    cullAndCompact->setInput(positions, 0);
+    cullAndCompact->setInput(cameraUBO, 1);
+    cullAndCompact->setInput(keys, 2);
+    cullAndCompact->setInput(indices, 3);
+    cullAndCompact->setInput(drawArgs, 4);
+    cullAndCompact->setInput(colorsAlpha, 5);
+    cullAndCompact->setInput(count, 6);
+    cullAndCompact->setGroupCountX((numSplats + 255) / 256);
+    cullAndCompact->setPushConstants({{numSplats, 0.0f}});
 
     auto computegraph = ComputeGraph(vc, 1);
-    computegraph.compileFrom(dist);
+    computegraph.compileFrom(cullAndCompact);
 
     positions->getBuffer(0).memcopyFrom(positionData);
     colorsAlpha->getBuffer(0).memcopyFrom(std::vector<glm::vec4>(numSplats, glm::vec4(1.0f)));

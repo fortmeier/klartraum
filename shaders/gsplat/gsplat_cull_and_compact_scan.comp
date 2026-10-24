@@ -12,7 +12,7 @@
 // shared dispatch size return right away.
 layout(local_size_x = 256) in;
 
-#include "gsplat_dist_include.glsl"
+#include "gsplat_cull_and_compact_include.glsl"
 
 layout(scalar, set = 0, binding = 6) buffer CountBuf {
     uint numberTotalGaussians;

@@ -11,7 +11,7 @@
 // draw order, and with it the blended image, is the same on every run.
 layout(local_size_x = 256) in;
 
-#include "gsplat_dist_include.glsl"
+#include "gsplat_cull_and_compact_include.glsl"
 
 shared uint visibleCount;
 

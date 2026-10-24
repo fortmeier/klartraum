@@ -28,8 +28,9 @@ namespace klartraum {
  *
  * The counterpart to VulkanGaussianSplatting, which rasterizes in compute shaders.
  * It reads the same Gaussian data and connects:
- * - GaussianDist: culling, depth keys and compaction in splat-index order
- *   (`gsplat_dist.comp`, `gsplat_dist_scan.comp`, `gsplat_dist_scatter.comp`);
+ * - GaussianCullAndCompact: culling, depth keys and compaction in splat-index order
+ *   (`gsplat_cull_and_compact_count.comp`, `gsplat_cull_and_compact_scan.comp`,
+ * `gsplat_cull_and_compact_scatter.comp`);
  * - a radix sort of the depth keys;
  * - BufferToGraphicsBarrier, which orders the indirect draw after the compute work;
  * - a RenderPass with a GaussianSplatRasterizer (or, where mesh shaders are
@@ -70,8 +71,8 @@ private:
     GaussianSoABuffers buffers;
 
     // Stage A: cull + depth-key + compaction
-    std::shared_ptr<GaussianDist> dist;
-    // Per-workgroup visible counts of dist, scanned in place into output offsets.
+    std::shared_ptr<GaussianCullAndCompact> cullAndCompact;
+    // Per-workgroup visible counts of cullAndCompact, scanned in place into output offsets.
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> workgroupOffsets;
 
     // Per-splat 2D attribute precompute (project once per splat, not 4x per
@@ -79,7 +80,7 @@ private:
     std::shared_ptr<GaussianRasterProject> project;
     std::shared_ptr<BufferElement<VulkanBuffer<float>>> splat2D;
 
-    // Stage B: ping-pong key/index buffers (A holds dist's output and, after
+    // Stage B: ping-pong key/index buffers (A holds cullAndCompact's output and, after
     // an even pass count, the final sorted result the rasterizer reads) plus
     // the existing radix sort's scratch buffers.
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> keysA;

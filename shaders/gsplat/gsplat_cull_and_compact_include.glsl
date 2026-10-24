@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 // Bindings, push constants and the visibility test shared by the three passes of the
-// raster backend's cull + compaction (gsplat_dist.comp, gsplat_dist_scan.comp,
-// gsplat_dist_scatter.comp). The passes share one descriptor set and dispatch size.
+// raster backend's cull + compaction (gsplat_cull_and_compact_count.comp, gsplat_cull_and_compact_scan.comp,
+// gsplat_cull_and_compact_scatter.comp). The passes share one descriptor set and dispatch size.
 layout(scalar, set = 0, binding = 0) readonly buffer Positions { vec3 positions[]; };
 
 layout(set = 0, binding = 1) uniform UBO {

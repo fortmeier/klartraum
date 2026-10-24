@@ -78,7 +78,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
 
     const uint32_t N = buffers.count;
 
-    // --- Stage A: cull + depth-key + compaction (gsplat_dist.comp) ---
+    // --- Stage A: cull + depth-key + compaction (gsplat_cull_and_compact_count.comp) ---
     const VkBufferUsageFlags storageDst = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
     // Culling generates depth keys and splat indices; radix sort alternates between A and B.
@@ -96,7 +96,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     keysB->setName("RasterKeysB");
     indicesB->setName("RasterIndicesB");
 
-    // The sort below runs only over the visible count dist compacts into the
+    // The sort below runs only over the visible count cullAndCompact compacts into the
     // front of these buffers (slots [0, instanceCount)), so no sentinel fill of
     // the tail is needed — the sort never reads past instanceCount.
 
@@ -106,31 +106,31 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
         vulkanContext, 1, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | storageDst, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     drawArgs->setName("RasterDrawArgs");
 
-    // dist compacts the visible splats in splat-index order with three sub-shaders
-    // that share one dispatch size: gsplat_dist.comp counts the visible splats per
-    // workgroup, gsplat_dist_scan.comp turns the counts into offsets and writes the
+    // cullAndCompact compacts the visible splats in splat-index order with three sub-shaders
+    // that share one dispatch size: gsplat_cull_and_compact_count.comp counts the visible splats per
+    // workgroup, gsplat_cull_and_compact_scan.comp turns the counts into offsets and writes the
     // total into drawArgs.instanceCount and the sort's count buffer (binding 6), and
-    // gsplat_dist_scatter.comp writes keys and indices. The order makes the stable
+    // gsplat_cull_and_compact_scatter.comp writes keys and indices. The order makes the stable
     // sort break depth-key ties by splat index, so every run draws the same image.
     // The count buffer (totalCount) is wired below once it is created.
     // GeneralComputation's inter-pipeline barrier orders the three.
-    const uint32_t numDistWGs = (N + 255) / 256;
-    workgroupOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(vulkanContext, numDistWGs, storageDst,
-                                                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    workgroupOffsets->setName("RasterDistWorkgroupOffsets");
-    dist = vulkanContext.create<GaussianDist>(std::vector<std::string>{"shaders/gsplat/gsplat_dist.comp.spv",
-                                                                       "shaders/gsplat/gsplat_dist_scan.comp.spv",
-                                                                       "shaders/gsplat/gsplat_dist_scatter.comp.spv"});
-    dist->setName("GaussianDist");
-    buffers.pos.connectTo(*dist, 0);
-    dist->setInput(cameraUBO, 1);
-    dist->setInput(keysA, 2);
-    dist->setInput(indicesA, 3);
-    dist->setInput(drawArgs, 4);
-    buffers.colAlpha.connectTo(*dist, 5); // alpha for the opacity cull
-    dist->setInput(workgroupOffsets, 7);
-    dist->setGroupCountX(numDistWGs);
-    dist->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
+    const uint32_t numCullAndCompactWGs = (N + 255) / 256;
+    workgroupOffsets = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
+        vulkanContext, numCullAndCompactWGs, storageDst, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    workgroupOffsets->setName("RasterCullAndCompactWorkgroupOffsets");
+    cullAndCompact = vulkanContext.create<GaussianCullAndCompact>(std::vector<std::string>{
+        "shaders/gsplat/gsplat_cull_and_compact_count.comp.spv", "shaders/gsplat/gsplat_cull_and_compact_scan.comp.spv",
+        "shaders/gsplat/gsplat_cull_and_compact_scatter.comp.spv"});
+    cullAndCompact->setName("GaussianCullAndCompact");
+    buffers.pos.connectTo(*cullAndCompact, 0);
+    cullAndCompact->setInput(cameraUBO, 1);
+    cullAndCompact->setInput(keysA, 2);
+    cullAndCompact->setInput(indicesA, 3);
+    cullAndCompact->setInput(drawArgs, 4);
+    buffers.colAlpha.connectTo(*cullAndCompact, 5); // alpha for the opacity cull
+    cullAndCompact->setInput(workgroupOffsets, 7);
+    cullAndCompact->setGroupCountX(numCullAndCompactWGs);
+    cullAndCompact->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
 
     // --- Stage A2: per-splat 2D attribute precompute (perf plan R1+R2) ---
     // Projects covariance, eigendecomposes, and evaluates SH once per splat into
@@ -160,7 +160,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     // --- Stage B: radix sort over the visible count (perf plan R3). The reused
     // sort operates on plain (uint key, uint index) pairs; 8 passes x 4 bits
     // sorts the full 32-bit key, and an even pass count returns the result to
-    // the A buffers dist wrote into. The dispatch group count stays fixed at
+    // the A buffers cullAndCompact wrote into. The dispatch group count stays fixed at
     // numSortWGs (so the histogram stride is consistent), but the per-workgroup
     // item count is driven by the visible count read from the count buffer. ---
     const uint32_t numBins = 16;
@@ -180,7 +180,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     scratchHist->setRecordToZero(true);
     scratchCounts->setRecordToZero(true);
     scratchOffsets->setRecordToZero(true);
-    // totalCount holds the visible count, fully written each frame by dist's
+    // totalCount holds the visible count, fully written each frame by cullAndCompact's
     // count sub-shader — no per-frame zeroing.
     totalCount->setRecordToZero(false);
     scratchHist->setName("RasterSortScratchHist");
@@ -188,18 +188,18 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     scratchOffsets->setName("RasterSortScratchOffsets");
     totalCount->setName("RasterSortTotalCount");
 
-    // Wire the count buffer as dist's binding 6 so gsplat_dist_scan.comp writes
-    // the visible count into it; the existing dist -> sort edge then makes that
+    // Wire the count buffer as cullAndCompact's binding 6 so gsplat_cull_and_compact_scan.comp writes
+    // the visible count into it; the existing cullAndCompact -> sort edge then makes that
     // write visible to the sort, which reads it as binding 6 (inputBuffer2).
-    dist->setInput(totalCount, 6);
+    cullAndCompact->setInput(totalCount, 6);
 
     sortOp = std::make_shared<RadixSort>(
         vulkanContext, std::vector<std::string>{"shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
                                                 "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
                                                 "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"});
     sortOp->setName("RasterRadixSort");
-    sortOp->setInput(dist, 0, 2); // keysA    (dist's output index 2)
-    sortOp->setInput(dist, 1, 3); // indicesA (dist's output index 3)
+    sortOp->setInput(cullAndCompact, 0, 2); // keysA    (cullAndCompact's output index 2)
+    sortOp->setInput(cullAndCompact, 1, 3); // indicesA (cullAndCompact's output index 3)
     sortOp->setInput(keysB, 2);
     sortOp->setInput(indicesB, 3);
     sortOp->addScratchBufferElement(scratchCounts, true);
@@ -209,7 +209,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     sortOp->setGroupCountX(numSortWGs);
     {
         // useCountBuffer = 1: the sort reads the active count from totalCount
-        // (the visible count dist wrote) instead of N, so it sorts only the
+        // (the visible count cullAndCompact wrote) instead of N, so it sorts only the
         // visible range. The group count stays numSortWGs, keeping the
         // histogram's bin-major stride consistent across the three passes.
         std::vector<SortPushConstants> pcs;
@@ -225,9 +225,9 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     barrier->addBuffer(indicesA);
     barrier->addBuffer(drawArgs);
     barrier->addBuffer(splat2D);
-    barrier->setInput(sortOp, 0, 1);  // indicesA, sorted back into A by the even pass count
-    barrier->setInput(dist, 1, 4);    // drawArgs (instanceCount written by dist's atomicAdd)
-    barrier->setInput(project, 2, 8); // splat2D (per-splat attributes), output binding 8
+    barrier->setInput(sortOp, 0, 1);         // indicesA, sorted back into A by the even pass count
+    barrier->setInput(cullAndCompact, 1, 4); // drawArgs (visible instance count)
+    barrier->setInput(project, 2, 8);        // splat2D (per-splat attributes), output binding 8
 
     // --- Stage C: instanced indirect draw, hardware rasterized ---
     auto extent = imageViewSrc->getImageExtent(0);
@@ -251,7 +251,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
 
         meshArgsOp = vulkanContext.create<MeshArgsFill>("shaders/gsplat/gsplat_mesh_args.comp.spv");
         meshArgsOp->setName("RasterMeshArgsFill");
-        meshArgsOp->setInput(dist, 0, 6); // totalCount (visible count) — edge orders after dist
+        meshArgsOp->setInput(cullAndCompact, 0, 6); // totalCount (visible count) — edge orders after cullAndCompact
         meshArgsOp->setInput(meshArgs, 1);
         meshArgsOp->setGroupCountX(1);
 
@@ -259,8 +259,8 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
         // meshArgs; extend the barrier to cover them and the mesh-shader stage.
         barrier->addBuffer(meshArgs);
         barrier->addBuffer(totalCount);
-        barrier->setInput(meshArgsOp, 3, 1); // meshArgs (indirect draw args)
-        barrier->setInput(dist, 4, 6);       // totalCount (read in the mesh shader)
+        barrier->setInput(meshArgsOp, 3, 1);     // meshArgs (indirect draw args)
+        barrier->setInput(cullAndCompact, 4, 6); // totalCount (read in the mesh shader)
         barrier->setIncludeMeshShaderStage(true);
 
         // set 1: Splat2D (0), sorted indices (1), visible count (2).

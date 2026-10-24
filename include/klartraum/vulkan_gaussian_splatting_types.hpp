@@ -48,7 +48,7 @@ struct GsplatConfig {
     // degrees skip band loads + evaluation for speed at a colour-fidelity cost.
     int shDegree = 3;
 
-    // Raster backend dist-side opacity cull: splats whose post-activation alpha
+    // Raster backend cull-and-compact opacity cull: splats whose post-activation alpha
     // is below this are dropped before sort/draw. 1/255 is near-bit-preserving
     // (such splats contribute < 1/255 even at their centre). 0 disables it.
     float alphaCullThreshold = 1.0f / 255.0f;
@@ -184,12 +184,12 @@ struct SplatPushConstants {
     float screenHeight;
 };
 
-struct DistPushConstants {
+struct CullAndCompactPushConstants {
     uint32_t numSplats;
     float frustumDilation;       // dilates the cull frustum so near-edge splat footprints survive
     float alphaThreshold = 0.0f; // drop splats with post-activation alpha below this (0 = off)
 };
-typedef GeneralComputation<DistPushConstants> GaussianDist;
+typedef GeneralComputation<CullAndCompactPushConstants> GaussianCullAndCompact;
 
 // Per-splat 2D attribute precompute (raster backend, gsplat_raster_project.comp).
 // All-scalar (4-byte) members so std430 packing matches the GLSL push block.
