@@ -198,6 +198,12 @@ Before compiling, `enableProfiling()` adds GPU timestamp queries around every
 element, and `enablePerformanceProfiling()` adds hardware performance counters
 where the driver supports `VK_KHR_performance_query` (with pipeline statistics
 as a fallback). `getProfilingResults()` returns the mean time per element.
+`getElementTimesMs()` returns the same means in the order of `getElements()`,
+and `getGpuSpanMs()` the mean time from the first element's start to the last
+element's end, which also covers the barriers between elements.
+`resetProfiling()` starts the means anew, e.g. after warm-up frames.
+`writeGraphJson()` exports a compiled graph with its elements, edges and times
+for drawing it.
 
 ## Chains of graphs
 
@@ -207,7 +213,8 @@ from graph to graph on the GPU without the CPU in between. A graph can appear
 several times in a chain if it was compiled after `enableSimultaneousUse()`.
 `BufferElement` instances shared by the graphs are allocated once, by the
 first graph that compiles them, and the graphs must have the same number of
-paths.
+paths. For submissions the graph does not wait for itself, `readProfiling()`
+reads the timestamps once the chain has finished.
 
 ### Example
 
