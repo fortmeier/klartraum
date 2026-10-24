@@ -36,7 +36,16 @@ extensions = [
     "myst_parser",
     "breathe",
     "sphinx_needs",
+    "sphinxcontrib.bibtex",
 ]
+
+# Articles share one database and list only their own cited references.
+bibtex_bibfiles = ["references.bib"]
+bibtex_reference_style = "author_year"
+bibtex_default_style = "plain"
+# The same source may appear in several articles' local bibliographies.
+# Duplicate entries within a single bibliography still produce warnings.
+suppress_warnings = ["bibtex.duplicate_citation"]
 
 breathe_projects = {"klartraum": os.path.join(DOCS_DIR, "_doxygen", "xml")}
 breathe_default_project = "klartraum"

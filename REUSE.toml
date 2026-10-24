@@ -10,6 +10,7 @@ path = [
     "**/*.md",
     "docs/Doxyfile",
     "docs/requirements.txt",
+    "docs/references.bib",
     ".clang-format",
     ".editorconfig",
     ".gitattributes",

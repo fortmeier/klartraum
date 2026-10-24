@@ -8,7 +8,7 @@
 // Pass 2 of 3 of the cull + compaction: the first workgroup turns the per-workgroup
 // visible counts of pass 1 into exclusive offsets, in place, and writes the total into
 // the indirect draw arguments and the radix sort's count buffer (binding 6), so the
-// sort processes only the visible range (perf plan R3). The other workgroups of the
+// sort processes only the visible range. The other workgroups of the
 // shared dispatch size return right away.
 layout(local_size_x = 256) in;
 

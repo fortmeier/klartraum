@@ -57,6 +57,13 @@ guides/onnx
 
 ```{toctree}
 :hidden:
+:caption: Articles
+
+articles/deterministic-raster-order
+```
+
+```{toctree}
+:hidden:
 :caption: Reference
 
 api/index

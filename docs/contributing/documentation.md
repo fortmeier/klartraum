@@ -19,6 +19,30 @@ errors, as in CI. Doxygen warnings fail the build too, for example an `@param`
 that names no parameter of the function; they are listed in
 `docs/_doxygen/warnings.log`.
 
+## Citing sources in articles
+
+Add BibTeX entries to the shared `docs/references.bib` file. Cite their keys in
+MyST Markdown with `{cite:t}` for a citation in the sentence or `{cite:p}` for
+a parenthetical citation:
+
+```markdown
+The original method is described by {cite:t}`kerbl2023_3Dgaussians`.
+The renderer uses Gaussian splats {cite:p}`kerbl2023_3Dgaussians`.
+```
+
+End each article that cites sources with:
+
+````markdown
+## References
+
+```{bibliography}
+:filter: docname in docnames
+```
+````
+
+The filter includes only sources cited on that page. Several articles can cite
+the same entry; each citation links to the bibliography on its own page.
+
 ## Documenting C++ code
 
 Document the public API in the headers under `include/klartraum/`, using

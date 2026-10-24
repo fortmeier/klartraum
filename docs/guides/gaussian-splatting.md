@@ -21,6 +21,9 @@ the surrounding graph.
 | `GsplatBackend::Compute` | {cpp:class}`klartraum::VulkanGaussianSplatting` | Sorts per screen tile and splats in compute shaders |
 | `GsplatBackend::Raster` | `klartraum::VulkanGaussianSplattingRaster` | Sorts once and draws with the hardware rasterizer |
 
+For a walkthrough of culling, compaction and equal-depth ordering, see
+{doc}`../articles/deterministic-raster-order`.
+
 ## The compute pipeline
 
 The compute backend runs these stages every frame (shaders in
