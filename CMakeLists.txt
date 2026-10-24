@@ -253,6 +253,8 @@ add_executable(
   tests/test_drawindirectbuffer.cpp
   tests/test_buffertographicsbarrier.cpp
   tests/test_gaussian_splat_rasterizer.cpp
+  tests/test_gaussian_splat_crop.cpp
+  tests/test_gaussian_splat_depth.cpp
   tests/test_gaussian_cull_and_compact.cpp
   tests/test_gaussian_splatting_raster.cpp
   tests/test_gaussian_splatting_factory.cpp
