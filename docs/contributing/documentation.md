@@ -19,6 +19,25 @@ errors, as in CI. Doxygen warnings fail the build too, for example an `@param`
 that names no parameter of the function; they are listed in
 `docs/_doxygen/warnings.log`.
 
+On Windows, set up the Python environment in PowerShell:
+
+```powershell
+python -m venv docs/.venv
+.\docs\.venv\Scripts\python.exe -m pip install -r docs/requirements.txt
+```
+
+With Doxygen on `PATH`, build the website and documentation together:
+
+```powershell
+.\scripts\site\build_site.ps1
+Start-Process .\_site\docs\index.html
+```
+
+The script uses `docs/.venv/Scripts/sphinx-build.exe` when available, then
+`sphinx-build` on `PATH`. Set `SPHINX_BUILD` to use another executable. It
+replaces `_site/` on each run and treats warnings as errors, like
+`scripts/site/build_site.sh`. Use `-SphinxArgs` to pass additional Sphinx options.
+
 ## Citing sources in articles
 
 Add BibTeX entries to the shared `docs/references.bib` file. Cite their keys in

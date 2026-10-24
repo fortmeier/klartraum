@@ -28,6 +28,7 @@ shows the structure; they are not a complete specification of the engine.
 :maxdepth: 1
 
 compute-graph
+graph-chains
 ```
 
 ## Gaussian splatting

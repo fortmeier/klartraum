@@ -45,20 +45,18 @@ storage, and per-path upload examples.
 
 ## Submission model
 
-### Current: Single queue, single command buffer per path
+### One command buffer per path
+
+All elements of a graph path run on one queue, including independent
+branches. Separate graphs can be submitted to the graphics or background
+queue.
 
 - All elements of a path are recorded into **one command buffer** in topological order
 - A **full memory barrier** (`MEMORY_WRITE → MEMORY_READ|WRITE`) separates consecutive elements,
   ensuring each element sees all writes from earlier elements
-- One `VkSubmitInfo` per path (instead of one per element)
-- Only **external semaphores** (e.g. swapchain image acquisition) are waited on;
-  no per-element binary semaphores are needed
-- Synchronization happens inside the command buffer, not via the queue
-
-**Why this model?** The old per-element semaphore chain caused KosmicKrisp to hang
-when submitting 5,000+ elements (Stable Diffusion 1.5 UNet). Batching thousands
-of binary-semaphore waits on a single queue exceeded driver capabilities.
-Recording everything into one command buffer removes this overhead.
+- One `VkSubmitInfo` per path
+- The submission waits for **external semaphores** (e.g. swapchain image acquisition)
+  and signals the graph-finished semaphore when the path completes
 
 ### Submitting
 
@@ -181,46 +179,6 @@ worker.join();
   call it only when no background work is running, e.g. at shutdown. A
   swapchain recreation waits only for the graphics and present queues.
 
-## Future: Multi-queue architecture
-
-**Not yet implemented.** When graph branches are independent (no data dependencies),
-they could run in parallel on separate compute or graphics queues for higher GPU utilization.
-
-### Motivation
-
-Independent branches currently serialize on a single queue:
-- Branch A: Shader A → Shader B (10ms)
-- Branch B: Shader C → Shader D (5ms)
-- They wait for each other, total time: 15ms
-
-With multiple queues:
-- Queue 0: Shader A → Shader B (10ms, runs in parallel)
-- Queue 1: Shader C → Shader D (5ms, runs in parallel)
-- Total time: max(10ms, 5ms) = 10ms (33% faster)
-
-### Implementation strategy
-
-1. **Detect independent sub-graphs**: Analyze the DAG to find branches with no data dependencies.
-2. **Assign to queues**: Partition elements into disjoint sets, each bound to a queue family.
-3. **Reconstruct edge semaphores**: Create binary semaphores only at merge points where
-   independent branches reconverge and synchronize.
-4. **Record per-queue command buffers**: Each queue has its own buffer(s) for its assigned elements.
-5. **Multi-queue submission**: Submit to each queue, waiting on inter-queue synchronization semaphores.
-
-### Changes required
-
-- Add support for multiple queue families (compute, graphics, transfer, etc.)
-- Modify topological sort to optionally partition into independent sets
-- Add per-element queue family assignment
-- Reconstruct `SubmitInfoWrapper` per queue (not per path)
-- Track queue-to-elements mapping and inter-queue dependencies
-- Update `submitTo()` to handle multiple `vkQueueSubmit()` calls
-
-### Compatibility
-
-The public API (`compileFrom()`, `submitTo()`, `submitAndWait()`) would remain unchanged.
-The graph would automatically benefit from multi-queue execution if the topology allows it.
-
 ## Element types
 
 | Element | Purpose |
@@ -246,6 +204,53 @@ A {cpp:class}`klartraum::GraphChain` submits several compiled graphs in one
 `vkQueueSubmit`, each waiting for a semaphore of the one before, so data passes
 from graph to graph on the GPU without the CPU in between. A graph can appear
 several times in a chain if it was compiled after `enableSimultaneousUse()`.
-Buffer and tensor elements shared by the graphs are allocated once, by the
+`BufferElement` instances shared by the graphs are allocated once, by the
 first graph that compiles them, and the graphs must have the same number of
 paths.
+
+### Example
+
+With an initialized `VulkanContext vc`, this example copies four values
+through two graphs. The first writes a shared device-local buffer, and the
+second reads it:
+
+```cpp
+using Floats = klartraum::VulkanBuffer<float>;
+using Buffer = klartraum::BufferElement<Floats>;
+
+auto input = std::make_shared<Buffer>(vc, 4);
+auto shared = std::make_shared<Buffer>(
+    vc, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+auto output = std::make_shared<Buffer>(vc, 4);
+
+auto firstCopy = std::make_shared<klartraum::CopyBuffer>(vc);
+firstCopy->setInput(input, 0);
+firstCopy->setInput(shared, 1);
+
+auto secondCopy = std::make_shared<klartraum::CopyBuffer>(vc);
+secondCopy->setInput(shared, 0);
+secondCopy->setInput(output, 1);
+
+klartraum::ComputeGraph first(vc, 1), second(vc, 1);
+first.compileFrom(firstCopy);
+second.compileFrom(secondCopy);
+
+input->getBuffer(0).memcopyFrom(std::vector<float>{1, 2, 3, 4});
+
+klartraum::GraphChain chain(vc);
+chain.add(first, 0);
+chain.add(second, 0);
+chain.submitAndWait(vc.getGraphicsQueue());
+
+std::vector<float> result(4);
+output->getBuffer(0).memcopyTo(result); // {1, 2, 3, 4}
+```
+
+Both graphs have one path, selected by the `0` passed to `add()`. Compiling
+the second graph reuses the shared buffer allocated by the first. The chain
+orders their copies on the GPU; the CPU uploads before the chain and reads
+the result after both links finish.
+
+See {doc}`../requirements/graph-chains` for the requirements, specifications
+and tests.
