@@ -74,7 +74,16 @@ public:
           bufferUsageFlags(flags),
           memoryProperties(memory) {}
 
+    // A buffer element may be part of several compiled graphs, e.g. the links of a GraphChain that pass data on
+    // the GPU. Its buffers are allocated by the first graph and reused by the others, which must have as many
+    // paths (as TensorElement does). Review: whether reusing them is right for every graph that shares an element.
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+        if (!buffers.empty()) {
+            if (buffers.size() != numberPaths) {
+                throw std::runtime_error("BufferElement: shared by graphs with differing path counts");
+            }
+            return;
+        }
         buffers.reserve(numberPaths);
         for (uint32_t i = 0; i < numberPaths; i++) {
             if (bufferUsageFlags == VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM) {

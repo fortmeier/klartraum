@@ -41,8 +41,8 @@ void endSingleTimeCommands(VulkanContext& vulkanContext, VkCommandBuffer command
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    vkQueueSubmit(vulkanContext.getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
+    vulkanContext.queueSubmit(vulkanContext.getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    vulkanContext.queueWaitIdle(vulkanContext.getGraphicsQueue());
 
     vkFreeCommandBuffers(vulkanContext.getDevice(), vulkanContext.getCommandPool(), 1, &commandBuffer);
 }

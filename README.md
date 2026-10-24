@@ -21,6 +21,9 @@ Early development. What works today:
 
 - the compute graph: GPU work described as a graph of elements, recorded into
   command buffers once and submitted per frame, with GPU timings per element;
+- chains of compiled graphs submitted at once, passing data on the GPU
+  (`GraphChain`), and a background queue for long-running work beside the
+  frames;
 - Gaussian splatting with a compute and a raster backend (`.spz` scenes);
 - buffers in device-local or host-visible memory, with staged uploads, and
   per-frame updates of Gaussians from the CPU before a frame is submitted;

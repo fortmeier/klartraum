@@ -5,8 +5,11 @@
 #ifndef KLARTRAUM_COMPUTEGRAPH_COMPUTEGRAPHELEMENT_HPP
 #define KLARTRAUM_COMPUTEGRAPH_COMPUTEGRAPHELEMENT_HPP
 
+#include <algorithm>
 #include <map>
 #include <memory>
+#include <stdexcept>
+#include <vector>
 
 #include "klartraum/vulkan_context.hpp"
 
@@ -110,6 +113,14 @@ public:
 
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) { initialized = true; };
 
+    // The queue the element's graph is compiled for, set by
+    // ComputeGraph::compileFrom() before _setup(): uploads and other
+    // immediate submissions in _setup() go to it (VK_NULL_HANDLE: the
+    // graphics queue). An element that sets up other elements itself passes
+    // it on.
+    VkQueue getSetupQueue() const { return setupQueue; }
+    void _setSetupQueue(VkQueue queue) { setupQueue = queue; }
+
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
         if (!initialized) {
             throw std::runtime_error("ComputeGraphElement not initialized");
@@ -132,14 +143,39 @@ public:
 
     virtual std::map<int, ComputeGraphElementPtr> getInputs() const { return inputs; }
 
+    /**
+     * @brief Adds an execution-only dependency that does not become a shader input.
+     * @param dependency Element that must execute before this element.
+     * @throws std::invalid_argument If @p dependency is null or refers to this element.
+     *
+     * Execution-only dependencies order accesses to shared physical resources,
+     * including reusable tensor-storage slots, without changing shader bindings.
+     */
+    void addDependency(const ComputeGraphElementPtr& dependency) {
+        if (!dependency) {
+            throw std::invalid_argument("ComputeGraphElement: dependency must not be null");
+        }
+        if (dependency.get() == this) {
+            throw std::invalid_argument("ComputeGraphElement: element cannot depend on itself");
+        }
+        if (std::find(dependencies.begin(), dependencies.end(), dependency) == dependencies.end()) {
+            dependencies.push_back(dependency);
+        }
+    }
+
+    /** @brief Returns execution-only predecessors added with addDependency(). */
+    virtual std::vector<ComputeGraphElementPtr> getDependencies() const { return dependencies; }
+
     void setName(const std::string& name) { this->name = name; }
 
 protected:
-    std::map<int, ComputeGraphElementPtr> inputs;    // TODO: should be private
+    std::map<int, ComputeGraphElementPtr> inputs; // TODO: should be private
+    std::vector<ComputeGraphElementPtr> dependencies;
     std::map<int, VkSemaphore> renderWaitSemaphores; // TODO: should be private
     std::map<int, int> srcOutputSlots;               // TODO: should be private
 
     bool initialized = false;
+    VkQueue setupQueue = VK_NULL_HANDLE;
 
     std::string name;
 

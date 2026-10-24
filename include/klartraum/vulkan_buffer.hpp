@@ -89,11 +89,17 @@ public:
         vkFreeMemory(device, vertexBufferMemory, nullptr);
     }
 
+    // Staging transfers of a device-local buffer are submitted to `queue`
+    // (default: the graphics queue; see VulkanContext::submitImmediate()).
+    // Host-visible buffers are mapped.
+
     // Upload the vector's elements, limited to this buffer's capacity.
-    void memcopyFrom(const std::vector<T>& src) { memcopyFrom(src.data(), src.size()); }
+    void memcopyFrom(const std::vector<T>& src, VkQueue queue = VK_NULL_HANDLE) {
+        memcopyFrom(src.data(), src.size(), queue);
+    }
 
     // count is in T elements. The caller must ensure earlier GPU use of this buffer has finished.
-    void memcopyFrom(const T* src, size_t count) {
+    void memcopyFrom(const T* src, size_t count, VkQueue queue = VK_NULL_HANDLE) {
         if (!hostVisible) {
             // CPU data is mapped into a temporary coherent buffer, then copied to GPU storage.
             // commands() waits for completion before the temporary allocation is destroyed.
@@ -102,10 +108,12 @@ public:
                 return;
             VulkanBuffer<T> staging(vulkanContext, uint32_t(n));
             staging.memcopyFrom(src, n);
-            commands([&](VkCommandBuffer cmd) {
-                VkBufferCopy copy{0, 0, n * sizeof(T)};
-                vkCmdCopyBuffer(cmd, staging.vertexBuffer, vertexBuffer, 1, &copy);
-            });
+            commands(
+                [&](VkCommandBuffer cmd) {
+                    VkBufferCopy copy{0, 0, n * sizeof(T)};
+                    vkCmdCopyBuffer(cmd, staging.vertexBuffer, vertexBuffer, 1, &copy);
+                },
+                queue);
             return;
         }
         auto& device = vulkanContext.getDevice();
@@ -117,7 +125,7 @@ public:
     }
 
     // Upload count raw bytes, limited to the allocation's byte capacity regardless of T.
-    void memcopyFrom(const char* src, size_t count) {
+    void memcopyFrom(const char* src, size_t count, VkQueue queue = VK_NULL_HANDLE) {
         if (!hostVisible) {
             // Byte-sized staging lets the transfer use the raw byte count rather than T elements.
             size_t n = std::min(count, sizeof(T) * size_t(size));
@@ -125,10 +133,12 @@ public:
                 return;
             VulkanBuffer<uint8_t> staging(vulkanContext, uint32_t(n));
             staging.memcopyFrom(reinterpret_cast<const uint8_t*>(src), n);
-            commands([&](VkCommandBuffer cmd) {
-                VkBufferCopy copy{0, 0, n};
-                vkCmdCopyBuffer(cmd, staging.getBuffer(), vertexBuffer, 1, &copy);
-            });
+            commands(
+                [&](VkCommandBuffer cmd) {
+                    VkBufferCopy copy{0, 0, n};
+                    vkCmdCopyBuffer(cmd, staging.getBuffer(), vertexBuffer, 1, &copy);
+                },
+                queue);
             return;
         }
         auto& device = vulkanContext.getDevice();
@@ -140,17 +150,19 @@ public:
     }
 
     // Explicit readback for tests or inspection; call after the producing GPU work completes.
-    void memcopyTo(std::vector<T>& dst) {
+    void memcopyTo(std::vector<T>& dst, VkQueue queue = VK_NULL_HANDLE) {
         if (!hostVisible) {
             // Copy into coherent mapped storage and wait before exposing the result to the CPU.
             size_t n = std::min(dst.size(), size_t(size));
             if (!n)
                 return;
             VulkanBuffer<T> staging(vulkanContext, uint32_t(n));
-            commands([&](VkCommandBuffer cmd) {
-                VkBufferCopy copy{0, 0, n * sizeof(T)};
-                vkCmdCopyBuffer(cmd, vertexBuffer, staging.vertexBuffer, 1, &copy);
-            });
+            commands(
+                [&](VkCommandBuffer cmd) {
+                    VkBufferCopy copy{0, 0, n * sizeof(T)};
+                    vkCmdCopyBuffer(cmd, vertexBuffer, staging.vertexBuffer, 1, &copy);
+                },
+                queue);
             staging.memcopyTo(dst);
             return;
         }
@@ -162,10 +174,10 @@ public:
         vkUnmapMemory(device, vertexBufferMemory);
     }
 
-    void zero() {
+    void zero(VkQueue queue = VK_NULL_HANDLE) {
         if (!hostVisible) {
             // Fill unmapped storage directly on the GPU to initialize it to zero.
-            commands([&](VkCommandBuffer cmd) { vkCmdFillBuffer(cmd, vertexBuffer, 0, VK_WHOLE_SIZE, 0); });
+            commands([&](VkCommandBuffer cmd) { vkCmdFillBuffer(cmd, vertexBuffer, 0, VK_WHOLE_SIZE, 0); }, queue);
             return;
         }
         auto& device = vulkanContext.getDevice();
@@ -207,39 +219,21 @@ public:
 private:
     // Synchronous staging is for initialization and explicit readback only.
     // Per-frame GPU-only buffers stay in device-local memory.
-    void commands(const std::function<void(VkCommandBuffer)>& record) {
-        auto device = vulkanContext.getDevice();
-        VkCommandBuffer cmd{};
-        // A one-time command buffer carries the transfer on the graph's graphics queue.
-        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocation.commandPool = vulkanContext.getCommandPool();
-        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocation.commandBufferCount = 1;
-        if (vkAllocateCommandBuffers(device, &allocation, &cmd) != VK_SUCCESS)
-            throw std::runtime_error("Cannot allocate buffer transfer command");
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &begin);
-        record(cmd);
-        // Make transfer writes visible to later GPU consumers and mapped staging readback.
-        VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0,
-                             nullptr, 0, nullptr);
-        vkEndCommandBuffer(cmd);
-        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &cmd;
-        VkResult result = vkQueueSubmit(vulkanContext.getGraphicsQueue(), 1, &submit, VK_NULL_HANDLE);
-        // Wait for the transfer before releasing its command buffer and temporary staging storage.
-        // This stalls the graphics queue, so use coherent mapped buffers for per-frame uploads.
-        if (result == VK_SUCCESS)
-            result = vkQueueWaitIdle(vulkanContext.getGraphicsQueue());
-        vkFreeCommandBuffers(device, vulkanContext.getCommandPool(), 1, &cmd);
-        if (result != VK_SUCCESS)
-            throw std::runtime_error("Device-local buffer transfer failed");
+    // submitImmediate() waits for the transfer before the temporary staging storage is released.
+    void commands(const std::function<void(VkCommandBuffer)>& record, VkQueue queue = VK_NULL_HANDLE) {
+        vulkanContext.submitImmediate(
+            [&](VkCommandBuffer cmd) {
+                record(cmd);
+                // Make transfer writes visible to later GPU consumers and mapped staging readback.
+                VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask =
+                    VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0,
+                                     nullptr, 0, nullptr);
+            },
+            queue);
     }
 
 public:

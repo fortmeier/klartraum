@@ -21,6 +21,11 @@ For memory placement, CPU transfers and per-path buffer storage, see {doc}`buffe
 ```{doxygenclass} klartraum::ComputeGraphElement
 ```
 
+## Chains
+
+```{doxygenclass} klartraum::GraphChain
+```
+
 ## Groups
 
 Elements that are built from several graph elements.

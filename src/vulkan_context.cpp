@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include <functional>
 #include <vulkan/vulkan.h>
 
 #include "klartraum/vulkan_context.hpp"
@@ -514,15 +515,40 @@ void VulkanContext::createLogicalDevice() {
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-    std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsAndComputeFamily.value(), indices.presentFamily.value()};
+    graphicsFamily = indices.graphicsAndComputeFamily.value();
 
-    float queuePriority = 1.0f;
+    // The background queue: a second queue of the graphics family, else a
+    // queue of another graphics and compute family, else the graphics queue.
+    uint32_t familyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &familyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &familyCount, families.data());
+    constexpr VkQueueFlags kBackgroundFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
+    backgroundFamily = graphicsFamily;
+    uint32_t backgroundIndex = 0;
+    if (families[graphicsFamily].queueCount > 1) {
+        backgroundIndex = 1;
+    } else {
+        for (uint32_t i = 0; i < familyCount; ++i) {
+            if (i != graphicsFamily && (families[i].queueFlags & kBackgroundFlags) == kBackgroundFlags &&
+                families[i].queueCount > 0) {
+                backgroundFamily = i;
+                break;
+            }
+        }
+    }
+    sharingFamilies[0] = graphicsFamily;
+    sharingFamilies[1] = backgroundFamily;
+
+    std::set<uint32_t> uniqueQueueFamilies = {graphicsFamily, indices.presentFamily.value(), backgroundFamily};
+
+    const float queuePriorities[2] = {1.0f, 1.0f};
     for (uint32_t queueFamily : uniqueQueueFamilies) {
         VkDeviceQueueCreateInfo queueCreateInfo{};
         queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
         queueCreateInfo.queueFamilyIndex = queueFamily;
-        queueCreateInfo.queueCount = 1;
-        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfo.queueCount = queueFamily == graphicsFamily ? backgroundIndex + 1 : 1;
+        queueCreateInfo.pQueuePriorities = queuePriorities;
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
@@ -670,6 +696,11 @@ void VulkanContext::createLogicalDevice() {
 
     vkGetDeviceQueue(device, indices.graphicsAndComputeFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+    vkGetDeviceQueue(device, backgroundFamily, backgroundFamily == graphicsFamily ? backgroundIndex : 0,
+                     &backgroundQueue);
+    if (backgroundQueue != graphicsQueue) {
+        std::cout << "[VulkanContext] background queue: family " << backgroundFamily << "\n";
+    }
 }
 
 // Constructor: trivial initialization
@@ -888,7 +919,7 @@ void VulkanContext::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Vk
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
     bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    setSharing(bufferInfo);
 
     if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
         throw std::runtime_error("failed to create buffer!");
@@ -903,10 +934,18 @@ void VulkanContext::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Vk
     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+        vkDestroyBuffer(device, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
         throw std::runtime_error("failed to allocate buffer memory!");
     }
 
-    vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    if (vkBindBufferMemory(device, buffer, bufferMemory, 0) != VK_SUCCESS) {
+        vkFreeMemory(device, bufferMemory, nullptr);
+        vkDestroyBuffer(device, buffer, nullptr);
+        bufferMemory = VK_NULL_HANDLE;
+        buffer = VK_NULL_HANDLE;
+        throw std::runtime_error("failed to bind buffer memory!");
+    }
 }
 
 float VulkanContext::getTimestampPeriod() const {
@@ -988,7 +1027,9 @@ bool VulkanContext::recreateSwapChain() {
         return false;
     }
 
-    vkDeviceWaitIdle(device);
+    // Only the frames use the swapchain; work on the background queue may go on.
+    queueWaitIdle(graphicsQueue);
+    queueWaitIdle(presentQueue);
 
     // Sync objects are recreated rather than reused: a skipped frame can leave
     // a semaphore signaled or a fence unsignaled with nothing pending on it.
@@ -1096,7 +1137,7 @@ bool VulkanContext::tryBeginRender(uint32_t& imageIndex, VkFence*& fencePtr) {
     submitInfo.commandBufferCount = 0;
     submitInfo.pCommandBuffers = nullptr;
 
-    VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr);
+    VkResult submitResult = queueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
     if (submitResult != VK_SUCCESS) {
         throw std::runtime_error("image available delegate semaphore failed to submit!");
     }
@@ -1196,7 +1237,7 @@ void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSe
 
         presentInfo.pResults = nullptr; // Optional
 
-        VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
+        VkResult presentResult = queuePresent(presentQueue, &presentInfo);
         if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
             swapChainOutOfDate = true;
         } else if (presentResult != VK_SUCCESS) {
@@ -1216,7 +1257,7 @@ void VulkanContext::endRender(uint32_t imageIndex, VkSemaphore& renderFinishedSe
         submitInfo.commandBufferCount = 0;
         submitInfo.pCommandBuffers = nullptr;
 
-        VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        VkResult submitResult = queueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
         if (submitResult != VK_SUCCESS) {
             throw std::runtime_error("headless render finished submit failed!");
         }
@@ -1249,6 +1290,126 @@ void VulkanContext::createCommandPool() {
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
     }
+}
+
+void VulkanContext::submitImmediate(const std::function<void(VkCommandBuffer)>& record, VkQueue queue) {
+    if (queue == VK_NULL_HANDLE) {
+        queue = graphicsQueue;
+    }
+    // A pool per call: pools are externally synchronized, and this may run on
+    // several threads, for different queue families.
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    poolInfo.queueFamilyIndex = getQueueFamily(queue);
+    VkCommandPool pool = VK_NULL_HANDLE;
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &pool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create an immediate command pool");
+    }
+    struct PoolGuard {
+        VkDevice device;
+        VkCommandPool pool;
+        ~PoolGuard() { vkDestroyCommandPool(device, pool, nullptr); }
+    } poolGuard{device, pool};
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = pool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate an immediate command buffer");
+    }
+
+    VkFence fence = VK_NULL_HANDLE;
+    try {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            throw std::runtime_error("failed to begin an immediate command buffer");
+        }
+        record(commandBuffer);
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to end an immediate command buffer");
+        }
+
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (vkCreateFence(device, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create an immediate submission fence");
+        }
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+        if (queueSubmit(queue, 1, &submitInfo, fence) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit immediate commands");
+        }
+        if (vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+            throw std::runtime_error("failed to wait for immediate commands");
+        }
+    } catch (...) {
+        if (fence != VK_NULL_HANDLE)
+            vkDestroyFence(device, fence, nullptr);
+        vkFreeCommandBuffers(device, pool, 1, &commandBuffer);
+        throw;
+    }
+
+    vkDestroyFence(device, fence, nullptr);
+    vkFreeCommandBuffers(device, pool, 1, &commandBuffer);
+}
+
+std::mutex& VulkanContext::queueLock(VkQueue queue) {
+    return queue == backgroundQueue && backgroundQueue != graphicsQueue ? backgroundQueueLock : graphicsQueueLock;
+}
+
+VkResult VulkanContext::queueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* submits, VkFence fence) {
+    std::lock_guard lock(queueLock(queue));
+    return vkQueueSubmit(queue, submitCount, submits, fence);
+}
+
+VkResult VulkanContext::queueWaitIdle(VkQueue queue) {
+    std::lock_guard lock(queueLock(queue));
+    return vkQueueWaitIdle(queue);
+}
+
+VkResult VulkanContext::queuePresent(VkQueue queue, const VkPresentInfoKHR* presentInfo) {
+    std::lock_guard lock(queueLock(queue));
+    return vkQueuePresentKHR(queue, presentInfo);
+}
+
+uint32_t VulkanContext::getQueueFamily(VkQueue queue) const {
+    if (queue == graphicsQueue)
+        return graphicsFamily;
+    if (queue == backgroundQueue)
+        return backgroundFamily;
+    throw std::invalid_argument("queue is neither the graphics nor the background queue of this context");
+}
+
+VkQueue VulkanContext::getQueueOfFamily(uint32_t family) const {
+    if (family == graphicsFamily)
+        return graphicsQueue;
+    if (family == backgroundFamily)
+        return backgroundQueue;
+    throw std::invalid_argument("queue family is neither the graphics nor the background family of this context");
+}
+
+VkQueue VulkanContext::getBackgroundQueue() { return backgroundQueue; }
+
+void VulkanContext::copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size, VkQueue queue) {
+    if (size == 0)
+        return;
+    submitImmediate(
+        [&](VkCommandBuffer commandBuffer) {
+            VkBufferCopy region{};
+            region.size = size;
+            vkCmdCopyBuffer(commandBuffer, source, destination, 1, &region);
+        },
+        queue);
 }
 
 } // namespace klartraum

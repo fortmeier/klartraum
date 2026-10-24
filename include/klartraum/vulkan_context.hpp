@@ -6,8 +6,10 @@
 #define KLARTRAUM_VULKAN_CONTEXT_HPP
 
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <queue>
 #include <set>
@@ -190,6 +192,45 @@ public:
 
     VkQueue& getGraphicsQueue();
 
+    // Queues are externally synchronized: submit to and wait on them with
+    // queueSubmit(), queueWaitIdle() and queuePresent(), which hold the
+    // queue's lock, never with the vkQueue* functions directly.
+    VkResult queueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* submits, VkFence fence);
+    VkResult queueWaitIdle(VkQueue queue);
+    VkResult queuePresent(VkQueue queue, const VkPresentInfoKHR* presentInfo);
+
+    // The queue family of the graphics or the background queue; throws for
+    // any other queue.
+    uint32_t getQueueFamily(VkQueue queue) const;
+    // The graphics queue for the graphics family, the background queue for the
+    // background family; throws for any other family.
+    VkQueue getQueueOfFamily(uint32_t family) const;
+
+    /**
+     * @brief A queue for long work next to the frames, e.g. on a worker
+     *        thread: a queue of its own when the device has a second
+     *        graphics and compute queue, otherwise the graphics queue.
+     *        Buffers and images are then shared by both queue families.
+     *        Compile a graph with getBackgroundQueueFamily() to submit it
+     *        here.
+     */
+    VkQueue getBackgroundQueue();
+    uint32_t getBackgroundQueueFamily() const { return backgroundFamily; }
+    bool hasOwnBackgroundQueue() const { return backgroundQueue != graphicsQueue; }
+
+    // Fills a create info's sharing mode: concurrent between the graphics and
+    // the background queue family when they differ, else exclusive.
+    template <typename CreateInfo>
+    void setSharing(CreateInfo& info) const {
+        if (backgroundFamily != graphicsFamily) {
+            info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            info.queueFamilyIndexCount = 2;
+            info.pQueueFamilyIndices = sharingFamilies;
+        } else {
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
+    }
+
     VkImageView& getImageView(uint32_t imageIndex);
 
     VkImage& getSwapChainImage(uint32_t imageIndex);
@@ -207,6 +248,18 @@ public:
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
                       VkDeviceMemory& bufferMemory);
+    // Copies with submitImmediate(), on `queue` (default: the graphics queue).
+    void copyBufferImmediate(VkBuffer source, VkBuffer destination, VkDeviceSize size, VkQueue queue = VK_NULL_HANDLE);
+    /**
+     * @brief Records commands into a one-time command buffer, submits it to
+     *        `queue` and waits for it to finish. Safe to call from several
+     *        threads.
+     * @param record Records the commands into the command buffer it is given.
+     * @param queue The graphics queue (the default) or the background queue.
+     *        Work on a worker thread passes the background queue, so that it
+     *        does not wait behind the frames.
+     */
+    void submitImmediate(const std::function<void(VkCommandBuffer)>& record, VkQueue queue = VK_NULL_HANDLE);
     BackendConfig& getConfig();
 
     std::vector<VkFence> inFlightFences;
@@ -269,6 +322,15 @@ public:
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
+
+    std::mutex& queueLock(VkQueue queue);
+    uint32_t graphicsFamily = 0;
+    VkQueue backgroundQueue = VK_NULL_HANDLE;
+    uint32_t backgroundFamily = 0;
+    uint32_t sharingFamilies[2] = {0, 0};
+    // Guards the graphics and the present queue (often the same queue).
+    std::mutex graphicsQueueLock;
+    std::mutex backgroundQueueLock;
 
     bool meshShaderSupported = false;
     bool pipelineStatisticsQuerySupported = false;
