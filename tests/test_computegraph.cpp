@@ -10,6 +10,12 @@
  * - glfwSubmitAndWait: DrawBasics render graph over GLFW paths, simple path cycling with submitAndWait
  * - glfwSubmitTo: DrawBasics render graph over GLFW paths using beginRender/submitTo/endRender
  * - executionOnlyDependenciesAreUnique: resource-order dependencies remain separate from shader inputs
+ * - profilingSpansMultipleQueryPools: a graph with more elements than one timestamp pool holds reports a nonzero GPU
+ * time for every dispatch
+ * - elementTimesAndGraphJson: getElementTimesMs() gives a time per compiled element in getElements() order, is zero
+ * after resetProfiling(), and writeGraphJson() writes every element, edge and group with these times
+ * - profilingGpuSpanCoversElements: the GPU span of a profiled graph is at least the sum of its elements' times, and
+ * reset with resetProfiling()
  * - longDependencyChainCompletes: a chain of thousands of dependent dispatches (larger than the SD1.5 UNet graph)
  * finishes and applies every dispatch in order
  * - submitChecksQueueFamily: a graph compiled for a queue family runs on a queue of that family, and submitting it
@@ -22,7 +28,11 @@
  * run on the background queue when given it
  **/
 
+#include <algorithm>
 #include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <map>
 #include <thread>
 #include <vector>
@@ -31,6 +41,7 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/computegraph/graph_export.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/draw_basics.hpp"
@@ -215,6 +226,168 @@ TEST(ComputeGraph, glfwSubmitTo) {
         vc.endRender(imageIndex, finishSem);
     }
     vkQueueWaitIdle(vc.getGraphicsQueue());
+}
+
+// ----------------------------------------------------------------
+// Test: profilingSpansMultipleQueryPools
+// A chain of dispatches whose element count (dispatches plus their output
+// buffers) exceeds one timestamp query pool. Every dispatch, including those
+// recorded into later pools, must report a positive GPU time.
+// ----------------------------------------------------------------
+TEST(ComputeGraph, profilingSpansMultipleQueryPools) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 64;
+    constexpr int kDispatches = 1100;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+
+    auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto first = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    std::shared_ptr<GeneralComputation<>> last;
+    for (int i = 0; i < kDispatches; ++i) {
+        auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+        op->setName("chain_" + std::to_string(i));
+        if (last) {
+            op->setInput(last, 0, 2);
+        } else {
+            op->setInput(first, 0);
+        }
+        op->setInput(factors, 1);
+        op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+        op->setGroupCountX(kLength);
+        last = op;
+    }
+
+    auto graph = ComputeGraph(vc, 1);
+    graph.enableProfiling();
+    graph.compileFrom(last);
+
+    first->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 3.0f));
+    factors->getBuffer(0).memcopyFrom(std::vector<float>(kLength, 1.0f));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+
+    std::vector<float> output(kLength, 0.0f);
+    last->getOutputElement<BufferElement<FloatBuffer>>(2)->getBuffer(0).memcopyTo(output);
+    for (float value : output)
+        EXPECT_FLOAT_EQ(value, 3.0f);
+
+    int timedDispatches = 0;
+    for (const auto& [name, ms] : graph.getProfilingResults()) {
+        if (name.rfind("chain_", 0) != 0)
+            continue;
+        ++timedDispatches;
+        EXPECT_GT(ms, 0.0f) << name;
+    }
+    EXPECT_EQ(timedDispatches, kDispatches);
+}
+
+TEST(ComputeGraph, elementTimesAndGraphJson) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 1 << 16;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+    auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto input = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    std::vector<std::shared_ptr<GeneralComputation<>>> ops;
+    for (int i = 0; i < 3; ++i) {
+        auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+        op->setName("op_" + std::to_string(i));
+        if (ops.empty()) {
+            op->setInput(input, 0);
+        } else {
+            op->setInput(ops.back(), 0, 2);
+        }
+        op->setInput(factors, 1);
+        op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+        op->setGroupCountX(kLength);
+        ops.push_back(op);
+    }
+    auto graph = ComputeGraph(vc, 1);
+    graph.enableProfiling();
+    graph.compileFrom(ops.back());
+
+    const auto& elements = graph.getElements();
+    EXPECT_EQ(graph.getElementTimesMs().size(), elements.size());
+    for (int frame = 0; frame < 3; ++frame) {
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    }
+    const std::vector<double> times = graph.getElementTimesMs();
+    ASSERT_EQ(times.size(), elements.size());
+    for (const auto& op : ops) {
+        const auto it = std::find(elements.begin(), elements.end(), op);
+        ASSERT_NE(it, elements.end());
+        EXPECT_GT(times[it - elements.begin()], 0.0) << op->getName();
+    }
+
+    std::filesystem::create_directories("build/TestingOutput");
+    const std::filesystem::path path = "build/TestingOutput/compute_graph_export.json";
+    writeGraphJson(path, "three ops", graph, {{"tail", ops[2], {ops[0]}}});
+    std::ifstream in(path);
+    std::stringstream json;
+    json << in.rdbuf();
+    const std::string text = json.str();
+    EXPECT_NE(text.find("\"name\": \"three ops\""), std::string::npos);
+    EXPECT_NE(text.find("\"ms\": "), std::string::npos);
+    for (const auto& op : ops) {
+        EXPECT_NE(text.find(std::string("\"name\": \"") + op->getName() + "\""), std::string::npos);
+    }
+    size_t edges = 0;
+    for (const auto& element : elements) {
+        edges += graph.getPredecessors(element).size();
+    }
+    const std::string edgeList = text.substr(text.find("\"edges\""));
+    EXPECT_EQ(size_t(std::count(edgeList.begin(), edgeList.end(), '[')) - 1, edges);
+    EXPECT_NE(text.find("\"groups\": [{\"name\": \"tail\""), std::string::npos);
+
+    graph.resetProfiling();
+    for (double ms : graph.getElementTimesMs()) {
+        EXPECT_EQ(ms, 0.0);
+    }
+}
+
+TEST(ComputeGraph, profilingGpuSpanCoversElements) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    typedef VulkanBuffer<float> FloatBuffer;
+    constexpr uint32_t kLength = 1 << 16;
+    const std::string shaderPath = "shaders/operator_multiply_scalar_element_wise.comp.spv";
+    auto factors = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    auto first = std::make_shared<BufferElement<FloatBuffer>>(vc, kLength);
+    std::shared_ptr<GeneralComputation<>> last;
+    for (int i = 0; i < 20; ++i) {
+        auto op = std::make_shared<GeneralComputation<>>(vc, shaderPath);
+        if (last) {
+            op->setInput(last, 0, 2);
+        } else {
+            op->setInput(first, 0);
+        }
+        op->setInput(factors, 1);
+        op->setInput(std::make_shared<BufferElement<FloatBuffer>>(vc, kLength), 2);
+        op->setGroupCountX(kLength);
+        last = op;
+    }
+    auto graph = ComputeGraph(vc, 1);
+    graph.enableProfiling();
+    graph.compileFrom(last);
+    EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
+
+    for (int frame = 0; frame < 3; ++frame) {
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    }
+    double elements = 0.0;
+    for (double ms : graph.getElementTimesMs()) {
+        elements += ms;
+    }
+    EXPECT_GT(elements, 0.0);
+    EXPECT_GE(graph.getGpuSpanMs(), elements * 0.999);
+
+    graph.resetProfiling();
+    EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
 }
 
 // ----------------------------------------------------------------

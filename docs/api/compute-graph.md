@@ -26,6 +26,14 @@ For memory placement, CPU transfers and per-path buffer storage, see {doc}`buffe
 ```{doxygenclass} klartraum::GraphChain
 ```
 
+## Export
+
+```{doxygenfunction} klartraum::writeGraphJson
+```
+
+```{doxygenstruct} klartraum::ExportGroup
+```
+
 ## Groups
 
 Elements that are built from several graph elements.
