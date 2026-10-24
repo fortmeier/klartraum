@@ -20,6 +20,9 @@ include(FetchContent)
 # project, not when it is consumed via add_subdirectory()/FetchContent.
 option(KLARTRAUM_BUILD_TESTS "Build the klartraum unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(KLARTRAUM_BUILD_EXAMPLES "Build the klartraum examples" ${PROJECT_IS_TOP_LEVEL})
+# Text as Gaussians (text_gaussians) needs FreeType and the OFL fonts, which the
+# build downloads only with this option.
+option(KLARTRAUM_WITH_FREETYPE "Build text as Gaussians with FreeType (downloads FreeType and fonts)" OFF)
 
 add_subdirectory(3rdparty/glfw)
 
@@ -155,6 +158,27 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# FreeType rasterizes TrueType/OpenType fonts, including variable fonts at a
+# chosen weight (text_gaussians). Built without optional dependencies; its own
+# copy of zlib handles compressed fonts.
+if(KLARTRAUM_WITH_FREETYPE)
+  set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+  set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+  set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+  set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+  set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+  set(SKIP_INSTALL_ALL ON)
+  FetchContent_Declare(
+    freetype
+    URL https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-3.tar.gz
+    URL_HASH SHA256=dc49de6b01a266eef4876a4dd34d9842c475d3e28ff2eff63bd2fb760ab56261
+  )
+  FetchContent_MakeAvailable(freetype)
+  unset(SKIP_INSTALL_ALL)
+
+  include(cmake/KlartraumFonts.cmake)
+endif()
+
 # Add Protobuf for ONNX support
 set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -284,6 +308,8 @@ add_executable(
   tests/test_glyph_atlas.cpp
   tests/test_simple_text_renderer.cpp
   tests/test_text_rendering.cpp
+  tests/test_gaussian_morph.cpp
+  tests/test_gaussian_lighting.cpp
 )
 
 add_dependencies(klartraum_tests Shaders)
@@ -310,6 +336,8 @@ set(KLARTRAUM_LIB_SRC
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
+  src/gaussian_morph.cpp
+  src/gaussian_lighting.cpp
   ${SPZ_SRC}
   )
 
@@ -326,6 +354,11 @@ set(LIBRARIES
     onnx_proto
 )
 
+if(KLARTRAUM_WITH_FREETYPE)
+  target_sources(klartraum_lib PRIVATE src/text_gaussians.cpp)
+  list(APPEND LIBRARIES freetype)
+endif()
+
 if(APPLE)
   list(APPEND LIBRARIES ${MACOS_FRAMEWORKS})
 endif()
@@ -340,6 +373,9 @@ target_include_directories(klartraum_lib PUBLIC
 )
 
 target_compile_definitions(klartraum_lib PRIVATE KLARTRAUM_DEFAULT_ASSET_DIR="${PROJECT_BINARY_DIR}")
+if(KLARTRAUM_WITH_FREETYPE)
+  target_compile_definitions(klartraum_lib PUBLIC KLARTRAUM_WITH_FREETYPE)
+endif()
 
 add_dependencies(klartraum_lib Shaders onnx_proto)
 
@@ -349,6 +385,9 @@ target_link_libraries(
   gtest
   klartraum_lib
   )
+if(KLARTRAUM_WITH_FREETYPE)
+  target_sources(klartraum_tests PRIVATE tests/test_text_gaussians.cpp)
+endif()
 
 include(GoogleTest)
 # The tests read data/ and write build/TestingOutput/ relative to the
