@@ -50,7 +50,7 @@ public:
 
     virtual const char* getType() const { return "RenderPass"; }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) {
         this->vulkanContext = &vulkanContext;
 
         auto& device = vulkanContext.getDevice();

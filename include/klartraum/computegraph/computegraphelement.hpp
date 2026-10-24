@@ -111,15 +111,16 @@ public:
 
     void setWaitFor(uint32_t pathId, VkSemaphore semaphore) { renderWaitSemaphores[pathId] = semaphore; }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) { initialized = true; };
-
-    // The queue the element's graph is compiled for, set by
-    // ComputeGraph::compileFrom() before _setup(): uploads and other
-    // immediate submissions in _setup() go to it (VK_NULL_HANDLE: the
-    // graphics queue). An element that sets up other elements itself passes
-    // it on.
-    VkQueue getSetupQueue() const { return setupQueue; }
-    void _setSetupQueue(VkQueue queue) { setupQueue = queue; }
+    /**
+     * @brief Initializes resources for the graph paths.
+     * @param vulkanContext The context providing the resources and queues.
+     * @param numberPaths The number of execution paths.
+     * @param setupQueue The queue for uploads and immediate submissions.
+     *        VK_NULL_HANDLE uses the graphics queue. Pass this queue to nested elements.
+     */
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) {
+        initialized = true;
+    };
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {
         if (!initialized) {
@@ -175,7 +176,6 @@ protected:
     std::map<int, int> srcOutputSlots;               // TODO: should be private
 
     bool initialized = false;
-    VkQueue setupQueue = VK_NULL_HANDLE;
 
     std::string name;
 

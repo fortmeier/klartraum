@@ -42,14 +42,13 @@ public:
         }
     }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) {
         this->numberPaths = numberPaths;
         this->vulkanContext = &vulkanContext;
         // The other inputs are scratch buffers that are not part of the compute graph, so
         // they are set up here. TODO: rename otherInputs to scratchBuffers.
         for (auto& other : otherInputs) {
-            other->_setSetupQueue(this->getSetupQueue());
-            other->_setup(vulkanContext, numberPaths);
+            other->_setup(vulkanContext, numberPaths, setupQueue);
         }
 
         createDescriptorPool();

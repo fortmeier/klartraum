@@ -32,7 +32,8 @@ public:
         // NoOp doesn't need to check inputs - it just passes data through
     }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override {
         // NoOp doesn't need any setup - it just passes data through
     }
 

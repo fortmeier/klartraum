@@ -58,18 +58,17 @@ public:
         }
     }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override {
         this->numberPaths = numberPaths;
         this->vulkanContext = &vulkanContext;
 
         if constexpr (!std::is_void<U>::value) {
-            uboPtr->_setSetupQueue(this->getSetupQueue());
-            uboPtr->_setup(vulkanContext, numberPaths);
+            uboPtr->_setup(vulkanContext, numberPaths, setupQueue);
         }
 
         for (auto& other : otherInputs) {
-            other->_setSetupQueue(this->getSetupQueue());
-            other->_setup(vulkanContext, numberPaths);
+            other->_setup(vulkanContext, numberPaths, setupQueue);
         }
 
         createDescriptorPool();

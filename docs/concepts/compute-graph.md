@@ -167,9 +167,10 @@ worker.join();
   the frames, which wait for the swapchain (vsync), so every immediate
   submission there waits up to a frame.
 - Uploads while a graph is compiled, e.g. an ONNX network's weights, go to
-  the queue the graph is compiled for: `compileFrom()` hands it to every
-  element as `getSetupQueue()` before `_setup()`. An element that sets up
-  other elements itself passes it on with `_setSetupQueue()`.
+  the queue family the graph is compiled for: `compileFrom()` passes a queue
+  of that family as the optional `setupQueue` argument to `_setup()`. An
+  element that sets up other elements passes this argument on to them.
+  Omitting the queue uses the graphics queue for immediate submissions.
 - When the background queue belongs to another queue family, buffers made by
   `VulkanContext::createBuffer()` and offscreen images are shared by both
   families (`VK_SHARING_MODE_CONCURRENT`), so a result computed on the

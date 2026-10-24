@@ -25,7 +25,8 @@ public:
 template <typename UniformBufferObjectType>
 class UniformBufferObject : public UniformBufferObjectInterface {
 public:
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override {
         // A UBO element may be shared across several compute graphs — e.g. one
         // camera feeding multiple viewport scenes. The buffers and descriptors
         // are built once; later graphs reuse the same buffers so a single

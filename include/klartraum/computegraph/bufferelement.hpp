@@ -13,7 +13,8 @@ namespace klartraum {
 /// Untyped graph interface for a path's Vulkan buffer handle and byte capacity.
 class BufferElementInterface : public ComputeGraphElement {
 public:
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override = 0;
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override = 0;
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override = 0;
 
@@ -77,7 +78,7 @@ public:
     // A buffer element may be part of several compiled graphs, e.g. the links of a GraphChain that pass data on
     // the GPU. Its buffers are allocated by the first graph and reused by the others, which must have as many
     // paths (as TensorElement does). Review: whether reusing them is right for every graph that shares an element.
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) {
         if (!buffers.empty()) {
             if (buffers.size() != numberPaths) {
                 throw std::runtime_error("BufferElement: shared by graphs with differing path counts");
@@ -178,7 +179,7 @@ public:
     BufferElementSinglePath(Args&&... args)
         : buffer(std::forward<Args>(args)...) {}
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) {};
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) {};
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) {};
 

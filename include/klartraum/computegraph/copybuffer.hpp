@@ -38,9 +38,10 @@ public:
         }
     }
 
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override {
         this->numberPaths = numberPaths;
-        ComputeGraphElement::_setup(vulkanContext, numberPaths);
+        ComputeGraphElement::_setup(vulkanContext, numberPaths, setupQueue);
     }
 
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {

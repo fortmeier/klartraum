@@ -24,8 +24,8 @@ VulkanGaussianSplattingRaster::VulkanGaussianSplattingRaster(VulkanContext& vulk
 
 VulkanGaussianSplattingRaster::~VulkanGaussianSplattingRaster() {}
 
-void VulkanGaussianSplattingRaster::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
-    ComputeGraphElement::_setup(vulkanContext, numberPaths); // marks this element initialized
+void VulkanGaussianSplattingRaster::_setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue) {
+    ComputeGraphElement::_setup(vulkanContext, numberPaths, setupQueue); // marks this element initialized
 
     // drawArgs's per-path buffers only exist after this point (graph compile
     // allocates them). vertexCount=4 (the rasterizer's triangle-strip quad) is
@@ -39,7 +39,7 @@ void VulkanGaussianSplattingRaster::_setup(VulkanContext& vulkanContext, uint32_
                                 sizeof(uint32_t), 4u);
             }
         },
-        getSetupQueue());
+        setupQueue);
 }
 
 void VulkanGaussianSplattingRaster::checkInput(ComputeGraphElementPtr input, int index) {

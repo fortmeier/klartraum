@@ -81,8 +81,7 @@ public:
 
         const VkQueue setupQueue = vulkanContext.getQueueOfFamily(queueFamily);
         for (auto& element : ordered_elements) {
-            element->_setSetupQueue(setupQueue);
-            element->_setup(vulkanContext, numberPaths);
+            element->_setup(vulkanContext, numberPaths, setupQueue);
         }
 
         updatable_elements.clear();

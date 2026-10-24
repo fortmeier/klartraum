@@ -285,7 +285,7 @@ void VulkanGaussianSplatting::checkInput(ComputeGraphElementPtr input, int index
         throw std::runtime_error("VulkanGaussianSplatting: input index out of range");
 }
 
-void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue) {
     numberOfPaths = numberPaths;
 
     vulkanContext.submitImmediate(
@@ -295,7 +295,7 @@ void VulkanGaussianSplatting::_setup(VulkanContext& vulkanContext, uint32_t numb
                 vkCmdFillBuffer(cmd, sortRadixValB->getVkBuffer(i), 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
             }
         },
-        getSetupQueue());
+        setupQueue);
 }
 
 void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pathId) {

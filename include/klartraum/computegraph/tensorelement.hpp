@@ -30,7 +30,7 @@ T prod(const std::vector<T>& vec) {
  */
 class TensorElementInterface : public BufferElementInterface {
 public:
-    // virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) = 0;
+    // virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) = 0;
 
     // virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) = 0;
 
@@ -119,7 +119,8 @@ public:
     virtual ~TensorElement() = default;
 
     // ComputeGraphElement interface
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override {
         this->numberOfPaths = numberPaths;
 
         // Reserve space for buffers
@@ -128,7 +129,7 @@ public:
         // Create dimensions buffer (always 4 elements: width, height, depth, batch)
         dimensionBuffer = std::make_unique<VulkanBuffer<uint32_t>>(vulkanContext, dimensions.size(), dimUsageFlags);
         // Initialize dimensions buffer with the tensor dimensions
-        dimensionBuffer->memcopyFrom(dimensions, this->getSetupQueue());
+        dimensionBuffer->memcopyFrom(dimensions, setupQueue);
 
         // Create buffers for each path
         for (uint32_t i = 0; i < numberPaths; ++i) {
@@ -314,8 +315,9 @@ public:
     virtual ~TensorElementSinglePath() = default;
 
     // Override setup to use single buffers instead of creating multiple paths
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
-        TensorElement<DataType>::_setup(vulkanContext, 1);
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override {
+        TensorElement<DataType>::_setup(vulkanContext, 1, setupQueue);
     }
 
     virtual const char* getType() const override { return "TensorElementSinglePath"; }

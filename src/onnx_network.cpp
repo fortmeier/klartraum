@@ -614,7 +614,7 @@ void OnnxNetwork::checkInput(ComputeGraphElementPtr input, int index) {
     std::cout << "OnnxNetwork: Checking input " << index << std::endl;
 }
 
-void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
+void OnnxNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue) {
     this->vulkanContext = &vulkanContext;
     this->numberOfPaths = numberPaths;
 

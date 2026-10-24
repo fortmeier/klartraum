@@ -49,7 +49,8 @@ public:
     ~VulkanGaussianSplattingRaster();
 
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override;
-    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override;
+    virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
+                        VkQueue setupQueue = VK_NULL_HANDLE) override;
 
     virtual const char* getType() const override { return "GaussianSplattingRaster"; }
 

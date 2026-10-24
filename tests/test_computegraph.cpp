@@ -17,7 +17,7 @@
  * - backgroundQueueRunsBesideFrames: a graph compiled for and run on the background queue by a worker thread computes
  * the right result while the main thread renders frames, and the main thread reads its output
  * - elementsSetUpOnGraphQueue: compileFrom() hands each element the queue of the family it compiles for
- * (getSetupQueue()), also to the scratch inputs a GeneralComputation sets up itself
+ * (the setupQueue argument), also to the scratch inputs a GeneralComputation sets up itself
  * - immediateSubmissionsChooseQueue: submitImmediate(), copyBufferImmediate() and device-local uploads and downloads
  * run on the background queue when given it
  **/
@@ -411,9 +411,9 @@ class SetupQueueProbe : public ComputeGraphElement {
 public:
     const char* getType() const override { return "SetupQueueProbe"; }
     void checkInput(ComputeGraphElementPtr, int) override {}
-    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
-        ComputeGraphElement::_setup(vulkanContext, numberPaths);
-        setUpOn = getSetupQueue();
+    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) override {
+        ComputeGraphElement::_setup(vulkanContext, numberPaths, setupQueue);
+        setUpOn = setupQueue;
     }
     void _record(VkCommandBuffer, uint32_t) override {}
     VkQueue setUpOn = VK_NULL_HANDLE;
@@ -423,9 +423,9 @@ public:
 class SetupQueueBuffer : public BufferElement<VulkanBuffer<float>> {
 public:
     using BufferElement<VulkanBuffer<float>>::BufferElement;
-    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override {
-        BufferElement<VulkanBuffer<float>>::_setup(vulkanContext, numberPaths);
-        setUpOn = getSetupQueue();
+    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) override {
+        BufferElement<VulkanBuffer<float>>::_setup(vulkanContext, numberPaths, setupQueue);
+        setUpOn = setupQueue;
     }
     VkQueue setUpOn = VK_NULL_HANDLE;
 };
@@ -434,6 +434,16 @@ public:
 TEST(ComputeGraph, elementsSetUpOnGraphQueue) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+
+    // Direct setup keeps the optional queue default and forwards explicit queues.
+    SetupQueueProbe direct;
+    direct._setup(vc, 1);
+    EXPECT_EQ(direct.setUpOn, VK_NULL_HANDLE);
+    direct._setup(vc, 1, vc.getBackgroundQueue());
+    EXPECT_EQ(direct.setUpOn, vc.getBackgroundQueue());
+    ComputeGraphElement& base = direct;
+    base._setup(vc, 1);
+    EXPECT_EQ(direct.setUpOn, VK_NULL_HANDLE);
 
     auto graphicsProbe = std::make_shared<SetupQueueProbe>();
     auto graphics = ComputeGraph(vc, 1);
