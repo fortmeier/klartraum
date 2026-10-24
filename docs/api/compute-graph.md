@@ -86,6 +86,21 @@ The buffer allocation and interface types are documented in {doc}`buffers`.
 ```{doxygenclass} klartraum::ImageViewSrc
 ```
 
+```{doxygenclass} klartraum::ImageViewForward
+```
+
+```{doxygenclass} klartraum::ClearImage
+```
+
+```{doxygenclass} klartraum::ImageComposite
+```
+
+```{doxygenfunction} klartraum::recordClearImage
+```
+
+```{doxygenclass} klartraum::SinglePathImage
+```
+
 ## Synchronization and placeholders
 
 ```{doxygenclass} klartraum::ImageViewSrcTransition
