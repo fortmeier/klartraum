@@ -20,7 +20,8 @@ See [Vision and roadmap](https://klartraum.ai/docs/vision.html) for where it is 
 Early development. What works today:
 
 - the compute graph: GPU work described as a graph of elements, recorded into
-  command buffers once and submitted per frame, with GPU timings per element;
+  command buffers once and submitted per frame, with GPU timings per element
+  and a JSON export of compiled graphs;
 - chains of compiled graphs submitted at once, passing data on the GPU
   (`GraphChain`), and a background queue for long-running work beside the
   frames;
