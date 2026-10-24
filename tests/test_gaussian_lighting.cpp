@@ -405,10 +405,7 @@ TEST_F(GaussianLightingGpu, relitLanternDiffersWhereLit) {
     auto frame = std::make_shared<HostValues<LightingFrame>>(vc(), std::vector<LightingFrame>{LightingFrame{}});
     const auto lighting =
         createGaussianLighting(vc(), data->buffers(), bakeSplatMaterials(scene.gaussians), BufferRef{frame});
-    auto render = [&](const GaussianSoABuffers& buffers, const LightingFrame& values) {
-        auto splatting = createGaussianSplatting(vc(), GsplatBackend::Compute, target, cameraUBO, buffers);
-        ComputeGraph graph(vc(), 1);
-        graph.compileFrom(splatting);
+    auto render = [&](ComputeGraph& graph, const LightingFrame& values) {
         orbit.update(cameraUBO->ubo);
         cameraUBO->update(0);
         frame->set(0, values);
@@ -425,7 +422,17 @@ TEST_F(GaussianLightingGpu, relitLanternDiffersWhereLit) {
         return sum / double(a.size() / 4 * 3);
     };
 
-    const auto plain = render(data->buffers(), LightingFrame{});
+    std::vector<uint8_t> plain;
+    {
+        auto splatting = createGaussianSplatting(vc(), GsplatBackend::Compute, target, cameraUBO, data->buffers());
+        ComputeGraph graph(vc(), 1);
+        graph.compileFrom(splatting);
+        plain = render(graph, LightingFrame{});
+    }
+    // Reuse the compiled lighting graph while changing its frame parameters.
+    auto splatting = createGaussianSplatting(vc(), GsplatBackend::Compute, target, cameraUBO, lighting.output);
+    ComputeGraph graph(vc(), 1);
+    graph.compileFrom(splatting);
     LightingFrame values;
     values.camera = glm::vec4(glm::vec3(cameraUBO->ubo.cameraWorldPos), 0.0f);
     values.ambient = glm::vec4(0.25f);
@@ -434,9 +441,9 @@ TEST_F(GaussianLightingGpu, relitLanternDiffersWhereLit) {
                         {1.0f, 0.6f, 0.3f, 3.0f},
                         {0.2f, 0.02f, 0.0f, 0.0f}};
     values.control.x = 0.0f;
-    const auto unrelit = render(lighting.output, values);
+    const auto unrelit = render(graph, values);
     values.control.x = 1.0f;
-    const auto relit = render(lighting.output, values);
+    const auto relit = render(graph, values);
 
     const std::filesystem::path outDir = "build/TestingOutput/gaussian_lighting";
     std::filesystem::create_directories(outDir);
