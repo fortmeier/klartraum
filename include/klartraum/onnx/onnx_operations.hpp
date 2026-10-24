@@ -5,7 +5,12 @@
 #ifndef KLARTRAUM_ONNX_ONNX_OPERATIONS_HPP
 #define KLARTRAUM_ONNX_ONNX_OPERATIONS_HPP
 
-#include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/computegraph/copybuffer.hpp"
+#include "klartraum/computegraph/noop.hpp"
+#include "klartraum/layers/layers.hpp"
+
+#include <algorithm>
+#include <cstring>
 
 namespace klartraum {
 
@@ -71,6 +76,8 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
         if (valueInfo->has_type() && valueInfo->type().has_tensor_type()) {
             const onnx::TypeProto::Tensor& tensorType = valueInfo->type().tensor_type();
             if (tensorType.has_shape()) {
+                // A shape without dimensions is a scalar.
+                dimensionsFound = true;
                 for (int i = 0; i < tensorType.shape().dim_size(); ++i) {
                     const auto& dim = tensorType.shape().dim(i);
                     if (dim.has_dim_value()) {
@@ -88,6 +95,7 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
         for (int i = 0; i < graph.initializer_size(); ++i) {
             const auto& init = graph.initializer(i);
             if (init.name() == tensorName) {
+                dimensionsFound = true;
                 for (int j = 0; j < init.dims_size(); ++j) {
                     dimensions.push_back(static_cast<uint32_t>(init.dims(j)));
                     dimensionsFound = true;
@@ -105,206 +113,443 @@ std::vector<uint32_t> getTensorDimensions(const std::string& tensorName,
     return dimensions;
 }
 
-ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                  const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
-                                  const onnx::GraphProto& graph) {
-    ConvPushConstants pushConstants;
-
-    // parse attributes
-
-    parseAttributes<uint32_t>(node, "dilations", pushConstants.dilations);
-    parseAttributes<uint32_t>(node, "group", pushConstants.groups);
-    parseAttributes<uint32_t>(node, "kernel_shape", pushConstants.kernel_shape);
-    parseAttributes<uint32_t>(node, "pads", pushConstants.pads);
-    parseAttributes<uint32_t>(node, "strides", pushConstants.strides);
-
-    // set dimension constants
-
-    auto inputName = node.input(0);
-    auto weightsName = node.input(1);
-    auto biasName = (node.input_size() > 2) ? node.input(2) : "";
-
-    // Extract dimensions directly from ONNX graph
-    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
-    auto weightDim = getTensorDimensions(weightsName, name2ValueInfoProto, graph);
-    auto biasDim =
-        biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
-
-    // Copy dimensions to push constants
-    for (size_t i = 0; i < 4; ++i) {
-        pushConstants.dimInput[i] = (i < inputDim.size()) ? inputDim[i] : 1;
-        pushConstants.dimWeights[i] = (i < weightDim.size()) ? weightDim[i] : 1;
+int64_t getIntegerAttribute(const onnx::NodeProto& node, const std::string& name, int64_t fallback) {
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == name && attribute.has_i())
+            return attribute.i();
     }
-    pushConstants.dimBias[0] = (biasDim.size() > 0) ? biasDim[0] : 1;
-
-    std::string shaderFilename = "shaders/onnx/conv.comp.spv";
-
-    // One invocation per output element: x covers the output width, y the
-    // output height, z the output channels (see shaders/onnx/conv.comp, local
-    // size 8x8x1). The output size follows the same formula as the shader.
-    const uint32_t outputHeight = (pushConstants.dimInput[2] + 2 * pushConstants.pads[0] -
-                                   pushConstants.dilations[0] * (pushConstants.kernel_shape[0] - 1) - 1) /
-                                      pushConstants.strides[0] +
-                                  1;
-    const uint32_t outputWidth = (pushConstants.dimInput[3] + 2 * pushConstants.pads[1] -
-                                  pushConstants.dilations[1] * (pushConstants.kernel_shape[1] - 1) - 1) /
-                                     pushConstants.strides[1] +
-                                 1;
-
-    auto operation = vulkanContext->create<GeneralComputation<ConvPushConstants>>(shaderFilename);
-    operation->setPushConstants({pushConstants});
-    operation->setGroupCountX((outputWidth + 7) / 8);
-    operation->setGroupCountY((outputHeight + 7) / 8);
-    operation->setGroupCountZ(pushConstants.dimWeights[0]);
-
-    return operation;
+    return fallback;
 }
 
-ComputeGraphElementPtr
-createConvTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                    const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
-                    const onnx::GraphProto& graph) {
-    ConvTransposePushConstants pushConstants;
-
-    // parse attributes
-    parseAttributes<uint32_t>(node, "dilations", pushConstants.dilations);
-    parseAttributes<uint32_t>(node, "group", pushConstants.groups);
-    parseAttributes<uint32_t>(node, "kernel_shape", pushConstants.kernel_shape);
-    parseAttributes<uint32_t>(node, "pads", pushConstants.pads);
-    parseAttributes<uint32_t>(node, "strides", pushConstants.strides);
-    // parseAttributes<uint32_t>(node, "output_padding", pushConstants.output_padding);
-
-    // set dimension constants
-    auto inputName = node.input(0);
-    auto weightsName = node.input(1);
-    auto biasName = (node.input_size() > 2) ? node.input(2) : "";
-
-    // Extract dimensions directly from ONNX graph
-    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
-    auto weightDim = getTensorDimensions(weightsName, name2ValueInfoProto, graph);
-    auto biasDim =
-        biasName.empty() ? std::vector<uint32_t>() : getTensorDimensions(biasName, name2ValueInfoProto, graph);
-
-    // Copy dimensions to push constants
-    for (size_t i = 0; i < 4; ++i) {
-        pushConstants.dimInput[i] = (i < inputDim.size()) ? inputDim[i] : 1;
-        pushConstants.dimWeights[i] = (i < weightDim.size()) ? weightDim[i] : 1;
+std::vector<int64_t> getInt64InitializerValues(const std::string& name, const onnx::GraphProto& graph) {
+    for (const auto& initializer : graph.initializer()) {
+        if (initializer.name() != name)
+            continue;
+        if (initializer.data_type() != onnx::TensorProto::INT64) {
+            throw std::runtime_error("Expected INT64 initializer for " + name);
+        }
+        if (!initializer.raw_data().empty()) {
+            if (initializer.raw_data().size() % sizeof(int64_t) != 0) {
+                throw std::runtime_error("Invalid INT64 initializer byte count for " + name);
+            }
+            std::vector<int64_t> values(initializer.raw_data().size() / sizeof(int64_t));
+            std::memcpy(values.data(), initializer.raw_data().data(), initializer.raw_data().size());
+            return values;
+        }
+        return {initializer.int64_data().begin(), initializer.int64_data().end()};
     }
-    pushConstants.dimBias[0] = (biasDim.size() > 0) ? biasDim[0] : 1;
-
-    // Calculate output dimensions for ConvTranspose
-    // output_size = (input_size - 1) * stride - 2 * padding + kernel_size + output_padding
-    uint32_t output_height = (inputDim[2] - 1) * pushConstants.strides[0] - 2 * pushConstants.pads[0] +
-                             pushConstants.kernel_shape[0]; // + pushConstants.output_padding[0];
-    uint32_t output_width = (inputDim[3] - 1) * pushConstants.strides[1] - 2 * pushConstants.pads[1] +
-                            pushConstants.kernel_shape[1]; // + pushConstants.output_padding[1];
-
-    pushConstants.dimOutput[0] = inputDim[0];  // batch size
-    pushConstants.dimOutput[1] = weightDim[1]; // output channels from weights
-    pushConstants.dimOutput[2] = output_height;
-    pushConstants.dimOutput[3] = output_width;
-
-    std::string shaderFilename = "shaders/onnx/conv_transpose.comp.spv";
-
-    auto operation = vulkanContext->create<GeneralComputation<ConvTransposePushConstants>>(shaderFilename);
-    operation->setPushConstants({pushConstants});
-    // One invocation per output element: x covers the output width, y the
-    // output height, z the output channels (see shaders/onnx/conv_transpose.comp,
-    // local size 8x8x1).
-    operation->setGroupCountX((pushConstants.dimOutput[3] + 7) / 8);
-    operation->setGroupCountY((pushConstants.dimOutput[2] + 7) / 8);
-    operation->setGroupCountZ(pushConstants.dimOutput[1]);
-
-    return operation;
+    throw std::runtime_error("Initializer not found: " + name);
 }
 
-ComputeGraphElementPtr createRelu(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                  const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
+onnx::TensorProto::DataType getTensorElementType(const std::string& name,
+                                                 const std::map<std::string, const onnx::ValueInfoProto*>& infos,
+                                                 const onnx::GraphProto& graph) {
+    const auto info = infos.find(name);
+    if (info != infos.end()) {
+        return static_cast<onnx::TensorProto::DataType>(info->second->type().tensor_type().elem_type());
+    }
+    for (const auto& initializer : graph.initializer()) {
+        if (initializer.name() == name)
+            return static_cast<onnx::TensorProto::DataType>(initializer.data_type());
+    }
+    throw std::runtime_error("Failed to retrieve data type for tensor: " + name);
+}
+
+using ValueInfos = std::map<std::string, const onnx::ValueInfoProto*>;
+
+// Adapters from ONNX nodes to the layer factories: they read shapes and
+// attributes from the model and check what the layers support.
+
+layers::ConvAttributes getConvAttributes(const onnx::NodeProto& node) {
+    uint32_t dilations[2], group[1], kernelShape[2], pads[4], strides[2];
+    parseAttributes<uint32_t>(node, "dilations", dilations);
+    parseAttributes<uint32_t>(node, "group", group);
+    parseAttributes<uint32_t>(node, "kernel_shape", kernelShape);
+    parseAttributes<uint32_t>(node, "pads", pads);
+    parseAttributes<uint32_t>(node, "strides", strides);
+    layers::ConvAttributes attributes;
+    std::copy(std::begin(dilations), std::end(dilations), attributes.dilations.begin());
+    attributes.group = group[0];
+    std::copy(std::begin(kernelShape), std::end(kernelShape), attributes.kernelShape.begin());
+    std::copy(std::begin(pads), std::end(pads), attributes.pads.begin());
+    std::copy(std::begin(strides), std::end(strides), attributes.strides.begin());
+    return attributes;
+}
+
+std::vector<uint32_t> getBiasDimensions(const onnx::NodeProto& node, const ValueInfos& infos,
+                                        const onnx::GraphProto& graph) {
+    return node.input_size() > 2 ? getTensorDimensions(node.input(2), infos, graph) : std::vector<uint32_t>();
+}
+
+// An axis attribute, made non-negative for a tensor of `rank`.
+uint32_t getAxis(const onnx::NodeProto& node, int64_t fallback, size_t rank) {
+    int64_t axis = getIntegerAttribute(node, "axis", fallback);
+    if (axis < 0)
+        axis += static_cast<int64_t>(rank);
+    if (axis < 0 || axis >= static_cast<int64_t>(rank)) {
+        throw std::runtime_error(node.op_type() + " axis is outside the tensor rank");
+    }
+    return static_cast<uint32_t>(axis);
+}
+
+float getEpsilon(const onnx::NodeProto& node) {
+    float epsilon = 1e-5f;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == "epsilon")
+            epsilon = attribute.f();
+    }
+    return epsilon;
+}
+
+ComputeGraphElementPtr createConv3d(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    if (node.input_size() != 3)
+        throw std::runtime_error("Conv3d requires a bias input");
+    const auto weights = getTensorDimensions(node.input(1), infos, graph);
+    layers::Conv3dAttributes attributes;
+    for (size_t axis = 0; axis < 3; ++axis)
+        attributes.kernelShape[axis] = weights[2 + axis];
+    for (const auto& attribute : node.attribute()) {
+        const auto copy = [&attribute](auto& target) {
+            if (static_cast<size_t>(attribute.ints_size()) != target.size()) {
+                throw std::runtime_error("Conv3d attribute " + attribute.name() + " has the wrong length");
+            }
+            for (size_t i = 0; i < target.size(); ++i)
+                target[i] = static_cast<uint32_t>(attribute.ints(i));
+        };
+        if (attribute.name() == "strides")
+            copy(attributes.strides);
+        else if (attribute.name() == "pads")
+            copy(attributes.pads);
+        else if (attribute.name() == "dilations")
+            copy(attributes.dilations);
+        else if (attribute.name() == "group")
+            attributes.group = static_cast<uint32_t>(attribute.i());
+        else if (attribute.name() == "auto_pad" && attribute.s() != "NOTSET") {
+            throw std::runtime_error("Conv3d supports only explicit pads");
+        }
+    }
+    return layers::conv3d(*vulkanContext, attributes, getTensorDimensions(node.input(0), infos, graph), weights,
+                          getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createConv(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                   const onnx::GraphProto& graph) {
-    TensorOpPushConstants pushConstants;
-
-    auto inputName = node.input(0);
-    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
-
-    // set dimension constants
-    for (size_t i = 0; i < 4; ++i) {
-        pushConstants.dimInput[i] = (i < inputDim.size()) ? inputDim[i] : 1;
-        pushConstants.dimOutput[i] = (i < inputDim.size()) ? inputDim[i] : 1; // Output dimensions are the same as input
+    if (getTensorDimensions(node.input(0), infos, graph).size() == 5) {
+        return createConv3d(vulkanContext, node, infos, graph);
     }
+    return layers::conv(*vulkanContext, getConvAttributes(node), getTensorDimensions(node.input(0), infos, graph),
+                        getTensorDimensions(node.input(1), infos, graph), getBiasDimensions(node, infos, graph),
+                        getTensorDimensions(node.output(0), infos, graph));
+}
 
-    std::string shaderFilename = "shaders/onnx/relu.comp.spv";
+ComputeGraphElementPtr createConvTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                           const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::convTranspose(
+        *vulkanContext, getConvAttributes(node), getTensorDimensions(node.input(0), infos, graph),
+        getTensorDimensions(node.input(1), infos, graph), getBiasDimensions(node, infos, graph));
+}
 
-    auto operation = vulkanContext->create<GeneralComputation<TensorOpPushConstants>>(shaderFilename);
-    operation->setPushConstants({pushConstants});
-    uint32_t elementCount = 1;
-    for (const auto dimension : inputDim) {
-        elementCount *= dimension;
-    }
-    operation->setGroupCountX((elementCount + 63) / 64);
-
-    return operation;
+ComputeGraphElementPtr createRelu(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                  const onnx::GraphProto& graph) {
+    return layers::relu(*vulkanContext, getTensorDimensions(node.input(0), infos, graph));
 }
 
 ComputeGraphElementPtr createConstant(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                      const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
-                                      const onnx::GraphProto& graph) {
+                                      const ValueInfos& infos, const onnx::GraphProto& graph) {
     // Constant operations don't perform computation - they just provide constant data
     // Use NoOp to pass the constant data through without any GPU operations
-    auto operation = vulkanContext->create<NoOp>();
-
-    return operation;
+    return vulkanContext->create<NoOp>();
 }
 
-ComputeGraphElementPtr createReshape(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                     const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
+ComputeGraphElementPtr createReshape(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
                                      const onnx::GraphProto& graph) {
-    // ReshapePushConstants pushConstants;
-
-    auto inputName = node.input(0);
-    auto shapeName = node.input(1);
-
-    auto inputDim = getTensorDimensions(inputName, name2ValueInfoProto, graph);
-    auto shapeDim = getTensorDimensions(shapeName, name2ValueInfoProto, graph);
-
-    // // Copy dimensions to push constants
-    // for (size_t i = 0; i < 4; ++i) {
-    //     pushConstants.dimInput[i] = (i < inputDim.size()) ? inputDim[i] : 1;
-    // }
-
-    // for (size_t i = 0; i < 6; ++i) {
-    //     pushConstants.dimShape[i] = (i < shapeDim.size()) ? shapeDim[i] : 1;
-    // }
-
-    // std::string shaderFilename = "shaders/onnx/reshape.comp.spv";
-
-    // auto operation = vulkanContext->create<GeneralComputation<ReshapePushConstants>>(shaderFilename);
-    // operation->setPushConstants({pushConstants});
-
+    // The data is copied unchanged; input 1 is the shape tensor, so the copy
+    // goes from input 0 to slot 2 (the reshaped output).
     auto operation = vulkanContext->create<CopyBuffer>();
     operation->setName(node.name());
-
-    // input with index 1 is the shape tensor
-    // so the copy operation needs to copy from input 0 to input 2 (reshaped)
     operation->setSrcIndex(0);
     operation->setDstIndex(2);
-
     return operation;
 }
 
 ComputeGraphElementPtr createTranspose(VulkanContext* vulkanContext, const onnx::NodeProto& node,
-                                       const std::map<std::string, const onnx::ValueInfoProto*>& name2ValueInfoProto,
-                                       const onnx::GraphProto& graph) {
-    TransposePushConstants pushConstants;
+                                       const ValueInfos& infos, const onnx::GraphProto& graph) {
+    uint32_t permutation[8];
+    parseAttributes<uint32_t>(node, "perm", permutation);
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    return layers::transpose(*vulkanContext, input, getTensorDimensions(node.output(0), infos, graph),
+                             std::vector<uint32_t>(permutation, permutation + input.size()));
+}
 
-    // Parse the perm attribute
-    parseAttributes<uint32_t>(node, "perm", pushConstants.dimPerm);
+ComputeGraphElementPtr createBinaryBroadcast(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                             const ValueInfos& infos, const onnx::GraphProto& graph,
+                                             layers::BinaryOp op) {
+    return layers::binary(*vulkanContext, op, getTensorDimensions(node.input(0), infos, graph),
+                          getTensorDimensions(node.input(1), infos, graph),
+                          getTensorDimensions(node.output(0), infos, graph));
+}
 
-    std::string shaderFilename = "shaders/onnx/transpose.comp.spv";
+ComputeGraphElementPtr createUnary(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                   const onnx::GraphProto& graph, layers::UnaryOp op) {
+    return layers::unary(*vulkanContext, op, getTensorDimensions(node.output(0), infos, graph));
+}
 
-    auto operation = vulkanContext->create<GeneralComputation<TransposePushConstants>>(shaderFilename);
-    operation->setPushConstants({pushConstants});
+ComputeGraphElementPtr createElu(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                 const onnx::GraphProto& graph) {
+    float alpha = 1.0f;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == "alpha")
+            alpha = attribute.f();
+    }
+    return layers::elu(*vulkanContext, getTensorDimensions(node.output(0), infos, graph), alpha);
+}
 
-    return operation;
+ComputeGraphElementPtr createInstanceNormalization(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                                   const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::instanceNormalization(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                                         getEpsilon(node));
+}
+
+ComputeGraphElementPtr createMatMul(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    return layers::matMul(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                          getTensorDimensions(node.input(1), infos, graph),
+                          getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createRmsNormalization(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                              const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::rmsNormalization(*vulkanContext, getTensorDimensions(node.input(0), infos, graph));
+}
+
+ComputeGraphElementPtr createChannelRmsNormalization(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                                     const ValueInfos& infos, const onnx::GraphProto& graph) {
+    bool silu = false;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() == "silu")
+            silu = attribute.i() != 0;
+    }
+    return layers::channelRmsNormalization(*vulkanContext, getTensorDimensions(node.input(0), infos, graph), silu);
+}
+
+ComputeGraphElementPtr createMatMulReluSquare(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                              const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::matMulReluSquare(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                                    getTensorDimensions(node.input(1), infos, graph),
+                                    getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createMatMulAdd(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                       const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::matMulAdd(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                             getTensorDimensions(node.input(1), infos, graph),
+                             getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createFusedAttentionBias(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                                const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::fusedAttentionWithBias(
+        *vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+        getTensorDimensions(node.input(1), infos, graph), getTensorDimensions(node.input(2), infos, graph),
+        getTensorDimensions(node.input(3), infos, graph), getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createFusedAttention(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                            const ValueInfos& infos, const onnx::GraphProto& graph) {
+    return layers::fusedAttention(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                                  getTensorDimensions(node.input(1), infos, graph),
+                                  getTensorDimensions(node.input(2), infos, graph),
+                                  getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createGemm(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                  const onnx::GraphProto& graph) {
+    if (getIntegerAttribute(node, "transA", 0) != 0 || getIntegerAttribute(node, "transB", 0) != 1) {
+        throw std::runtime_error("Gemm supports only transA=0 and transB=1");
+    }
+    for (const auto& attribute : node.attribute()) {
+        if ((attribute.name() == "alpha" || attribute.name() == "beta") && attribute.f() != 1.0f) {
+            throw std::runtime_error("Gemm supports only alpha=beta=1");
+        }
+    }
+    return layers::gemm(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                        getTensorDimensions(node.input(1), infos, graph));
+}
+
+ComputeGraphElementPtr createLayerNormalization(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                                const ValueInfos& infos, const onnx::GraphProto& graph) {
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    if (getAxis(node, -1, input.size()) != input.size() - 1) {
+        throw std::runtime_error("Only last-axis LayerNormalization is supported");
+    }
+    return layers::layerNormalization(*vulkanContext, input, getEpsilon(node));
+}
+
+ComputeGraphElementPtr createConcat(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (node.input_size() > 2) {
+        std::vector<layers::Shape> inputs;
+        for (const auto& name : node.input())
+            inputs.push_back(getTensorDimensions(name, infos, graph));
+        return layers::concat(*vulkanContext, inputs, getAxis(node, 0, output.size()), output);
+    }
+    if (node.input_size() != 2)
+        throw std::runtime_error("Concat needs at least two inputs");
+    return layers::concat(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                          getTensorDimensions(node.input(1), infos, graph), getAxis(node, 0, output.size()), output);
+}
+
+ComputeGraphElementPtr createCast(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                  const onnx::GraphProto& graph) {
+    const auto inputType = getTensorElementType(node.input(0), infos, graph);
+    const auto outputType = getTensorElementType(node.output(0), infos, graph);
+    if (inputType == outputType) {
+        auto operation = vulkanContext->create<CopyBuffer>();
+        operation->setSrcIndex(0);
+        operation->setDstIndex(1);
+        return operation;
+    }
+    if (inputType != onnx::TensorProto::INT64 || outputType != onnx::TensorProto::FLOAT) {
+        throw std::runtime_error("Cast supports only identity and INT64-to-FLOAT conversions");
+    }
+    return createUnary(vulkanContext, node, infos, graph, layers::UnaryOp::CastInt64ToFloat);
+}
+
+layers::ElementType getLayerElementType(onnx::TensorProto::DataType type, const char* operation) {
+    if (type == onnx::TensorProto::FLOAT)
+        return layers::ElementType::Float32;
+    if (type == onnx::TensorProto::INT64)
+        return layers::ElementType::Int64;
+    throw std::runtime_error(std::string(operation) + " supports FLOAT or INT64 tensors");
+}
+
+ComputeGraphElementPtr createExpand(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    const auto inputType = getTensorElementType(node.input(0), infos, graph);
+    if (inputType != getTensorElementType(node.output(0), infos, graph)) {
+        throw std::runtime_error("Expand supports matching FLOAT or INT64 tensors");
+    }
+    return layers::expand(*vulkanContext, getLayerElementType(inputType, "Expand"),
+                          getTensorDimensions(node.input(0), infos, graph),
+                          getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createGather(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    if (getTensorElementType(node.input(0), infos, graph) != onnx::TensorProto::FLOAT ||
+        getTensorElementType(node.input(1), infos, graph) != onnx::TensorProto::INT64 ||
+        getTensorElementType(node.output(0), infos, graph) != onnx::TensorProto::FLOAT) {
+        throw std::runtime_error("Gather supports FLOAT data with INT64 indices");
+    }
+    const auto data = getTensorDimensions(node.input(0), infos, graph);
+    return layers::gather(*vulkanContext, data, getTensorDimensions(node.input(1), infos, graph),
+                          getAxis(node, 0, data.size()), getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createSoftmax(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                     const onnx::GraphProto& graph) {
+    const auto dimensions = getTensorDimensions(node.input(0), infos, graph);
+    if (getAxis(node, -1, dimensions.size()) != dimensions.size() - 1) {
+        throw std::runtime_error("Only last-axis Softmax is supported");
+    }
+    return layers::softmax(*vulkanContext, dimensions);
+}
+
+ComputeGraphElementPtr createReduceMean(VulkanContext* vulkanContext, const onnx::NodeProto& node,
+                                        const ValueInfos& infos, const onnx::GraphProto& graph) {
+    if (node.input_size() != 1)
+        throw std::runtime_error("ReduceMean supports only the axes attribute (opset <= 17)");
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    std::vector<uint32_t> axes;
+    for (const auto& attribute : node.attribute()) {
+        if (attribute.name() != "axes")
+            continue;
+        for (const auto axis : attribute.ints()) {
+            const int64_t normalized = axis < 0 ? axis + static_cast<int64_t>(input.size()) : axis;
+            if (normalized < 0 || normalized >= static_cast<int64_t>(input.size())) {
+                throw std::runtime_error("ReduceMean axis is outside the tensor rank");
+            }
+            axes.push_back(static_cast<uint32_t>(normalized));
+        }
+    }
+    if (axes.empty()) {
+        for (uint32_t axis = 0; axis < input.size(); ++axis)
+            axes.push_back(axis);
+    }
+    std::sort(axes.begin(), axes.end());
+    for (size_t i = 1; i < axes.size(); ++i) {
+        if (axes[i] != axes[i - 1] + 1)
+            throw std::runtime_error("ReduceMean axes must be contiguous");
+    }
+    return layers::reduceMean(*vulkanContext, input, axes.front(), static_cast<uint32_t>(axes.size()));
+}
+
+ComputeGraphElementPtr createSplit(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                   const onnx::GraphProto& graph) {
+    if (node.output_size() != 3)
+        throw std::runtime_error("Only three-way Split is supported");
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    const uint32_t axis = getAxis(node, 0, input.size());
+    return layers::split3(*vulkanContext, input, axis, getTensorDimensions(node.output(0), infos, graph)[axis],
+                          getTensorDimensions(node.output(1), infos, graph)[axis]);
+}
+
+ComputeGraphElementPtr createResize(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                    const onnx::GraphProto& graph) {
+    return layers::resizeNearest(*vulkanContext, getTensorDimensions(node.input(0), infos, graph),
+                                 getTensorDimensions(node.output(0), infos, graph));
+}
+
+ComputeGraphElementPtr createSlice(VulkanContext* vulkanContext, const onnx::NodeProto& node, const ValueInfos& infos,
+                                   const onnx::GraphProto& graph) {
+    const auto input = getTensorDimensions(node.input(0), infos, graph);
+    const auto output = getTensorDimensions(node.output(0), infos, graph);
+    if (input.size() != output.size())
+        throw std::runtime_error("Unsupported Slice rank");
+    if (input == output) {
+        const auto starts = getInt64InitializerValues(node.input(1), graph);
+        const auto ends = getInt64InitializerValues(node.input(2), graph);
+        const auto axes =
+            node.input_size() > 3 ? getInt64InitializerValues(node.input(3), graph) : std::vector<int64_t>{0};
+        const auto steps =
+            node.input_size() > 4 ? getInt64InitializerValues(node.input(4), graph) : std::vector<int64_t>{1};
+        int64_t fullAxis = axes.size() == 1 ? axes[0] : 0;
+        if (fullAxis < 0)
+            fullAxis += static_cast<int64_t>(input.size());
+        if (starts.size() != 1 || ends.size() != 1 || axes.size() != 1 || steps.size() != 1 || fullAxis < 0 ||
+            fullAxis >= static_cast<int64_t>(input.size()) || starts[0] != 0 || steps[0] != 1 ||
+            ends[0] < static_cast<int64_t>(input[static_cast<size_t>(fullAxis)])) {
+            throw std::runtime_error("Unsupported shape-preserving Slice");
+        }
+        return vulkanContext->create<NoOp>();
+    }
+    // The one axis the slice changes; the layer finds it again.
+    size_t axis = 0;
+    while (axis < input.size() && input[axis] == output[axis])
+        ++axis;
+    const auto starts = getInt64InitializerValues(node.input(1), graph);
+    if (starts.size() != 1)
+        throw std::runtime_error("Only single-axis Slice is supported");
+    int64_t start = starts[0];
+    if (start < 0)
+        start += input[axis];
+    if (start < 0 || start > UINT32_MAX)
+        throw std::runtime_error("Unsupported Slice start");
+    if (node.input_size() == 5) {
+        const auto steps = getInt64InitializerValues(node.input(4), graph);
+        if (steps.size() != 1 || steps[0] != 1)
+            throw std::runtime_error("Only unit Slice steps are supported");
+    }
+    const auto inputType = getTensorElementType(node.input(0), infos, graph);
+    if (inputType != getTensorElementType(node.output(0), infos, graph)) {
+        throw std::runtime_error("Slice supports matching FLOAT or INT64 input and output tensors");
+    }
+    if (node.input_size() < 3 || node.input_size() > 5)
+        throw std::runtime_error("Slice requires 3, 4, or 5 inputs");
+    return layers::slice(*vulkanContext, getLayerElementType(inputType, "Slice"), input, output,
+                         static_cast<uint32_t>(start), static_cast<layers::SliceParameters>(node.input_size() - 1));
 }
 
 ComputeGraphElementPtr
@@ -315,12 +560,71 @@ createTensorOperation(VulkanContext* vulkanContext, const onnx::NodeProto& node,
     auto x = output.size();
     // Create a compute operation for each node
     std::string operationType = node.op_type();
-    std::cout << "Creating operation for node: " << node.name() << " of type: " << operationType << std::endl;
 
     ComputeGraphElementPtr operation;
 
     if (operationType == "Conv") {
         operation = createConv(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Add") {
+        operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, layers::BinaryOp::Add);
+    } else if (operationType == "Sub") {
+        operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, layers::BinaryOp::Sub);
+    } else if (operationType == "Mul") {
+        operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, layers::BinaryOp::Mul);
+    } else if (operationType == "Div") {
+        operation = createBinaryBroadcast(vulkanContext, node, name2ValueInfoProto, graph, layers::BinaryOp::Div);
+    } else if (operationType == "Sigmoid") {
+        operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, layers::UnaryOp::Sigmoid);
+    } else if (operationType == "Cos") {
+        operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, layers::UnaryOp::Cos);
+    } else if (operationType == "Sin") {
+        operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, layers::UnaryOp::Sin);
+    } else if (operationType == "Sqrt") {
+        operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, layers::UnaryOp::Sqrt);
+    } else if (operationType == "Erf") {
+        operation = createUnary(vulkanContext, node, name2ValueInfoProto, graph, layers::UnaryOp::Erf);
+    } else if (operationType == "InstanceNormalization") {
+        operation = createInstanceNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "ChannelRmsNormalization") {
+        operation = createChannelRmsNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "RmsNormalization") {
+        operation = createRmsNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "MatMulReluSquare") {
+        operation = createMatMulReluSquare(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "MatMulAdd") {
+        operation = createMatMulAdd(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "FusedAttentionBias") {
+        operation = createFusedAttentionBias(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "FusedAttention") {
+        operation = createFusedAttention(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "MatMul") {
+        operation = createMatMul(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Gemm") {
+        operation = createGemm(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "LayerNormalization") {
+        operation = createLayerNormalization(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Concat") {
+        operation = createConcat(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Cast") {
+        operation = createCast(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Expand") {
+        operation = createExpand(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Gather") {
+        operation = createGather(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Unsqueeze") {
+        operation = createReshape(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Softmax") {
+        operation = createSoftmax(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "ReduceMean") {
+        operation = createReduceMean(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Split") {
+        operation = createSplit(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Resize") {
+        operation = createResize(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Slice") {
+        operation = createSlice(vulkanContext, node, name2ValueInfoProto, graph);
+    } else if (operationType == "Elu") {
+        operation = createElu(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Relu") {
         operation = createRelu(vulkanContext, node, name2ValueInfoProto, graph);
     } else if (operationType == "Constant") {

@@ -2,3 +2,6 @@
 
 ```{doxygenclass} klartraum::OnnxNetwork
 ```
+
+```{doxygenstruct} klartraum::OnnxMemoryPlanStats
+```
