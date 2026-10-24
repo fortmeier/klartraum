@@ -160,7 +160,8 @@ worker.join();
   and submit each to its own queue.
 - Immediate submissions take the queue they run on: `submitImmediate()`,
   `copyBufferImmediate()`, the staging copies of `VulkanBuffer::memcopyFrom()`
-  and `memcopyTo()` for device-local buffers. Without one they use the graphics queue. On
+  and `memcopyTo()` for device-local buffers, and the copies of
+  `SinglePathImage::copyFrom()`. Without one they use the graphics queue. On
   a worker thread, pass the background queue: the graphics queue also holds
   the frames, which wait for the swapchain (vsync), so every immediate
   submission there waits up to a frame.

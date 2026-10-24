@@ -24,6 +24,8 @@ Early development. What works today:
 - chains of compiled graphs submitted at once, passing data on the GPU
   (`GraphChain`), and a background queue for long-running work beside the
   frames;
+- rendering over offscreen targets: clearing, compositing and single-path
+  images;
 - Gaussian splatting with a compute and a raster backend (`.spz` scenes);
 - buffers in device-local or host-visible memory, with staged uploads, and
   per-frame updates of Gaussians from the CPU before a frame is submitted;
