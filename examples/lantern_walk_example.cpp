@@ -191,7 +191,7 @@ public:
         config.outputDepth = true;
         auto splatting = klartraum::createGaussianSplatting(vc, klartraum::GsplatBackend::Compute, sceneTarget,
                                                             sceneCamera, model, config);
-        const auto depth = klartraum::getGaussianSplattingDepth(splatting);
+        const auto depth = splatting->getDepth();
         poseTarget = std::make_shared<klartraum::OffscreenTarget>(vc, extent, 1u);
         auto skeleton = std::make_shared<klartraum::OpenPoseSkeletonRenderer>(joints, 1, extent);
         skeleton->setOcclusionDepth(depth);
@@ -628,7 +628,7 @@ int main(int argc, char** argv) {
         auto splatting = klartraum::createGaussianSplatting(vc, klartraum::GsplatBackend::Compute, frameTarget,
                                                             sceneCamera, model, splatConfig);
         // The skeleton camera shares the scene camera's view and projection, so the depths compare directly.
-        const auto sceneDepth = klartraum::getGaussianSplattingDepth(splatting);
+        const auto sceneDepth = splatting->getDepth();
         auto makeRenderer = [&]() {
             auto renderer =
                 std::make_shared<klartraum::OpenPoseSkeletonRenderer>(controller->getOpenPoseJoints(), 1, extent);

@@ -593,7 +593,7 @@ TEST_F(OpenPoseSkeletonTest, splatOccludesSkeleton) {
         auto joints = std::make_shared<JointBuffer>(*vc, openpose::kJointCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         auto skeletonTarget = std::make_shared<OffscreenTarget>(*vc, kExtent, 1);
         auto renderer = std::make_shared<OpenPoseSkeletonRenderer>(joints, 1, kExtent);
-        renderer->setOcclusionDepth(getGaussianSplattingDepth(splatting));
+        renderer->setOcclusionDepth(splatting->getDepth());
         renderer->setJointRadius(3.0f);
         auto renderPass = std::make_shared<RenderPass>(vc->getSwapChainImageFormat(), kExtent);
         renderPass->setInput(skeletonTarget, 0);
