@@ -45,6 +45,8 @@ pub struct ComputeGraph {
     profiling_accum: Vec<(f64, u64)>,
     /// From the first element's start to the last element's end, per submission: nanoseconds and count.
     profiling_span_accum: (f64, u64),
+    /// The span of the last submission read, in nanoseconds.
+    last_span_ns: f64,
     timestamps_unread: bool,
 }
 
@@ -64,6 +66,7 @@ impl ComputeGraph {
             profiling_query_pools: Vec::new(),
             profiling_accum: Vec::new(),
             profiling_span_accum: (0.0, 0),
+            last_span_ns: 0.0,
             timestamps_unread: false,
         }
     }
@@ -310,6 +313,7 @@ impl ComputeGraph {
             }
         }
         if last > first {
+            self.last_span_ns = (last - first) as f64 * period;
             self.profiling_span_accum.0 += (last - first) as f64 * period;
             self.profiling_span_accum.1 += 1;
         }
@@ -319,6 +323,11 @@ impl ComputeGraph {
     pub fn gpu_span_ms(&self) -> f64 {
         let (total, count) = self.profiling_span_accum;
         if count > 0 { total / count as f64 * 1e-6 } else { 0.0 }
+    }
+
+    /// The GPU time of the last submission read back, from the first element's start to the last element's end, in milliseconds.
+    pub fn last_gpu_span_ms(&self) -> f64 {
+        self.last_span_ns * 1e-6
     }
 
     /// `(label, mean milliseconds)` per element in recording order; the label is the

@@ -19,4 +19,5 @@ mod klartraum_ipc_generated;
 pub use klartraum_ipc_generated::klartraum::ipc as schema;
 
 pub mod framing;
+pub mod server;
 pub mod shared_memory;
