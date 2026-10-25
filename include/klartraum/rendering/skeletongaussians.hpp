@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_COMPUTEGRAPH_SKELETONGAUSSIANS_HPP
-#define KLARTRAUM_COMPUTEGRAPH_SKELETONGAUSSIANS_HPP
+#ifndef KLARTRAUM_RENDERING_SKELETONGAUSSIANS_HPP
+#define KLARTRAUM_RENDERING_SKELETONGAUSSIANS_HPP
 
 #include <cstdint>
 #include <memory>
@@ -13,7 +13,7 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/computegraph/generalcomputation.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -68,4 +68,4 @@ SkeletonGaussiansResult createSkeletonGaussians(VulkanContext& vulkanContext, co
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_COMPUTEGRAPH_SKELETONGAUSSIANS_HPP
+#endif // KLARTRAUM_RENDERING_SKELETONGAUSSIANS_HPP

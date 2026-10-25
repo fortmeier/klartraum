@@ -13,7 +13,7 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/computegraph/bufferelement.hpp"
-#include "klartraum/computegraph/skeletongaussians.hpp"
+#include "klartraum/rendering/skeletongaussians.hpp"
 #include "klartraum/draw_component.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include "klartraum/computegraph/skeletongaussians.hpp"
+#include "klartraum/rendering/skeletongaussians.hpp"
 
 #include <set>
 #include <stdexcept>
