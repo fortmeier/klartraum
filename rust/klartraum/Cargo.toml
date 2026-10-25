@@ -12,6 +12,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow = "1"
+ash = "0.38"
 bytemuck = { version = "1", features = ["derive", "extern_crate_alloc"] }
 flate2 = "1"
 ruzstd = "0.8"

@@ -11,5 +11,9 @@
 //! per path, [`engine`] drives the frame loop and the frontends open a window or
 //! run headless.
 
+pub mod camera;
+pub mod events;
 pub mod gaussian_data;
+pub mod glm;
+pub mod interface_camera;
 pub mod spz;
