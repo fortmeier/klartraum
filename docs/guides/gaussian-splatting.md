@@ -171,6 +171,37 @@ Custom draw components must use `DrawComponent::pipelineDepthState()` when
 creating their graphics pipeline to honor the render pass's depth options.
 Color-only rendering needs no depth attachment or depth transfer passes.
 
+### Profiling example
+
+The lantern and two opaque boxes were measured at 512 × 512 pixels on an
+NVIDIA GeForce RTX 2070 SUPER, Windows, Release build, validation disabled.
+The scene contains 145,562 Gaussians, with a fixed camera and one execution path.
+Each configuration ran three repetitions of 10 warm-up and 30 measured
+executions; the table shows the median of the three mean GPU graph spans.
+
+| Gaussian backend / pass order | Depth testing and writing off | Both enabled on both passes | Observed difference |
+|---|---:|---:|---:|
+| Raster / boxes first | 1.338 ms | 1.438 ms | +7.5% |
+| Raster / Gaussians first | 1.336 ms | 1.446 ms | +8.2% |
+| Compute / boxes first | 28.369 ms | 34.266 ms | +20.8% |
+| Compute / Gaussians first | 28.763 ms | 33.918 ms | +17.9% |
+
+These spans include both renderers, clears, barriers and depth transfers, with
+per-element timestamp profiling enabled. Loading, graph compilation, CPU work,
+image export and presentation are excluded. Even the off baseline retains the
+shared attachment and its clear. The difference combines depth-handling work
+with work saved through occlusion; it does not isolate the cost of depth alone.
+
+The measurements use each backend's default depth estimate: nearest opaque
+splat for raster, accumulated opacity for compute, both with a 0.5 threshold.
+Across the full set of configurations, run means varied by up to 11.3% within
+one configuration. Treat small differences as exploratory measurements.
+
+`gaussian_depth_composition_example` can reproduce the measurements or vary the
+backend, pass order and depth switches; see the
+[example options](../getting-started/examples.md).
+See [Profiling](profiling.md) for interpreting graph and element timings.
+
 ## Operating on Gaussians
 
 Gaussians can be changed on the GPU every frame before they are rendered:

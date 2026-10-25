@@ -24,6 +24,7 @@ relative to the working directory.
 | Example | Shows | Window |
 |---|---|---|
 | `gaussian_splatting_example` | A Gaussian splatting scene with an orbit camera, using the compute or the raster backend | yes |
+| `gaussian_depth_composition_example` | A lantern and two rasterized boxes with configurable pass order and depth controls; exports images and GPU timings | no |
 | `multi_viewports_single_camera_example` | Two viewports in one window, the compute backend next to the raster backend, driven by one camera | yes |
 | `gaussian_autoencoder_example` | Gaussian splatting feeding an ONNX encoder and decoder, all in one compute graph | yes |
 | `draw_basics_example` | Coordinate axes drawn with `DrawBasics` in a render pass | yes |
@@ -63,6 +64,37 @@ can be resized: the graph is rebuilt for the new swapchain through
 ./build/examples/gaussian_splatting_example --backend raster
 ./build/examples/gaussian_splatting_example --file path/to/scene.spz --flip-y --camera-position 0.55 0.48 0.69
 ```
+
+### `gaussian_depth_composition_example`
+
+Renders the lantern with an orange box nearer the camera and a blue box farther
+away. Both boxes overlap the lantern. A shared depth attachment connects the
+Gaussian backend and the boxes' render pass; their depth tests and writes can
+be switched independently. Each run exports a PNG and CSV profiling results.
+
+| Option | Meaning |
+|---|---|
+| `--backend raster\|compute` | Gaussian backend (default `raster`) |
+| `--order raster-first\|gs-first` | Draw the boxes or Gaussians first (default `raster-first`) |
+| `--gs-test on\|off`, `--gs-write on\|off` | Gaussian depth testing and writing (both default `on`) |
+| `--raster-test on\|off`, `--raster-write on\|off` | Box render-pass depth testing and writing (both default `on`) |
+| `--depth-mode default\|nearest\|accumulated` | Gaussian depth method (default preserves the backend's convention) |
+| `--matrix` | Render all 64 combinations of backend, order, and the four depth switches |
+| `--width N`, `--height N` | Output dimensions (default `512` by `512`) |
+| `--warmup N`, `--samples N`, `--runs N` | Warm-up executions, measured executions, and repetitions (defaults `10`, `30`, `3`) |
+| `--profile on\|off` | Enable graph timestamps (default `on`); with `off`, timing fields stay empty |
+| `--out-dir PATH` | Output directory (default `build/TestingOutput/gaussian-depth-composition`) |
+| `--help` | Print the options |
+
+```bash
+./build/examples/gaussian_depth_composition_example --backend raster --order raster-first
+./build/examples/gaussian_depth_composition_example --matrix
+```
+
+Use a Release build for timings. The matrix uses the selected depth method,
+resolution and sampling settings, and replaces backend, order and depth switches
+with every combination. Use a separate output directory when changing the depth
+method or resolution. Run from the repository root to find `data/lantern.spz`.
 
 ### `multi_viewports_single_camera_example`
 
