@@ -90,3 +90,16 @@ if(KLARTRAUM_WITH_FREETYPE)
 
   add_dependencies(title_morph_example Shaders)
 endif()
+
+# Compute graph run remotely by the Rust engine (needs KLARTRAUM_WITH_IPC)
+if(KLARTRAUM_WITH_IPC)
+  add_executable(remote_compute_example
+      remote_compute_example.cpp
+  )
+
+  target_link_libraries(remote_compute_example
+      klartraum_lib
+  )
+
+  add_dependencies(remote_compute_example Shaders)
+endif()

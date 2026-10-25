@@ -42,3 +42,27 @@ project:
 ```
 
 Tests whose reference data is missing return early and print a "skipped" note (Rust has no runtime test skip).
+
+## Remote compute graphs (`klartraum_ipc`)
+
+The crate `klartraum_ipc` runs compute graphs that the C++ engine describes.
+A C++ application builds a graph from `GeneralComputation`s over
+`klartraum::ipc::SharedBufferElement`s and sends its description — a FlatBuffers
+message, schema [`ipc/klartraum_ipc.fbs`](../ipc/klartraum_ipc.fbs) — to
+`klartraum_ipc_server` over a Unix socket; the server rebuilds it with the Rust
+engine, compiles it once and runs it on every `Execute` request.
+
+The data is never copied between the processes: each buffer is a POSIX
+shared-memory object both map, and the server imports it as Vulkan memory
+(`VK_EXT_external_memory_host`), so the shaders read the inputs the client
+wrote and write the results the client reads in the same pages. Without the
+extension the server copies and reports `zero_copy = false`.
+
+```bash
+cd rust && cargo build --release -p klartraum_ipc && cd ..
+./build/examples/remote_compute_example          # C++ client, see examples/README.md
+./build/klartraum_tests --gtest_filter='Ipc*'      # C++ end-to-end tests (start the server themselves)
+```
+
+After changing the schema, regenerate the checked-in Rust code with
+`cmake --build build --target klartraum_ipc_rust_codegen`.

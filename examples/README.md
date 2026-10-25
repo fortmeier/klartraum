@@ -116,6 +116,23 @@ context and exits after compiling. No options.
 ./build/examples/onnx_example
 ```
 
+### `remote_compute_example`
+
+Builds a compute graph in C++ (`C = 2A + B`, a doubling feeding an addition) on
+`SharedBufferElement`s, compiles it once in the Rust engine through
+`klartraum_ipc_server` (see [`rust/`](../rust/README.md)) and runs it a few
+times, writing new inputs into shared memory and reading the results from it
+without copies. Needs `KLARTRAUM_WITH_IPC` (the default on Unix) and a build of
+the server crate `klartraum_ipc` (see [`rust/README.md`](../rust/README.md)).
+
+- `--server PATH` — the server binary (default: `rust/target/release` or `debug`)
+- `--size N` — number of floats (default 1000000)
+- `--runs N` — executions after the compilation (default 3)
+
+```bash
+./build/examples/remote_compute_example --size 1000000 --runs 3
+```
+
 ### `turntable_example`
 
 Renders a scene without a window, from a camera that circles the scene's
