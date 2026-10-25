@@ -225,8 +225,9 @@ void GgufNetwork::buildQwen35() {
     outputElements[0] = operations.back();
 }
 
-void GgufNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
-    BatchedUpload batch(vulkanContext, getSetupQueue());
+void GgufNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue) {
+    this->setupQueue = setupQueue;
+    BatchedUpload batch(vulkanContext, setupQueue);
     std::vector<uint8_t> packed;
     for (const auto& [name, weight] : encodedWeights) {
         // Repacked into the GPU block layout in slices of rows, so no copy of
@@ -261,7 +262,7 @@ void GgufNetwork::_setup(VulkanContext& vulkanContext, uint32_t numberPaths) {
 
 void GgufNetwork::resetState() {
     for (const auto& state : recurrentStates)
-        state->getDataBuffer().zero(getSetupQueue());
+        state->getDataBuffer().zero(setupQueue);
 }
 
 void GgufNetwork::setTokens(const std::vector<int32_t>& tokens, uint32_t position) {
