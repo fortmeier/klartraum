@@ -10,7 +10,7 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/character_controller.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 
 namespace klartraum {
 
