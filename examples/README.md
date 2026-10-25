@@ -269,6 +269,8 @@ third-party and are not part of Klartraum: export them first with
 
 ```bash
 ./build/examples/sd15_denoiser_example --prompt "a red sports car parked on a city street"
+```
+
 ### `openpose_skeleton_example`
 
 Draws a fixed 3D standing pose with `OpenPoseSkeletonRenderer` without a
