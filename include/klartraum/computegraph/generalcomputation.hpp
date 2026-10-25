@@ -18,8 +18,32 @@
 
 namespace klartraum {
 
+/**
+ * @brief What a GeneralComputation runs, independent of its push-constant type.
+ *
+ * Lets code that describes a graph for another engine (klartraum::ipc) read the
+ * shaders, dispatch size, push constants and scratch buffers of any GeneralComputation.
+ */
+class GeneralComputationInterface : public ComputeGraphElement {
+public:
+    /// The shaders, run in this order with the same bindings.
+    virtual const std::vector<std::string>& getShaderPaths() const = 0;
+
+    /// The workgroup counts of the direct dispatch.
+    virtual std::array<uint32_t, 3> getGroupCounts() const = 0;
+
+    /// Whether the dispatches read their group counts from a buffer instead.
+    virtual bool usesIndirectDispatch() const = 0;
+
+    /// The bytes of each push constant, one round of dispatches each; empty without push constants.
+    virtual std::vector<std::vector<uint8_t>> getPushConstantBytes() const = 0;
+
+    /// The scratch buffers, bound after the inputs, and whether each is zeroed before every round.
+    virtual std::vector<std::pair<std::shared_ptr<BufferElementInterface>, bool>> getScratchBuffers() const = 0;
+};
+
 template <typename P = void>
-class GeneralComputation : public ComputeGraphElement {
+class GeneralComputation : public GeneralComputationInterface {
 public:
     GeneralComputation(VulkanContext& vulkanContext, const std::string& shaderPath)
         : shaderPaths({shaderPath}) {
@@ -180,6 +204,31 @@ public:
     void addScratchBufferElement(std::shared_ptr<BufferElementInterface> bufferElement, bool recordSetToZero = true) {
         otherInputs.push_back(bufferElement);
         otherInputsSetToZero.push_back(recordSetToZero);
+    }
+
+    const std::vector<std::string>& getShaderPaths() const override { return shaderPaths; }
+
+    std::array<uint32_t, 3> getGroupCounts() const override { return {groupCountX, groupCountY, groupCountZ}; }
+
+    bool usesIndirectDispatch() const override { return dynamicGroupDispatchParams != nullptr; }
+
+    std::vector<std::vector<uint8_t>> getPushConstantBytes() const override {
+        std::vector<std::vector<uint8_t>> rounds;
+        if constexpr (!std::is_void<P>::value) {
+            for (const P& pushConstant : pushConstants) {
+                const auto* bytes = reinterpret_cast<const uint8_t*>(&pushConstant);
+                rounds.emplace_back(bytes, bytes + sizeof(P));
+            }
+        }
+        return rounds;
+    }
+
+    std::vector<std::pair<std::shared_ptr<BufferElementInterface>, bool>> getScratchBuffers() const override {
+        std::vector<std::pair<std::shared_ptr<BufferElementInterface>, bool>> scratch;
+        for (size_t i = 0; i < otherInputs.size(); ++i) {
+            scratch.emplace_back(otherInputs[i], otherInputsSetToZero[i]);
+        }
+        return scratch;
     }
 
 private:

@@ -92,6 +92,15 @@ public:
     }
 
     /**
+     * @brief The slot given with setInput() for input @p index: -1 when the input is the
+     *        element in getInputs() itself, else the input of that element that is meant.
+     */
+    int getInputSlot(int index) const {
+        auto it = srcOutputSlots.find(index);
+        return it == srcOutputSlots.end() ? -1 : it->second;
+    }
+
+    /**
      * @brief get the output with specified index
      *
      * Generally simply returns the input at the given index.

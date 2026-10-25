@@ -598,6 +598,14 @@ void VulkanContext::createLogicalDevice() {
                 break;
             }
         }
+        // Optional: buffers over host memory another process shares (klartraum::ipc).
+        for (auto& e : avail) {
+            if (strcmp(e.extensionName, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) == 0) {
+                deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+                externalMemoryHostSupported = true;
+                break;
+            }
+        }
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
     }
@@ -671,6 +679,19 @@ void VulkanContext::createLogicalDevice() {
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
         throw std::runtime_error("failed to create logical device!");
+
+    if (externalMemoryHostSupported) {
+        pfnGetMemoryHostPointerPropertiesEXT = reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(
+            vkGetDeviceProcAddr(device, "vkGetMemoryHostPointerPropertiesEXT"));
+        VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{};
+        hostProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT;
+        VkPhysicalDeviceProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties2.pNext = &hostProperties;
+        vkGetPhysicalDeviceProperties2(physicalDevice, &properties2);
+        minImportedHostPointerAlignment = hostProperties.minImportedHostPointerAlignment;
+        externalMemoryHostSupported = pfnGetMemoryHostPointerPropertiesEXT != nullptr;
+    }
 
     if (meshShaderSupported) {
         pfnCmdDrawMeshTasksIndirectEXT = reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectEXT>(

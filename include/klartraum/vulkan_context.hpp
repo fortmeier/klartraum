@@ -320,6 +320,14 @@ public:
     // supports it. Apple GPUs (MoltenVK, KosmicKrisp) do not.
     bool isPipelineStatisticsQuerySupported() const { return pipelineStatisticsQuerySupported; }
 
+    /// Whether host memory can back buffers (VK_EXT_external_memory_host is enabled).
+    bool isExternalMemoryHostSupported() const { return externalMemoryHostSupported; }
+    /// The alignment imported host pointers and sizes need (with VK_EXT_external_memory_host).
+    VkDeviceSize getMinImportedHostPointerAlignment() const { return minImportedHostPointerAlignment; }
+    PFN_vkGetMemoryHostPointerPropertiesEXT getMemoryHostPointerPropertiesEXT() const {
+        return pfnGetMemoryHostPointerPropertiesEXT;
+    }
+
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 
@@ -335,6 +343,10 @@ public:
     bool meshShaderSupported = false;
     bool pipelineStatisticsQuerySupported = false;
     PFN_vkCmdDrawMeshTasksIndirectEXT pfnCmdDrawMeshTasksIndirectEXT = nullptr;
+
+    bool externalMemoryHostSupported = false;
+    VkDeviceSize minImportedHostPointerAlignment = 0;
+    PFN_vkGetMemoryHostPointerPropertiesEXT pfnGetMemoryHostPointerPropertiesEXT = nullptr;
 };
 
 } // namespace klartraum

@@ -421,7 +421,10 @@ if(KLARTRAUM_WITH_FREETYPE)
 endif()
 
 if(KLARTRAUM_WITH_IPC)
-  target_sources(klartraum_lib PRIVATE src/ipc/shared_memory.cpp)
+  target_sources(klartraum_lib PRIVATE src/ipc/shared_memory.cpp src/ipc/shared_buffer_element.cpp
+                                       src/ipc/remote_session.cpp)
+  # Where RemoteServerProcess::findServerExecutable() looks for the Rust server build.
+  target_compile_definitions(klartraum_lib PRIVATE KLARTRAUM_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
   list(APPEND LIBRARIES flatbuffers)
   target_include_directories(klartraum_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated)
   target_compile_definitions(klartraum_lib PUBLIC KLARTRAUM_WITH_IPC)
