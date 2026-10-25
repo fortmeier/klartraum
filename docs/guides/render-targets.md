@@ -120,9 +120,8 @@ offscreen target this is `TRANSFER_SRC_OPTIMAL`; for a swapchain image it is
 normally `PRESENT_SRC_KHR`. Before rendering over that image again with
 clearing disabled, a transition back to `GENERAL` must preserve its contents.
 That transition is not added automatically by an uncleared image source.
-Automatic handling across repeated renders is tracked in
-[#64](https://github.com/fortmeier/klartraum/issues/64). The example above
-renders once and does not rely on that behavior.
+The example above renders once and does not rely on automatic transitions
+across repeated renders.
 
 ## Alpha conventions
 
@@ -142,9 +141,8 @@ Gaussian renderers accumulate premultiplied RGB. Feeding their transparent
 output into this formula applies the source opacity again. `Replace` copies
 filtered RGBA without converting its representation, and filtering a
 straight-alpha source does not account for premultiplied contributions at
-transparent edges. A consistent convention and transparent-layer tests are
-tracked in [#63](https://github.com/fortmeier/klartraum/issues/63). The example
-uses opaque backgrounds and does not composite transparent Gaussian output.
+transparent edges. The example uses opaque backgrounds and does not composite
+transparent Gaussian output.
 
 See {doc}`../requirements/render-targets` for requirements, specifications and
 the linked rendering tests, and {doc}`../api/compute-graph` for the API.

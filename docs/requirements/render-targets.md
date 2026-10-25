@@ -63,8 +63,7 @@ Transparent images produced by either Gaussian backend shall be composable
 over another image without applying opacity twice. Resizing shall preserve
 the contributions of colors at transparent edges.
 
-Tracked in [#63](https://github.com/fortmeier/klartraum/issues/63). The existing
-straight-alpha composition test does not verify this requirement.
+The existing straight-alpha composition test does not verify this requirement.
 ```
 
 ```{req} Repeated rendering with preserved contents
@@ -75,8 +74,8 @@ A compiled rendering graph shall support repeated execution on the same
 offscreen target with clearing disabled, preserving its contents and handling
 the layout required by the next execution.
 
-Tracked in [#64](https://github.com/fortmeier/klartraum/issues/64). The existing
-preservation test submits an image source without a Gaussian renderer.
+The existing preservation test submits an image source without a Gaussian
+renderer.
 ```
 
 ## Specifications
