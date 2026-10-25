@@ -1,0 +1,30 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Decodes the raster backend's encoded depths (gsplat_raster_depth.frag) into
+// NDC depths; pixels no splat covered opaquely enough become +inf.
+
+#include "gsplat_depth_encoding.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(push_constant) uniform PushConstants {
+    uint pixelCount;
+    uint flags;
+} pc;
+
+layout(set = 0, binding = 0) readonly buffer DepthBits { uint depthBits[]; };
+layout(set = 0, binding = 1) writeonly buffer Depth { float depth[]; };
+layout(set = 0, binding = 2) buffer SceneDepth { float sceneDepth[]; };
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel < pc.pixelCount) {
+        float selected = decodeDepth(depthBits[pixel]);
+        if ((pc.flags & 2u) != 0u) depth[pixel] = selected;
+        if ((pc.flags & 1u) != 0u && !isinf(selected)) sceneDepth[pixel] = clamp(selected, 0.0, 1.0);
+    }
+}

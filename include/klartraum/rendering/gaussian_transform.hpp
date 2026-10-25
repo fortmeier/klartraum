@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_GAUSSIAN_TRANSFORM_HPP
-#define KLARTRAUM_GAUSSIAN_TRANSFORM_HPP
+#ifndef KLARTRAUM_RENDERING_GAUSSIAN_TRANSFORM_HPP
+#define KLARTRAUM_RENDERING_GAUSSIAN_TRANSFORM_HPP
 
 #include <array>
 #include <vector>
@@ -11,7 +11,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -30,4 +30,4 @@ std::array<float, 15> shBasis(const glm::vec3& dir);
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_GAUSSIAN_TRANSFORM_HPP
+#endif // KLARTRAUM_RENDERING_GAUSSIAN_TRANSFORM_HPP

@@ -48,16 +48,16 @@
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/vulkan_gaussian_splatting.hpp"
-#include "klartraum/vulkan_gaussian_splatting_raster.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
-#include "klartraum/computegraph/gaussianmerge.hpp"
-#include "klartraum/computegraph/gaussiantransform.hpp"
-#include "klartraum/computegraph/transformbuffer.hpp"
+#include "klartraum/rendering/gaussianmerge.hpp"
+#include "klartraum/rendering/gaussiantransform.hpp"
+#include "klartraum/rendering/transformbuffer.hpp"
 
 #include "test_scene.hpp"
 

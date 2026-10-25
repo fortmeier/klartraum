@@ -106,7 +106,7 @@ if(STALE_SPIRV_FILES)
                   "repository root; delete them with: find shaders -name '*.spv' -delete")
 endif()
 
-file(GLOB_RECURSE GLSL_SOURCE_FILES "${SHADER_BASE_DIR}/*.vert" "${SHADER_BASE_DIR}/*.frag" "${SHADER_BASE_DIR}/*.comp")
+file(GLOB_RECURSE GLSL_SOURCE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.vert" "${SHADER_BASE_DIR}/*.frag" "${SHADER_BASE_DIR}/*.comp")
 # Exclude draft/scratch shaders prefixed with underscore
 list(FILTER GLSL_SOURCE_FILES EXCLUDE REGEX "/_[^/]+\\.comp$")
 
@@ -118,7 +118,8 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${GLSLC} -o ${SPIRV} ${GLSL}
+    COMMAND ${GLSLC} -MD -MF ${SPIRV}.d -o ${SPIRV} ${GLSL}
+    DEPFILE ${SPIRV}.d
     DEPENDS ${GLSL}
     COMMENT "Compiling ${GLSL} to ${SPIRV}"
   )
@@ -127,7 +128,7 @@ endforeach()
 
 # Mesh shaders (VK_EXT_mesh_shader) need a SPIR-V 1.4+ target, so compile them
 # separately with --target-env=vulkan1.3 (glslc infers the stage from .mesh).
-file(GLOB_RECURSE MESH_SOURCE_FILES "${SHADER_BASE_DIR}/*.mesh")
+file(GLOB_RECURSE MESH_SOURCE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.mesh")
 foreach(GLSL ${MESH_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
@@ -135,7 +136,8 @@ foreach(GLSL ${MESH_SOURCE_FILES})
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${GLSLC} --target-env=vulkan1.3 -o ${SPIRV} ${GLSL}
+    COMMAND ${GLSLC} --target-env=vulkan1.3 -MD -MF ${SPIRV}.d -o ${SPIRV} ${GLSL}
+    DEPFILE ${SPIRV}.d
     DEPENDS ${GLSL}
     COMMENT "Compiling mesh ${GLSL} to ${SPIRV}"
   )
@@ -253,6 +255,9 @@ add_executable(
   tests/test_drawindirectbuffer.cpp
   tests/test_buffertographicsbarrier.cpp
   tests/test_gaussian_splat_rasterizer.cpp
+  tests/test_gaussian_splat_crop.cpp
+  tests/test_gaussian_splat_depth.cpp
+  tests/test_depth_composition.cpp
   tests/test_gaussian_cull_and_compact.cpp
   tests/test_gaussian_splatting_raster.cpp
   tests/test_gaussian_splatting_factory.cpp
@@ -291,19 +296,19 @@ endif()
 set(KLARTRAUM_LIB_SRC
   src/glfw_frontend.cpp
   src/headless_frontend.cpp
-  src/vulkan_gaussian_splatting.cpp
-  src/vulkan_gaussian_splatting_raster.cpp
-  src/gaussian_data_standard.cpp
-  src/gaussian_transform.cpp
-  src/gaussian_splatting_factory.cpp
+  src/rendering/vulkan_gaussian_splatting.cpp
+  src/rendering/vulkan_gaussian_splatting_raster.cpp
+  src/rendering/gaussian_data_standard.cpp
+  src/rendering/gaussian_transform.cpp
+  src/rendering/gaussian_splatting_factory.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp
   src/window.cpp
   src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
-  src/gaussian_splat_rasterizer.cpp
-  src/gaussian_splat_mesh_rasterizer.cpp
+  src/rendering/gaussian_splat_rasterizer.cpp
+  src/rendering/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp

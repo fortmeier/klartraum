@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_COMPUTEGRAPH_TRANSFORMBUFFER_HPP
-#define KLARTRAUM_COMPUTEGRAPH_TRANSFORMBUFFER_HPP
+#ifndef KLARTRAUM_RENDERING_TRANSFORMBUFFER_HPP
+#define KLARTRAUM_RENDERING_TRANSFORMBUFFER_HPP
 
 #include <array>
 #include <cstdint>
@@ -12,7 +12,7 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/vulkan_buffer.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -62,4 +62,4 @@ inline TransformBufferResult createTransformBuffer(VulkanContext& vulkanContext,
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_COMPUTEGRAPH_TRANSFORMBUFFER_HPP
+#endif // KLARTRAUM_RENDERING_TRANSFORMBUFFER_HPP

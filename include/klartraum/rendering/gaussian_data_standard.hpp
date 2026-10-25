@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_GAUSSIAN_DATA_STANDARD_HPP
-#define KLARTRAUM_GAUSSIAN_DATA_STANDARD_HPP
+#ifndef KLARTRAUM_RENDERING_GAUSSIAN_DATA_STANDARD_HPP
+#define KLARTRAUM_RENDERING_GAUSSIAN_DATA_STANDARD_HPP
 
 #include <string>
 #include <vector>
 
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -49,4 +49,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_GAUSSIAN_DATA_STANDARD_HPP
+#endif // KLARTRAUM_RENDERING_GAUSSIAN_DATA_STANDARD_HPP

@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <array>
 
-#include "klartraum/gaussian_splat_rasterizer.hpp"
+#include "klartraum/rendering/gaussian_splat_rasterizer.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 
 namespace klartraum {
@@ -37,6 +37,14 @@ void GaussianSplatRasterizer::initialize(VulkanContext& vulkanContext, VkRenderP
     createGraphicsPipeline();
 }
 
+void GaussianSplatRasterizer::setDepthOutput(std::shared_ptr<BufferElementInterface> depthBits) {
+    if (splatBuffers.size() != 2 || outputDepth) {
+        throw std::runtime_error("GaussianSplatRasterizer: the depth output is binding 2, after two splat buffers");
+    }
+    splatBuffers.push_back(std::move(depthBits));
+    outputDepth = true;
+}
+
 void GaussianSplatRasterizer::createSplatDescriptorSetLayout() {
     auto& device = vulkanContext->getDevice();
 
@@ -46,7 +54,9 @@ void GaussianSplatRasterizer::createSplatDescriptorSetLayout() {
         layoutBindings[i].descriptorCount = 1;
         layoutBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         layoutBindings[i].pImmutableSamplers = nullptr;
-        layoutBindings[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        // The depth output (the last binding when enabled) is written by the fragment shader.
+        const bool depthBinding = outputDepth && i >= 2;
+        layoutBindings[i].stageFlags = depthBinding ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -120,7 +130,8 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     auto swapChainExtent = vulkanContext->getSwapChainExtent();
 
     auto vertShaderCode = readFile("shaders/gsplat/gsplat_raster.vert.spv");
-    auto fragShaderCode = readFile("shaders/gsplat/gsplat_raster.frag.spv");
+    auto fragShaderCode =
+        readFile(outputDepth ? "shaders/gsplat/gsplat_raster_depth.frag.spv" : "shaders/gsplat/gsplat_raster.frag.spv");
 
     VkShaderModule vertShaderModule = createShaderModule(vertShaderCode, device);
     VkShaderModule fragShaderModule = createShaderModule(fragShaderCode, device);
@@ -222,7 +233,8 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     colorBlending.blendConstants[3] = 0.0f;
 
     VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    // The depth fragment shader reads the resolution.
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(GaussianSplatRasterPushConstants);
 
@@ -248,7 +260,8 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = nullptr;
+    auto depthInfo = pipelineDepthState();
+    pipelineInfo.pDepthStencilState = &depthInfo;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
@@ -294,7 +307,7 @@ void GaussianSplatRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer,
     VkDescriptorSet sets[] = {cameraDescriptorSets[pathId], splatDescriptorSets[pathId]};
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
 
-    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(GaussianSplatRasterPushConstants), &pushConstants);
 
     vkCmdDrawIndirect(commandBuffer, drawArgsBuffer->getVkBuffer(pathId), 0, 1, sizeof(VkDrawIndirectCommand));

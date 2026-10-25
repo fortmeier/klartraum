@@ -558,6 +558,9 @@ void VulkanContext::createLogicalDevice() {
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
     pipelineStatisticsQuerySupported = supportedFeatures.pipelineStatisticsQuery == VK_TRUE;
+    // The raster Gaussian splatting backend writes its depth output from the fragment shader.
+    deviceFeatures.fragmentStoresAndAtomics = supportedFeatures.fragmentStoresAndAtomics;
+    fragmentStoresAndAtomicsSupported = supportedFeatures.fragmentStoresAndAtomics == VK_TRUE;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;

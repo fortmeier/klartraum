@@ -9,7 +9,7 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/vulkan_gaussian_splatting.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting.hpp"
 
 namespace klartraum {
 
@@ -21,12 +21,24 @@ VulkanGaussianSplatting::VulkanGaussianSplatting(VulkanContext& vulkanContext,
     initialize(vulkanContext, _imageViewSrc, _cameraUBO, config);
 }
 
+VulkanGaussianSplatting::VulkanGaussianSplatting(VulkanContext& vulkanContext,
+                                                 std::shared_ptr<ImageViewSrc> _imageViewSrc,
+                                                 std::shared_ptr<CameraUboType> _cameraUBO, GaussianSoABuffers buffers,
+                                                 GsplatConfig config, bool depthOnly)
+    : depthOnly(depthOnly) {
+    this->buffers = std::move(buffers);
+    initialize(vulkanContext, _imageViewSrc, _cameraUBO, config);
+}
+
 void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> _imageViewSrc,
                                          std::shared_ptr<CameraUboType> _cameraUBO, GsplatConfig config) {
     this->vulkanContext = &vulkanContext;
     this->config = config;
     this->setInput(_imageViewSrc, 0);
     this->setInput(_cameraUBO, 1);
+    configureOutputLayout(vulkanContext);
+    if (!(config.depthOpacityThreshold > 0.0f && config.depthOpacityThreshold <= 1.0f))
+        throw std::invalid_argument("Gaussian splatting: depth opacity threshold must be in (0, 1]");
 
     auto imageViewSrc = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
     if (!imageViewSrc)
@@ -243,7 +255,17 @@ void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shar
     computeBounds->setGroupCountX(maxBinned / 256 + 1);
 
     // Stage 9: splatting
-    splat = std::make_shared<GaussianSplatting>(vulkanContext, "shaders/gsplat/gsplat_binned_splatting.comp.spv");
+    const bool sceneDepth = config.depthAttachment && (config.depthState.test || config.depthState.write);
+    const bool needDepth = config.outputDepth || sceneDepth;
+    if (sceneDepth &&
+        (config.depthAttachment->extent().width != ext.width || config.depthAttachment->extent().height != ext.height))
+        throw std::invalid_argument("Gaussian splatting: depth and color extents differ");
+    const char* shader = depthOnly ? (sceneDepth ? "shaders/gsplat/gsplat_binned_depth_only_scene.comp.spv"
+                                                 : "shaders/gsplat/gsplat_binned_depth_only.comp.spv")
+                                   : (sceneDepth ? "shaders/gsplat/gsplat_binned_splatting_depth_scene.comp.spv"
+                                                 : (needDepth ? "shaders/gsplat/gsplat_binned_splatting_depth.comp.spv"
+                                                              : "shaders/gsplat/gsplat_binned_splatting.comp.spv"));
+    splat = std::make_shared<GaussianSplatting>(vulkanContext, shader);
     splat->setName("GaussianSplatting");
     splat->setInput(gatherSorted, 0, 7);  // sortedPos2D
     splat->setInput(gatherSorted, 1, 10); // sortedCovInv
@@ -255,7 +277,38 @@ void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shar
     // left in GENERAL (see ImageViewSrc); keep them.
     splat->setImageLayoutTransition(5, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                    VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                                    VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                                    true);
+    std::shared_ptr<DepthBuffer> sceneBuffer;
+    if (sceneDepth) {
+        sceneBuffer = std::make_shared<DepthBuffer>(
+            vulkanContext, ext.width * ext.height,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        depthRead = std::make_shared<DepthTransfer>(config.depthAttachment, sceneBuffer, false);
+        depthRead->addDependency(_imageViewSrc);
+        splat->setInput(depthRead, 8, 0);
+        if (config.depthState.write) {
+            depthWrite = std::make_shared<DepthTransfer>(config.depthAttachment, sceneBuffer, true);
+            depthWrite->addDependency(splat);
+        }
+    }
+    if (config.outputDepth) {
+        // Every pixel of the image is written each frame, so the buffer needs no clearing.
+        depth = std::make_shared<BufferElement<VulkanBuffer<float>>>(
+            vulkanContext, ext.width * ext.height,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        depth->setName("SplatDepth");
+    }
+    if (needDepth) {
+        splat->setInput(gatherSorted, 6, 8); // sortedZ
+        splat->setInput(depth ? depth : sceneBuffer, 7);
+    }
+    if (depthOnly) {
+        splat->setInput(depth ? depth : sceneBuffer, 5);
+        splat->addDependency(_imageViewSrc);
+    }
 
     const uint32_t tbX = config.splatTileX;
     const uint32_t tbY = config.splatTileY;
@@ -272,11 +325,17 @@ void VulkanGaussianSplatting::initialize(VulkanContext& vulkanContext, std::shar
         std::vector<SplatPushConstants> pcs;
         for (uint32_t y = 0; y < gridSize; y++)
             for (uint32_t x = 0; x < gridSize; x++)
-                pcs.push_back({maxBinned, gridSize, x, y, W, H});
+                pcs.push_back({maxBinned, gridSize, x, y, W, H,
+                               config.depthMode == GaussianDepthMode::NearestOpaqueSplat ? 2u : 1u,
+                               (sceneDepth && config.depthState.test ? 1u : 0u) |
+                                   (sceneDepth && config.depthState.write ? 2u : 0u) | (config.outputDepth ? 4u : 0u),
+                               config.depthOpacityThreshold, depthOnly ? config.alphaCullThreshold : 0.0f});
         splat->setPushConstants(pcs);
     }
 
     outputElements[0] = splat;
+    if (depthWrite)
+        outputElements[1] = depthWrite;
 }
 
 VulkanGaussianSplatting::~VulkanGaussianSplatting() {}
@@ -315,6 +374,8 @@ void VulkanGaussianSplatting::_record(VkCommandBuffer commandBuffer, uint32_t pa
                              &mb, 0, nullptr, 0, nullptr);
     }
 
+    if (depthOnly)
+        return;
     auto* ivs = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0)).get();
     VkImage image = ivs->getImage(pathId);
 

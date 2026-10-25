@@ -6,6 +6,8 @@
 #define KLARTRAUM_COMPUTEGRAPH_RENDERPASS_HPP
 
 #include <map>
+#include <array>
+#include <algorithm>
 #include <vector>
 #include <vulkan/vulkan.h>
 #include "klartraum/computegraph/imageviewsrc.hpp"
@@ -54,6 +56,10 @@ public:
         this->vulkanContext = &vulkanContext;
 
         auto& device = vulkanContext.getDevice();
+        if (depthAttachment && (depthAttachment->extent().width != swapChainExtent.width ||
+                                depthAttachment->extent().height != swapChainExtent.height)) {
+            throw std::invalid_argument("RenderPass: depth and color extents differ");
+        }
 
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = swapChainImageFormat;
@@ -79,6 +85,7 @@ public:
         } else {
             colorAttachment.finalLayout = defaultFinal;
         }
+        outputLayout = colorAttachment.finalLayout;
 
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;
@@ -90,10 +97,24 @@ public:
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
 
+        VkAttachmentDescription depthDescription{};
+        depthDescription.format = DepthAttachment::format();
+        depthDescription.samples = VK_SAMPLE_COUNT_1_BIT;
+        depthDescription.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depthDescription.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depthDescription.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depthDescription.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthDescription.initialLayout = depthDescription.finalLayout =
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference depthReference{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+        if (depthAttachment)
+            subpass.pDepthStencilAttachment = &depthReference;
+        std::array<VkAttachmentDescription, 2> attachments{colorAttachment, depthDescription};
+
         VkRenderPassCreateInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = 1;
-        renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.attachmentCount = depthAttachment ? 2u : 1u;
+        renderPassInfo.pAttachments = attachments.data();
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
 
@@ -108,6 +129,14 @@ public:
         dependency.dstAccessMask = loadExisting
                                        ? VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
                                        : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        if (depthAttachment) {
+            dependency.srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            dependency.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+            dependency.dstStageMask |=
+                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dependency.dstAccessMask |=
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        }
 
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = &dependency;
@@ -120,7 +149,8 @@ public:
 
         for (uint32_t i = 0; i < framebuffers.size(); i++) {
             VkImageView imageView = this->getImageView(i);
-            VkImageView attachments[] = {imageView};
+            VkImageView attachments[] = {imageView,
+                                         depthAttachment ? depthAttachment->getImageView(i) : VK_NULL_HANDLE};
 
             // TODO: create the framebuffers in a compute graph element of their own that takes
             // an ImageViewSrc.
@@ -128,7 +158,7 @@ public:
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass = renderPass;
-            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.attachmentCount = depthAttachment ? 2u : 1u;
             framebufferInfo.pAttachments = attachments;
             framebufferInfo.width = swapChainExtent.width;
             framebufferInfo.height = swapChainExtent.height;
@@ -142,6 +172,7 @@ public:
         auto cameraUBO = getCameraUBO();
         for (auto& drawComponent : drawComponents) {
             drawComponent->setNumberPaths(numberPaths);
+            drawComponent->setDepthState(depthAttachment != nullptr, depthState);
             drawComponent->initialize(vulkanContext, renderPass, cameraUBO);
         }
     };
@@ -155,7 +186,8 @@ public:
         VkImageMemoryBarrier barrierBack = {};
         barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         // Keep the contents when drawing over them; else they are discarded.
-        barrierBack.oldLayout = loadExisting ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
+        auto source = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
+        barrierBack.oldLayout = loadExisting ? source->getOutputLayout() : VK_IMAGE_LAYOUT_UNDEFINED;
         barrierBack.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -203,6 +235,26 @@ public:
      * ImageViewSrc leaves it. Call before the pass is compiled.
      */
     void setLoadExisting(bool load) { loadExisting = load; }
+
+    void setDepthAttachment(std::shared_ptr<DepthAttachment> attachment, DepthState state = {}) {
+        if (vulkanContext)
+            throw std::logic_error("RenderPass: set depth before graph compilation");
+        computeDependencies.erase(std::remove(computeDependencies.begin(), computeDependencies.end(), depthAttachment),
+                                  computeDependencies.end());
+        depthAttachment = std::move(attachment);
+        depthState = state;
+        if (depthAttachment)
+            addComputeDependency(depthAttachment);
+    }
+    std::shared_ptr<DepthAttachment> getDepthAttachment() const { return depthAttachment; }
+    VkImageLayout getOutputLayout() const override { return outputLayout; }
+    std::optional<VkImageLayout> getFinalLayoutOverride() const override {
+        if (inputs.empty())
+            return std::nullopt;
+        auto source =
+            std::dynamic_pointer_cast<ImageViewSrcInterface>(const_cast<RenderPass*>(this)->getInputElement(0));
+        return source ? source->getFinalLayoutOverride() : std::nullopt;
+    }
 
     void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) { drawComponents.push_back(drawComponent); }
 
@@ -260,7 +312,7 @@ public:
 
 private:
     VulkanContext* vulkanContext = nullptr;
-    VkRenderPass renderPass;
+    VkRenderPass renderPass = VK_NULL_HANDLE;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
 
@@ -271,6 +323,9 @@ private:
     std::vector<ComputeGraphElementPtr> computeDependencies;
 
     bool loadExisting = false;
+    std::shared_ptr<DepthAttachment> depthAttachment;
+    DepthState depthState{};
+    VkImageLayout outputLayout = VK_IMAGE_LAYOUT_GENERAL;
 };
 
 typedef std::shared_ptr<RenderPass> RenderPassPtr;

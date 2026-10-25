@@ -40,7 +40,7 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/buffertransformation.hpp"
 #include "klartraum/vulkan_buffer.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 using namespace klartraum;
