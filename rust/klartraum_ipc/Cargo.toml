@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "klartraum_ipc"
+version = "0.1.0"
+description = "Runs compute graphs described by a remote (C++) Klartraum client over FlatBuffers and shared memory"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = "1"
+ash = "0.38"
+bytemuck = { version = "1", features = ["derive", "extern_crate_alloc"] }
+# Must match the flatc that generated src/klartraum_ipc_generated.rs (CMake fetches v25.12.19).
+flatbuffers = "=25.12.19"
+klartraum = { path = "../klartraum" }
+libc = "0.2"

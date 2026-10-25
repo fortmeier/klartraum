@@ -1,0 +1,109 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+// Messages between a client that describes compute graphs (the C++ engine) and a
+// server that compiles and runs them (the Rust engine). Each message on the socket
+// is a 4-byte little-endian length followed by a FlatBuffer with root Message.
+//
+// Tensor data does not travel in the messages: every buffer is a shared-memory
+// object both processes map, named in SharedRegion.
+
+namespace klartraum.ipc;
+
+// A POSIX shared-memory object (shm_open name) of `size` bytes.
+table SharedRegion {
+  name: string (required);
+  size: ulong;
+}
+
+enum ElementKind : byte { NoOp = 0, Buffer = 1, Computation = 2 }
+
+// Input `index` of an element is element `element` itself (slot -1) or that
+// element's input `slot`, as ComputeGraphElement::setInput(element, index, slot).
+table Input {
+  index: int;
+  element: uint;
+  slot: int = -1;
+}
+
+table Spirv {
+  code: [uint] (required);
+}
+
+// The push constants of one round of dispatches.
+table PushConstants {
+  data: [ubyte] (required);
+}
+
+// A buffer bound after a computation's inputs, zeroed before each round if `zero`.
+table Scratch {
+  element: uint;
+  zero: bool;
+}
+
+table Element {
+  id: uint;
+  kind: ElementKind;
+  name: string;
+
+  // Buffer: the region holding it, and its size in bytes (at most the region's size).
+  region: uint;
+  byte_size: ulong;
+
+  // Computation: shaders run in order over the same bindings.
+  shaders: [Spirv];
+  group_count_x: uint = 1;
+  group_count_y: uint = 1;
+  group_count_z: uint = 1;
+  push_constants: [PushConstants];
+  scratch: [Scratch];
+
+  inputs: [Input];
+  dependencies: [uint];
+}
+
+// Compiles the graph of the elements `root` reaches; buffers refer to `regions`.
+table CompileGraph {
+  graph_id: uint;
+  regions: [SharedRegion] (required);
+  elements: [Element] (required);
+  root: uint;
+}
+
+// Runs a compiled graph once and replies when it has finished.
+table Execute {
+  graph_id: uint;
+}
+
+// Frees a compiled graph and unmaps its regions.
+table Release {
+  graph_id: uint;
+}
+
+// Ends the server.
+table Shutdown {}
+
+union Request { CompileGraph, Execute, Release, Shutdown }
+
+table Response {
+  ok: bool;
+  error: string;
+  // Whether the graph's buffers are the shared memory itself (else the server copies).
+  zero_copy: bool;
+  // GPU time of the execution in milliseconds (Execute only).
+  gpu_ms: float;
+}
+
+union Body { RequestBody, Response }
+
+table RequestBody {
+  request: Request (required);
+}
+
+table Message {
+  request_id: ulong;
+  body: Body (required);
+}
+
+root_type Message;

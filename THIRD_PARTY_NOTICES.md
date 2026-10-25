@@ -17,6 +17,7 @@ distributes a build has to pass these notices on with it.
 | FreeType (only with `KLARTRAUM_WITH_FREETYPE`) | 2.14.3 | FTL (FreeType License; dual-licensed FTL OR GPL-2.0-or-later) |
 | Zstandard | 1.5.6 | BSD-3-Clause |
 | ONNX (`onnx.proto`) | 1.20.1 | Apache-2.0 |
+| FlatBuffers (only with `KLARTRAUM_WITH_IPC`, the default on Unix) | 25.12.19 | Apache-2.0 |
 | Vulkan headers | from the Vulkan SDK used for the build | MIT (dual-licensed Apache-2.0 OR MIT) |
 | Fonts in `build/fonts/` (only with `KLARTRAUM_WITH_FREETYPE`; Space Grotesk, Geist, Unbounded, Syne, IBM Plex Sans, Fraunces, JetBrains Mono) | google/fonts at commit 47d54ca | OFL-1.1 |
 
@@ -38,6 +39,8 @@ dependencies:
 | ash-window | 0.13.0 | MIT OR Apache-2.0 |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 |
+| flatbuffers (`klartraum_ipc`) | 25.12.19 | Apache-2.0 |
+| libc (`klartraum_ipc`) | 0.2.191 | MIT OR Apache-2.0 |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
 | ruzstd | 0.8.3 | MIT |
 | winit | 0.30.13 | Apache-2.0 |
@@ -548,8 +551,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Version: 1.20.1 (`onnx.proto` from the submodule `3rdparty/onnx`, compiled to C++). License: Apache-2.0.
 
-Abseil (bundled with Protocol Buffers 25.1) is licensed under the same
-Apache License, Version 2.0. Neither project ships a NOTICE file.
+Abseil (bundled with Protocol Buffers 25.1) and FlatBuffers 25.12.19 (fetched
+by CMake with `KLARTRAUM_WITH_IPC`; its header-only runtime and the code `flatc`
+generates from `ipc/klartraum_ipc.fbs` are part of the library) are licensed
+under the same Apache License, Version 2.0. None of these projects ships a
+NOTICE file.
 
 ```text
                                  Apache License

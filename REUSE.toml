@@ -24,6 +24,7 @@ path = [
     "**/pyproject.toml",
     "**/uv.lock",
     "rust/Cargo.lock",
+    "rust/klartraum_ipc/src/klartraum_ipc_generated.rs",
     "**/*.cmd",
     "**/*.ipynb",
     "scripts/site/package.json",

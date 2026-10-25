@@ -23,6 +23,13 @@ option(KLARTRAUM_BUILD_EXAMPLES "Build the klartraum examples" ${PROJECT_IS_TOP_
 # Text as Gaussians (text_gaussians) needs FreeType and the OFL fonts, which the
 # build downloads only with this option.
 option(KLARTRAUM_WITH_FREETYPE "Build text as Gaussians with FreeType (downloads FreeType and fonts)" OFF)
+# Remote compute graphs over FlatBuffers and POSIX shared memory (see ipc/ and rust/klartraum_ipc).
+if(UNIX)
+  set(KLARTRAUM_WITH_IPC_DEFAULT ON)
+else()
+  set(KLARTRAUM_WITH_IPC_DEFAULT OFF)
+endif()
+option(KLARTRAUM_WITH_IPC "Build the remote compute graph client (downloads FlatBuffers)" ${KLARTRAUM_WITH_IPC_DEFAULT})
 
 add_subdirectory(3rdparty/glfw)
 
@@ -259,6 +266,41 @@ add_library(onnx_proto STATIC ${ONNX_GENERATED_SOURCES})
 target_link_libraries(onnx_proto protobuf::libprotobuf)
 target_include_directories(onnx_proto PUBLIC ${ONNX_GENERATED_DIR})
 
+if(KLARTRAUM_WITH_IPC)
+  # FlatBuffers for the messages of the remote compute graph protocol. flatc is
+  # built here, so the generated code matches the runtime; the Rust side uses the
+  # flatbuffers crate of the same version (rust/klartraum_ipc/Cargo.toml).
+  set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(FLATBUFFERS_BUILD_FLATC ON CACHE BOOL "" FORCE)
+  set(FLATBUFFERS_BUILD_FLATHASH OFF CACHE BOOL "" FORCE)
+  set(FLATBUFFERS_INSTALL OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    flatbuffers
+    GIT_REPOSITORY https://github.com/google/flatbuffers.git
+    GIT_TAG 282dcb1c3266b45600510da4810092f6ec4c85f2 # v25.12.19
+  )
+  FetchContent_MakeAvailable(flatbuffers)
+
+  set(IPC_SCHEMA "${CMAKE_CURRENT_SOURCE_DIR}/ipc/klartraum_ipc.fbs")
+  set(IPC_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/klartraum/ipc")
+  file(MAKE_DIRECTORY ${IPC_GENERATED_DIR})
+  add_custom_command(
+    OUTPUT ${IPC_GENERATED_DIR}/klartraum_ipc_generated.h
+    COMMAND flatc --cpp --scoped-enums -o ${IPC_GENERATED_DIR} ${IPC_SCHEMA}
+    DEPENDS ${IPC_SCHEMA} flatc
+    COMMENT "Generating C++ code from ${IPC_SCHEMA}"
+  )
+  add_custom_target(klartraum_ipc_schema DEPENDS ${IPC_GENERATED_DIR}/klartraum_ipc_generated.h)
+
+  # The Rust code is checked in (rust/klartraum_ipc/src/klartraum_ipc_generated.rs);
+  # regenerate it with this target after changing the schema.
+  add_custom_target(klartraum_ipc_rust_codegen
+    COMMAND flatc --rust -o ${CMAKE_CURRENT_SOURCE_DIR}/rust/klartraum_ipc/src ${IPC_SCHEMA}
+    DEPENDS ${IPC_SCHEMA} flatc
+    COMMENT "Generating Rust code from ${IPC_SCHEMA}"
+  )
+endif()
+
 
 
 if(KLARTRAUM_BUILD_TESTS)
@@ -328,6 +370,9 @@ add_executable(
 )
 
 add_dependencies(klartraum_tests Shaders)
+if(KLARTRAUM_WITH_IPC)
+  target_sources(klartraum_tests PRIVATE tests/test_ipc.cpp)
+endif()
 endif()
 
 
@@ -373,6 +418,14 @@ set(LIBRARIES
 if(KLARTRAUM_WITH_FREETYPE)
   target_sources(klartraum_lib PRIVATE src/text_gaussians.cpp)
   list(APPEND LIBRARIES freetype)
+endif()
+
+if(KLARTRAUM_WITH_IPC)
+  target_sources(klartraum_lib PRIVATE src/ipc/shared_memory.cpp)
+  list(APPEND LIBRARIES flatbuffers)
+  target_include_directories(klartraum_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated)
+  target_compile_definitions(klartraum_lib PUBLIC KLARTRAUM_WITH_IPC)
+  add_dependencies(klartraum_lib klartraum_ipc_schema)
 endif()
 
 if(APPLE)

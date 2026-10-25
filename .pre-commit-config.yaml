@@ -17,9 +17,9 @@ repos:
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: trailing-whitespace
-        exclude: ^LICENSES/
+        exclude: ^LICENSES/|_generated\.rs$
       - id: end-of-file-fixer
-        exclude: ^LICENSES/
+        exclude: ^LICENSES/|_generated\.rs$
 
   - repo: https://github.com/fsfe/reuse-tool
     rev: v6.2.0
