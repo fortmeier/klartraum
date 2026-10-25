@@ -52,6 +52,7 @@ concepts/frontends
 :caption: Guides
 
 guides/gaussian-splatting
+guides/render-targets
 guides/onnx
 ```
 

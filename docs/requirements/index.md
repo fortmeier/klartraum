@@ -29,6 +29,7 @@ shows the structure; they are not a complete specification of the engine.
 
 compute-graph
 graph-chains
+render-targets
 ```
 
 ## Gaussian splatting

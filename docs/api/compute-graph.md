@@ -1,7 +1,8 @@
 # Compute graph
 
-A directed acyclic graph of elements. Each element records its own Vulkan
-command buffers; the graph connects them with semaphores.
+A directed acyclic graph of elements. The graph records its elements into one
+Vulkan command buffer per path, in dependency order, with memory barriers
+between consecutive elements.
 
 (compute-graph-paths)=
 ## Paths
@@ -80,6 +81,9 @@ The buffer allocation and interface types are documented in {doc}`buffers`.
 
 ## Rendering
 
+For clearing, image composition and shared images, see
+{doc}`../guides/render-targets` and {doc}`../requirements/render-targets`.
+
 ```{doxygenclass} klartraum::RenderPass
 ```
 
@@ -93,6 +97,12 @@ The buffer allocation and interface types are documented in {doc}`buffers`.
 ```
 
 ```{doxygenclass} klartraum::ImageComposite
+```
+
+```{doxygenenum} klartraum::CompositeMode
+```
+
+```{doxygenenum} klartraum::CompositeFit
 ```
 
 ```{doxygenfunction} klartraum::recordClearImage

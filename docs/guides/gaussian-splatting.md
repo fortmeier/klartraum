@@ -24,6 +24,9 @@ the surrounding graph.
 For a walkthrough of culling, compaction and equal-depth ordering, see
 {doc}`../articles/deterministic-raster-order`.
 
+For drawing Gaussians over a background image and controlling target clearing,
+see {doc}`render-targets`.
+
 ## The compute pipeline
 
 The compute backend runs these stages every frame (shaders in

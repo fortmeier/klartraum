@@ -15,6 +15,10 @@
  * - compositeDrawsOntoTarget: ImageComposite replaces a blue target with a red source (stretched), draws
  *   a tall source in the middle and keeps the target beside it (fit), covers the whole target with
  *   a wide source (fill), and blends a half-transparent source over the target (over)
+ * - compositeFitsPatternWithoutDistortion: a tall patterned source is centred at its original size,
+ *   keeping every source pixel and leaving the target beside it
+ * - compositeFillsByCroppingCenter: a wide patterned source is cropped symmetrically to cover the target
+ * - compositeInterpolatesOpaquePattern: stretching an opaque pattern uses bilinear interpolation
  * - singlePathImageIsReadByEveryPath: a SinglePathImage filled with copyFrom() hands the same image
  *   to every path; a three-path graph copies it into each path's target, run through an
  *   ImageViewForward that stands for the copy's output
@@ -66,6 +70,69 @@ std::vector<uint8_t> readImage(VulkanContext& vc, VkImage image, VkImageLayout l
 
 void fill(VulkanContext& vc, VkImage image, VkClearColorValue color) {
     vc.submitImmediate([&](VkCommandBuffer commandBuffer) { recordClearImage(commandBuffer, image, color); });
+}
+
+// Uploads BGRA pixels to a GENERAL image, ready for the compositor to read.
+void uploadImage(VulkanContext& vc, VkImage image, VkExtent2D extent, const std::vector<uint8_t>& pixels) {
+    VulkanBuffer<uint8_t> staging(vc, static_cast<uint32_t>(pixels.size()));
+    staging.memcopyFrom(pixels);
+    vc.submitImmediate([&](VkCommandBuffer commandBuffer) {
+        VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1, &barrier);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {extent.width, extent.height, 1};
+        vkCmdCopyBufferToImage(commandBuffer, staging.getBuffer(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                               &copy);
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1, &barrier);
+    });
+}
+
+std::array<uint8_t, 4> pixelAt(const std::vector<uint8_t>& pixels, uint32_t width, uint32_t x, uint32_t y) {
+    const size_t i = (size_t(y) * width + x) * 4;
+    return {pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]};
+}
+
+// Every pixel has a distinct opaque color, so cropping or distortion is visible.
+std::vector<uint8_t> opaquePattern(VkExtent2D extent) {
+    std::vector<uint8_t> pixels;
+    for (uint32_t y = 0; y < extent.height; ++y) {
+        for (uint32_t x = 0; x < extent.width; ++x) {
+            pixels.insert(pixels.end(),
+                          {50, static_cast<uint8_t>(20 + y * 20), static_cast<uint8_t>(10 + x * 30), 255});
+        }
+    }
+    return pixels;
+}
+
+std::vector<uint8_t> compositePattern(VulkanContext& vc, VkExtent2D sourceExtent, VkExtent2D targetExtent,
+                                      const std::vector<uint8_t>& pixels, CompositeFit fit) {
+    auto source = std::make_shared<OffscreenTarget>(vc, sourceExtent, 1);
+    source->setClear(false);
+    uploadImage(vc, source->getImage(0), sourceExtent, pixels);
+    auto target = std::make_shared<OffscreenTarget>(vc, targetExtent, 1);
+    target->setClearColor({{0.0f, 0.0f, 1.0f, 1.0f}});
+    auto draw = std::make_shared<ImageComposite>(vc, sourceExtent, targetExtent, CompositeMode::Replace, fit);
+    draw->setSource(source);
+    draw->setTarget(target);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(draw);
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    return readImage(vc, target->getImage(0), VK_IMAGE_LAYOUT_GENERAL, targetExtent);
 }
 
 // Whether every pixel is (b, g, r, a).
@@ -232,13 +299,58 @@ TEST_F(RenderOverTargetsTest, singlePathImageIsReadByEveryPath) {
     EXPECT_FALSE(copied->clears());
     ComputeGraph graph(*vc, paths);
     graph.compileFrom(copied);
-    for (uint32_t path = 0; path < paths; ++path) {
-        graph.submitAndWait(vc->getGraphicsQueue(), path);
-        EXPECT_TRUE(allPixels(readImage(*vc, targets->getImage(path), VK_IMAGE_LAYOUT_GENERAL, kSmall), 0, 0, 255, 255))
-            << "path " << path;
+    for (const auto color : {kRed, kWhite, kBlue}) {
+        // Replace the shared contents only after all previous readers finished.
+        fill(*vc, source->getImage(0), color);
+        shared->copyFrom(source->getImage(0), VK_IMAGE_LAYOUT_GENERAL, kSmall);
+        const auto expected = readImage(*vc, source->getImage(0), VK_IMAGE_LAYOUT_GENERAL, kSmall);
+        EXPECT_EQ(readImage(*vc, shared->getImage(0), VK_IMAGE_LAYOUT_GENERAL, kSmall), expected);
+        for (uint32_t path = 0; path < paths; ++path) {
+            graph.submitAndWait(vc->getGraphicsQueue(), path);
+            EXPECT_EQ(readImage(*vc, targets->getImage(path), VK_IMAGE_LAYOUT_GENERAL, kSmall), expected)
+                << "path " << path;
+        }
+        EXPECT_EQ(readImage(*vc, shared->getImage(0), VK_IMAGE_LAYOUT_GENERAL, kSmall), expected);
     }
-    // The shared image itself is unchanged by the graph.
-    EXPECT_TRUE(allPixels(readImage(*vc, shared->getImage(0), VK_IMAGE_LAYOUT_GENERAL, kSmall), 0, 0, 255, 255));
+}
+
+TEST_F(RenderOverTargetsTest, compositeFitsPatternWithoutDistortion) {
+    constexpr VkExtent2D sourceExtent{4, 8}, targetExtent{8, 8};
+    const auto pattern = opaquePattern(sourceExtent);
+    const auto result = compositePattern(*vc, sourceExtent, targetExtent, pattern, CompositeFit::Fit);
+    const std::array<uint8_t, 4> blue{255, 0, 0, 255};
+    for (uint32_t y = 0; y < targetExtent.height; ++y) {
+        for (uint32_t x = 0; x < targetExtent.width; ++x) {
+            const auto expected = x >= 2 && x < 6 ? pixelAt(pattern, sourceExtent.width, x - 2, y) : blue;
+            EXPECT_EQ(pixelAt(result, targetExtent.width, x, y), expected) << x << "," << y;
+        }
+    }
+}
+
+TEST_F(RenderOverTargetsTest, compositeFillsByCroppingCenter) {
+    constexpr VkExtent2D sourceExtent{8, 4}, targetExtent{4, 4};
+    const auto pattern = opaquePattern(sourceExtent);
+    const auto result = compositePattern(*vc, sourceExtent, targetExtent, pattern, CompositeFit::Fill);
+    for (uint32_t y = 0; y < targetExtent.height; ++y) {
+        for (uint32_t x = 0; x < targetExtent.width; ++x) {
+            EXPECT_EQ(pixelAt(result, targetExtent.width, x, y), pixelAt(pattern, sourceExtent.width, x + 2, y))
+                << x << "," << y;
+        }
+    }
+}
+
+TEST_F(RenderOverTargetsTest, compositeInterpolatesOpaquePattern) {
+    // BGRA corners: red, green, blue, white.
+    const std::vector<uint8_t> pattern{0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255};
+    const auto result = compositePattern(*vc, {2, 2}, {4, 4}, pattern, CompositeFit::Stretch);
+    EXPECT_EQ(pixelAt(result, 4, 0, 0), pixelAt(pattern, 2, 0, 0));
+    EXPECT_EQ(pixelAt(result, 4, 3, 3), pixelAt(pattern, 2, 1, 1));
+    const auto upper = pixelAt(result, 4, 1, 1), lower = pixelAt(result, 4, 2, 2);
+    const std::array<int, 4> expectedUpper{64, 64, 159, 255}, expectedLower{191, 191, 159, 255};
+    for (size_t channel = 0; channel < 4; ++channel) {
+        EXPECT_NEAR(upper[channel], expectedUpper[channel], 1);
+        EXPECT_NEAR(lower[channel], expectedLower[channel], 1);
+    }
 }
 
 TEST_F(RenderOverTargetsTest, compositeDrawsOntoTarget) {
