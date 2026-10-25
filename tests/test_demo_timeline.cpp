@@ -33,7 +33,7 @@
 #include <vector>
 
 #include "klartraum/demo_timeline.hpp"
-#include "klartraum/text_gaussians.hpp"
+#include "klartraum/rendering/text_gaussians.hpp"
 
 using namespace klartraum;
 
