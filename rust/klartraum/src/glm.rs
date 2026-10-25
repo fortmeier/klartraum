@@ -224,7 +224,8 @@ pub fn normalize(v: Vec3) -> Vec3 {
     v * inversesqrt(dot(v, v))
 }
 
-/// `glm::radians`.
+/// `glm::radians`, with glm's constant.
+#[allow(clippy::excessive_precision)]
 pub fn radians(degrees: f32) -> f32 {
     degrees * 0.01745329251994329576923690768489f32
 }

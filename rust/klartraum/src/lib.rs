@@ -17,3 +17,6 @@ pub mod gaussian_data;
 pub mod glm;
 pub mod interface_camera;
 pub mod spz;
+pub mod vulkan_buffer;
+pub mod vulkan_context;
+pub mod vulkan_helpers;
