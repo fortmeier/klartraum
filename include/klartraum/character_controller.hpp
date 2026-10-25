@@ -65,6 +65,7 @@ public:
     static const std::vector<std::string> kJointNames;
 
     /**
+     * @param vulkanContext the context the controller network and its buffers are created in
      * @param modelDirectory directory with `controller.onnx` and `initial_state_f32.bin`
      *        (written by scripts/character_animation)
      */
