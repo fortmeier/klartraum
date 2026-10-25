@@ -61,7 +61,7 @@ public:
      * @brief Hides the skeleton where a scene surface lies in front of it, e.g. of a Gaussian splatting scene.
      *
      * `depth` holds one NDC depth per pixel of the target (+inf: no surface),
-     * seen with the render pass camera, such as getGaussianSplattingDepth(). A
+     * seen with the render pass camera, such as GaussianSplattingInterface::getDepth(). A
      * fragment farther from the camera than the surface by more than
      * `relativeBias` of the surface's distance is dropped. Call before the graph
      * is compiled.

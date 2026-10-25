@@ -60,7 +60,7 @@
 #include "klartraum/computegraph/buffertographicsbarrier.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/rendering/gaussianmerge.hpp"
-#include "klartraum/computegraph/gaussianmorph.hpp"
+#include "klartraum/rendering/gaussianmorph.hpp"
 #include "klartraum/computegraph/graph_export.hpp"
 #include "klartraum/computegraph/graphchain.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
@@ -69,8 +69,8 @@
 #include "klartraum/rendering/skeletongaussians.hpp"
 #include "klartraum/demo_timeline.hpp"
 #include "klartraum/rendering/gaussian_data_standard.hpp"
-#include "klartraum/gaussian_lighting.hpp"
-#include "klartraum/gaussian_morph.hpp"
+#include "klartraum/rendering/gaussian_lighting.hpp"
+#include "klartraum/rendering/gaussian_morph.hpp"
 #include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
@@ -85,7 +85,7 @@
 #include "klartraum/sd15/lcm_scheduler.hpp"
 #include "klartraum/sd15/pose_video_pipeline.hpp"
 #include "klartraum/skeleton_mesh_renderer.hpp"
-#include "klartraum/text_gaussians.hpp"
+#include "klartraum/rendering/text_gaussians.hpp"
 
 namespace {
 
