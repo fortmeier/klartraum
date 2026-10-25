@@ -238,6 +238,9 @@ pub struct Device {
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub properties: vk::PhysicalDeviceProperties,
     pub pipeline_statistics_query_supported: bool,
+    /// The VK_EXT_external_memory_host functions and the required alignment of imported
+    /// host pointers and sizes, when the device supports importing host memory.
+    pub external_memory_host: Option<(ash::ext::external_memory_host::Device, vk::DeviceSize)>,
     /// Serializes submissions to the queues, which Vulkan requires to be externally synchronized.
     queue_lock: Mutex<()>,
 }
@@ -384,6 +387,11 @@ impl Device {
         if contains(&available, ash::khr::portability_subset::NAME) {
             extensions.push(ash::khr::portability_subset::NAME.as_ptr());
         }
+        // Optional: buffers over host memory another process shares (klartraum_ipc).
+        let host_import = contains(&available, ash::ext::external_memory_host::NAME);
+        if host_import {
+            extensions.push(ash::ext::external_memory_host::NAME.as_ptr());
+        }
 
         let mut scalar_block_layout = vk::PhysicalDeviceScalarBlockLayoutFeatures::default().scalar_block_layout(true);
         let create_info = vk::DeviceCreateInfo::default()
@@ -414,6 +422,20 @@ impl Device {
         let graphics_queue = unsafe { device.get_device_queue(graphics_family, 0) };
         let present_queue = unsafe { device.get_device_queue(present_family, 0) };
         let memory_properties = unsafe { instance.instance.get_physical_device_memory_properties(physical_device) };
+        let external_memory_host = host_import.then(|| {
+            let mut host_properties = vk::PhysicalDeviceExternalMemoryHostPropertiesEXT::default();
+            let mut properties2 = vk::PhysicalDeviceProperties2::default().push_next(&mut host_properties);
+            unsafe {
+                instance
+                    .instance
+                    .get_physical_device_properties2(physical_device, &mut properties2)
+            };
+            let alignment = host_properties.min_imported_host_pointer_alignment;
+            (
+                ash::ext::external_memory_host::Device::new(&instance.instance, &device),
+                alignment,
+            )
+        });
 
         Ok(Rc::new(Self {
             instance,
@@ -426,6 +448,7 @@ impl Device {
             memory_properties,
             properties,
             pipeline_statistics_query_supported: supported.pipeline_statistics_query == vk::TRUE,
+            external_memory_host,
             queue_lock: Mutex::new(()),
         }))
     }

@@ -8,7 +8,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use ash::vk;
 use bytemuck::Pod;
 
@@ -38,6 +38,15 @@ impl Default for ImageLayoutTransition {
             dst_access_mask: vk::AccessFlags::SHADER_READ,
         }
     }
+}
+
+/// Where a [`GeneralComputation`] gets a shader from.
+#[derive(Clone, Debug)]
+pub enum ShaderSource {
+    /// A path read with [`read_file`](crate::vulkan_helpers::read_file).
+    Path(String),
+    /// SPIR-V words.
+    Spirv(Vec<u32>),
 }
 
 /// The Vulkan objects of a set-up [`GeneralComputation`].
@@ -73,16 +82,19 @@ impl Drop for Pipelines {
 /// buffers added with [`add_scratch_buffer_element`](Self::add_scratch_buffer_element).
 /// The inputs must be numbered 0, 1, 2, ... without gaps.
 ///
-/// With a push-constant type `P` (not `()`), the element records, for each push
-/// constant set with [`set_push_constants`](Self::set_push_constants), all shaders
-/// in order with a compute-to-compute memory barrier after each dispatch; scratch
-/// buffers marked for it are zeroed before each round. With `P = ()` every shader
-/// runs once.
+/// With push constants — of type `P` (not `()`), or raw bytes set with
+/// [`set_raw_push_constants`](Self::set_raw_push_constants) — the element records,
+/// for each push constant, all shaders in order with a compute-to-compute memory
+/// barrier after each dispatch; scratch buffers marked for it are zeroed before
+/// each round. Without push constants every shader runs once.
 pub struct GeneralComputation<P: Pod = ()> {
     base: ElementBase,
-    shader_paths: Vec<String>,
+    shaders: Vec<ShaderSource>,
     group_count: Cell<[u32; 3]>,
-    push_constants: RefCell<Vec<P>>,
+    /// One round of dispatches per entry, each `push_constant_size` bytes.
+    push_constants: RefCell<Vec<Vec<u8>>>,
+    /// Size of the push-constant range in bytes (0: none); `size_of::<P>()` unless raw bytes are set.
+    push_constant_size: Cell<u32>,
     /// Indirect dispatch arguments (`VkDispatchIndirectCommand`), replacing the group count.
     dynamic_group_dispatch_params: RefCell<Option<ElementPtr>>,
     /// Scratch buffers that are not part of the graph, set up by this element, and
@@ -90,6 +102,7 @@ pub struct GeneralComputation<P: Pod = ()> {
     scratch_buffers: RefCell<Vec<(ElementPtr, bool)>>,
     image_layout_transitions: RefCell<BTreeMap<i32, ImageLayoutTransition>>,
     pipelines: RefCell<Option<Pipelines>>,
+    _push_constant_type: std::marker::PhantomData<P>,
 }
 
 impl<P: Pod> GeneralComputation<P> {
@@ -100,20 +113,31 @@ impl<P: Pod> GeneralComputation<P> {
 
     /// A computation running several shaders in sequence with the same bindings.
     pub fn with_shaders(shader_paths: &[&str]) -> Rc<Self> {
+        Self::with_sources(shader_paths.iter().map(|s| ShaderSource::Path(s.to_string())).collect())
+    }
+
+    /// A computation running the given SPIR-V shaders in sequence with the same bindings.
+    pub fn from_spirv(shaders: Vec<Vec<u32>>) -> Rc<Self> {
+        Self::with_sources(shaders.into_iter().map(ShaderSource::Spirv).collect())
+    }
+
+    fn with_sources(shaders: Vec<ShaderSource>) -> Rc<Self> {
         Rc::new(Self {
             base: ElementBase::new(),
-            shader_paths: shader_paths.iter().map(|s| s.to_string()).collect(),
+            shaders,
             group_count: Cell::new([1, 1, 1]),
             push_constants: RefCell::new(Vec::new()),
+            push_constant_size: Cell::new(std::mem::size_of::<P>() as u32),
             dynamic_group_dispatch_params: RefCell::new(None),
             scratch_buffers: RefCell::new(Vec::new()),
             image_layout_transitions: RefCell::new(BTreeMap::new()),
             pipelines: RefCell::new(None),
+            _push_constant_type: std::marker::PhantomData,
         })
     }
 
-    fn has_push_constants() -> bool {
-        std::mem::size_of::<P>() > 0
+    fn has_push_constants(&self) -> bool {
+        self.push_constant_size.get() > 0
     }
 
     pub fn set_group_count(&self, x: u32, y: u32, z: u32) {
@@ -136,7 +160,22 @@ impl<P: Pod> GeneralComputation<P> {
 
     /// One round of dispatches per push constant.
     pub fn set_push_constants(&self, push_constants: Vec<P>) {
+        *self.push_constants.borrow_mut() = push_constants.iter().map(|p| bytemuck::bytes_of(p).to_vec()).collect();
+    }
+
+    /// One round of dispatches per entry, for push constants whose type is not known
+    /// at compile time (e.g. from a remote description). All entries must have the same
+    /// size, a multiple of 4 bytes of at most 128 bytes. Set before compiling.
+    pub fn set_raw_push_constants(&self, push_constants: Vec<Vec<u8>>) -> Result<()> {
+        let size = push_constants.first().map_or(0, Vec::len);
+        ensure!(
+            push_constants.iter().all(|p| p.len() == size),
+            "push constants of different sizes"
+        );
+        ensure!(size % 4 == 0 && size <= 128, "push constants of {size} bytes");
+        self.push_constant_size.set(size as u32);
         *self.push_constants.borrow_mut() = push_constants;
+        Ok(())
     }
 
     /// Records a layout transition of the image at input `index` before the dispatches.
@@ -213,16 +252,24 @@ impl<P: Pod> GeneralComputation<P> {
         let ranges = [vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::COMPUTE,
             offset: 0,
-            size: std::mem::size_of::<P>() as u32,
+            size: self.push_constant_size.get(),
         }];
         let mut layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts);
-        if Self::has_push_constants() {
+        if self.has_push_constants() {
             layout_info = layout_info.push_constant_ranges(&ranges);
         }
         resources.pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None) }?;
 
-        for path in &self.shader_paths {
-            let module = load_shader_module(device, path)?;
+        for (k, source) in self.shaders.iter().enumerate() {
+            let (module, path) = match source {
+                ShaderSource::Path(path) => (load_shader_module(device, path)?, path.clone()),
+                ShaderSource::Spirv(code) => {
+                    let info = vk::ShaderModuleCreateInfo::default().code(code);
+                    let module = unsafe { device.create_shader_module(&info, None) }
+                        .with_context(|| format!("SPIR-V shader {k}"))?;
+                    (module, format!("SPIR-V shader {k}"))
+                }
+            };
             let stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(module)
@@ -413,7 +460,7 @@ impl<P: Pod> ComputeGraphElement for GeneralComputation<P> {
             );
         };
 
-        if !Self::has_push_constants() {
+        if !self.has_push_constants() {
             self.record_scratch_to_zero(device, cmd, path_id);
             for &pipeline in &resources.pipelines {
                 bind(pipeline);
@@ -434,7 +481,7 @@ impl<P: Pod> ComputeGraphElement for GeneralComputation<P> {
                         resources.pipeline_layout,
                         vk::ShaderStageFlags::COMPUTE,
                         0,
-                        bytemuck::bytes_of(push_constant),
+                        push_constant,
                     )
                 };
                 self.dispatch(device, cmd, path_id);
