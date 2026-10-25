@@ -104,7 +104,7 @@ public:
 
     // ComputeGraphGroup interface
     void checkInput(ComputeGraphElementPtr input, int index = 0) override {}
-    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths) override;
+    void _setup(VulkanContext& vulkanContext, uint32_t numberPaths, VkQueue setupQueue = VK_NULL_HANDLE) override;
     void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {}
     const char* getType() const override { return "GgufNetwork"; }
 
@@ -113,6 +113,7 @@ private:
     using WordTensor = TensorElementSinglePath<uint32_t>;
 
     VulkanContext* vulkanContext;
+    VkQueue setupQueue = VK_NULL_HANDLE;
     std::unique_ptr<GgufFile> file;
     Qwen35Config config;
     GgufNetworkOptions options;
