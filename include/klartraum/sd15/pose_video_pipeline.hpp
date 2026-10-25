@@ -52,11 +52,15 @@ class PoseVideoPipeline {
 public:
     struct Directories {
         std::filesystem::path character = "data/character";
-        std::filesystem::path sd;      ///< default: data/onnx/sd15_denoiser_<size>
-        std::filesystem::path control; ///< default: data/onnx/sd15_controlnet_<size>
+        std::filesystem::path sd;      ///< default: `data/onnx/sd15_denoiser_<size>`
+        std::filesystem::path control; ///< default: `data/onnx/sd15_controlnet_<size>`
     };
 
-    /// @param size image size in pixels, a multiple of 64
+    /**
+     * @param vulkanContext the context the graphs and their models are created in
+     * @param directories the model directories; empty ones take their defaults for `size`
+     * @param size image size in pixels, a multiple of 64
+     */
     PoseVideoPipeline(VulkanContext& vulkanContext, Directories directories, uint32_t size);
     ~PoseVideoPipeline();
 
