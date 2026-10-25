@@ -46,8 +46,10 @@ public:
     using NoisePredictor = std::function<std::vector<float>(const std::vector<float>& latents, int64_t timestep)>;
 
     /**
+     * @param scheduler the LCM schedule every frame is sampled with
      * @param noise noise per scheduler step, each as many values as a latent: entry 0 is the initial latent of
      *        the keyframe, entry k the noise that brings a latent to the timestep of step k (k > 0)
+     * @param settings the step frames start from, the keyframe's weight, and whether frames run independently
      */
     TemporalLcmSampler(LcmScheduler scheduler, std::vector<std::vector<float>> noise, Settings settings);
 
