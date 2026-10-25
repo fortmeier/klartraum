@@ -9,7 +9,8 @@
 
 #include <glm/glm.hpp>
 
-#include "klartraum/vulkan_gaussian_splatting_raster.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_raster.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting.hpp"
 #include "klartraum/draw_basics.hpp"
 
 namespace klartraum {
@@ -57,6 +58,9 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     this->config = config;
     this->setInput(imageViewSrc, 0);
     this->setInput(cameraUBO, 1);
+    configureOutputLayout(vulkanContext);
+    if (!(config.depthOpacityThreshold > 0.0f && config.depthOpacityThreshold <= 1.0f))
+        throw std::invalid_argument("Gaussian splatting: depth opacity threshold must be in (0, 1]");
 
     const uint32_t N = buffers.count;
 
@@ -225,7 +229,12 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     // Mesh-shader path (perf plan R5) is selected only when requested and the
     // device supports VK_EXT_mesh_shader; otherwise fall back to the vertex path.
     // The depth output is written by the vertex path's fragment shader only.
-    const bool useMesh = config.useMeshShader && vulkanContext.isMeshShaderSupported() && !config.outputDepth;
+    const bool sceneDepth = config.depthAttachment && (config.depthState.test || config.depthState.write);
+    if (sceneDepth && (config.depthAttachment->extent().width != extent.width ||
+                       config.depthAttachment->extent().height != extent.height))
+        throw std::invalid_argument("Gaussian splatting: depth and color extents differ");
+    const bool useMesh =
+        config.useMeshShader && vulkanContext.isMeshShaderSupported() && !config.outputDepth && !sceneDepth;
 
     if (useMesh) {
         // VkDrawMeshTasksIndirectCommandEXT filled from the visible count by
@@ -269,11 +278,26 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
         pushConstants.splatScale = 3.0f;
         pushConstants.shDegree = 0;
         pushConstants.numSplats = N;
+        pushConstants.depthThreshold = config.depthOpacityThreshold;
+        const bool wantsSurface = config.outputDepth || (sceneDepth && config.depthState.write);
+        const bool computeDepth = config.depthMode == GaussianDepthMode::AccumulatedOpacity ||
+                                  !vulkanContext.isFragmentStoresAndAtomicsSupported();
         rasterizer->setPushConstants(pushConstants);
-        if (config.outputDepth) {
+        if (sceneDepth && config.depthState.test)
+            renderPass->setDepthAttachment(config.depthAttachment, {true, false});
+        if (wantsSurface && !computeDepth) {
             addDepthOutput(vulkanContext, extent);
         }
         renderPass->addDrawComponent(rasterizer);
+        if (wantsSurface && computeDepth) {
+            GsplatConfig depthConfig = config;
+            depthConfig.depthMode = config.depthMode == GaussianDepthMode::AccumulatedOpacity
+                                        ? GaussianDepthMode::AccumulatedOpacity
+                                        : GaussianDepthMode::NearestOpaqueSplat;
+            medianDepth = std::shared_ptr<VulkanGaussianSplatting>(
+                new VulkanGaussianSplatting(vulkanContext, renderPass, cameraUBO, buffers, depthConfig, true));
+            depth = medianDepth->getDepth();
+        }
     }
 
     renderPass->addComputeDependency(barrier);
@@ -282,10 +306,25 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     if (depthResolve) {
         outputElements[1] = depthResolve;
     }
+    if (depthWrite)
+        outputElements[2] = depthWrite;
+    if (medianDepth)
+        outputElements[3] = medianDepth;
 }
 
 void VulkanGaussianSplattingRaster::addDepthOutput(VulkanContext& vulkanContext, VkExtent2D extent) {
     const uint32_t pixels = extent.width * extent.height;
+    const bool sceneDepth = config.depthAttachment && config.depthState.write;
+    std::shared_ptr<DepthBuffer> sceneBuffer;
+    if (sceneDepth) {
+        sceneBuffer = std::make_shared<DepthBuffer>(
+            vulkanContext, pixels,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        depthRead = std::make_shared<DepthTransfer>(config.depthAttachment, sceneBuffer, false);
+        depthRead->addDependency(getInputElement(0));
+        renderPass->addComputeDependency(depthRead);
+    }
     // Encoded depths (gsplat_depth_encoding.glsl), reset to "no surface" before every render pass.
     constexpr uint32_t kNoSurface = 0xFF800000u;
     depthBits = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
@@ -296,18 +335,27 @@ void VulkanGaussianSplattingRaster::addDepthOutput(VulkanContext& vulkanContext,
     rasterizer->setDepthOutput(depthBits);
     renderPass->addComputeDependency(depthBits);
 
-    depth = std::make_shared<BufferElement<VulkanBuffer<float>>>(
-        vulkanContext, pixels,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    depth->setName("RasterDepth");
-    depthResolve = vulkanContext.create<GeneralComputation<uint32_t>>("shaders/gsplat/gsplat_depth_resolve.comp.spv");
+    if (config.outputDepth) {
+        depth = std::make_shared<DepthBuffer>(vulkanContext, pixels,
+                                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        depth->setName("RasterDepth");
+    }
+    depthResolve = vulkanContext.create<GeneralComputation<DepthResolvePushConstants>>(
+        "shaders/gsplat/gsplat_depth_resolve.comp.spv");
     depthResolve->setName("RasterDepthResolve");
     depthResolve->setInput(depthBits, 0);
-    depthResolve->setInput(depth, 1);
-    depthResolve->setPushConstants({pixels});
+    depthResolve->setInput(depth ? depth : sceneBuffer, 1);
+    depthResolve->setInput(sceneBuffer ? sceneBuffer : depth, 2);
+    depthResolve->setPushConstants(
+        {{pixels, (sceneDepth && config.depthState.write ? 1u : 0u) | (config.outputDepth ? 2u : 0u)}});
     depthResolve->setGroupCountX((pixels + 255) / 256);
     depthResolve->addDependency(renderPass);
+    if (sceneDepth && config.depthState.write) {
+        depthWrite = std::make_shared<DepthTransfer>(config.depthAttachment, sceneBuffer, true);
+        depthWrite->addDependency(depthResolve);
+    }
 }
 
 } // namespace klartraum

@@ -92,9 +92,10 @@ public:
 
     void setImageLayoutTransition(int inputIndex, VkImageLayout oldLayout, VkImageLayout newLayout,
                                   VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
-                                  VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask) {
+                                  VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
+                                  bool useInputLayout = false) {
         imageLayoutTransitions[inputIndex] = {
-            oldLayout, newLayout, srcStageMask, dstStageMask, srcAccessMask, dstAccessMask,
+            oldLayout, newLayout, srcStageMask, dstStageMask, srcAccessMask, dstAccessMask, useInputLayout,
         };
     }
 
@@ -119,6 +120,8 @@ public:
                 if (configured != imageLayoutTransitions.end()) {
                     transition = configured->second;
                 }
+                if (transition.useInputLayout)
+                    transition.oldLayout = imageElement->getOutputLayout();
                 VkImageMemoryBarrier imageBarrier{};
                 imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 imageBarrier.oldLayout = transition.oldLayout;
@@ -190,6 +193,7 @@ private:
         VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         VkAccessFlags srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         VkAccessFlags dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        bool useInputLayout = false;
     };
 
     VkDescriptorPool descriptorPool;

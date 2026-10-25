@@ -51,7 +51,7 @@ after the graph has finished.
 #include <memory>
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/imagecomposite.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/offscreen_target.hpp"
 
 std::shared_ptr<klartraum::OffscreenTarget> renderComposedImage(

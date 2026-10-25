@@ -22,8 +22,8 @@
 
 #include "klartraum/camera.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/offscreen_target.hpp"
 
@@ -102,7 +102,7 @@ Render render(VulkanContext& vc, GsplatBackend backend, const CameraMVP& matrice
     Render result;
     result.bgra = readImage(vc, target->getImage(0), *target->getFinalLayoutOverride(), extent);
     result.depth.resize(size_t(extent.width) * extent.height);
-    getGaussianSplattingDepth(splatting)->getBuffer(0).memcopyTo(result.depth);
+    splatting->getDepth()->getBuffer(0).memcopyTo(result.depth);
     return result;
 }
 

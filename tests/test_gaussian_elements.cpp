@@ -25,11 +25,11 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/computegraph/gaussianmerge.hpp"
-#include "klartraum/computegraph/gaussiantransform.hpp"
-#include "klartraum/computegraph/transformbuffer.hpp"
-#include "klartraum/gaussian_transform.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussianmerge.hpp"
+#include "klartraum/rendering/gaussiantransform.hpp"
+#include "klartraum/rendering/transformbuffer.hpp"
+#include "klartraum/rendering/gaussian_transform.hpp"
 #include "klartraum/headless_frontend.hpp"
 
 using namespace klartraum;

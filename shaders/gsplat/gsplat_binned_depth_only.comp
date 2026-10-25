@@ -1,0 +1,9 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+#define OUTPUT_DEPTH
+#define DEPTH_ONLY
+#include "gsplat_binned_splatting.glsl"

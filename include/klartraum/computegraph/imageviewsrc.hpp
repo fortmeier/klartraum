@@ -68,6 +68,9 @@ public:
     // TRANSFER_SRC_OPTIMAL so the Window composite can blit straight from them
     // (PRESENT_SRC is illegal on a non-swapchain image).
     virtual std::optional<VkImageLayout> getFinalLayoutOverride() const { return std::nullopt; }
+    // Layout after this element has executed, as distinct from the layout a
+    // target asks its next writer to leave behind.
+    virtual VkImageLayout getOutputLayout() const { return VK_IMAGE_LAYOUT_GENERAL; }
 };
 
 /**
@@ -175,6 +178,9 @@ public:
     VkImageView& getImageView(uint32_t pathId) override { return source().getImageView(pathId); }
     VkImage& getImage(uint32_t pathId) override { return source().getImage(pathId); }
     VkExtent2D& getImageExtent(uint32_t pathId) override { return source().getImageExtent(pathId); }
+    VkImageLayout getOutputLayout() const override {
+        return const_cast<ImageViewForward*>(this)->source().getOutputLayout();
+    }
     std::optional<VkImageLayout> getFinalLayoutOverride() const override {
         if (inputs.empty()) {
             return std::nullopt;
@@ -207,6 +213,7 @@ public:
         : color(color) {}
 
     const char* getType() const override { return "ClearImage"; }
+    VkImageLayout getOutputLayout() const override { return VK_IMAGE_LAYOUT_GENERAL; }
 
     void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
         ComputeGraphElement::_record(commandBuffer, pathId);

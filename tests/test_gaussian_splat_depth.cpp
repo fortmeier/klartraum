@@ -15,6 +15,9 @@
  *   depth where transmittance first falls to 0.5 (the second Gaussian), the raster backend no surface, as no single
  *   Gaussian is opaque enough
  * - backendsAgreeOnLantern: on the lantern scene both backends find a surface at nearly the same pixels and depths
+ * - depthMethodsAreSelectableOnBothBackends: both backends provide either selected surface estimate
+ * - rasterDepthPrepassHonorsOpacityCulling: accumulated-opacity depth excludes splats culled from raster RGB
+ * - rasterDepthPrepassHonorsClipRange: accumulated-opacity depth excludes depth-clipped raster splats
  **/
 
 #include <gtest/gtest.h>
@@ -29,8 +32,8 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/computegraph/computegraph.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/offscreen_target.hpp"
@@ -108,13 +111,16 @@ protected:
     }
 
     Render render(GsplatBackend backend, std::vector<Gaussian3D> gaussians, bool outputDepth,
-                  VkExtent2D extent = kExtent) {
+                  VkExtent2D extent = kExtent, GaussianDepthMode mode = GaussianDepthMode::BackendDefault,
+                  float alphaCull = 1.0f / 255.0f) {
         auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
         auto cameraUbo = std::make_shared<CameraUboType>();
         cameraUbo->ubo = camera(extent);
         auto model = std::make_shared<GaussianDataStandard>(*vc, std::move(gaussians));
         GsplatConfig config;
         config.outputDepth = outputDepth;
+        config.depthMode = mode;
+        config.alphaCullThreshold = alphaCull;
         // The compute backend's binned buffer holds maxMod entries per Gaussian on average; a scene of a few small
         // Gaussians that each overlap up to four bins needs more.
         config.maxMod = 16;
@@ -126,7 +132,7 @@ protected:
 
         Render result;
         result.color = readImage(*vc, target->getImage(0), *target->getFinalLayoutOverride(), extent);
-        auto depth = getGaussianSplattingDepth(splatting);
+        auto depth = splatting->getDepth();
         result.hasDepthBuffer = depth != nullptr;
         if (depth) {
             result.depth.resize(size_t(extent.width) * extent.height);
@@ -201,6 +207,37 @@ TEST_F(GaussianSplatDepthTest, translucentStackDepthDiffersByBackend) {
     const auto [expected, pixel] = project(camera(kExtent), second, kExtent);
     EXPECT_NEAR(depthAt(render(GsplatBackend::Compute, stack, true), pixel), expected, 1e-5f);
     EXPECT_EQ(depthAt(render(GsplatBackend::Raster, stack, true), pixel), kInfinity);
+}
+
+TEST_F(GaussianSplatDepthTest, depthMethodsAreSelectableOnBothBackends) {
+    const std::vector<Gaussian3D> stack = {gaussianAt({0, 0, 0.2f}, 0.32f, 0.04f), gaussianAt({0, 0, 0}, 0.32f, 0.04f),
+                                           gaussianAt({0, 0, -0.2f}, 0.32f, 0.04f)};
+    const auto [expected, pixel] = project(camera(kExtent), {0, 0, 0}, kExtent);
+    for (auto backend : kBackends) {
+        EXPECT_NEAR(depthAt(render(backend, stack, true, kExtent, GaussianDepthMode::AccumulatedOpacity), pixel),
+                    expected, 1e-5f);
+        EXPECT_EQ(depthAt(render(backend, stack, true, kExtent, GaussianDepthMode::NearestOpaqueSplat), pixel),
+                  kInfinity);
+    }
+}
+
+TEST_F(GaussianSplatDepthTest, rasterDepthPrepassHonorsOpacityCulling) {
+    const std::vector<Gaussian3D> stack = {gaussianAt({0, 0, 0.2f}, 0.32f, 0.04f), gaussianAt({0, 0, 0}, 0.32f, 0.04f),
+                                           gaussianAt({0, 0, -0.2f}, 0.32f, 0.04f)};
+    const auto pixel = project(camera(kExtent), {0, 0, 0}, kExtent).second;
+    const auto result =
+        render(GsplatBackend::Raster, stack, true, kExtent, GaussianDepthMode::AccumulatedOpacity, 0.4f);
+    EXPECT_EQ(depthAt(result, pixel), kInfinity);
+}
+
+TEST_F(GaussianSplatDepthTest, rasterDepthPrepassHonorsClipRange) {
+    const glm::vec3 position(0, 0, 0.85f);
+    const auto [z, pixel] = project(camera(kExtent), position, kExtent);
+    ASSERT_LT(z, 0.0f);
+    for (auto mode : {GaussianDepthMode::AccumulatedOpacity, GaussianDepthMode::NearestOpaqueSplat}) {
+        const auto result = render(GsplatBackend::Raster, {gaussianAt(position, 0.99f, 0.001f)}, true, kExtent, mode);
+        EXPECT_EQ(depthAt(result, pixel), kInfinity);
+    }
 }
 
 TEST_F(GaussianSplatDepthTest, backendsAgreeOnLantern) {

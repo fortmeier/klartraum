@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
-#define KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
+#ifndef KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_HPP
+#define KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_HPP
 
 #include <memory>
 #include <string>
@@ -12,22 +12,21 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include "klartraum/computegraph/computegraphgroup.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/computegraph/rendergraphelement.hpp"
 #include "klartraum/computegraph/buffertransformation.hpp"
+#include "klartraum/rendering/gaussian_splatting_interface.hpp"
 #include "klartraum/vulkan_buffer.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
-class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual public ComputeGraphGroup {
+class VulkanGaussianSplatting : public GaussianSplattingInterface {
 public:
     VulkanGaussianSplatting(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                             std::shared_ptr<CameraUboType> cameraUBO, GaussianSoABuffers buffers,
                             GsplatConfig config = GsplatConfig{});
 
-    ~VulkanGaussianSplatting();
+    ~VulkanGaussianSplatting() override;
 
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override;
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
@@ -36,10 +35,13 @@ public:
 
     virtual const char* getType() const override { return "GaussianSplatting"; }
 
-    /// The depth buffer (see GsplatConfig::outputDepth), or nullptr if it was not requested.
-    std::shared_ptr<BufferElement<VulkanBuffer<float>>> getDepth() { return depth; }
+    std::shared_ptr<DepthBuffer> getDepth() const override { return depth; }
 
 private:
+    friend class VulkanGaussianSplattingRaster;
+    VulkanGaussianSplatting(VulkanContext& context, std::shared_ptr<ImageViewSrc> target,
+                            std::shared_ptr<CameraUboType> camera, GaussianSoABuffers buffers, GsplatConfig config,
+                            bool depthOnly);
     void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                     std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
 
@@ -63,7 +65,10 @@ private:
     std::shared_ptr<GeneralComputation<>> gatherSorted;
     std::shared_ptr<GeneralComputation<>> computeBounds;
     std::shared_ptr<GaussianSplatting> splat;
-    std::shared_ptr<BufferElement<VulkanBuffer<float>>> depth;
+    std::shared_ptr<DepthBuffer> depth;
+    std::shared_ptr<DepthTransfer> depthRead;
+    std::shared_ptr<DepthTransfer> depthWrite;
+    bool depthOnly = false;
 
     // Sort ping-pong value buffers (stored as members for _record pre-fill)
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sortRadixValA;
@@ -72,4 +77,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
+#endif // KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_HPP

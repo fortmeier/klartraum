@@ -5,18 +5,17 @@
 #include <stdexcept>
 #include <array>
 
-#include "klartraum/gaussian_splat_mesh_rasterizer.hpp"
+#include "klartraum/rendering/gaussian_splat_rasterizer.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 
 namespace klartraum {
 
-GaussianSplatMeshRasterizer::GaussianSplatMeshRasterizer(
-    std::vector<std::shared_ptr<BufferElementInterface>> splatBuffers,
-    std::shared_ptr<BufferElementInterface> meshArgsBuffer)
+GaussianSplatRasterizer::GaussianSplatRasterizer(std::vector<std::shared_ptr<BufferElementInterface>> splatBuffers,
+                                                 std::shared_ptr<BufferElementInterface> drawArgsBuffer)
     : splatBuffers(std::move(splatBuffers)),
-      meshArgsBuffer(std::move(meshArgsBuffer)) {}
+      drawArgsBuffer(std::move(drawArgsBuffer)) {}
 
-GaussianSplatMeshRasterizer::~GaussianSplatMeshRasterizer() {
+GaussianSplatRasterizer::~GaussianSplatRasterizer() {
     // Nothing was created if initialize() never ran.
     if (vulkanContext == nullptr) {
         return;
@@ -28,8 +27,8 @@ GaussianSplatMeshRasterizer::~GaussianSplatMeshRasterizer() {
     vkDestroyDescriptorSetLayout(device, splatDescriptorSetLayout, nullptr);
 }
 
-void GaussianSplatMeshRasterizer::initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass,
-                                             std::shared_ptr<CameraUboType> cameraUBO) {
+void GaussianSplatRasterizer::initialize(VulkanContext& vulkanContext, VkRenderPass& renderPass,
+                                         std::shared_ptr<CameraUboType> cameraUBO) {
     DrawComponent::initialize(vulkanContext, renderPass, cameraUBO);
 
     createSplatDescriptorSetLayout();
@@ -38,7 +37,15 @@ void GaussianSplatMeshRasterizer::initialize(VulkanContext& vulkanContext, VkRen
     createGraphicsPipeline();
 }
 
-void GaussianSplatMeshRasterizer::createSplatDescriptorSetLayout() {
+void GaussianSplatRasterizer::setDepthOutput(std::shared_ptr<BufferElementInterface> depthBits) {
+    if (splatBuffers.size() != 2 || outputDepth) {
+        throw std::runtime_error("GaussianSplatRasterizer: the depth output is binding 2, after two splat buffers");
+    }
+    splatBuffers.push_back(std::move(depthBits));
+    outputDepth = true;
+}
+
+void GaussianSplatRasterizer::createSplatDescriptorSetLayout() {
     auto& device = vulkanContext->getDevice();
 
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings(splatBuffers.size());
@@ -47,7 +54,9 @@ void GaussianSplatMeshRasterizer::createSplatDescriptorSetLayout() {
         layoutBindings[i].descriptorCount = 1;
         layoutBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         layoutBindings[i].pImmutableSamplers = nullptr;
-        layoutBindings[i].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+        // The depth output (the last binding when enabled) is written by the fragment shader.
+        const bool depthBinding = outputDepth && i >= 2;
+        layoutBindings[i].stageFlags = depthBinding ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -56,11 +65,11 @@ void GaussianSplatMeshRasterizer::createSplatDescriptorSetLayout() {
     layoutInfo.pBindings = layoutBindings.data();
 
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &splatDescriptorSetLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create mesh splat descriptor set layout!");
+        throw std::runtime_error("failed to create splat descriptor set layout!");
     }
 }
 
-void GaussianSplatMeshRasterizer::createDescriptorPool() {
+void GaussianSplatRasterizer::createDescriptorPool() {
     auto& device = vulkanContext->getDevice();
 
     VkDescriptorPoolSize poolSize{};
@@ -74,11 +83,11 @@ void GaussianSplatMeshRasterizer::createDescriptorPool() {
     poolInfo.maxSets = numberPaths;
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create mesh splat descriptor pool!");
+        throw std::runtime_error("failed to create splat descriptor pool!");
     }
 }
 
-void GaussianSplatMeshRasterizer::createDescriptorSets() {
+void GaussianSplatRasterizer::createDescriptorSets() {
     auto& device = vulkanContext->getDevice();
 
     std::vector<VkDescriptorSetLayout> layouts(numberPaths, splatDescriptorSetLayout);
@@ -91,7 +100,7 @@ void GaussianSplatMeshRasterizer::createDescriptorSets() {
 
     splatDescriptorSets.resize(numberPaths);
     if (vkAllocateDescriptorSets(device, &allocInfo, splatDescriptorSets.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate mesh splat descriptor sets!");
+        throw std::runtime_error("failed to allocate splat descriptor sets!");
     }
 
     for (uint32_t pathId = 0; pathId < numberPaths; pathId++) {
@@ -116,21 +125,22 @@ void GaussianSplatMeshRasterizer::createDescriptorSets() {
     }
 }
 
-void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
+void GaussianSplatRasterizer::createGraphicsPipeline() {
     auto device = vulkanContext->getDevice();
     auto swapChainExtent = vulkanContext->getSwapChainExtent();
 
-    auto meshShaderCode = readFile("shaders/gsplat/gsplat_raster.mesh.spv");
-    auto fragShaderCode = readFile("shaders/gsplat/gsplat_raster.frag.spv");
+    auto vertShaderCode = readFile("shaders/gsplat/gsplat_raster.vert.spv");
+    auto fragShaderCode =
+        readFile(outputDepth ? "shaders/gsplat/gsplat_raster_depth.frag.spv" : "shaders/gsplat/gsplat_raster.frag.spv");
 
-    VkShaderModule meshShaderModule = createShaderModule(meshShaderCode, device);
+    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode, device);
     VkShaderModule fragShaderModule = createShaderModule(fragShaderCode, device);
 
-    VkPipelineShaderStageCreateInfo meshShaderStageInfo{};
-    meshShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    meshShaderStageInfo.stage = VK_SHADER_STAGE_MESH_BIT_EXT;
-    meshShaderStageInfo.module = meshShaderModule;
-    meshShaderStageInfo.pName = "main";
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
     fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -138,17 +148,26 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     fragShaderStageInfo.module = fragShaderModule;
     fragShaderStageInfo.pName = "main";
 
-    VkPipelineShaderStageCreateInfo shaderStages[] = {meshShaderStageInfo, fragShaderStageInfo};
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
     std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+
     VkPipelineDynamicStateCreateInfo dynamicState{};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
-    // Mesh pipelines have no vertex-input or input-assembly stage; the mesh
-    // shader emits primitives directly (pVertexInputState/pInputAssemblyState
-    // are ignored and left null).
+    // No vertex buffer — quad corners are generated in the vertex shader from
+    // gl_VertexIndex (klartraum_rasterized_gs_backend_guide.md §3.4).
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 0;
+    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
 
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -184,8 +203,13 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     multisampling.sampleShadingEnable = VK_FALSE;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     multisampling.minSampleShading = 1.0f;
+    multisampling.pSampleMask = nullptr;
+    multisampling.alphaToCoverageEnable = VK_FALSE;
+    multisampling.alphaToOneEnable = VK_FALSE;
 
-    // Premultiplied "over" (matches the vertex path / gsplat_raster.frag output).
+    // Premultiplied "over": the fragment shader outputs rgb already multiplied
+    // by alpha, so splats composite back-to-front via the hardware blender
+    // (klartraum_rasterized_gs_backend_guide.md §3.4 / §5C).
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -200,8 +224,19 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.logicOp = VK_LOGIC_OP_COPY;
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
+    colorBlending.blendConstants[0] = 0.0f;
+    colorBlending.blendConstants[1] = 0.0f;
+    colorBlending.blendConstants[2] = 0.0f;
+    colorBlending.blendConstants[3] = 0.0f;
+
+    VkPushConstantRange pushConstantRange{};
+    // The depth fragment shader reads the resolution.
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(GaussianSplatRasterPushConstants);
 
     VkDescriptorSetLayout setLayouts[] = {cameraUBO->getDescriptorSetLayout(), splatDescriptorSetLayout};
 
@@ -209,22 +244,24 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 2;
     pipelineLayoutInfo.pSetLayouts = setLayouts;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create mesh pipeline layout!");
+        throw std::runtime_error("failed to create pipeline layout!");
     }
 
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineInfo.stageCount = 2;
     pipelineInfo.pStages = shaderStages;
-    pipelineInfo.pVertexInputState = nullptr;
-    pipelineInfo.pInputAssemblyState = nullptr;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = nullptr;
+    auto depthInfo = pipelineDepthState();
+    pipelineInfo.pDepthStencilState = &depthInfo;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
@@ -234,41 +271,46 @@ void GaussianSplatMeshRasterizer::createGraphicsPipeline() {
     pipelineInfo.basePipelineIndex = -1;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create mesh graphics pipeline!");
+        throw std::runtime_error("failed to create graphics pipeline!");
     }
 
     vkDestroyShaderModule(device, fragShaderModule, nullptr);
-    vkDestroyShaderModule(device, meshShaderModule, nullptr);
+    vkDestroyShaderModule(device, vertShaderModule, nullptr);
 }
 
-void GaussianSplatMeshRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer,
-                                                      uint32_t pathId) {
-    // Viewport/scissor must match the render target (viewport offscreen extent),
-    // not the full swapchain; fall back to the swapchain when no target was set.
-    VkExtent2D extent = (targetExtent.width != 0) ? targetExtent : vulkanContext->getSwapChainExtent();
+void GaussianSplatRasterizer::recordCommandBuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer,
+                                                  uint32_t pathId) {
+    // The viewport/scissor must match the render target this pass draws into,
+    // which is the (possibly sub-window) render-target extent — carried in
+    // pushConstants.resolution — not the full swapchain. They coincide for a
+    // full-window target but differ for a viewport offscreen image.
+    VkExtent2D targetExtent = {static_cast<uint32_t>(pushConstants.resolution.x),
+                               static_cast<uint32_t>(pushConstants.resolution.y)};
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = static_cast<float>(extent.width);
-    viewport.height = static_cast<float>(extent.height);
+    viewport.width = static_cast<float>(targetExtent.width);
+    viewport.height = static_cast<float>(targetExtent.height);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor{};
     scissor.offset = {0, 0};
-    scissor.extent = extent;
+    scissor.extent = targetExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     auto& cameraDescriptorSets = cameraUBO->getDescriptorSets();
     VkDescriptorSet sets[] = {cameraDescriptorSets[pathId], splatDescriptorSets[pathId]};
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
 
-    auto drawMeshTasks = vulkanContext->getCmdDrawMeshTasksIndirectEXT();
-    drawMeshTasks(commandBuffer, meshArgsBuffer->getVkBuffer(pathId), 0, 1, sizeof(VkDrawMeshTasksIndirectCommandEXT));
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeof(GaussianSplatRasterPushConstants), &pushConstants);
+
+    vkCmdDrawIndirect(commandBuffer, drawArgsBuffer->getVkBuffer(pathId), 0, 1, sizeof(VkDrawIndirectCommand));
 }
 
 } // namespace klartraum

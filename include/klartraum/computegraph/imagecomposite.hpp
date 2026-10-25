@@ -78,10 +78,11 @@ public:
         drawComputation->setImageLayoutTransition(1, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                                                   VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
-                                                  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                                                  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, true);
     }
 
     const char* getType() const override { return "ImageComposite"; }
+    VkImageLayout getOutputLayout() const override { return VK_IMAGE_LAYOUT_GENERAL; }
 
     /** @brief The image drawn: `element` itself, or what it passes through `slot`. */
     void setSource(ComputeGraphElementPtr element, int slot = -1) { drawComputation->setInput(element, 0, slot); }

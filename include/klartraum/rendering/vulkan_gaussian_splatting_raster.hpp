@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
-#define KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
+#ifndef KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
+#define KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
 
 #include <memory>
 #include <string>
@@ -11,17 +11,18 @@
 
 #include <glm/glm.hpp>
 
-#include "klartraum/computegraph/computegraphgroup.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/computegraph/rendergraphelement.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/computegraph/buffertographicsbarrier.hpp"
+#include "klartraum/rendering/gaussian_splatting_interface.hpp"
 #include "klartraum/vulkan_buffer.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
-#include "klartraum/gaussian_splat_rasterizer.hpp"
-#include "klartraum/gaussian_splat_mesh_rasterizer.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/gaussian_splat_rasterizer.hpp"
+#include "klartraum/rendering/gaussian_splat_mesh_rasterizer.hpp"
 
 namespace klartraum {
+
+class VulkanGaussianSplatting;
 
 /**
  * @brief Gaussian splatting backend that sorts the Gaussians once and draws them with hardware rasterization.
@@ -37,16 +38,16 @@ namespace klartraum {
  *   supported, a GaussianSplatMeshRasterizer) that draws instanced quads with
  *   premultiplied "over" blending.
  *
- * The internal RenderPass is the group's output element: the single
- * image-producing element through which the compute graph reaches all others.
+ * The group's outputs anchor the RGB render pass and any depth calculation
+ * and attachment update, so consumers run after both results are ready.
  */
-class VulkanGaussianSplattingRaster : public RenderGraphElement, public ComputeGraphGroup {
+class VulkanGaussianSplattingRaster : public GaussianSplattingInterface {
 public:
     VulkanGaussianSplattingRaster(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                                   std::shared_ptr<CameraUboType> cameraUBO, GaussianSoABuffers buffers,
                                   GsplatConfig config = GsplatConfig{});
 
-    ~VulkanGaussianSplattingRaster();
+    ~VulkanGaussianSplattingRaster() override;
 
     virtual void checkInput(ComputeGraphElementPtr input, int index = 0) override;
     virtual void _setup(VulkanContext& vulkanContext, uint32_t numberPaths,
@@ -54,15 +55,14 @@ public:
 
     virtual const char* getType() const override { return "GaussianSplattingRaster"; }
 
-    /// The depth buffer (see GsplatConfig::outputDepth), or nullptr if it was not requested.
-    std::shared_ptr<BufferElement<VulkanBuffer<float>>> getDepth() { return depth; }
+    std::shared_ptr<DepthBuffer> getDepth() const override { return depth; }
 
     void setPushConstants(const GaussianSplatRasterPushConstants& pushConstants) {
         rasterizer->setPushConstants(pushConstants);
     }
 
 private:
-    std::shared_ptr<BufferElement<VulkanBuffer<float>>> depth;
+    std::shared_ptr<DepthBuffer> depth;
     void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                     std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
 
@@ -107,7 +107,10 @@ private:
     // rasterizing, decoded by a compute pass after the render pass.
     void addDepthOutput(VulkanContext& vulkanContext, VkExtent2D extent);
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> depthBits;
-    std::shared_ptr<GeneralComputation<uint32_t>> depthResolve;
+    std::shared_ptr<GeneralComputation<DepthResolvePushConstants>> depthResolve;
+    std::shared_ptr<DepthTransfer> depthRead;
+    std::shared_ptr<DepthTransfer> depthWrite;
+    std::shared_ptr<VulkanGaussianSplatting> medianDepth;
 
     // Optional VK_EXT_mesh_shader draw path (perf plan R5), selected when
     // config.useMeshShader && the device supports mesh shaders; otherwise the
@@ -121,4 +124,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
+#endif // KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP

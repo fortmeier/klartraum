@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
-#define KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
+#ifndef KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
+#define KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
+
+#include "klartraum/depth_attachment.hpp"
 
 #include <array>
 #include <memory>
@@ -19,8 +21,14 @@
 
 namespace klartraum {
 
-// Runtime-tunable knobs for the Gaussian splatting pipeline.
-// Different hardware benefits from different settings; adjust before construction.
+/** @brief How a Gaussian surface depth is selected, independently of the RGB rendering backend. */
+enum class GaussianDepthMode : uint32_t {
+    BackendDefault = 0,
+    AccumulatedOpacity = 1,
+    NearestOpaqueSplat = 2,
+};
+
+// Settings are captured when the backend is constructed, before graph compilation.
 struct GsplatConfig {
     // Gaussian footprint multiplier used in bin overlap tests (default 2.5 = 2.5 sigma).
     // Smaller → fewer bins touched, faster binning, slight clipping at edges.
@@ -58,14 +66,17 @@ struct GsplatConfig {
     // the raster backend falls back to the vertex path. Default off (portable).
     bool useMeshShader = false;
 
-    // Also write a depth buffer for compositing other geometry into the scene, read with
-    // getGaussianSplattingDepth(). It holds, per pixel (row-major, screen size), the NDC
-    // depth (clip.z / clip.w) of the scene's surface, or +inf where there is none. The
-    // compute backend reports the median depth: where the transmittance first falls to
-    // 0.5. The raster backend reports the nearest depth of a Gaussian that alone covers
-    // the pixel with an opacity of at least 0.5; it uses the vertex path then. Both agree
-    // on opaque surfaces. Off by default; the colour image is the same either way.
+    // Export a per-path, row-major float depth buffer through getDepth(), independently
+    // of the optional attachment. NDC depths are clip.z / clip.w; no surface is +inf.
     bool outputDepth = false;
+    // Defaults preserve accumulated opacity on compute and nearest opaque splat on raster.
+    GaussianDepthMode depthMode = GaussianDepthMode::BackendDefault;
+    // Per-pixel cumulative or individual opacity threshold, in (0, 1].
+    float depthOpacityThreshold = 0.5f;
+    // Optional shared native depth image. No attachment means no depth testing or writing.
+    std::shared_ptr<DepthAttachment> depthAttachment;
+    // Independent testing and writing controls when an attachment is supplied.
+    DepthState depthState{};
 };
 
 /**
@@ -191,6 +202,15 @@ struct SplatPushConstants {
     uint32_t gridY;
     float screenWidth;
     float screenHeight;
+    uint32_t depthMode = 1;
+    uint32_t depthFlags = 0;
+    float depthThreshold = 0.5f;
+    float depthAlphaCull = 0.0f;
+};
+
+struct DepthResolvePushConstants {
+    uint32_t pixelCount;
+    uint32_t flags;
 };
 
 struct CullAndCompactPushConstants {
@@ -229,4 +249,4 @@ typedef GeneralComputation<> MeshArgsFill;
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
+#endif // KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP

@@ -19,6 +19,9 @@
 
 ## Backends
 
+```{doxygenclass} klartraum::GaussianSplattingInterface
+```
+
 {cpp:func}`klartraum::createGaussianSplatting` builds either backend from the
 same inputs.
 
@@ -32,6 +35,9 @@ same inputs.
 ```
 
 ```{doxygenstruct} klartraum::GsplatConfig
+```
+
+```{doxygenenum} klartraum::GaussianDepthMode
 ```
 
 ## Draw components of the raster backend

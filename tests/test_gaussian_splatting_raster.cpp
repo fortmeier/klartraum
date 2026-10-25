@@ -42,8 +42,8 @@
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/vulkan_gaussian_splatting_raster.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_raster.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 #include "test_scene.hpp"

@@ -10,7 +10,7 @@
 
 #include "load-spz.h"
 
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 
 namespace klartraum {
 

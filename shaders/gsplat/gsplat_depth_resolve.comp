@@ -13,14 +13,18 @@ layout(local_size_x = 256) in;
 
 layout(push_constant) uniform PushConstants {
     uint pixelCount;
+    uint flags;
 } pc;
 
 layout(set = 0, binding = 0) readonly buffer DepthBits { uint depthBits[]; };
 layout(set = 0, binding = 1) writeonly buffer Depth { float depth[]; };
+layout(set = 0, binding = 2) buffer SceneDepth { float sceneDepth[]; };
 
 void main() {
     uint pixel = gl_GlobalInvocationID.x;
     if (pixel < pc.pixelCount) {
-        depth[pixel] = decodeDepth(depthBits[pixel]);
+        float selected = decodeDepth(depthBits[pixel]);
+        if ((pc.flags & 2u) != 0u) depth[pixel] = selected;
+        if ((pc.flags & 1u) != 0u && !isinf(selected)) sceneDepth[pixel] = clamp(selected, 0.0, 1.0);
     }
 }

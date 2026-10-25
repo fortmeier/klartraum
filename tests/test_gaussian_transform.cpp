@@ -18,8 +18,8 @@
 #include <filesystem>
 #include <random>
 
-#include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/gaussian_transform.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_transform.hpp"
 
 #include "test_scene.hpp"
 

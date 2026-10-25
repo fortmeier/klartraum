@@ -13,6 +13,7 @@
 #include "klartraum/vulkan_context.hpp"
 #include "klartraum/computegraph/uniformbufferobject.hpp"
 #include "klartraum/camera.hpp"
+#include "klartraum/depth_attachment.hpp"
 
 namespace klartraum {
 
@@ -24,6 +25,8 @@ typedef UniformBufferObject<CameraMVP> CameraUboType;
  * Add it with RenderPass::addDrawComponent(). When the graph is compiled, the
  * render pass calls setNumberPaths() and initialize() with its Vulkan render pass
  * and camera uniform buffer, and then recordCommandBuffer() once per path.
+ * Graphics pipelines should use pipelineDepthState() to honor the pass's optional
+ * depth attachment and its independent testing/writing controls.
  */
 class DrawComponent {
 public:
@@ -41,8 +44,21 @@ public:
     // graph may have fewer paths than there are swapchain images, e.g. a
     // single-path graph rendering into an OffscreenTarget.
     void setNumberPaths(uint32_t numberPaths) { this->numberPaths = numberPaths; }
+    void setDepthState(bool attached, DepthState state) {
+        depthAttached = attached;
+        depthState = state;
+    }
 
 protected:
+    VkPipelineDepthStencilStateCreateInfo pipelineDepthState() const {
+        VkPipelineDepthStencilStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        info.depthTestEnable = depthAttached && (depthState.test || depthState.write);
+        info.depthWriteEnable = depthAttached && depthState.write;
+        info.depthCompareOp = depthState.test ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_ALWAYS;
+        return info;
+    }
+    bool depthAttached = false;
+    DepthState depthState{};
     uint32_t numberPaths = 0;
     VulkanContext* vulkanContext = nullptr;
     VkRenderPass* renderPass = nullptr;
