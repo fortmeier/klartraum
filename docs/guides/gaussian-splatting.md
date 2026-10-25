@@ -171,7 +171,7 @@ Custom draw components must use `DrawComponent::pipelineDepthState()` when
 creating their graphics pipeline to honor the render pass's depth options.
 Color-only rendering needs no depth attachment or depth transfer passes.
 
-### Profiling example
+### Profiling measurements
 
 The lantern and two opaque boxes were measured at 512 × 512 pixels on an
 NVIDIA GeForce RTX 2070 SUPER, Windows, Release build, validation disabled.
@@ -197,9 +197,6 @@ splat for raster, accumulated opacity for compute, both with a 0.5 threshold.
 Across the full set of configurations, run means varied by up to 11.3% within
 one configuration. Treat small differences as exploratory measurements.
 
-`gaussian_depth_composition_example` can reproduce the measurements or vary the
-backend, pass order and depth switches; see the
-[example options](../getting-started/examples.md).
 See [Profiling](profiling.md) for interpreting graph and element timings.
 
 ## Operating on Gaussians

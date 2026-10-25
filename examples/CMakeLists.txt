@@ -24,11 +24,6 @@ target_link_libraries(gaussian_splatting_example
 
 add_dependencies(gaussian_splatting_example Shaders)
 
-# Gaussian splatting and opaque meshes sharing a configurable depth attachment.
-add_executable(gaussian_depth_composition_example gaussian_depth_composition_example.cpp)
-target_link_libraries(gaussian_depth_composition_example klartraum_lib)
-add_dependencies(gaussian_depth_composition_example Shaders)
-
 # Gaussian splatting through the ONNX autoencoder
 add_executable(gaussian_autoencoder_example
     gaussian_autoencoder_example.cpp
