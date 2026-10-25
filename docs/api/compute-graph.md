@@ -16,6 +16,9 @@ For memory placement, CPU transfers and per-path buffer storage, see {doc}`buffe
 
 ## Graph
 
+For timing measurements, warm-up, graph-chain readback and export, see
+{doc}`../guides/profiling`.
+
 ```{doxygenclass} klartraum::ComputeGraph
 ```
 

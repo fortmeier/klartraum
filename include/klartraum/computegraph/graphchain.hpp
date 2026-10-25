@@ -97,6 +97,11 @@ public:
         if (vulkanContext.queueSubmit(queue, uint32_t(submits.size()), submits.data(), fence) != VK_SUCCESS) {
             throw std::runtime_error("GraphChain: failed to submit the chain");
         }
+        for (const auto& link : prepared) {
+            if (link.first->profilingEnabled || link.first->perfProfilingEnabled) {
+                link.first->markProfilingSubmitted();
+            }
+        }
         pending = true;
     }
 

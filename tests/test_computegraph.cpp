@@ -16,6 +16,10 @@
  * after resetProfiling(), and writeGraphJson() writes every element, edge and group with these times
  * - profilingGpuSpanCoversElements: the GPU span of a profiled graph is at least the sum of its elements' times, and
  * reset with resetProfiling()
+ * - profilingReadbackCollectsEachSubmissionOnce: direct and chained submissions accumulate once; reset discards
+ * collected and unread timestamp results
+ * - performanceCounterReadbackCollectsEachSubmissionOnce: counter-only profiling reads once and resets safely
+ * - graphJsonUsesClassicNumericLocale: a comma-decimal global locale does not affect exported JSON numbers
  * - longDependencyChainCompletes: a chain of thousands of dependent dispatches (larger than the SD1.5 UNet graph)
  * finishes and applies every dispatch in order
  * - submitChecksQueueFamily: a graph compiled for a queue family runs on a queue of that family, and submitting it
@@ -32,6 +36,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <locale>
 #include <sstream>
 #include <map>
 #include <thread>
@@ -41,6 +46,7 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
+#include "klartraum/computegraph/graphchain.hpp"
 #include "klartraum/computegraph/graph_export.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
@@ -388,6 +394,129 @@ TEST(ComputeGraph, profilingGpuSpanCoversElements) {
 
     graph.resetProfiling();
     EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
+}
+
+TEST(ComputeGraph, profilingReadbackCollectsEachSubmissionOnce) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto element = std::make_shared<BlurOp>();
+    ComputeGraph graph(vc, 2);
+    graph.enableProfiling();
+    graph.compileFrom(element);
+
+    // Before a submission, there are no queries to collect.
+    graph.readProfiling();
+    EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    graph.submitAndWait(vc.getGraphicsQueue(), 1);
+    const auto directTimes = graph.getElementTimesMs();
+    const auto directSpan = graph.getGpuSpanMs();
+    EXPECT_GT(directSpan, 0.0);
+    graph.readProfiling();
+    graph.readProfiling();
+    EXPECT_EQ(graph.getElementTimesMs(), directTimes);
+    EXPECT_EQ(graph.getGpuSpanMs(), directSpan);
+
+    graph.resetProfiling();
+    graph.readProfiling();
+    EXPECT_EQ(graph.getElementTimesMs(), std::vector<double>(1, 0.0));
+    EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
+
+    GraphChain chain(vc);
+    chain.add(graph, 1);
+    for (int i = 0; i < 2; ++i) {
+        chain.submitAndWait(vc.getGraphicsQueue());
+        graph.readProfiling();
+    }
+    const auto chainTimes = graph.getElementTimesMs();
+    const auto chainSpan = graph.getGpuSpanMs();
+    EXPECT_GT(chainSpan, 0.0);
+    graph.readProfiling();
+    EXPECT_EQ(graph.getElementTimesMs(), chainTimes);
+    EXPECT_EQ(graph.getGpuSpanMs(), chainSpan);
+
+    // Reset must discard a completed submission even if it was not read yet.
+    chain.submitAndWait(vc.getGraphicsQueue());
+    graph.resetProfiling();
+    graph.readProfiling();
+    EXPECT_EQ(graph.getElementTimesMs(), std::vector<double>(1, 0.0));
+    EXPECT_EQ(graph.getGpuSpanMs(), 0.0);
+    chain.submitAndWait(vc.getGraphicsQueue());
+    graph.readProfiling();
+    EXPECT_GT(graph.getGpuSpanMs(), 0.0);
+}
+
+TEST(ComputeGraph, performanceCounterReadbackCollectsEachSubmissionOnce) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    if (!vc.isPipelineStatisticsQuerySupported()) {
+        GTEST_SKIP() << "Pipeline statistics queries are not supported";
+    }
+    using Buffer = BufferElement<VulkanBuffer<float>>;
+    constexpr uint32_t count = 64;
+    auto input = std::make_shared<Buffer>(vc, count);
+    auto factor = std::make_shared<Buffer>(vc, count);
+    auto output = std::make_shared<Buffer>(vc, count);
+    auto multiply =
+        std::make_shared<GeneralComputation<>>(vc, "shaders/operator_multiply_scalar_element_wise.comp.spv");
+    multiply->setInput(input, 0);
+    multiply->setInput(factor, 1);
+    multiply->setInput(output, 2);
+    multiply->setGroupCountX(count);
+    ComputeGraph graph(vc, 1);
+    graph.enablePipelineStatisticsProfiling();
+    graph.compileFrom(multiply);
+    input->getBuffer(0).memcopyFrom(std::vector<float>(count, 3.0f));
+    factor->getBuffer(0).memcopyFrom(std::vector<float>(count, 2.0f));
+
+    graph.readProfiling();
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto results = graph.getProfilingResults();
+    EXPECT_TRUE(std::any_of(results.begin(), results.end(), [](const auto& result) {
+        return result.first.find("[CS invocations]") != std::string::npos && result.second > 0.0f;
+    }));
+    graph.readProfiling();
+    EXPECT_EQ(graph.getProfilingResults(), results);
+
+    graph.resetProfiling();
+    graph.readProfiling();
+    for (const auto& result : graph.getProfilingResults()) {
+        EXPECT_EQ(result.second, 0.0f);
+    }
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto resumed = graph.getProfilingResults();
+    EXPECT_TRUE(std::any_of(resumed.begin(), resumed.end(), [](const auto& result) { return result.second > 0.0f; }));
+}
+
+TEST(ComputeGraph, graphJsonUsesClassicNumericLocale) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    ComputeGraph graph(vc, 1);
+    graph.enableProfiling();
+    graph.compileFrom(std::make_shared<BlurOp>());
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+
+    struct DecimalComma : std::numpunct<char> {
+        char do_decimal_point() const override { return ','; }
+    };
+    struct RestoreLocale {
+        std::locale original = std::locale();
+        ~RestoreLocale() { std::locale::global(original); }
+    } restoreLocale;
+    std::filesystem::create_directories("build/TestingOutput");
+    const std::filesystem::path path = "build/TestingOutput/compute_graph_locale.json";
+    auto exportJson = [&]() {
+        writeGraphJson(path, "locale test", graph, {});
+        std::ifstream input(path);
+        std::stringstream text;
+        text << input.rdbuf();
+        return text.str();
+    };
+    std::locale::global(std::locale::classic());
+    const auto classic = exportJson();
+    EXPECT_NE(classic.find("\"ms\": "), std::string::npos);
+    std::locale::global(std::locale(std::locale::classic(), new DecimalComma));
+    EXPECT_EQ(exportJson(), classic);
 }
 
 // ----------------------------------------------------------------

@@ -116,9 +116,7 @@ public:
                 qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
                 qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
                 qi.queryCount = 2u * elements;
-                VkQueryPool pool = VK_NULL_HANDLE;
-                vkCreateQueryPool(device, &qi, nullptr, &pool);
-                profilingQueryPools.push_back(pool);
+                profilingQueryPools.push_back(createProfilingQueryPool(qi, "timestamp"));
                 remaining -= elements;
             }
         }
@@ -140,7 +138,7 @@ public:
                 qi.pNext = &perfCI;
                 qi.queryType = VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR;
                 qi.queryCount = n;
-                vkCreateQueryPool(device, &qi, nullptr, &perfQueryPool);
+                perfQueryPool = createProfilingQueryPool(qi, "performance counter");
             } else {
                 // Pipeline statistics fallback path: count CS invocations per element.
                 VkQueryPoolCreateInfo qi{};
@@ -148,7 +146,7 @@ public:
                 qi.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
                 qi.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
                 qi.queryCount = n;
-                vkCreateQueryPool(device, &qi, nullptr, &perfQueryPool);
+                perfQueryPool = createProfilingQueryPool(qi, "pipeline statistics");
             }
         }
 
@@ -169,6 +167,9 @@ public:
 
         if (vulkanContext.queueSubmit(graphicsQueue, 1, &pathSubmits[pathId].submitInfo, fence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit the graph elements!");
+        }
+        if (profilingEnabled || perfProfilingEnabled) {
+            markProfilingSubmitted();
         }
 
         return graphFinishedSemaphores[pathId];
@@ -200,6 +201,7 @@ public:
             info.pNext = &perfSubmit;
             if (vulkanContext.queueSubmit(graphicsQueue, 1, &info, fence) != VK_SUCCESS)
                 throw std::runtime_error("failed to submit perf-query command buffers!");
+            markProfilingSubmitted();
 
             const VkResult waitResult = vkWaitForFences(device, 1, &fence, true, UINT64_MAX);
             vkDestroyFence(device, fence, nullptr);
@@ -236,6 +238,8 @@ public:
     }
 
 private:
+    friend class GraphChain;
+
     VulkanContext& vulkanContext;
     uint32_t numberPaths;
 
@@ -294,8 +298,27 @@ private:
     float profilingTimestampPeriodNs = 1.0f;
     // Per ordered_element: {accumulated nanoseconds, sample count}
     std::vector<std::pair<double, uint64_t>> profilingAccum;
+    bool timestampsUnread = false;
+    bool performanceCountersUnread = false;
     // From the first element's start to the last element's end, per submission: {sum in ns, count}.
     std::pair<double, uint64_t> profilingSpanAccum{0.0, 0ULL};
+
+    // Query slots hold only the latest execution. Track timestamp and counter
+    // readback separately because the engine collects them at different times.
+    void markProfilingSubmitted() {
+        timestampsUnread = profilingEnabled;
+        performanceCountersUnread = perfProfilingEnabled;
+    }
+
+    VkQueryPool createProfilingQueryPool(const VkQueryPoolCreateInfo& info, const char* purpose) {
+        VkQueryPool pool = VK_NULL_HANDLE;
+        const VkResult result = vkCreateQueryPool(vulkanContext.getDevice(), &info, nullptr, &pool);
+        if (result != VK_SUCCESS) {
+            throw std::runtime_error(std::string("failed to create ") + purpose + " query pool (VkResult " +
+                                     std::to_string(result) + ")");
+        }
+        return pool;
+    }
 
     // ---- Performance counter profiling -----------------------------------
     // Tries VK_KHR_performance_query first; falls back to pipeline statistics
@@ -444,6 +467,7 @@ public:
 
     // Reads the timestamps of the last submission into the means of getProfilingResults(), as submitAndWait()
     // does; for submissions the graph does not wait for itself (GraphChain), after they finished.
+    // Each submission is collected at most once, separately for timestamps and counters.
     void readProfiling() {
         readAndAccumulateTimestamps();
         readAndAccumulatePerformanceCounters();
@@ -454,6 +478,8 @@ public:
         std::fill(profilingAccum.begin(), profilingAccum.end(), std::pair<double, uint64_t>{0.0, 0ULL});
         std::fill(perfAccum.begin(), perfAccum.end(), std::pair<double, uint64_t>{0.0, 0ULL});
         profilingSpanAccum = {0.0, 0ULL};
+        timestampsUnread = false;
+        performanceCountersUnread = false;
     }
 
     // The mean GPU time from the first element's start to the last element's end in milliseconds (profiling
@@ -483,10 +509,9 @@ public:
             return l.empty() ? std::string(ordered_elements[i]->getType()) : l;
         };
 
+        const auto times = getElementTimesMs();
         for (size_t i = 0; i < ordered_elements.size(); ++i) {
-            auto& [totalNs, count] = profilingAccum[i];
-            float meanMs = (count > 0) ? float(totalNs / double(count)) * 1e-6f : 0.f;
-            out.push_back({label(i), meanMs});
+            out.push_back({label(i), static_cast<float>(times[i])});
         }
 
         if (perfProfilingEnabled && !perfCounterInfos.empty()) {
@@ -506,7 +531,7 @@ public:
     }
 
     void readAndAccumulateTimestamps() {
-        if (!profilingEnabled || profilingQueryPools.empty())
+        if (!timestampsUnread || profilingQueryPools.empty())
             return;
         uint32_t n = (uint32_t)ordered_elements.size();
         std::vector<uint64_t> ts(2u * n, 0ULL);
@@ -516,9 +541,10 @@ public:
             VkResult r = vkGetQueryPoolResults(vulkanContext.getDevice(), profilingQueryPools[p], 0, 2u * elements,
                                                sizeof(uint64_t) * 2u * elements, ts.data() + 2u * first,
                                                sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
-            if (r != VK_SUCCESS && r != VK_NOT_READY)
+            if (r != VK_SUCCESS)
                 return;
         }
+        timestampsUnread = false;
         uint64_t first = UINT64_MAX, last = 0;
         for (uint32_t i = 0; i < n; ++i) {
             if (ts[2 * i + 1] >= ts[2 * i]) {
@@ -537,7 +563,7 @@ public:
     }
 
     void readAndAccumulatePerformanceCounters() {
-        if (!perfProfilingEnabled || perfQueryPool == VK_NULL_HANDLE)
+        if (!performanceCountersUnread || perfQueryPool == VK_NULL_HANDLE)
             return;
         uint32_t n = (uint32_t)ordered_elements.size();
 
@@ -570,6 +596,7 @@ public:
                 acc.second += 1;
             }
         }
+        performanceCountersUnread = false;
     }
 
     // Called when VK_KHR_performance_query is unavailable.  Sets up pipeline statistics

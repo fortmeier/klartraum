@@ -205,6 +205,9 @@ element's end, which also covers the barriers between elements.
 `writeGraphJson()` exports a compiled graph with its elements, edges and times
 for drawing it.
 
+See {doc}`../guides/profiling` for examples, readback rules and the performance
+impact of collecting these measurements.
+
 ## Chains of graphs
 
 A {cpp:class}`klartraum::GraphChain` submits several compiled graphs in one

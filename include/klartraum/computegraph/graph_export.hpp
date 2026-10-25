@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <locale>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -97,6 +98,7 @@ inline void writeGraphJson(const std::filesystem::path& path, const std::string&
     if (!out) {
         throw std::runtime_error("writeGraphJson: cannot write " + path.string());
     }
+    out.imbue(std::locale::classic());
     out << "{\n  \"name\": \"" << escape(name) << "\",\n  \"groups\": [";
     for (size_t g = 0; g < groups.size(); ++g) {
         out << (g ? ", " : "") << "{\"name\": \"" << escape(groups[g].name)

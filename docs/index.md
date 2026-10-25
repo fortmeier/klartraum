@@ -53,6 +53,7 @@ concepts/frontends
 
 guides/gaussian-splatting
 guides/render-targets
+guides/profiling
 guides/onnx
 ```
 
