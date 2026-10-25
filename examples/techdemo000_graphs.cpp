@@ -52,7 +52,7 @@
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/rendering/skeletongaussians.hpp"
 #include "klartraum/rendering/gaussian_data_standard.hpp"
-#include "klartraum/gaussian_lighting.hpp"
+#include "klartraum/rendering/gaussian_lighting.hpp"
 #include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
