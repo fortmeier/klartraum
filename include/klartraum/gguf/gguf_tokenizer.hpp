@@ -33,6 +33,7 @@ public:
 
     /**
      * @brief Token ids of @p text.
+     * @param text UTF-8 text to tokenize
      * @param parseSpecial Also recognize control tokens such as `<|im_start|>` in the text.
      */
     std::vector<int32_t> encode(const std::string& text, bool parseSpecial = false) const;
