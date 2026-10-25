@@ -26,6 +26,28 @@ Not included in builds, but used by them or by the tests:
   Vulkan SDK or the operating system.
 - GoogleTest (BSD-3-Clause) is linked into the test program only.
 
+Builds of the Rust port in [`rust/`](rust/README.md) contain the Rust crates
+listed in `rust/Cargo.lock` instead of the components above (they use the same
+shaders and, through the Vulkan loader, the same drivers). Its direct
+dependencies:
+
+| Crate | Version | License |
+|---|---|---|
+| anyhow | 1.0.104 | MIT OR Apache-2.0 |
+| ash | 0.38.0+1.3.281 | MIT OR Apache-2.0 |
+| ash-window | 0.13.0 | MIT OR Apache-2.0 |
+| bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 |
+| raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
+| ruzstd | 0.8.3 | MIT |
+| winit | 0.30.13 | Apache-2.0 |
+
+Their transitive dependencies (about 170 crates over all platforms, mostly
+winit's platform bindings) are all under permissive licenses (MIT, Apache-2.0,
+BSD, ISC, Zlib, Unicode-3.0, 0BSD; LGPL-2.1-or-later only as one alternative
+of a dual license). `cargo metadata --manifest-path rust/Cargo.toml` lists each
+crate with its license, and every crate ships its license text.
+
 The scenes, images and models in `data/` are the project's own material and
 contain no third-party content; their licenses are given in
 [REUSE.toml](REUSE.toml).
