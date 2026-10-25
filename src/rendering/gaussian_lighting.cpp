@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include "klartraum/gaussian_lighting.hpp"
+#include "klartraum/rendering/gaussian_lighting.hpp"
 
 #include <algorithm>
 #include <cmath>

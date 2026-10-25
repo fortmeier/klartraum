@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include "klartraum/text_gaussians.hpp"
+#include "klartraum/rendering/text_gaussians.hpp"
 
 #include <algorithm>
 #include <cmath>

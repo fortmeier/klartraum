@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_TEXT_GAUSSIANS_HPP
-#define KLARTRAUM_TEXT_GAUSSIANS_HPP
+#ifndef KLARTRAUM_RENDERING_TEXT_GAUSSIANS_HPP
+#define KLARTRAUM_RENDERING_TEXT_GAUSSIANS_HPP
 
 #include <cstdint>
 #include <memory>
@@ -12,7 +12,7 @@
 
 #include <glm/glm.hpp>
 
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 // Built only with the CMake option KLARTRAUM_WITH_FREETYPE, which defines the
 // macro of the same name for code linking klartraum_lib.
@@ -134,4 +134,4 @@ float colorToSh0(float value);
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_TEXT_GAUSSIANS_HPP
+#endif // KLARTRAUM_RENDERING_TEXT_GAUSSIANS_HPP

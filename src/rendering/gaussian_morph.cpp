@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include "klartraum/gaussian_morph.hpp"
+#include "klartraum/rendering/gaussian_morph.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
-#include "klartraum/gaussian_transform.hpp"
+#include "klartraum/rendering/gaussian_transform.hpp"
 
 namespace klartraum {
 

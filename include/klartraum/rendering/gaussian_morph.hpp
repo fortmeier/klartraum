@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_GAUSSIAN_MORPH_HPP
-#define KLARTRAUM_GAUSSIAN_MORPH_HPP
+#ifndef KLARTRAUM_RENDERING_GAUSSIAN_MORPH_HPP
+#define KLARTRAUM_RENDERING_GAUSSIAN_MORPH_HPP
 
 #include <cstdint>
 #include <vector>
@@ -11,7 +11,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -103,4 +103,4 @@ struct MorphTimeline {
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_GAUSSIAN_MORPH_HPP
+#endif // KLARTRAUM_RENDERING_GAUSSIAN_MORPH_HPP

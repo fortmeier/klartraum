@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_COMPUTEGRAPH_GAUSSIANMORPH_HPP
-#define KLARTRAUM_COMPUTEGRAPH_GAUSSIANMORPH_HPP
+#ifndef KLARTRAUM_RENDERING_GAUSSIANMORPH_HPP
+#define KLARTRAUM_RENDERING_GAUSSIANMORPH_HPP
 
 #include <cstdint>
 #include <memory>
@@ -11,8 +11,8 @@
 
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
-#include "klartraum/gaussian_morph.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/gaussian_morph.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -84,4 +84,4 @@ inline GaussianMorphResult createGaussianMorph(VulkanContext& vulkanContext, con
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_COMPUTEGRAPH_GAUSSIANMORPH_HPP
+#endif // KLARTRAUM_RENDERING_GAUSSIANMORPH_HPP

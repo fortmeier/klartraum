@@ -339,8 +339,8 @@ set(KLARTRAUM_LIB_SRC
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
-  src/gaussian_morph.cpp
-  src/gaussian_lighting.cpp
+  src/rendering/gaussian_morph.cpp
+  src/rendering/gaussian_lighting.cpp
   ${SPZ_SRC}
   )
 
@@ -358,7 +358,7 @@ set(LIBRARIES
 )
 
 if(KLARTRAUM_WITH_FREETYPE)
-  target_sources(klartraum_lib PRIVATE src/text_gaussians.cpp)
+  target_sources(klartraum_lib PRIVATE src/rendering/text_gaussians.cpp)
   list(APPEND LIBRARIES freetype)
 endif()
 

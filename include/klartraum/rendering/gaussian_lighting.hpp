@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_GAUSSIAN_LIGHTING_HPP
-#define KLARTRAUM_GAUSSIAN_LIGHTING_HPP
+#ifndef KLARTRAUM_RENDERING_GAUSSIAN_LIGHTING_HPP
+#define KLARTRAUM_RENDERING_GAUSSIAN_LIGHTING_HPP
 
 #include <array>
 #include <cstdint>
@@ -13,7 +13,7 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/computegraph/generalcomputation.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -101,4 +101,4 @@ GaussianLightingResult createGaussianLighting(VulkanContext& vulkanContext, cons
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_GAUSSIAN_LIGHTING_HPP
+#endif // KLARTRAUM_RENDERING_GAUSSIAN_LIGHTING_HPP
