@@ -8,6 +8,8 @@
 #include <set>
 #include <stdexcept>
 
+#include <glm/gtc/constants.hpp>
+
 #include "klartraum/vulkan_helpers.hpp"
 
 namespace klartraum {
@@ -21,7 +23,7 @@ constexpr uint32_t kRings = 8;     // from pole to pole of a sphere
 // sphere of radius 1. A vertex's normal follows from its position.
 std::vector<glm::vec4> cylinderTriangles() {
     std::vector<glm::vec4> vertices;
-    const float step = 2.0f * float(M_PI) / float(kSegments);
+    const float step = 2.0f * glm::pi<float>() / float(kSegments);
     for (uint32_t i = 0; i < kSegments; ++i) {
         const glm::vec4 a(std::cos(step * i), 0.0f, std::sin(step * i), 1.0f);
         const glm::vec4 b(std::cos(step * (i + 1)), 0.0f, std::sin(step * (i + 1)), 1.0f);
@@ -33,8 +35,8 @@ std::vector<glm::vec4> cylinderTriangles() {
 
 std::vector<glm::vec4> sphereTriangles() {
     auto point = [](uint32_t ring, uint32_t segment) {
-        const float polar = float(M_PI) * float(ring) / float(kRings);
-        const float azimuth = 2.0f * float(M_PI) * float(segment) / float(kSegments);
+        const float polar = glm::pi<float>() * float(ring) / float(kRings);
+        const float azimuth = 2.0f * glm::pi<float>() * float(segment) / float(kSegments);
         return glm::vec4(std::sin(polar) * std::cos(azimuth), std::cos(polar), std::sin(polar) * std::sin(azimuth),
                          1.0f);
     };
