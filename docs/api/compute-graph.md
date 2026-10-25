@@ -80,6 +80,18 @@ The buffer allocation and interface types are documented in {doc}`buffers`.
 ```{doxygenclass} klartraum::TensorElementSinglePath
 ```
 
+```{doxygenclass} klartraum::TensorMemoryPlanner
+```
+
+```{doxygenstruct} klartraum::TensorLifetimeRequest
+```
+
+```{doxygenstruct} klartraum::TensorMemoryPlan
+```
+
+```{doxygenstruct} klartraum::TensorMemoryAssignment
+```
+
 ```{doxygenclass} klartraum::UniformBufferObject
 ```
 

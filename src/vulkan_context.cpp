@@ -558,6 +558,8 @@ void VulkanContext::createLogicalDevice() {
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
     pipelineStatisticsQuerySupported = supportedFeatures.pipelineStatisticsQuery == VK_TRUE;
+    // ONNX INT64 tensors (token ids, shapes, timesteps) use 64-bit integer shader types.
+    deviceFeatures.shaderInt64 = supportedFeatures.shaderInt64;
     // The raster Gaussian splatting backend writes its depth output from the fragment shader.
     deviceFeatures.fragmentStoresAndAtomics = supportedFeatures.fragmentStoresAndAtomics;
     fragmentStoresAndAtomicsSupported = supportedFeatures.fragmentStoresAndAtomics == VK_TRUE;
@@ -691,7 +693,8 @@ void VulkanContext::createLogicalDevice() {
         std::cout << " " << ext;
     std::cout << "\n";
     std::cout << "[VulkanContext] requested features:"
-              << " pipelineStatisticsQuery=" << deviceFeatures.pipelineStatisticsQuery << " scalarBlockLayout=1\n";
+              << " pipelineStatisticsQuery=" << deviceFeatures.pipelineStatisticsQuery
+              << " shaderInt64=" << deviceFeatures.shaderInt64 << " scalarBlockLayout=1\n";
     if (perfQueryPresent)
         std::cout << "[VulkanContext] VK_KHR_performance_query enabled\n";
     if (meshShaderSupported)
