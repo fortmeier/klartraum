@@ -26,3 +26,4 @@ pub mod vulkan_buffer;
 pub mod vulkan_context;
 pub mod vulkan_gaussian_splatting_raster;
 pub mod vulkan_helpers;
+pub mod window_frontend;

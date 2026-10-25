@@ -84,6 +84,33 @@ fn validation_requested() -> bool {
     }
 }
 
+/// Loads the Vulkan loader library: from the default search path, else (where `dlopen`
+/// does not search them, e.g. on macOS) from `$VULKAN_SDK/lib` and the usual install
+/// directories, which the C++ build reaches through its link-time rpath instead.
+fn load_vulkan_loader() -> Result<ash::Entry> {
+    let default_error = match unsafe { ash::Entry::load() } {
+        Ok(entry) => return Ok(entry),
+        Err(e) => e,
+    };
+    let names = ["libvulkan.1.dylib", "libvulkan.dylib", "libvulkan.so.1", "libvulkan.so"];
+    let mut directories: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(sdk) = std::env::var_os("VULKAN_SDK") {
+        directories.push(std::path::Path::new(&sdk).join("lib"));
+    }
+    directories.extend(["/usr/local/lib", "/opt/homebrew/lib"].map(std::path::PathBuf::from));
+    for directory in &directories {
+        for name in names {
+            let path = directory.join(name);
+            if path.exists() {
+                if let Ok(entry) = unsafe { ash::Entry::load_from(&path) } {
+                    return Ok(entry);
+                }
+            }
+        }
+    }
+    Err(anyhow!("failed to load the Vulkan loader: {default_error}"))
+}
+
 /// The Vulkan loader and instance, with the debug messenger when validation is on.
 pub struct VulkanInstance {
     pub entry: ash::Entry,
@@ -96,7 +123,7 @@ pub struct VulkanInstance {
 impl VulkanInstance {
     /// Creates the instance with the extensions a surface for `display` needs, if given.
     pub fn new(display: Option<RawDisplayHandle>) -> Result<Rc<Self>> {
-        let entry = unsafe { ash::Entry::load() }.context("failed to load the Vulkan loader")?;
+        let entry = load_vulkan_loader()?;
 
         let available_layers = unsafe { entry.enumerate_instance_layer_properties() }?;
         let mut validation = validation_requested();

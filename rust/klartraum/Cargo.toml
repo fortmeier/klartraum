@@ -18,3 +18,4 @@ bytemuck = { version = "1", features = ["derive", "extern_crate_alloc"] }
 flate2 = "1"
 raw-window-handle = "0.6"
 ruzstd = "0.8"
+winit = "0.30"

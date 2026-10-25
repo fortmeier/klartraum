@@ -18,8 +18,18 @@ and `glslc` on the `PATH` (or in `GLSLC`); `build.rs` compiles the shaders.
 cd rust
 cargo build
 cargo test            # run from anywhere; tests switch to the repository root
-cargo run --example gaussian_splatting_example -- --frames 100
+cargo run --release --example gaussian_splatting_example -- --frames 100   # from the repository root
 ```
+
+The example takes the options of `examples/gaussian_splatting_example.cpp`
+(`--frames`, `--file`, `--camera-position`, `--flip-y`; `--backend` accepts only
+`raster`). Debug builds enable the validation layers (as C++ builds without
+`NDEBUG`); `KLARTRAUM_VALIDATION=0` or `1` overrides that. The window uses
+[winit](https://github.com/rust-windowing/winit) instead of GLFW.
+
+On macOS the Vulkan loader is looked up in `$VULKAN_SDK/lib`, `/usr/local/lib`
+and `/opt/homebrew/lib` when `dlopen` does not find it; select the driver with
+`VK_DRIVER_FILES` as for the C++ engine.
 
 The tests compare the Rust engine against the C++ engine. The reference data
 (Gaussians as loaded, camera matrices, the raster render of the lantern) is
