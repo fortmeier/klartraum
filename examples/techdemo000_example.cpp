@@ -59,19 +59,19 @@
 #include "klartraum/character_mask.hpp"
 #include "klartraum/computegraph/buffertographicsbarrier.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
-#include "klartraum/computegraph/gaussianmerge.hpp"
+#include "klartraum/rendering/gaussianmerge.hpp"
 #include "klartraum/computegraph/gaussianmorph.hpp"
 #include "klartraum/computegraph/graph_export.hpp"
 #include "klartraum/computegraph/graphchain.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
-#include "klartraum/computegraph/skeletongaussians.hpp"
+#include "klartraum/rendering/skeletongaussians.hpp"
 #include "klartraum/demo_timeline.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/gaussian_lighting.hpp"
 #include "klartraum/gaussian_morph.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/offscreen_target.hpp"
@@ -501,7 +501,7 @@ CloseUpRender renderCloseUp(klartraum::VulkanContext& vc, VkExtent2D extent, kla
     klartraum::GsplatConfig config;
     config.outputDepth = true;
     r.splatting = klartraum::createGaussianSplatting(vc, backend, r.sceneTarget, sceneCamera, model, config);
-    const auto depth = klartraum::getGaussianSplattingDepth(r.splatting);
+    const auto depth = r.splatting->getDepth();
     auto pass = [&](std::shared_ptr<klartraum::OffscreenTarget>& target,
                     std::shared_ptr<klartraum::DrawComponent> component, klartraum::ComputeGraphElementPtr after) {
         target = std::make_shared<klartraum::OffscreenTarget>(vc, extent, 1u);
@@ -1187,7 +1187,7 @@ int main(int argc, char** argv) {
         if (meshSkeleton) {
             auto meshRenderer = std::make_shared<klartraum::SkeletonMeshRenderer>(
                 controller->getJoints(), klartraum::characterSkeletonBones(), meshSkeletonValues, extent);
-            meshRenderer->setOcclusionDepth(klartraum::getGaussianSplattingDepth(splatting));
+            meshRenderer->setOcclusionDepth(splatting->getDepth());
             // Splatting leaves the target ready for transfers; drawing over it needs GENERAL (see RenderPass).
             auto toGeneral = std::make_shared<klartraum::ImageViewSrcTransition>(
                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
@@ -1205,7 +1205,7 @@ int main(int argc, char** argv) {
         }
         auto poseRenderer =
             std::make_shared<klartraum::OpenPoseSkeletonRenderer>(controller->getOpenPoseJoints(), 1, extent);
-        poseRenderer->setOcclusionDepth(klartraum::getGaussianSplattingDepth(splatting));
+        poseRenderer->setOcclusionDepth(splatting->getDepth());
         poseRenderer->setStickWidth(4.0f * float(height) / 1080.0f);
         poseRenderer->setJointRadius(5.0f * float(height) / 1080.0f);
         auto poseTarget = std::make_shared<klartraum::OffscreenTarget>(vc, extent, 1u);
@@ -1221,7 +1221,7 @@ int main(int argc, char** argv) {
 
         // The character mask: the region of its body, cut by the scene in front.
         auto maskRenderer = std::make_shared<klartraum::CharacterMaskRenderer>(controller->getOpenPoseJoints(), extent);
-        maskRenderer->setOcclusionDepth(klartraum::getGaussianSplattingDepth(splatting));
+        maskRenderer->setOcclusionDepth(splatting->getDepth());
         auto maskTarget = std::make_shared<klartraum::OffscreenTarget>(vc, extent, 1u);
         auto maskPass = std::make_shared<klartraum::RenderPass>(vc.getSwapChainImageFormat(), extent);
         maskPass->setInput(maskTarget, 0);

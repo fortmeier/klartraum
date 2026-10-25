@@ -380,7 +380,7 @@ set(KLARTRAUM_LIB_SRC
   src/text_draw_component.cpp
   src/rendering/gaussian_morph.cpp
   src/rendering/gaussian_lighting.cpp
-  src/skeleton_gaussians.cpp
+  src/rendering/skeleton_gaussians.cpp
   src/skeleton_mesh_renderer.cpp
   ${SPZ_SRC}
   )

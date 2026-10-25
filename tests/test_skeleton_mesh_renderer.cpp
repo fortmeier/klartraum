@@ -35,8 +35,8 @@
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/skeleton_mesh_renderer.hpp"
@@ -340,7 +340,7 @@ TEST_F(SkeletonMeshRendererTest, splatOccludesSkeleton) {
         auto params = std::make_shared<Params>(
             *vc, std::vector<SkeletonGaussianParams>{skeletonParams(glm::vec3(1.0f, 0.0f, 0.0f), 1.0f, 0.03f)});
         auto renderer = std::make_shared<SkeletonMeshRenderer>(jointBuffer, Bones{{0, 0}, {1, 1}}, params, kExtent);
-        renderer->setOcclusionDepth(getGaussianSplattingDepth(splatting));
+        renderer->setOcclusionDepth(splatting->getDepth());
         auto skeletonTarget = std::make_shared<OffscreenTarget>(*vc, kExtent, 1);
         auto renderPass = std::make_shared<RenderPass>(vc->getSwapChainImageFormat(), kExtent);
         renderPass->setDepthAttachment(std::make_shared<DepthAttachment>(*vc, kExtent, 1));
