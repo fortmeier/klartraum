@@ -23,6 +23,7 @@ path = [
     "**/.python-version",
     "**/pyproject.toml",
     "**/uv.lock",
+    "rust/Cargo.lock",
     "**/*.cmd",
     "**/*.ipynb",
     "scripts/site/package.json",

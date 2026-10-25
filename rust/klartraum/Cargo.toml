@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "klartraum"
+version = "0.1.0"
+description = "Rust port of the Klartraum Vulkan compute/rendering engine"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = "1"
+bytemuck = { version = "1", features = ["derive", "extern_crate_alloc"] }
+flate2 = "1"
+ruzstd = "0.8"

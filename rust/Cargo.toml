@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Dirk Fortmeier
+#
+# SPDX-License-Identifier: MIT
+
+[workspace]
+members = ["klartraum"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+authors = ["Dirk Fortmeier"]
+
+[profile.dev]
+# The splatting tests load ~150k Gaussians; unoptimized loops make them slow.
+opt-level = 1

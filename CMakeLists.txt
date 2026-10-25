@@ -291,6 +291,7 @@ add_executable(
   tests/test_gaussian_cull_and_compact.cpp
   tests/test_gaussian_splatting_raster.cpp
   tests/test_gaussian_splatting_factory.cpp
+  tests/test_rust_reference.cpp
   tests/test_general_computation.cpp
   tests/test_gaussian_splatting.cpp
   tests/test_copybuffer.cpp
