@@ -40,7 +40,7 @@
 
 #include "klartraum/character_controller.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/scene_placement.hpp"
 
