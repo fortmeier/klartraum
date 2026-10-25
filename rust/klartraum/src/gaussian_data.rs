@@ -2,14 +2,18 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! Gaussian scenes on the CPU: [`Gaussian3D`] and the `.spz` loader that produces them.
+//! Gaussian scenes: [`Gaussian3D`], the `.spz` loader and the GPU upload [`GaussianDataStandard`].
 
 use std::path::Path;
 
 use anyhow::Result;
+use ash::vk;
 use bytemuck::{Pod, Zeroable};
 
+use crate::computegraph::{BufferElementSinglePath, ComputeGraphElement};
+use crate::gaussian_splatting_types::{BufferRef, GaussianSoABuffers};
 use crate::spz;
+use crate::vulkan_context::VulkanContext;
 
 /// One Gaussian of a scene, with the same fields and layout as the C++ `Gaussian3D`.
 #[repr(C)]
@@ -91,4 +95,71 @@ pub fn median_centre(gaussians: &[Gaussian3D]) -> [f32; 3] {
         centre[axis] = *median;
     }
     centre
+}
+
+/// A Gaussian scene uploaded once into device-local storage shared by all paths, as [`GaussianSoABuffers`].
+///
+/// The CPU-side array is not kept. Consumers (e.g. the splatting backends) take the
+/// buffer bundle from [`buffers`](Self::buffers), not this type, so loading and
+/// ownership are decoupled from how the buffers are wired.
+pub struct GaussianDataStandard {
+    buffers: GaussianSoABuffers,
+}
+
+impl GaussianDataStandard {
+    /// Loads an `.spz` file (see [`load_gaussians_spz`]) and uploads it.
+    pub fn from_spz(context: &VulkanContext, path: impl AsRef<Path>, flip_y: bool) -> Result<Self> {
+        Self::new(context, &load_gaussians_spz(path, flip_y)?)
+    }
+
+    /// Uploads `gaussians` as a structure of arrays.
+    pub fn new(context: &VulkanContext, gaussians: &[Gaussian3D]) -> Result<Self> {
+        let n = gaussians.len();
+        anyhow::ensure!(n > 0, "GaussianDataStandard: no Gaussians");
+        let mut pos = Vec::with_capacity(n);
+        let mut rot = Vec::with_capacity(n);
+        let mut scale = Vec::with_capacity(n);
+        let mut col_alpha = Vec::with_capacity(n);
+        let (mut sh_r, mut sh_g, mut sh_b) = (vec![0.0f32; 15 * n], vec![0.0f32; 15 * n], vec![0.0f32; 15 * n]);
+        for (i, g) in gaussians.iter().enumerate() {
+            pos.push(g.position);
+            rot.push(g.rotation);
+            scale.push(g.scale);
+            col_alpha.push([g.color[0], g.color[1], g.color[2], g.alpha]);
+            for b in 0..15 {
+                sh_r[b * n + i] = g.sh_r[b];
+                sh_g[b * n + i] = g.sh_g[b];
+                sh_b[b * n + i] = g.sh_b[b];
+            }
+        }
+
+        fn upload<T: Pod>(context: &VulkanContext, data: &[T], name: &str) -> Result<BufferRef> {
+            let element = BufferElementSinglePath::<T>::new(
+                context,
+                data.len() as u32,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            )?;
+            element.set_name(name);
+            element.buffer().memcopy_from(data)?;
+            Ok(BufferRef::new(element))
+        }
+        Ok(Self {
+            buffers: GaussianSoABuffers {
+                count: n as u32,
+                pos: upload(context, &pos, "Pos3D")?,
+                rot: upload(context, &rot, "Rot3D")?,
+                scale: upload(context, &scale, "Scale3D")?,
+                col_alpha: upload(context, &col_alpha, "ColAlpha3D")?,
+                sh_r: upload(context, &sh_r, "ShR")?,
+                sh_g: upload(context, &sh_g, "ShG")?,
+                sh_b: upload(context, &sh_b, "ShB")?,
+            },
+        })
+    }
+
+    /// The uploaded buffers.
+    pub fn buffers(&self) -> &GaussianSoABuffers {
+        &self.buffers
+    }
 }
