@@ -1,0 +1,12 @@
+{
+  "device": "NVIDIA GeForce RTX 2070 SUPER",
+  "driver_version": 2559967232,
+  "width": 512,
+  "height": 512,
+  "gaussians": 145562,
+  "warmup_per_run": 10,
+  "samples_per_run": 30,
+  "runs": 3,
+  "profiling": true,
+  "validation": false
+}

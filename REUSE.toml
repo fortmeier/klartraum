@@ -42,3 +42,16 @@ path = [
 ]
 SPDX-FileCopyrightText = "Dirk Fortmeier"
 SPDX-License-Identifier = "CC-BY-4.0"
+
+[[annotations]]
+path = ["docs/articles/assets/gaussian-depth-composition/*.png"]
+SPDX-FileCopyrightText = "Dirk Fortmeier"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+[[annotations]]
+path = [
+    "docs/articles/assets/gaussian-depth-composition/*.csv",
+    "docs/articles/assets/gaussian-depth-composition/*.json",
+]
+SPDX-FileCopyrightText = "Dirk Fortmeier"
+SPDX-License-Identifier = "MIT"
