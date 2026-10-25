@@ -1,6 +1,14 @@
 # Profiling
 
 Use profiling to find expensive GPU work and compare shader implementations.
+
+Under the hood, profiling inserts GPU timestamp commands before and after each
+graph element's recorded work. The GPU writes its clock values into Vulkan query
+pools; after execution finishes, the CPU reads them, converts the differences
+to milliseconds and averages them across executions. Optional performance
+counters use Vulkan queries to collect hardware measurements or pipeline
+statistics, such as the number of compute-shader invocations.
+
 Choose the workflow that matches what you want to measure:
 
 - [A. Profile a full graph](#a-profile-a-full-graph) to find bottlenecks in a pipeline.
