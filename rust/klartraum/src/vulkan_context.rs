@@ -716,6 +716,42 @@ impl VulkanContext {
         self.device.submit_immediate(record, vk::Queue::null())
     }
 
+    /// Copies a 4-byte-per-pixel image in `GENERAL` layout (e.g. a headless image)
+    /// into host memory, row by row; the work writing it must have finished.
+    pub fn read_image_to_host(&self, image: vk::Image, extent: vk::Extent2D) -> Result<Vec<u8>> {
+        let bytes = extent.width as usize * extent.height as usize * 4;
+        let staging = crate::vulkan_buffer::VulkanBuffer::<u8>::with_usage(
+            &self.device,
+            bytes as u32,
+            vk::BufferUsageFlags::TRANSFER_DST,
+            crate::vulkan_buffer::HOST_COHERENT,
+        )?;
+        self.submit_immediate(|cmd| {
+            let region = vk::BufferImageCopy::default()
+                .image_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .image_extent(vk::Extent3D {
+                    width: extent.width,
+                    height: extent.height,
+                    depth: 1,
+                });
+            unsafe {
+                self.device.device.cmd_copy_image_to_buffer(
+                    cmd,
+                    image,
+                    vk::ImageLayout::GENERAL,
+                    staging.buffer(),
+                    &[region],
+                )
+            };
+        })?;
+        staging.read()
+    }
+
     fn create_swap_chain(&mut self, old: vk::SwapchainKHR) -> Result<()> {
         let surface_loader = &self.device.instance.surface_loader;
         let pd = self.device.physical_device;

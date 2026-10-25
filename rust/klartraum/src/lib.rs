@@ -14,6 +14,7 @@
 pub mod camera;
 pub mod computegraph;
 pub mod draw_component;
+pub mod engine;
 pub mod events;
 pub mod gaussian_data;
 pub mod glm;
