@@ -95,7 +95,7 @@ private:
  * @brief A compute element that writes the scene mask: white where `depth` holds a surface, black where it holds +inf.
  *
  * `depth` is a per-pixel depth buffer of the target's size, such as the output
- * of getGaussianSplattingDepth(); pass the element that writes it as `producer`
+ * of GaussianSplattingInterface::getDepth(); pass the element that writes it as `producer`
  * so the mask follows it in the graph. The target is left in
  * VK_IMAGE_LAYOUT_GENERAL.
  */

@@ -152,7 +152,7 @@ public:
      *
      * `depth` holds one NDC depth per pixel of the target (row-major, +inf where
      * there is no surface), seen through the same view and projection as the
-     * render pass camera, such as the output of getGaussianSplattingDepth(). The
+     * render pass camera, such as the output of GaussianSplattingInterface::getDepth(). The
      * test is per pixel: a pixel of a limb or joint is dropped when the skeleton
      * there is farther from the camera than the surface by more than
      * `relativeBias` of the surface's distance (with a perspective projection;
