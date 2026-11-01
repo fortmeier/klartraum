@@ -24,5 +24,5 @@ annotate() {
             --style "$style" --skip-existing
 }
 
-annotate cppsingle '*.cpp' '*.hpp' '*.inc' '*.comp' '*.vert' '*.frag' '*.mesh' '*.glsl' '*.mjs'
+annotate cppsingle '*.cpp' '*.hpp' '*.inc' '*.slang' '*.mjs'
 annotate python '*.py' '*.sh' 'CMakeLists.txt' '*/CMakeLists.txt'

@@ -87,14 +87,6 @@ endif()
 
 
 
-# Prefer the glslc that belongs to the Vulkan SDK found above.
-if(Vulkan_GLSLC_EXECUTABLE)
-    set(GLSLC ${Vulkan_GLSLC_EXECUTABLE})
-else()
-    find_program(GLSLC glslc REQUIRED)
-endif()
-message(STATUS "Using glslc: ${GLSLC}")
-
 set(SHADER_BASE_DIR "${PROJECT_SOURCE_DIR}/shaders")
 # The compiled shaders go to the build directory; the library finds them there
 # through its default asset root (see readFile() in vulkan_helpers.hpp).
@@ -109,6 +101,7 @@ if(STALE_SPIRV_FILES)
                   "repository root; delete them with: find shaders -name '*.spv' -delete")
 endif()
 
+# Prefer the slangc that belongs to the Vulkan SDK found above.
 find_program(SLANGC slangc HINTS "$ENV{VULKAN_SDK}/bin" REQUIRED)
 message(STATUS "Using slangc: ${SLANGC}")
 
@@ -118,20 +111,24 @@ file(GLOB_RECURSE SLANG_SOURCE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.ver
      "${SHADER_BASE_DIR}/*.frag.slang" "${SHADER_BASE_DIR}/*.comp.slang" "${SHADER_BASE_DIR}/*.mesh.slang")
 file(GLOB_RECURSE SLANG_MODULE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.slang")
 list(REMOVE_ITEM SLANG_MODULE_FILES ${SLANG_SOURCE_FILES})
+# Exclude draft/scratch shaders prefixed with underscore
+list(FILTER SLANG_SOURCE_FILES EXCLUDE REGEX "/_[^/]+\\.slang$")
+
+# SPIR-V 1.5 covers mesh shaders (1.4+) and needs Vulkan 1.2. The profile
+# permits the subgroup operations of the attention and RMS norm shaders.
+# Column-major matrices match the GLM memory layout on the C++ side.
+set(SLANGC_OPTIONS -target spirv -entry main -matrix-layout-column-major
+    -profile spirv_1_5+spvGroupNonUniform+spvGroupNonUniformArithmetic+spvGroupNonUniformShuffle)
 
 foreach(SLANG ${SLANG_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${SLANG})
   string(REGEX REPLACE "\\.slang$" "" FILE_NAME ${FILE_NAME})
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
-  # Column-major matrices match the GLM memory layout on the C++ side. The
-  # profile permits the subgroup operations of the attention and RMS norm shaders.
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${SLANGC} ${SLANG} -target spirv
-            -profile spirv_1_5+spvGroupNonUniform+spvGroupNonUniformArithmetic+spvGroupNonUniformShuffle -entry main -matrix-layout-column-major
-            -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
+    COMMAND ${SLANGC} ${SLANG} ${SLANGC_OPTIONS} -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
     DEPFILE ${SPIRV}.d
     DEPENDS ${SLANG} ${SLANG_MODULE_FILES}
     COMMENT "Compiling ${SLANG} to ${SPIRV}"
@@ -139,62 +136,9 @@ foreach(SLANG ${SLANG_SOURCE_FILES})
   list(APPEND SPIRV_BINARY_FILES ${SPIRV})
 endforeach()
 
-file(GLOB_RECURSE GLSL_SOURCE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.vert" "${SHADER_BASE_DIR}/*.frag" "${SHADER_BASE_DIR}/*.comp")
-# Exclude draft/scratch shaders prefixed with underscore
-list(FILTER GLSL_SOURCE_FILES EXCLUDE REGEX "/_[^/]+\\.comp$")
-# A shader with a Slang source compiles from that source instead.
-foreach(GLSL ${GLSL_SOURCE_FILES})
-  if(EXISTS "${GLSL}.slang")
-    list(REMOVE_ITEM GLSL_SOURCE_FILES ${GLSL})
-  endif()
-endforeach()
-
-foreach(GLSL ${GLSL_SOURCE_FILES})
-  file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
-
-  set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
-  get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
-  set(GLSLC_OPTIONS)
-  if(FILE_NAME STREQUAL "onnx/fused_attention.comp" OR FILE_NAME STREQUAL "onnx/fused_attention_bias_d128.comp"
-     OR FILE_NAME STREQUAL "onnx/rms_norm.comp")
-    # Subgroup operations are core in Vulkan 1.1 / SPIR-V 1.3.
-    list(APPEND GLSLC_OPTIONS --target-env=vulkan1.1)
-  endif()
-  # Shaders #include the .glsl files next to them; recompile when those change.
-  get_filename_component(GLSL_DIRECTORY ${GLSL} DIRECTORY)
-  file(GLOB GLSL_INCLUDES "${GLSL_DIRECTORY}/*.glsl")
-  add_custom_command(
-    OUTPUT ${SPIRV}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${GLSLC} ${GLSLC_OPTIONS} -MD -MF ${SPIRV}.d -o ${SPIRV} ${GLSL}
-    DEPFILE ${SPIRV}.d
-    DEPENDS ${GLSL} ${GLSL_INCLUDES}
-    COMMENT "Compiling ${GLSL} to ${SPIRV}"
-  )
-  list(APPEND SPIRV_BINARY_FILES ${SPIRV})
-endforeach()
-
-# Mesh shaders (VK_EXT_mesh_shader) need a SPIR-V 1.4+ target, so compile them
-# separately with --target-env=vulkan1.3 (glslc infers the stage from .mesh).
-file(GLOB_RECURSE MESH_SOURCE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.mesh")
-foreach(GLSL ${MESH_SOURCE_FILES})
-  file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
-  set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
-  get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
-  add_custom_command(
-    OUTPUT ${SPIRV}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${GLSLC} --target-env=vulkan1.3 -MD -MF ${SPIRV}.d -o ${SPIRV} ${GLSL}
-    DEPFILE ${SPIRV}.d
-    DEPENDS ${GLSL}
-    COMMENT "Compiling mesh ${GLSL} to ${SPIRV}"
-  )
-  list(APPEND SPIRV_BINARY_FILES ${SPIRV})
-endforeach()
-
 add_custom_target(
   Shaders
-  DEPENDS ${SPIRV_BINARY_FILES} ${GLSL_SOURCE_FILES}
+  DEPENDS ${SPIRV_BINARY_FILES}
 )
 
 # Add GLM (OpenGL Mathematics) - header-only library
@@ -318,6 +262,7 @@ add_executable(
   tests/test_vulkan_buffers.cpp
   tests/test_vulkan_context.cpp
   tests/test_vulkan_helpers.cpp
+  tests/test_shader_assets.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
   tests/test_buffertransformation.cpp

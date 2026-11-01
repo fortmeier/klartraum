@@ -16,7 +16,7 @@
 
 namespace klartraum {
 
-// Layout must match the GLSL `push_constant` block in gsplat_raster.vert
+// Layout must match the push constants of gsplat_raster_fragment.slang
 // (std430 scalar rules: vec2/vec2/float/int pack tightly, no padding).
 struct GaussianSplatRasterPushConstants {
     glm::vec2 resolution;

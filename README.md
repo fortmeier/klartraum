@@ -47,7 +47,7 @@ Ray tracing is not implemented yet.
 ## Requirements
 
 - CMake 3.24 or newer and a C++17 compiler
-- the [Vulkan SDK](https://vulkan.lunarg.com/) (loader, headers and `glslc`)
+- the [Vulkan SDK](https://vulkan.lunarg.com/) (loader, headers and `slangc`)
 - tested on Windows (Visual Studio 2022) and macOS on Apple Silicon (MoltenVK
   or KosmicKrisp); Linux is not tested yet
 
