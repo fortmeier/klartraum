@@ -2,11 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants { uint elementCount; } pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
-layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer { float outputData[]; };
+struct PushConstants {
+    uint elementCount;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
+
+[[vk::binding(0, 0)]] StructuredBuffer<float> inputData;
+[[vk::binding(1, 0)]] RWStructuredBuffer<float> outputData;
 
 float errorFunction(float value) {
     float magnitude = abs(value);
@@ -17,7 +19,9 @@ float errorFunction(float value) {
     return value < 0.0 ? -result : result;
 }
 
-void main() {
-    uint index = gl_GlobalInvocationID.x;
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint index = globalId.x;
     if (index < pc.elementCount) outputData[index] = errorFunction(inputData[index]);
 }

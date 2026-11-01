@@ -2,20 +2,23 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint elementCount;
     uint rank;
     uint inputDims[4];
     uint outputDims[4];
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { int64_t inputData[]; };
-layout(set = 0, binding = 1) restrict readonly buffer ShapeBuffer { int64_t shapeData[]; };
-layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { int64_t outputData[]; };
-void main() {
-    uint index = gl_GlobalInvocationID.x;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
+
+[[vk::binding(0, 0)]] StructuredBuffer<int64_t> inputData;
+// The target shape; the dimensions come in through the push constants.
+[[vk::binding(1, 0)]] StructuredBuffer<int64_t> shapeData;
+[[vk::binding(2, 0)]] RWStructuredBuffer<int64_t> outputData;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint index = globalId.x;
     if (index >= pc.elementCount) return;
     uint remaining = index;
     uint inputIndex = 0;

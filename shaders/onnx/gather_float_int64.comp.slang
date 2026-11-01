@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint outerCount;
     uint axisSize;
     uint innerSize;
     uint indexCount;
     uint outputCount;
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer DataBuffer { float data[]; };
-layout(set = 0, binding = 1) restrict readonly buffer IndicesBuffer { int64_t indices[]; };
-layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-void main() {
-    uint outputIndex = gl_GlobalInvocationID.x;
+[[vk::binding(0, 0)]] StructuredBuffer<float> data;
+[[vk::binding(1, 0)]] StructuredBuffer<int64_t> indices;
+[[vk::binding(2, 0)]] RWStructuredBuffer<float> outputData;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint outputIndex = globalId.x;
     if (outputIndex >= pc.outputCount) return;
     uint outer = outputIndex / (pc.indexCount * pc.innerSize);
     uint remainder = outputIndex % (pc.indexCount * pc.innerSize);
