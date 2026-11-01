@@ -17,7 +17,7 @@ void main(uint3 localId: SV_GroupThreadID, uint3 groupId: SV_GroupID) {
     product.batchCount = 16;
     product.rows = pc.outputChannels;
     product.columns = tileCount();
-    product.reduction = pc.inputChannels;
+    product.reduction = reductionCount();
     product.lhsBatchCount = 16;
     product.rhsBatchCount = 16;
     matmul<IdentityEpilogue>(localId, groupId, product, u, v, m);

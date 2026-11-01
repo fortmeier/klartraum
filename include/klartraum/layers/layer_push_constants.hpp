@@ -177,8 +177,10 @@ struct ConvPushConstants {
 
 struct WinogradPushConstants {
     uint32_t batch, inputChannels, outputChannels;
-    uint32_t height, width;  // the input's and the output's
-    uint32_t tilesY, tilesX; // 2 x 2 output tiles per image
+    uint32_t inputDepth, outputDepth, kernelDepth, padDepth; // padDepth: leading
+    uint32_t height, width;                                  // the input's and the output's
+    uint32_t tilesY, tilesX;                                 // 2 x 2 output tiles per frame
+    uint32_t frameBegin, frameCount;                         // the chunk of output frames
 };
 
 struct Conv3dPushConstants {

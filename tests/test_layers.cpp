@@ -31,6 +31,8 @@
  * - concatSixInputs: six tensors of different sizes along axis 2 (the denoiser's attention chunks)
  *   and three along the last axis are joined in order
  * - conv3x3WithBias: the specialized 3x3 convolution with padding and bias matches a CPU convolution
+ * - conv3dCausalWinogradChunks: a causal 3x3x3 convolution large enough for the Winograd path to process its
+ *   nine output frames in three chunks (the last one partial) matches a CPU convolution on sampled outputs
  * - conv3x3Winograd: a 3x3 convolution with padding 1 over enough tiles for the Winograd F(2x2, 3x3) path, with
  *   odd image sizes (partial edge tiles), matches a CPU convolution
  * - layerNormalization: last-axis normalization with scale and bias matches the CPU
@@ -656,4 +658,35 @@ TEST_F(LayersTest, conv3x3Winograd) {
                     expected[((size_t(n) * outputChannels + o) * height + y) * width + xx] = float(sum);
                 }
     expectNear(actual, expected, 1e-4f);
+}
+
+TEST_F(LayersTest, conv3dCausalWinogradChunks) {
+    // (64 x 3 + 64) x 64 bytes per tile and 4096 tiles per frame: four frames per 256 MiB chunk.
+    const uint32_t channels = 64, depth = 9, height = 128, width = 128;
+    const Shape input{1, channels, depth, height, width}, weights{channels, channels, 3, 3, 3}, bias{channels};
+    const auto x = ramp(layers::elementCount(input), 0.07f, -0.8f);
+    const auto w = ramp(layers::elementCount(weights), 0.0011f, -0.012f);
+    const auto b = ramp(channels, 0.3f, -2.0f);
+    layers::Conv3dAttributes attributes;
+    attributes.kernelShape = {3, 3, 3};
+    attributes.pads = {2, 1, 1, 0, 1, 1};
+    const auto actual = run(layers::conv3d(*vc, attributes, input, weights, input),
+                            {{tensor(input), x}, {tensor(weights), w}, {tensor(bias), b}}, tensor(input));
+    const size_t plane = size_t(height) * width;
+    for (size_t index = 0; index < actual.size(); index += 7919) {
+        const uint32_t o = uint32_t(index / (plane * depth)), z = uint32_t(index / plane % depth);
+        const uint32_t y = uint32_t(index / width % height), xx = uint32_t(index % width);
+        double expected = b[o];
+        for (uint32_t c = 0; c < channels; ++c)
+            for (uint32_t kd = 0; kd < 3; ++kd)
+                for (uint32_t ky = 0; ky < 3; ++ky)
+                    for (uint32_t kx = 0; kx < 3; ++kx) {
+                        const int iz = int(z + kd) - 2, iy = int(y + ky) - 1, ix = int(xx + kx) - 1;
+                        if (iz < 0 || iy < 0 || ix < 0 || iy >= int(height) || ix >= int(width))
+                            continue;
+                        expected += double(x[((size_t(c) * depth + iz) * height + iy) * width + ix]) *
+                                    w[(((size_t(o) * channels + c) * 3 + kd) * 3 + ky) * 3 + kx];
+                    }
+        ASSERT_NEAR(actual[index], expected, 1e-4) << "element " << index;
+    }
 }
