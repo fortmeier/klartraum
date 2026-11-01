@@ -2,16 +2,12 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // One step of LCM inpainting (LcmScheduler::step followed by the latent
 // blending of sampleInpainted), in place on the latents the denoiser reads.
 // Before the last step it noises the result to the next timestep and sets that
 // timestep; after the last step it writes the decoder's input instead.
 
-layout(local_size_x = 256) in;
-
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint count; // values of a latent, channels * plane
     uint plane; // latent pixels
     uint next;  // index of the next step's noise
@@ -27,18 +23,21 @@ layout(push_constant) uniform PushConstants {
     float scale; // VAE scaling factor
     uint timestepLow;
     uint timestepHigh;
-} pc;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-layout(set = 0, binding = 0) buffer Latents { float latents[]; };
-layout(set = 0, binding = 1) readonly buffer Prediction { float prediction[]; };
-layout(set = 0, binding = 2) readonly buffer Known { float known[]; };
-layout(set = 0, binding = 3) readonly buffer Mask { float mask[]; };
-layout(set = 0, binding = 4) readonly buffer Noise { float noise[]; }; // [steps][count]
-layout(set = 0, binding = 5) writeonly buffer Timestep { uint timestep[]; }; // one int64
-layout(set = 0, binding = 6) writeonly buffer DecoderInput { float decoderInput[]; };
+[[vk::binding(0, 0)]] RWStructuredBuffer<float> latents;
+[[vk::binding(1, 0)]] StructuredBuffer<float> prediction;
+[[vk::binding(2, 0)]] StructuredBuffer<float> known;
+[[vk::binding(3, 0)]] StructuredBuffer<float> mask;
+[[vk::binding(4, 0)]] StructuredBuffer<float> noise;     // [steps][count]
+[[vk::binding(5, 0)]] RWStructuredBuffer<uint> timestep; // one int64
+[[vk::binding(6, 0)]] RWStructuredBuffer<float> decoderInput;
 
-void main() {
-    uint i = gl_GlobalInvocationID.x;
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint i = globalId.x;
     if (i == 0 && pc.last == 0) {
         timestep[0] = pc.timestepLow;
         timestep[1] = pc.timestepHigh;

@@ -2,46 +2,45 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // The generated close-up pasted into the close-up scene through the feathered
 // body mask (pasteGenerated() on the GPU). Output per pixel, packed as bytes
 // B, G, R, alpha: the pasted colour and the feathered mask.
 
-layout(local_size_x = 8, local_size_y = 8) in;
-
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint size; // the close-up is size x size pixels
-} pc;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-layout(set = 0, binding = 0) readonly buffer Generated { float generated[]; }; // [3, size, size] in [-1, 1]
-layout(set = 0, binding = 1, rgba8) uniform readonly image2D scene;
-layout(set = 0, binding = 2, rgba8) uniform readonly image2D bodyMask;
-layout(set = 0, binding = 3) writeonly buffer CloseUp { uint closeUp[]; };
+[[vk::binding(0, 0)]] StructuredBuffer<float> generated; // [3, size, size] in [-1, 1]
+[[vk::binding(1, 0)]] [[vk::image_format("rgba8")]] RWTexture2D<float4> scene;
+[[vk::binding(2, 0)]] [[vk::image_format("rgba8")]] RWTexture2D<float4> bodyMask;
+[[vk::binding(3, 0)]] RWStructuredBuffer<uint> closeUp;
 
 uint byteOf(float unorm) { return uint(unorm * 255.0 + 0.5); }
 
 // Coverage of the 5 x 5 box around a pixel, clamped at the borders (featherMask()).
-float feather(ivec2 pixel, int size) {
+float feather(int2 pixel, int size) {
     float coverage = 0.0;
     for (int dy = -2; dy <= 2; ++dy) {
         for (int dx = -2; dx <= 2; ++dx) {
-            ivec2 p = clamp(pixel + ivec2(dx, dy), ivec2(0), ivec2(size - 1));
-            coverage += imageLoad(bodyMask, p).r > 0.0 ? 1.0 : 0.0;
+            int2 p = clamp(pixel + int2(dx, dy), int2(0), int2(size - 1));
+            coverage += bodyMask.Load(p).r > 0.0 ? 1.0 : 0.0;
         }
     }
     return coverage / 25.0;
 }
 
-void main() {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    int2 pixel = int2(globalId.xy);
     int size = int(pc.size);
     if (pixel.x >= size || pixel.y >= size) {
         return;
     }
     uint plane = pc.size * pc.size, i = uint(pixel.y) * pc.size + uint(pixel.x);
     float alpha = feather(pixel, size);
-    vec4 original = imageLoad(scene, pixel);
+    float4 original = scene.Load(pixel);
     uint channels[3];
     for (int c = 0; c < 3; ++c) {
         float value = (clamp(generated[uint(c) * plane + i], -1.0, 1.0) + 1.0) * 127.5;
