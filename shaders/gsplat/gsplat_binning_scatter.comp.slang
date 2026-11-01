@@ -77,10 +77,10 @@ void main(uint lid: SV_GroupIndex, uint3 globalId: SV_DispatchThreadID, uint3 gr
     uint numBins = pc.gridSize * pc.gridSize;
 
     bool inRange = (idx < pc.numElements);
-    float2 gPos;
-    float gZ;
-    float4 gCovInv;
-    float4 gColorAlpha;
+    float2 gPos = float2(0.0);
+    float gZ = 0.0;
+    float4 gCovInv = float4(0.0);
+    float4 gColorAlpha = float4(0.0);
     bool validZ = false;
 
     if (inRange) {

@@ -7,14 +7,8 @@
 // _scatter). The passes share one descriptor set and dispatch size.
 module gsplat_cull_and_compact;
 
+__exported import gsplat_types;
 __exported import scalar_buffer;
-
-public struct CameraUBO {
-    public float4x4 model;
-    public float4x4 view;
-    public float4x4 proj;
-    public float4 cameraWorldPos;
-};
 
 public struct DrawArgs {
     public uint vertexCount;

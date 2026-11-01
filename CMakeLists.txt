@@ -124,11 +124,13 @@ foreach(SLANG ${SLANG_SOURCE_FILES})
   string(REGEX REPLACE "\\.slang$" "" FILE_NAME ${FILE_NAME})
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
-  # Column-major matrices match the GLM memory layout on the C++ side.
+  # Column-major matrices match the GLM memory layout on the C++ side. The
+  # profile permits the subgroup operations of the attention and RMS norm shaders.
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${SLANGC} ${SLANG} -target spirv -profile spirv_1_5 -entry main -matrix-layout-column-major
+    COMMAND ${SLANGC} ${SLANG} -target spirv
+            -profile spirv_1_5+spvGroupNonUniform+spvGroupNonUniformArithmetic+spvGroupNonUniformShuffle -entry main -matrix-layout-column-major
             -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
     DEPFILE ${SPIRV}.d
     DEPENDS ${SLANG} ${SLANG_MODULE_FILES}

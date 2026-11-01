@@ -30,6 +30,14 @@ public struct RadixContainer {
     public uint originalIndex;
 };
 
+// The camera uniform buffer of the projection shaders.
+public struct CameraUBO {
+    public float4x4 model;
+    public float4x4 view;
+    public float4x4 proj;
+    public float4 cameraWorldPos;
+};
+
 public struct StartAndEnd {
     public uint start;
     public uint end;
