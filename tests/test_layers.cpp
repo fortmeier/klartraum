@@ -31,6 +31,8 @@
  * - concatSixInputs: six tensors of different sizes along axis 2 (the denoiser's attention chunks)
  *   and three along the last axis are joined in order
  * - conv3x3WithBias: the specialized 3x3 convolution with padding and bias matches a CPU convolution
+ * - conv3x3Winograd: a 3x3 convolution with padding 1 over enough tiles for the Winograd F(2x2, 3x3) path, with
+ *   odd image sizes (partial edge tiles), matches a CPU convolution
  * - layerNormalization: last-axis normalization with scale and bias matches the CPU
  **/
 
@@ -621,5 +623,37 @@ TEST_F(LayersTest, layerNormalization) {
             expected[row * 6 + i] = (v[i] - mean) / std::sqrt(variance + 1e-5f) * scale[i] + bias[i];
         }
     }
+    expectNear(actual, expected, 1e-4f);
+}
+
+TEST_F(LayersTest, conv3x3Winograd) {
+    const uint32_t batch = 2, inputChannels = 24, outputChannels = 20, height = 33, width = 31;
+    const Shape input{batch, inputChannels, height, width}, weights{outputChannels, inputChannels, 3, 3},
+        bias{outputChannels}, output{batch, outputChannels, height, width};
+    const auto x = ramp(layers::elementCount(input), 0.07f, -0.8f);
+    const auto w = ramp(layers::elementCount(weights), 0.011f, -0.12f);
+    const auto b = ramp(outputChannels, 0.3f, -2.0f);
+    layers::ConvAttributes attributes;
+    attributes.kernelShape = {3, 3};
+    attributes.pads = {1, 1, 1, 1};
+    const auto actual = run(layers::conv(*vc, attributes, input, weights, bias, output),
+                            {{tensor(input), x}, {tensor(weights), w}, {tensor(bias), b}}, tensor(output));
+    std::vector<float> expected(actual.size());
+    for (uint32_t n = 0; n < batch; ++n)
+        for (uint32_t o = 0; o < outputChannels; ++o)
+            for (uint32_t y = 0; y < height; ++y)
+                for (uint32_t xx = 0; xx < width; ++xx) {
+                    double sum = b[o];
+                    for (uint32_t c = 0; c < inputChannels; ++c)
+                        for (uint32_t ky = 0; ky < 3; ++ky)
+                            for (uint32_t kx = 0; kx < 3; ++kx) {
+                                const int iy = int(y + ky) - 1, ix = int(xx + kx) - 1;
+                                if (iy < 0 || ix < 0 || iy >= int(height) || ix >= int(width))
+                                    continue;
+                                sum += double(x[((size_t(n) * inputChannels + c) * height + iy) * width + ix]) *
+                                       w[((size_t(o) * inputChannels + c) * 3 + ky) * 3 + kx];
+                            }
+                    expected[((size_t(n) * outputChannels + o) * height + y) * width + xx] = float(sum);
+                }
     expectNear(actual, expected, 1e-4f);
 }
