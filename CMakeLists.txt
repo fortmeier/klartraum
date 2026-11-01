@@ -109,9 +109,43 @@ if(STALE_SPIRV_FILES)
                   "repository root; delete them with: find shaders -name '*.spv' -delete")
 endif()
 
+find_program(SLANGC slangc HINTS "$ENV{VULKAN_SDK}/bin" REQUIRED)
+message(STATUS "Using slangc: ${SLANGC}")
+
+# A shader `name.<stage>.slang` compiles to `name.<stage>.spv`. Other .slang
+# files are modules that the shaders import.
+file(GLOB_RECURSE SLANG_SOURCE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.vert.slang"
+     "${SHADER_BASE_DIR}/*.frag.slang" "${SHADER_BASE_DIR}/*.comp.slang" "${SHADER_BASE_DIR}/*.mesh.slang")
+file(GLOB_RECURSE SLANG_MODULE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.slang")
+list(REMOVE_ITEM SLANG_MODULE_FILES ${SLANG_SOURCE_FILES})
+
+foreach(SLANG ${SLANG_SOURCE_FILES})
+  file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${SLANG})
+  string(REGEX REPLACE "\\.slang$" "" FILE_NAME ${FILE_NAME})
+  set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
+  get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
+  # Column-major matrices match the GLM memory layout on the C++ side.
+  add_custom_command(
+    OUTPUT ${SPIRV}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
+    COMMAND ${SLANGC} ${SLANG} -target spirv -profile spirv_1_5 -entry main -matrix-layout-column-major
+            -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
+    DEPFILE ${SPIRV}.d
+    DEPENDS ${SLANG} ${SLANG_MODULE_FILES}
+    COMMENT "Compiling ${SLANG} to ${SPIRV}"
+  )
+  list(APPEND SPIRV_BINARY_FILES ${SPIRV})
+endforeach()
+
 file(GLOB_RECURSE GLSL_SOURCE_FILES CONFIGURE_DEPENDS "${SHADER_BASE_DIR}/*.vert" "${SHADER_BASE_DIR}/*.frag" "${SHADER_BASE_DIR}/*.comp")
 # Exclude draft/scratch shaders prefixed with underscore
 list(FILTER GLSL_SOURCE_FILES EXCLUDE REGEX "/_[^/]+\\.comp$")
+# A shader with a Slang source compiles from that source instead.
+foreach(GLSL ${GLSL_SOURCE_FILES})
+  if(EXISTS "${GLSL}.slang")
+    list(REMOVE_ITEM GLSL_SOURCE_FILES ${GLSL})
+  endif()
+endforeach()
 
 foreach(GLSL ${GLSL_SOURCE_FILES})
   file(RELATIVE_PATH FILE_NAME ${SHADER_BASE_DIR} ${GLSL})
