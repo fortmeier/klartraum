@@ -6,40 +6,14 @@
 // This compute shader was automatically generated and may require
 // manual review and optimization for production use.
 
-#version 450
+import conv_common;
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+[[vk::push_constant]] ConstantBuffer<ConvPushConstants> pc;
 
-layout(push_constant) uniform PushConstants {
-    // operation attributes
-    uint dilations[2];
-    uint groups[1];
-    uint kernel_shape[2];
-    uint pads[4];
-    uint strides[2];
-
-    // tensor input sizes
-    uint dimInput[4];      // [N, C, H, W]
-    uint dimWeights[4];    // [output_channels, input_channels/groups, kH, kW]
-    uint dimBias[1];       // [output_channels]
-    uint dimOutput[4];     // inferred ONNX output shape
-} pc;
-
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer {
-    float input_data[];
-};
-
-layout(set = 0, binding = 1) restrict readonly buffer WeightBuffer {
-    float weight_data[];
-};
-
-layout(set = 0, binding = 2) restrict readonly buffer BiasBuffer {
-    float bias_data[];
-};
-
-layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer {
-    float output_data[];
-};
+[[vk::binding(0, 0)]] StructuredBuffer<float> input_data;
+[[vk::binding(1, 0)]] StructuredBuffer<float> weight_data;
+[[vk::binding(2, 0)]] StructuredBuffer<float> bias_data;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> output_data;
 
 // Helper function to calculate tensor index for NCHW layout
 uint getTensorIndex4D(uint n, uint c, uint h, uint w, uint N, uint C, uint H, uint W) {
@@ -52,21 +26,23 @@ uint getWeightIndex4D(uint out_c, uint in_c, uint kh, uint kw, uint OUT_C, uint 
 }
 
 // Basic 2D convolution implementation
-void main() {
-    uint gx = gl_GlobalInvocationID.x;
-    uint gy = gl_GlobalInvocationID.y;
-    uint gz = gl_GlobalInvocationID.z;
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint gx = globalId.x;
+    uint gy = globalId.y;
+    uint gz = globalId.z;
 
     // Extract tensor dimensions from push constants
-    uint input_N = pc.dimInput[0];    // batch size
-    uint input_C = pc.dimInput[1];    // input channels
-    uint input_H = pc.dimInput[2];    // input height
-    uint input_W = pc.dimInput[3];    // input width
+    uint input_N = pc.dimInput[0]; // batch size
+    uint input_C = pc.dimInput[1]; // input channels
+    uint input_H = pc.dimInput[2]; // input height
+    uint input_W = pc.dimInput[3]; // input width
 
-    uint weight_OUT_C = pc.dimWeights[0];  // output channels
-    uint weight_IN_C = pc.dimWeights[1];   // input channels / groups
-    uint weight_KH = pc.dimWeights[2];     // kernel height
-    uint weight_KW = pc.dimWeights[3];     // kernel width
+    uint weight_OUT_C = pc.dimWeights[0]; // output channels
+    uint weight_IN_C = pc.dimWeights[1];  // input channels / groups
+    uint weight_KH = pc.dimWeights[2];    // kernel height
+    uint weight_KW = pc.dimWeights[3];    // kernel width
 
     // Extract convolution parameters
     uint kernel_h = pc.kernel_shape[0];
@@ -120,14 +96,14 @@ void main() {
 
                     // Get input value
                     uint input_idx = getTensorIndex4D(batch, actual_in_c, uint(input_y), uint(input_x),
-                                                    input_N, input_C, input_H, input_W);
+                                                      input_N, input_C, input_H, input_W);
 
                     // Get weight value
                     uint weight_idx = getWeightIndex4D(out_channel, in_c, kh, kw,
-                                                     weight_OUT_C, weight_IN_C, weight_KH, weight_KW);
+                                                       weight_OUT_C, weight_IN_C, weight_KH, weight_KW);
 
                     // Bounds checking for buffer access
-                    if (input_idx < input_data.length() && weight_idx < weight_data.length()) {
+                    if (input_idx < input_data.getCount() && weight_idx < weight_data.getCount()) {
                         sum += input_data[input_idx] * weight_data[weight_idx];
                     }
                 }
@@ -136,15 +112,15 @@ void main() {
     }
 
     // Add bias if available
-    if (pc.dimBias[0] > 0 && out_channel < bias_data.length()) {
+    if (pc.dimBias[0] > 0 && out_channel < bias_data.getCount()) {
         sum += bias_data[out_channel];
     }
 
     // Write output
     uint output_idx = getTensorIndex4D(batch, out_channel, out_y, out_x,
-                                     input_N, weight_OUT_C, output_H, output_W);
+                                       input_N, weight_OUT_C, output_H, output_W);
 
-    if (output_idx < output_data.length()) {
+    if (output_idx < output_data.getCount()) {
         output_data[output_idx] = sum;
     }
 }
