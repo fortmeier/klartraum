@@ -2,15 +2,19 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
+struct PushConstants {
+    uint outerCount;
+    uint axisSize;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants { uint outerCount; uint axisSize; } pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
-layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer { float outputData[]; };
+[[vk::binding(0, 0)]] StructuredBuffer<float> inputData;
+[[vk::binding(1, 0)]] RWStructuredBuffer<float> outputData;
 
-void main() {
-    uint row = gl_GlobalInvocationID.x;
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint row = globalId.x;
     if (row >= pc.outerCount) return;
     uint offset = row * pc.axisSize;
     float maximum = inputData[offset];

@@ -2,27 +2,29 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // RMS normalization over the channel axis of an N x C x P tensor (the Wan VAE's
 // channel RMSNorm), optionally followed by SiLU. One invocation per (n, p): it
 // reads its C values twice (sum of squares, then the normalized output), and
 // neighbouring invocations read neighbouring positions.
-layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
+
+struct PushConstants {
     uint batch;
     uint channels;
     uint positions;
     uint silu;
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
-layout(set = 0, binding = 1) restrict readonly buffer EpsBuffer { float eps[]; };
-layout(set = 0, binding = 2) restrict readonly buffer ScaleBuffer { float scale[]; };
-layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-void main() {
-    const uint position = gl_GlobalInvocationID.x;
-    const uint n = gl_GlobalInvocationID.y;
+[[vk::binding(0, 0)]] StructuredBuffer<float> inputData;
+[[vk::binding(1, 0)]] StructuredBuffer<float> eps;
+[[vk::binding(2, 0)]] StructuredBuffer<float> scale;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> outputData;
+
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    const uint position = globalId.x;
+    const uint n = globalId.y;
     if (position >= pc.positions || n >= pc.batch) return;
     const uint base = n * pc.channels * pc.positions + position;
     float sum = 0.0;
@@ -30,7 +32,7 @@ void main() {
         const float value = inputData[base + c * pc.positions];
         sum += value * value;
     }
-    const float inverse = inversesqrt(sum / float(pc.channels) + eps[0]);
+    const float inverse = rsqrt(sum / float(pc.channels) + eps[0]);
     for (uint c = 0; c < pc.channels; ++c) {
         float y = inputData[base + c * pc.positions] * inverse * scale[c];
         if (pc.silu != 0) y = y / (1.0 + exp(-y));

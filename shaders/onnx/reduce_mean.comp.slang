@@ -2,17 +2,23 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // One invocation per output element; neighbouring invocations read
 // neighbouring inner elements, so reductions over leading axes stay coalesced.
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants { uint outerCount; uint axisSize; uint innerSize; } pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
-layout(set = 0, binding = 1) restrict writeonly buffer OutputBuffer { float outputData[]; };
 
-void main() {
-    uint index = gl_GlobalInvocationID.x;
+struct PushConstants {
+    uint outerCount;
+    uint axisSize;
+    uint innerSize;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
+
+[[vk::binding(0, 0)]] StructuredBuffer<float> inputData;
+[[vk::binding(1, 0)]] RWStructuredBuffer<float> outputData;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint index = globalId.x;
     if (index >= pc.outerCount * pc.innerSize) return;
     uint outer = index / pc.innerSize;
     uint inner = index - outer * pc.innerSize;
