@@ -264,6 +264,7 @@ add_executable(
   tests/test_vulkan_helpers.cpp
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
+  tests/test_training.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
   tests/test_buffertransformation.cpp
@@ -333,6 +334,8 @@ set(KLARTRAUM_LIB_SRC
   src/rendering/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
   src/layers.cpp
+  src/training.cpp
+  src/mlp_training.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
