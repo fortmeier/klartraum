@@ -447,13 +447,14 @@ ComputeGraphElementPtr fusedAttention(VulkanContext& vulkanContext, const Shape&
         output[3] != constants.valueDepth || constants.queryDepth > 512 || constants.valueDepth > 512) {
         throw std::runtime_error("Unsupported FusedAttention tensor shapes");
     }
-    // Head widths 40 and 80 (the SD1.5 UNet's two highest-resolution
-    // attention levels) use the key-tiled kernel with one query per invocation
-    // and 64 queries per group.
-    if (constants.queryDepth == constants.valueDepth && (constants.queryDepth == 40 || constants.queryDepth == 80)) {
-        const std::string shader =
-            "shaders/onnx/fused_attention_tiled_d" + std::to_string(constants.queryDepth) + ".comp.spv";
-        auto operation = computation(vulkanContext, shader, constants);
+    // Heads up to 192 wide with equal query and value widths run the flash kernel for the next multiple of 64,
+    // padded with zeros; it beats the key-tiled kernels for 40 and 80 wide heads on an Apple M4.
+    if (constants.queryDepth == constants.valueDepth && constants.queryDepth % 4 == 0 && constants.queryDepth <= 192) {
+        FusedAttentionBiasPushConstants flash{
+            constants.batchCount, 1, constants.queryCount, constants.keyCount, 0, 0, 0, constants.queryDepth};
+        const uint32_t padded = (constants.queryDepth + 63) / 64 * 64;
+        auto operation =
+            computation(vulkanContext, "shaders/onnx/flash_attention_d" + std::to_string(padded) + ".comp.spv", flash);
         operation->setGroupCount((constants.queryCount + 63) / 64, constants.batchCount, 1);
         return operation;
     }

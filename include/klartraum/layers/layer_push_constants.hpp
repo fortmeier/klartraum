@@ -65,6 +65,7 @@ struct FusedAttentionBiasPushConstants {
     uint32_t biasStrideBatch; ///< bias elements between batches (0: broadcast)
     uint32_t biasStrideHead;  ///< bias elements between heads (0: broadcast)
     uint32_t biasStrideQuery; ///< bias elements between queries (0: broadcast)
+    uint32_t depth = 128;     ///< head width, a multiple of 4
 };
 
 struct RmsNormalizationPushConstants {

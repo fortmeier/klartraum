@@ -18,6 +18,9 @@
  *   (Cosmos3's text padding, including -1e9 entries) matches a CPU softmax(qkᵀ + bias)v,
  *   for query and key counts that are not multiples of the kernel tiles
  * - fusedAttentionWithCausalBias: the same kernel with a per-query [queries, keys] causal mask
+ * - fusedAttentionPaddedHeadWidths: attention without a bias for the SD1.5 head widths 40, 80 and 160 (the
+ *   flash kernel padded to 64, 128 and 192) matches a CPU softmax(qkᵀ)v for query and key counts that are not
+ *   multiples of the kernel tiles
  * - fusedAttentionCosmos3Denoiser: at the 256x256 Cosmos3 denoiser shapes (text padding in the
  *   first guidance branch) the fused kernel matches the unfused MatMul/Add/Softmax/MatMul chain;
  *   prints the wall time of both
@@ -370,6 +373,21 @@ TEST_F(LayersTest, fusedAttentionWithCausalBias) {
         run(layers::fusedAttentionWithBias(*vc, query, key, value, bias, output),
             {{tensor(query), q}, {tensor(key), k}, {tensor(value), v}, {tensor(bias), b}}, tensor(output));
     expectNear(actual, attentionReference(q, k, v, b, batches, heads, queries, keys, depth, 0, 0, keys), 1e-5f);
+}
+
+TEST_F(LayersTest, fusedAttentionPaddedHeadWidths) {
+    for (const uint32_t depth : {40u, 80u, 160u}) {
+        const uint32_t batches = 2, heads = 3, queries = 70, keys = 77;
+        const Shape query{batches, heads, queries, depth}, key{batches, heads, depth, keys};
+        const Shape value{batches, heads, keys, depth}, output{batches, heads, queries, depth};
+        const auto q = ramp(layers::elementCount(query), 0.017f, -0.2f);
+        const auto k = ramp(layers::elementCount(key), 0.009f, -0.1f);
+        const auto v = ramp(layers::elementCount(value), 0.05f, -0.6f);
+        const auto actual = run(layers::fusedAttention(*vc, query, key, value, output),
+                                {{tensor(query), q}, {tensor(key), k}, {tensor(value), v}}, tensor(output));
+        const std::vector<float> noBias(keys, 0.0f);
+        expectNear(actual, attentionReference(q, k, v, noBias, batches, heads, queries, keys, depth, 0, 0, 0), 1e-5f);
+    }
 }
 
 TEST_F(LayersTest, fusedAttentionCosmos3Denoiser) {
