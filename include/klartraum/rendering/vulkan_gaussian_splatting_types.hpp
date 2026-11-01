@@ -221,7 +221,7 @@ struct CullAndCompactPushConstants {
 typedef GeneralComputation<CullAndCompactPushConstants> GaussianCullAndCompact;
 
 // Per-splat 2D attribute precompute (raster backend, gsplat_raster_project.comp).
-// All-scalar (4-byte) members so std430 packing matches the GLSL push block.
+// All-scalar (4-byte) members so std430 packing matches the shader's push constants.
 struct RasterProjectPushConstants {
     uint32_t numSplats;
     float screenWidth;

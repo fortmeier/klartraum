@@ -2,7 +2,7 @@
 
 Klartraum is built with CMake 3.24 or newer and needs a C++17 compiler and the
 [Vulkan SDK](https://vulkan.lunarg.com/) (for the loader, the headers and the
-`glslc` shader compiler). All other dependencies are git submodules or are
+`slangc` shader compiler). All other dependencies are git submodules or are
 downloaded by CMake. Their licenses are listed in
 [THIRD_PARTY_NOTICES.md](https://github.com/fortmeier/klartraum/blob/main/THIRD_PARTY_NOTICES.md);
 pass that file on with any build you distribute.
@@ -31,7 +31,7 @@ The binaries end up in `build\Debug\` (tests) and `build\examples\Debug\`
 
 Klartraum runs on macOS through a Vulkan portability driver such as MoltenVK
 or KosmicKrisp. Install the Vulkan SDK and make sure `VULKAN_SDK` points to it;
-CMake uses it to find the Vulkan loader and the matching `glslc`.
+CMake uses it to find the Vulkan loader and the matching `slangc`.
 
 ```bash
 mkdir build
@@ -62,8 +62,10 @@ library and its headers.
 
 ## Shaders
 
-Compute and graphics shaders are written in GLSL and compiled to SPIR-V by
-`glslc` as part of the build. The compiled `.spv` files are written to
+Compute and graphics shaders are written in [Slang](https://shader-slang.org/)
+and compiled to SPIR-V by `slangc` as part of the build. A shader
+`name.<stage>.slang` compiles to `name.<stage>.spv`; the other `.slang` files
+are modules the shaders import. The compiled `.spv` files are written to
 `shaders/` in the build directory and loaded at runtime by relative path (for
 example `shaders/gsplat/gsplat_projection.comp.spv`). Such a path is looked up
 in the working directory first and then in the asset root:
