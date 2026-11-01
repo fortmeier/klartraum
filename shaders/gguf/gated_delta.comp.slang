@@ -2,10 +2,6 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-#extension GL_KHR_shader_subgroup_basic : require
-#extension GL_KHR_shader_subgroup_arithmetic : require
-
 // Gated delta rule of one linear-attention value head per workgroup, for the
 // params[0] active tokens in order, followed by the gated RMS normalization:
 //   q, k  = L2-normalized query/key of key head (head % keyHeads); q /= sqrt(keyDim)
@@ -16,63 +12,71 @@
 //   out   = o / rms(o) * normWeight * silu(z)
 // S (keyDim x valueDim per head, value index fastest) persists across
 // submissions. Invocation j owns value column j (keyDim, valueDim <= 128).
-layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
+import subgroup;
+
+struct PushConstants {
     uint keyHeads;
     uint valueHeads;
     uint keyDim;
     uint valueDim;
-    uint channels;  // convolution channels per token: 2 * keyHeads * keyDim + valueHeads * valueDim
+    uint channels; // convolution channels per token: 2 * keyHeads * keyDim + valueHeads * valueDim
     float epsilon;
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer ConvBuffer { float C[]; };      // [T][channels]: q | k | v
-layout(set = 0, binding = 1) restrict readonly buffer GateBuffer { float Z[]; };      // [T][valueHeads * valueDim]
-layout(set = 0, binding = 2) restrict readonly buffer AlphaBuffer { float alpha[]; }; // [T][valueHeads]
-layout(set = 0, binding = 3) restrict readonly buffer BetaBuffer { float beta[]; };   // [T][valueHeads]
-layout(set = 0, binding = 4) restrict readonly buffer ABuffer { float A[]; };         // [valueHeads]
-layout(set = 0, binding = 5) restrict readonly buffer DtBiasBuffer { float dtBias[]; };
-layout(set = 0, binding = 6) restrict readonly buffer NormBuffer { float normWeight[]; }; // [valueDim]
-layout(set = 0, binding = 7) restrict readonly buffer ParamsBuffer { uint params[]; };
-layout(set = 0, binding = 8) buffer StateBuffer { float S[]; };                       // [valueHeads][keyDim][valueDim]
-layout(set = 0, binding = 9) restrict writeonly buffer OutputBuffer { float O[]; };   // [T][valueHeads * valueDim]
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-shared float queries[128];
-shared float keys[128];
-shared float partial[3][4];
+[[vk::binding(0, 0)]] StructuredBuffer<float> C;     // [T][channels]: q | k | v
+[[vk::binding(1, 0)]] StructuredBuffer<float> Z;     // [T][valueHeads * valueDim]
+[[vk::binding(2, 0)]] StructuredBuffer<float> alpha; // [T][valueHeads]
+[[vk::binding(3, 0)]] StructuredBuffer<float> beta;  // [T][valueHeads]
+[[vk::binding(4, 0)]] StructuredBuffer<float> A;     // [valueHeads]
+[[vk::binding(5, 0)]] StructuredBuffer<float> dtBias;
+[[vk::binding(6, 0)]] StructuredBuffer<float> normWeight; // [valueDim]
+[[vk::binding(7, 0)]] StructuredBuffer<uint> params;
+[[vk::binding(8, 0)]] RWStructuredBuffer<float> S;   // [valueHeads][keyDim][valueDim]
+[[vk::binding(9, 0)]] RWStructuredBuffer<float> O;   // [T][valueHeads * valueDim]
+
+// The normalized query of the current token.
+groupshared float queries[128];
+// The normalized key of the current token.
+groupshared float keys[128];
+// Per subgroup, the three partial sums of workgroupSum().
+groupshared float partial[3][4];
 
 // Workgroup-wide sums of three values (all invocations must call it).
-vec3 workgroupSum(vec3 value) {
-    const vec3 subgroupTotal = subgroupAdd(value);
-    if (subgroupElect()) {
-        partial[0][gl_SubgroupID] = subgroupTotal.x;
-        partial[1][gl_SubgroupID] = subgroupTotal.y;
-        partial[2][gl_SubgroupID] = subgroupTotal.z;
+float3 workgroupSum(float3 value) {
+    const float3 subgroupTotal = WaveActiveSum(value);
+    if (WaveIsFirstLane()) {
+        partial[0][subgroupId()] = subgroupTotal.x;
+        partial[1][subgroupId()] = subgroupTotal.y;
+        partial[2][subgroupId()] = subgroupTotal.z;
     }
-    barrier();
-    vec3 total = vec3(0.0);
-    for (uint s = 0u; s < gl_NumSubgroups; ++s) total += vec3(partial[0][s], partial[1][s], partial[2][s]);
-    barrier();
+    GroupMemoryBarrierWithGroupSync();
+    float3 total = float3(0.0);
+    for (uint s = 0u; s < subgroupCount(); ++s) total += float3(partial[0][s], partial[1][s], partial[2][s]);
+    GroupMemoryBarrierWithGroupSync();
     return total;
 }
 
-void main() {
-    const uint head = gl_WorkGroupID.x;
+[shader("compute")]
+[numthreads(128, 1, 1)]
+void main(uint3 localId: SV_GroupThreadID, uint3 groupId: SV_GroupID) {
+    const uint head = groupId.x;
     const uint keyHead = head % pc.keyHeads;
-    const uint j = gl_LocalInvocationID.x;
+    const uint j = localId.x;
     const bool keyLane = j < pc.keyDim, valueLane = j < pc.valueDim;
     const uint stateBase = head * pc.keyDim * pc.valueDim;
     const float a = A[head], bias = dtBias[head];
-    const float queryScale = inversesqrt(float(pc.keyDim));
+    const float queryScale = rsqrt(float(pc.keyDim));
 
     const uint tokens = params[0];
     for (uint t = 0u; t < tokens; ++t) {
         const uint row = t * pc.channels;
         const float q = keyLane ? C[row + keyHead * pc.keyDim + j] : 0.0;
         const float k = keyLane ? C[row + (pc.keyHeads + keyHead) * pc.keyDim + j] : 0.0;
-        const vec3 norms = workgroupSum(vec3(q * q, k * k, 0.0));
-        queries[j] = q * inversesqrt(norms.x + 1e-6) * queryScale;
-        keys[j] = k * inversesqrt(norms.y + 1e-6);
-        barrier();
+        const float3 norms = workgroupSum(float3(q * q, k * k, 0.0));
+        queries[j] = q * rsqrt(norms.x + 1e-6) * queryScale;
+        keys[j] = k * rsqrt(norms.y + 1e-6);
+        GroupMemoryBarrierWithGroupSync();
 
         const float x = alpha[t * pc.valueHeads + head] + bias;
         const float softplus = x > 20.0 ? x : log(1.0 + exp(x));
@@ -92,13 +96,13 @@ void main() {
                 output_ += updated * queries[i];
             }
         }
-        const float squares = workgroupSum(vec3(output_ * output_, 0.0, 0.0)).x;
+        const float squares = workgroupSum(float3(output_ * output_, 0.0, 0.0)).x;
         if (valueLane) {
             const float z = Z[t * pc.valueHeads * pc.valueDim + head * pc.valueDim + j];
-            const float normalizedOutput = output_ * inversesqrt(squares / float(pc.valueDim) + pc.epsilon);
+            const float normalizedOutput = output_ * rsqrt(squares / float(pc.valueDim) + pc.epsilon);
             O[t * pc.valueHeads * pc.valueDim + head * pc.valueDim + j] =
                 normalizedOutput * normWeight[j] * (z / (1.0 + exp(-z)));
         }
-        barrier();  // queries/keys are rewritten by the next token
+        GroupMemoryBarrierWithGroupSync(); // queries/keys are rewritten by the next token
     }
 }

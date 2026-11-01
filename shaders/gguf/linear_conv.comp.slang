@@ -2,26 +2,28 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // Causal depthwise convolution (kernel 4) of the linear-attention input
 // projection, followed by SiLU, for the params[0] active tokens in order.
 // `state` holds each channel's previous three inputs (oldest first) across
 // submissions and is advanced here. One invocation per channel.
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
-    uint channels;
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float X[]; };      // [T][channels]
-layout(set = 0, binding = 1) restrict readonly buffer WeightBuffer { vec4 weights[]; }; // [channels][4], oldest tap first
-layout(set = 0, binding = 2) restrict readonly buffer ParamsBuffer { uint params[]; };
-layout(set = 0, binding = 3) buffer StateBuffer { float state[]; };                     // [3][channels]
-layout(set = 0, binding = 4) restrict writeonly buffer OutputBuffer { float Y[]; };     // [T][channels]
 
-void main() {
-    const uint channel = gl_GlobalInvocationID.x;
+struct PushConstants {
+    uint channels;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
+
+[[vk::binding(0, 0)]] StructuredBuffer<float> X;        // [T][channels]
+[[vk::binding(1, 0)]] StructuredBuffer<float4> weights; // [channels][4], oldest tap first
+[[vk::binding(2, 0)]] StructuredBuffer<uint> params;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> state;  // [3][channels]
+[[vk::binding(4, 0)]] RWStructuredBuffer<float> Y;      // [T][channels]
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    const uint channel = globalId.x;
     if (channel >= pc.channels) return;
-    const vec4 w = weights[channel];
+    const float4 w = weights[channel];
     float s0 = state[channel], s1 = state[pc.channels + channel], s2 = state[2u * pc.channels + channel];
     const uint tokens = params[0];
     for (uint t = 0u; t < tokens; ++t) {
