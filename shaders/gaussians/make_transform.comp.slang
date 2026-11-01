@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // Builds the transform buffer GaussianTransform reads from seven
 // scalars: translation, rotation (degrees about X, then Y, then Z) and a
 // uniform scale. Besides translation, scale and the rotation quaternion it
@@ -11,23 +9,18 @@
 // fitted by least squares to the basis the splatting shaders evaluate
 // (computeSH), at 64 directions on a Fibonacci sphere, as
 // klartraum::transformGaussians does on the CPU. Runs as one invocation.
+import gaussian_common;
 
-#extension GL_GOOGLE_include_directive : require
+[[vk::binding(0, 0)]] StructuredBuffer<float> tx;
+[[vk::binding(1, 0)]] StructuredBuffer<float> ty;
+[[vk::binding(2, 0)]] StructuredBuffer<float> tz;
+[[vk::binding(3, 0)]] StructuredBuffer<float> pitch;
+[[vk::binding(4, 0)]] StructuredBuffer<float> yaw;
+[[vk::binding(5, 0)]] StructuredBuffer<float> roll;
+[[vk::binding(6, 0)]] StructuredBuffer<float> scale;
+[[vk::binding(7, 0)]] RWStructuredBuffer<float> t;
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-
-layout(set = 0, binding = 0) readonly buffer TX { float tx[]; };
-layout(set = 0, binding = 1) readonly buffer TY { float ty[]; };
-layout(set = 0, binding = 2) readonly buffer TZ { float tz[]; };
-layout(set = 0, binding = 3) readonly buffer Pitch { float pitch[]; };
-layout(set = 0, binding = 4) readonly buffer Yaw { float yaw[]; };
-layout(set = 0, binding = 5) readonly buffer Roll { float roll[]; };
-layout(set = 0, binding = 6) readonly buffer Scale { float scale[]; };
-layout(set = 0, binding = 7) writeonly buffer Transform { float t[]; };
-
-#include "gaussian_common.glsl"
-
-void shBasis(vec3 d, out float b[15]) {
+void shBasis(float3 d, out float b[15]) {
     float x = d.x, y = d.y, z = d.z;
     float x2 = x * x, y2 = y * y, z2 = z * z;
     b[0] = -0.488603 * y;
@@ -47,17 +40,19 @@ void shBasis(vec3 d, out float b[15]) {
     b[14] = -0.590044 * x * (x2 - 3.0 * y2);
 }
 
-vec4 axisAngle(vec3 axis, float degrees) {
+float4 axisAngle(float3 axis, float degrees) {
     float half_ = radians(degrees) * 0.5;
-    return vec4(axis * sin(half_), cos(half_));
+    return float4(axis * sin(half_), cos(half_));
 }
 
-const int kDirections = 64;
+static const int kDirections = 64;
 
+[shader("compute")]
+[numthreads(1, 1, 1)]
 void main() {
-    vec4 q = normalize(quatMul(axisAngle(vec3(0.0, 0.0, 1.0), roll[0]),
-                               quatMul(axisAngle(vec3(0.0, 1.0, 0.0), yaw[0]),
-                                       axisAngle(vec3(1.0, 0.0, 0.0), pitch[0]))));
+    float4 q = normalize(quatMul(axisAngle(float3(0.0, 0.0, 1.0), roll[0]),
+                                 quatMul(axisAngle(float3(0.0, 1.0, 0.0), yaw[0]),
+                                         axisAngle(float3(1.0, 0.0, 0.0), pitch[0]))));
     t[kTranslation + 0] = tx[0];
     t[kTranslation + 1] = ty[0];
     t[kTranslation + 2] = tz[0];
@@ -68,10 +63,10 @@ void main() {
     t[kRotation + 3] = q.w;
 
     // The rotated colour at direction d is the original one at R^T d.
-    mat3 inverse = transpose(quatToMat3(q));
-    int starts[3] = int[3](0, 3, 8);
-    int sizes[3] = int[3](3, 5, 7);
-    int offsets[3] = int[3](kShBand1, kShBand2, kShBand3);
+    float3x3 inverse = transpose(quatToMat3(q));
+    int starts[3] = { 0, 3, 8 };
+    int sizes[3] = { 3, 5, 7 };
+    int offsets[3] = { kShBand1, kShBand2, kShBand3 };
     for (int band = 0; band < 3; ++band) {
         int start = starts[band], n = sizes[band];
         // Normal equations (A^T A) M = A^T B for all columns of M at once.
@@ -87,11 +82,11 @@ void main() {
             float z = 1.0 - (2.0 * float(i) + 1.0) / float(kDirections);
             float r = sqrt(1.0 - z * z);
             float phi = float(i) * 2.399963229728653;
-            vec3 d = vec3(r * cos(phi), r * sin(phi), z);
+            float3 d = float3(r * cos(phi), r * sin(phi), z);
             float basis[15];
             float turned[15];
             shBasis(d, basis);
-            shBasis(inverse * d, turned);
+            shBasis(mul(inverse, d), turned);
             for (int j = 0; j < n; ++j) {
                 for (int k = 0; k < n; ++k) {
                     a[j][k] += basis[start + j] * basis[start + k];
@@ -108,8 +103,12 @@ void main() {
                 }
             }
             for (int k = 0; k < 7; ++k) {
-                float ta = a[col][k]; a[col][k] = a[pivot][k]; a[pivot][k] = ta;
-                float tb = b[col][k]; b[col][k] = b[pivot][k]; b[pivot][k] = tb;
+                float ta = a[col][k];
+                a[col][k] = a[pivot][k];
+                a[pivot][k] = ta;
+                float tb = b[col][k];
+                b[col][k] = b[pivot][k];
+                b[pivot][k] = tb;
             }
             for (int row = col + 1; row < n; ++row) {
                 float f = a[row][col] / a[col][col];
