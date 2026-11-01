@@ -36,6 +36,8 @@ struct InstanceNormalizationPushConstants {
     uint32_t channels;
     uint32_t spatialSize;
     float epsilon;
+    uint32_t chunkSize; // spatial values per workgroup of the chunked shaders
+    uint32_t chunks;
 };
 
 struct MatMulPushConstants {

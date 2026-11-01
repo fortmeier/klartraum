@@ -13,6 +13,13 @@ public uint subgroupId() {
     };
 }
 
+// Returns the number of subgroups in the workgroup (SPIR-V NumSubgroups).
+public uint subgroupCount() {
+    return spirv_asm {
+        result:$$uint = OpLoad builtin(NumSubgroups:uint);
+    };
+}
+
 // Returns `value` of the lane whose index is this lane's index XOR `mask`.
 public float subgroupShuffleXor(float value, uint mask) {
     return WaveReadLaneAt(value, WaveGetLaneIndex() ^ mask);

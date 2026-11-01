@@ -347,8 +347,22 @@ ComputeGraphElementPtr instanceNormalization(VulkanContext& vulkanContext, const
     for (size_t i = 2; i < input.size(); ++i)
         constants.spatialSize *= input[i];
     constants.epsilon = epsilon;
-    auto operation = computation(vulkanContext, "shaders/onnx/instance_normalization.comp.spv", constants);
-    operation->setGroupCountX(constants.batch * constants.channels);
+    // Each N x C slice is split into chunks of at least 1024 values until about 512 workgroups share the work: a
+    // statistics pass, then a pass that merges a slice's chunk statistics and normalizes its chunk.
+    constexpr uint32_t kTargetWorkgroups = 512, kMinChunk = 1024;
+    const uint32_t slices = constants.batch * constants.channels;
+    constants.chunks = std::max(
+        1u, std::min((constants.spatialSize + kMinChunk - 1) / kMinChunk, (kTargetWorkgroups + slices - 1) / slices));
+    constants.chunkSize = (constants.spatialSize + constants.chunks - 1) / constants.chunks;
+    constants.chunks = (constants.spatialSize + constants.chunkSize - 1) / constants.chunkSize;
+    auto operation = vulkanContext.create<GeneralComputation<InstanceNormalizationPushConstants>>(
+        std::vector<std::string>{"shaders/onnx/instance_normalization_stats.comp.spv",
+                                 "shaders/onnx/instance_normalization_apply.comp.spv"});
+    operation->setPushConstants({constants});
+    auto statistics =
+        std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, size_t(slices) * constants.chunks * 2);
+    operation->addScratchBufferElement(statistics, false);
+    operation->setGroupCount(constants.chunks, slices, 1);
     return operation;
 }
 
