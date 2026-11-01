@@ -2,23 +2,24 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint batch;
     uint channels;
     uint inputHeight;
     uint inputWidth;
     uint outputHeight;
     uint outputWidth;
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
-layout(set = 0, binding = 1) restrict readonly buffer ScalesBuffer { float scales[]; };
-layout(set = 0, binding = 2) restrict writeonly buffer OutputBuffer { float outputData[]; };
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-void main() {
-    uint index = gl_GlobalInvocationID.x;
+[[vk::binding(0, 0)]] StructuredBuffer<float> inputData;
+[[vk::binding(1, 0)]] StructuredBuffer<float> scales;
+[[vk::binding(2, 0)]] RWStructuredBuffer<float> outputData;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint index = globalId.x;
     uint total = pc.batch * pc.channels * pc.outputHeight * pc.outputWidth;
     if (index >= total) return;
     uint x = index % pc.outputWidth;

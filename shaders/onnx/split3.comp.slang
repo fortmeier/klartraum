@@ -2,26 +2,27 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint outerCount;
     uint axisSize;
     uint innerSize;
     uint split0;
     uint split1;
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer InputBuffer { float inputData[]; };
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
+
+[[vk::binding(0, 0)]] StructuredBuffer<float> inputData;
 // The split-size tensor is bound for ONNX slot compatibility. Static split
 // sizes are carried in push constants, so its 64-bit payload is not read.
-layout(set = 0, binding = 1) restrict readonly buffer SizesBuffer { uint sizes[]; };
-layout(set = 0, binding = 2) restrict writeonly buffer Output0Buffer { float output0[]; };
-layout(set = 0, binding = 3) restrict writeonly buffer Output1Buffer { float output1[]; };
-layout(set = 0, binding = 4) restrict writeonly buffer Output2Buffer { float output2[]; };
+[[vk::binding(1, 0)]] StructuredBuffer<uint> sizes;
+[[vk::binding(2, 0)]] RWStructuredBuffer<float> output0;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> output1;
+[[vk::binding(4, 0)]] RWStructuredBuffer<float> output2;
 
-void main() {
-    uint index = gl_GlobalInvocationID.x;
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint index = globalId.x;
     uint total = pc.outerCount * pc.axisSize * pc.innerSize;
     if (index >= total) return;
     uint inner = index % pc.innerSize;
