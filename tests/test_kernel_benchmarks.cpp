@@ -11,6 +11,8 @@
  * - fusedAttention: the fused attention kernels at SD1.5 UNet and VAE shapes (head widths 40, 80, 160 and 512)
  *   and the Cosmos3 128-wide kernel with a key-padding bias match a CPU softmax(q kᵀ + bias) v on sampled
  *   queries; prints the GPU time of each
+ * - elementwise: Mul and Add with equal shapes, a per-channel and a scalar operand, and Sigmoid at SD1.5 VAE
+ *   and UNet shapes match the CPU on sampled elements; prints the GPU time and bandwidth of each
  * - normalization: instance normalization at SD1.5 VAE group-norm shapes and layer normalization and softmax at
  *   CLIP and UNet shapes match the CPU on sampled rows; prints the GPU time and bandwidth of each
  *
@@ -352,6 +354,46 @@ TEST_F(KernelBenchmark, normalization) {
                 ASSERT_NEAR(y[row * rowLength + i], expected, 2e-4 + 2e-4 * std::abs(expected))
                     << c.name << " row " << row;
             }
+        }
+    }
+}
+
+TEST_F(KernelBenchmark, elementwise) {
+    std::cout << "elementwise:" << std::endl;
+    struct Case {
+        std::string name;
+        int kind; // 0 Mul, 1 Add, 2 Sigmoid
+        Shape lhs, rhs;
+    };
+    const std::vector<Case> cases = {
+        {"vae mul equal [1,128,256,256]", 0, {1, 128, 256, 256}, {1, 128, 256, 256}},
+        {"vae mul per-channel [1,128,256,256]x[128,1,1]", 0, {1, 128, 256, 256}, {128, 1, 1}},
+        {"vae add equal [1,256,128,128]", 1, {1, 256, 128, 128}, {1, 256, 128, 128}},
+        {"unet add scalar [2,320,32,32]+[]", 1, {2, 320, 32, 32}, {1}},
+        {"vae sigmoid [1,128,256,256]", 2, {1, 128, 256, 256}, {}},
+    };
+    for (const auto& c : cases) {
+        const auto x = pattern(count(c.lhs), 12, 2.0f);
+        const auto y = c.rhs.empty() ? std::vector<float>{} : pattern(count(c.rhs), 13, 2.0f);
+        double ms = 0.0;
+        std::vector<float> result;
+        if (c.kind == 2) {
+            result = run(layers::unary(*vc, layers::UnaryOp::Sigmoid, c.lhs), {c.lhs}, {x}, c.lhs, ms);
+        } else {
+            const auto op = c.kind == 0 ? layers::BinaryOp::Mul : layers::BinaryOp::Add;
+            result = run(layers::binary(*vc, op, c.lhs, c.rhs, c.lhs), {c.lhs, c.rhs}, {x, y}, c.lhs, ms);
+        }
+        report(c.name, ms, 0, (c.kind == 2 ? 2.0 : 3.0) * count(c.lhs) * sizeof(float));
+        const size_t inner = c.rhs.size() == 3 ? size_t(c.lhs[2]) * c.lhs[3] : 1;
+        for (size_t i : sampleIndices(result.size(), 101)) {
+            float expected;
+            if (c.kind == 2) {
+                expected = 1.0f / (1.0f + std::exp(-x[i]));
+            } else {
+                const float other = y.size() == x.size() ? y[i] : y.size() == 1 ? y[0] : y[i / inner % y.size()];
+                expected = c.kind == 0 ? x[i] * other : x[i] + other;
+            }
+            ASSERT_NEAR(result[i], expected, 1e-6f + 1e-6f * std::abs(expected)) << c.name << " element " << i;
         }
     }
 }
