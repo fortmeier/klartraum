@@ -2,26 +2,24 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // Decodes the raster backend's encoded depths (gsplat_raster_depth.frag) into
 // NDC depths; pixels no splat covered opaquely enough become +inf.
+import gsplat_depth_encoding;
 
-#include "gsplat_depth_encoding.glsl"
-
-layout(local_size_x = 256) in;
-
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint pixelCount;
     uint flags;
-} pc;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-layout(set = 0, binding = 0) readonly buffer DepthBits { uint depthBits[]; };
-layout(set = 0, binding = 1) writeonly buffer Depth { float depth[]; };
-layout(set = 0, binding = 2) buffer SceneDepth { float sceneDepth[]; };
+[[vk::binding(0, 0)]] StructuredBuffer<uint> depthBits;
+[[vk::binding(1, 0)]] RWStructuredBuffer<float> depth;
+[[vk::binding(2, 0)]] RWStructuredBuffer<float> sceneDepth;
 
-void main() {
-    uint pixel = gl_GlobalInvocationID.x;
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint pixel = globalId.x;
     if (pixel < pc.pixelCount) {
         float selected = decodeDepth(depthBits[pixel]);
         if ((pc.flags & 2u) != 0u) depth[pixel] = selected;

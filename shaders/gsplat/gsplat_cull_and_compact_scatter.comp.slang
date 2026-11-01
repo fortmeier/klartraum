@@ -2,36 +2,34 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-#extension GL_EXT_scalar_block_layout : enable
-
 // Pass 3 of 3 of the cull + compaction: each visible splat is written to its
 // workgroup's offset (pass 2) plus its rank among the visible splats of the
 // workgroup, so the visible splats keep their splat-index order.
-layout(local_size_x = 256) in;
+import gsplat_cull_and_compact;
 
-#include "gsplat_cull_and_compact_include.glsl"
+// The visibility flags of the workgroup, scanned in place into ranks.
+groupshared uint scan[256];
 
-shared uint scan[256];
-
-void main() {
-    const uint lid = gl_LocalInvocationID.x;
-    const uint id = gl_GlobalInvocationID.x;
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void main(uint3 globalId: SV_DispatchThreadID, uint3 localId: SV_GroupThreadID, uint3 groupId: SV_GroupID) {
+    const uint lid = localId.x;
+    const uint id = globalId.x;
     uint key;
     const bool visible = visibleSplat(id, key);
 
     // Inclusive Hillis-Steele scan of the visibility flags gives each splat's rank.
     scan[lid] = visible ? 1u : 0u;
-    barrier();
+    GroupMemoryBarrierWithGroupSync();
     for (uint stride = 1u; stride < 256u; stride <<= 1u) {
         const uint add = lid >= stride ? scan[lid - stride] : 0u;
-        barrier();
+        GroupMemoryBarrierWithGroupSync();
         scan[lid] += add;
-        barrier();
+        GroupMemoryBarrierWithGroupSync();
     }
 
     if (visible) {
-        const uint slot = workgroupOffsets[gl_WorkGroupID.x] + scan[lid] - 1u;
+        const uint slot = workgroupOffsets[groupId.x] + scan[lid] - 1u;
         indices[slot] = id;
         keys[slot] = key;
     }
