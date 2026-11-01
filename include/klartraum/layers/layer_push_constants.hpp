@@ -178,6 +178,10 @@ struct Conv3dPushConstants {
     uint32_t kernelDepth, kernelHeight, kernelWidth;
     uint32_t strideDepth, strideHeight, strideWidth;
     uint32_t padDepth, padHeight, padWidth;
+    uint32_t batchCount;
+    uint32_t splitCount;    // workgroups along z, each reducing its own range of the reduction
+    uint32_t stepsPerSplit; // reduction steps of 16 per split
+    uint32_t tileM, tileN;  // the shader's tile, for the split-K reduce pass
 };
 
 // struct ReshapePushConstants {

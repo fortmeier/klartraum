@@ -5,9 +5,12 @@
 #include "klartraum/layers/layers.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
+#include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/layers/layer_push_constants.hpp"
 
@@ -255,10 +258,41 @@ ComputeGraphElementPtr conv3d(VulkanContext& vulkanContext, const Conv3dAttribut
                                   attributes.strides[2],
                                   attributes.pads[0],
                                   attributes.pads[1],
-                                  attributes.pads[2]};
-    auto operation = computation(vulkanContext, "shaders/onnx/conv3d.comp.spv", constants);
-    const uint32_t positions = output[2] * output[3] * output[4];
-    operation->setGroupCount((positions + 127) / 128, (output[1] + 63) / 64, output[0]);
+                                  attributes.pads[2],
+                                  input[0]};
+    // The product's columns are batch x output positions. Few of them (deep layers of small images) take the
+    // 256 x 32 tile. Fewer than kSplitBelowTiles tiles leave the GPU idle: their reduction is split until about
+    // kTargetWorkgroups workgroups run, keeping at least kMinStepsPerSplit steps of 16 per split (measured on an
+    // Apple M4; more tiles run faster without the partial sums).
+    constexpr uint32_t kSplitBelowTiles = 64, kTargetWorkgroups = 192, kMinStepsPerSplit = 8, kStep = 16;
+    const uint32_t columns = input[0] * output[2] * output[3] * output[4];
+    const uint32_t channels = output[1];
+    const bool narrow = columns <= 64 && channels >= 256;
+    constants.tileM = narrow ? 256 : 64;
+    constants.tileN = narrow ? 32 : 128;
+    const uint32_t tiles =
+        ((columns + constants.tileN - 1) / constants.tileN) * ((channels + constants.tileM - 1) / constants.tileM);
+    const uint32_t steps = (weights[1] * weights[2] * weights[3] * weights[4] + kStep - 1) / kStep;
+    const uint32_t wanted = tiles >= kSplitBelowTiles ? 1u
+                                                      : std::min((kTargetWorkgroups + tiles - 1) / tiles,
+                                                                 std::max(1u, steps / kMinStepsPerSplit));
+    constants.stepsPerSplit = (steps + wanted - 1) / wanted;
+    constants.splitCount = (steps + constants.stepsPerSplit - 1) / constants.stepsPerSplit;
+    const std::string shader = std::string("shaders/onnx/conv3d") + (narrow ? "_narrow" : "") +
+                               (constants.splitCount > 1 ? "_split" : "") + ".comp.spv";
+    std::vector<std::string> shaders{shader};
+    if (constants.splitCount > 1)
+        shaders.push_back("shaders/onnx/conv3d_reduce.comp.spv");
+    auto operation = vulkanContext.create<GeneralComputation<Conv3dPushConstants>>(shaders);
+    operation->setPushConstants({constants});
+    if (constants.splitCount > 1) {
+        // The reduce pass overwrites every output element and reads only partial sums written before it.
+        auto partialSums = std::make_shared<BufferElement<VulkanBuffer<float>>>(
+            vulkanContext, size_t(constants.splitCount) * channels * columns);
+        operation->addScratchBufferElement(partialSums, false);
+    }
+    operation->setGroupCount((columns + constants.tileN - 1) / constants.tileN,
+                             (channels + constants.tileM - 1) / constants.tileM, constants.splitCount);
     return operation;
 }
 
