@@ -263,6 +263,7 @@ add_executable(
   tests/test_vulkan_context.cpp
   tests/test_vulkan_helpers.cpp
   tests/test_shader_assets.cpp
+  tests/test_kernel_benchmarks.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
   tests/test_buffertransformation.cpp
