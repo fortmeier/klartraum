@@ -206,3 +206,54 @@ public void conv3dReduce(uint localIndex, uint3 groupId) {
         outputData[(batch * pc.outputChannels + channel) * positions + position] = sum + bias[channel];
     }
 }
+
+// Direct 3D convolution for at most SMALL_CHANNELS output channels (e.g. the
+// RGB output of a VAE), where a 64-channel tile would be mostly empty. One
+// invocation per output column keeps all channels in registers and reads each
+// input value once for all of them; the weights are the same for all
+// invocations, so their loads are broadcast.
+public static const uint SMALL_CHANNELS = 8;
+
+public void conv3dSmall(uint column) {
+    const uint outputPlane = pc.outputHeight * pc.outputWidth;
+    const uint positions = pc.outputDepth * outputPlane;
+    if (column >= pc.batchCount * positions) return;
+    const uint batch = column / positions;
+    const uint position = column - batch * positions;
+    const int3 origin = int3(position / outputPlane * pc.strideDepth,
+                             (position / pc.outputWidth) % pc.outputHeight * pc.strideHeight,
+                             position % pc.outputWidth * pc.strideWidth) -
+                        int3(pc.padDepth, pc.padHeight, pc.padWidth);
+    const uint inputPlane = pc.inputHeight * pc.inputWidth;
+    const uint inputVolume = pc.inputDepth * inputPlane;
+    const uint kernelVolume = pc.kernelDepth * pc.kernelHeight * pc.kernelWidth;
+    const uint reduction = pc.inputChannels * kernelVolume;
+
+    float sums[SMALL_CHANNELS];
+    for (uint m = 0; m < SMALL_CHANNELS; ++m) sums[m] = 0.0;
+    for (uint kd = 0; kd < pc.kernelDepth; ++kd) {
+        const int z = origin.x + int(kd);
+        if (z < 0 || z >= int(pc.inputDepth)) continue;
+        for (uint kh = 0; kh < pc.kernelHeight; ++kh) {
+            const int y = origin.y + int(kh);
+            if (y < 0 || y >= int(pc.inputHeight)) continue;
+            for (uint kw = 0; kw < pc.kernelWidth; ++kw) {
+                const int x = origin.z + int(kw);
+                if (x < 0 || x >= int(pc.inputWidth)) continue;
+                const uint tap = (kd * pc.kernelHeight + kh) * pc.kernelWidth + kw;
+                uint inputIndex = batch * pc.inputChannels * inputVolume + uint(z) * inputPlane +
+                                  uint(y) * pc.inputWidth + uint(x);
+                for (uint c = 0; c < pc.inputChannels; ++c, inputIndex += inputVolume) {
+                    const float value = inputData[inputIndex];
+                    const uint weightIndex = c * kernelVolume + tap;
+                    for (uint m = 0; m < SMALL_CHANNELS; ++m) {
+                        if (m < pc.outputChannels) sums[m] += value * weights[m * reduction + weightIndex];
+                    }
+                }
+            }
+        }
+    }
+    for (uint m = 0; m < SMALL_CHANNELS; ++m) {
+        if (m < pc.outputChannels) outputData[(batch * pc.outputChannels + m) * positions + position] = sums[m] + bias[m];
+    }
+}

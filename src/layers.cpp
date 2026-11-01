@@ -267,6 +267,12 @@ ComputeGraphElementPtr conv3d(VulkanContext& vulkanContext, const Conv3dAttribut
     constexpr uint32_t kSplitBelowTiles = 64, kTargetWorkgroups = 192, kMinStepsPerSplit = 8, kStep = 16;
     const uint32_t columns = input[0] * output[2] * output[3] * output[4];
     const uint32_t channels = output[1];
+    // At most eight output channels (e.g. a VAE's RGB output) run one invocation per output column instead.
+    if (channels <= 8) {
+        auto operation = computation(vulkanContext, "shaders/onnx/conv3d_small.comp.spv", constants);
+        operation->setGroupCountX((columns + 255) / 256);
+        return operation;
+    }
     const bool narrow = columns <= 64 && channels >= 256;
     constants.tileM = narrow ? 256 : 64;
     constants.tileN = narrow ? 32 : 128;
