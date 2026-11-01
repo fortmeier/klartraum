@@ -79,7 +79,10 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
 
     auto* graph = model->mutable_graph();
     // The fused kernel handles rank-four attention with head widths up to 512;
-    // other attention keeps its separate MatMul/Softmax/MatMul nodes.
+    // other attention keeps its separate MatMul/Softmax/MatMul nodes. Heads
+    // wider than 192 (e.g. the SD1.5 VAE's single 512-wide head) only fuse when
+    // their score tensor would exceed kMaxUnfusedScoreBytes: unfused, the
+    // MatMul kernels run them several times faster than the fused kernel.
     std::map<std::string, std::vector<int64_t>> declaredShapes;
     for (const auto* values : {&graph->input(), &graph->value_info(), &graph->output()}) {
         for (const auto& value : *values) {
@@ -96,6 +99,15 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
     auto fusableOperand = [&declaredShapes](const std::string& name) {
         const auto it = declaredShapes.find(name);
         return it != declaredShapes.end() && it->second.size() == 4 && it->second.back() <= 512;
+    };
+    constexpr uint64_t kMaxUnfusedScoreBytes = 512ull << 20;
+    auto prefersFused = [&declaredShapes](const std::string& query, const std::string& key) {
+        const auto& q = declaredShapes[query];
+        const auto& k = declaredShapes[key];
+        if (q.size() != 4 || k.size() != 4 || q[3] <= 192)
+            return true;
+        const uint64_t scoreBytes = uint64_t(q[0]) * q[1] * q[2] * k[3] * sizeof(float);
+        return scoreBytes > kMaxUnfusedScoreBytes;
     };
     std::map<std::string, size_t> consumerCounts;
     for (const auto& node : graph->node()) {
@@ -167,7 +179,7 @@ bool OnnxNetwork::loadModel(const std::string& modelPath) {
                 context.input_size() == 2 && context.output_size() == 1 && softmax.input(0) == score.output(0) &&
                 context.input(0) == softmax.output(0) && consumerCounts[score.output(0)] == 1 &&
                 consumerCounts[softmax.output(0)] == 1 && fusableOperand(score.input(0)) &&
-                fusableOperand(context.input(1))) {
+                fusableOperand(context.input(1)) && prefersFused(score.input(0), score.input(1))) {
                 onnx::NodeProto fused = context;
                 fused.set_op_type("FusedAttention");
                 fused.set_name(context.name() + "/KlartraumFusedAttention");
