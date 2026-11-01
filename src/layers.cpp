@@ -374,7 +374,7 @@ ComputeGraphElementPtr layerNormalization(VulkanContext& vulkanContext, const Sh
     constants.outerCount = elementCount(input) / constants.axisSize;
     constants.epsilon = epsilon;
     auto operation = computation(vulkanContext, "shaders/onnx/layer_normalization.comp.spv", constants);
-    operation->setGroupCountX((constants.outerCount + 63) / 64);
+    operation->setGroupCountX((constants.outerCount + 7) / 8); // a 32-wide subgroup per row
     return operation;
 }
 
@@ -517,7 +517,7 @@ ComputeGraphElementPtr softmax(VulkanContext& vulkanContext, const Shape& shape)
         throw std::runtime_error("Softmax requires rank >= 1");
     SoftmaxPushConstants constants{elementCount(shape) / shape.back(), shape.back()};
     auto operation = computation(vulkanContext, "shaders/onnx/softmax.comp.spv", constants);
-    operation->setGroupCountX((constants.outerCount + 63) / 64);
+    operation->setGroupCountX((constants.outerCount + 7) / 8); // a 32-wide subgroup per row
     return operation;
 }
 
