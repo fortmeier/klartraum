@@ -2,29 +2,28 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // RGB of an image as a [3, height, width] tensor with values from `low` to
 // `high` (bgraToTensor() on the GPU).
 
-layout(local_size_x = 8, local_size_y = 8) in;
-
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint width;
     uint height;
     float low;
     float high;
-} pc;
+};
+[[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-layout(set = 0, binding = 0, rgba8) uniform readonly image2D inputImage;
-layout(set = 0, binding = 1) writeonly buffer OutputTensor { float outputData[]; };
+[[vk::binding(0, 0)]] [[vk::image_format("rgba8")]] RWTexture2D<float4> inputImage;
+[[vk::binding(1, 0)]] RWStructuredBuffer<float> outputData;
 
-void main() {
-    uvec2 pixel = gl_GlobalInvocationID.xy;
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void main(uint3 globalId: SV_DispatchThreadID) {
+    uint2 pixel = globalId.xy;
     if (pixel.x >= pc.width || pixel.y >= pc.height) {
         return;
     }
-    vec3 color = imageLoad(inputImage, ivec2(pixel)).rgb;
+    float3 color = inputImage.Load(int2(pixel)).rgb;
     uint plane = pc.width * pc.height;
     uint offset = pixel.y * pc.width + pixel.x;
     outputData[offset] = pc.low + (pc.high - pc.low) * color.r;
