@@ -11,3 +11,10 @@ public float2x2 inverse(float2x2 m) {
         result:$$float2x2 = OpExtInst glsl450 MatrixInverse $m;
     };
 }
+
+// Returns the inverse of `m` (GLSL.std.450 MatrixInverse, as GLSL's inverse()).
+public float4x4 inverse(float4x4 m) {
+    return spirv_asm {
+        result:$$float4x4 = OpExtInst glsl450 MatrixInverse $m;
+    };
+}

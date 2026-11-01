@@ -2,36 +2,34 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // Builds the motion and gating inputs of the controller network from the
 // state and the control (controller.py: assemble). The past trajectory comes
 // from the root history, the future trajectory blends the network's own
 // prediction towards the control, increasingly with the time ahead.
 
-#include "character_common.glsl"
+import character_common;
 
-layout(local_size_x = 1) in;
+[[vk::binding(0, 0)]] StructuredBuffer<float> state;
+[[vk::binding(1, 0)]] StructuredBuffer<float> control;
+[[vk::binding(2, 0)]] RWStructuredBuffer<float> motionInput;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> gatingInput;
 
-layout(std430, set = 0, binding = 0) readonly buffer State { float state[]; };
-layout(std430, set = 0, binding = 1) readonly buffer Control { float control[]; };
-layout(std430, set = 0, binding = 2) writeonly buffer MotionInput { float motionInput[]; };
-layout(std430, set = 0, binding = 3) writeonly buffer GatingInput { float gatingInput[]; };
-
+[shader("compute")]
+[numthreads(1, 1, 1)]
 void main() {
-    vec2 root = vec2(state[0], state[1]);
+    float2 root = float2(state[0], state[1]);
     float angle = state[2];
     uint style = uint(control[4]);
     float responsiveness = control[5];
-    vec2 velocity = toLocal(vec2(control[0], control[1]), angle);
-    vec2 facing = normalizeOrForward(toLocal(vec2(control[2], control[3]), angle));
+    float2 velocity = toLocal(float2(control[0], control[1]), angle);
+    float2 facing = normalizeOrForward(toLocal(float2(control[2], control[3]), angle));
 
     for (uint pastSample = 0u; pastSample < PAST_SAMPLES; ++pastSample) {
         uint entry = HISTORY_OFFSET + (HISTORY - 1u - (PAST_SAMPLES - 1u - pastSample) * TRAJECTORY_STEP) * 5u;
         uint base = pastSample * 6u;
-        vec2 position = toLocal(vec2(state[entry], state[entry + 1u]) - root, angle);
-        vec2 direction = toLocal(vec2(sin(state[entry + 2u]), cos(state[entry + 2u])), angle);
-        vec2 rootVelocity = toLocal(vec2(state[entry + 3u], state[entry + 4u]), angle);
+        float2 position = toLocal(float2(state[entry], state[entry + 1u]) - root, angle);
+        float2 direction = toLocal(float2(sin(state[entry + 2u]), cos(state[entry + 2u])), angle);
+        float2 rootVelocity = toLocal(float2(state[entry + 3u], state[entry + 4u]), angle);
         motionInput[base + 0u] = position.x;
         motionInput[base + 1u] = position.y;
         motionInput[base + 2u] = direction.x;
@@ -44,11 +42,11 @@ void main() {
         uint predicted = FUTURE_OFFSET + future * 6u;
         float time = float((future + 1u) * TRAJECTORY_STEP) / float(FPS);
         float weight = responsiveness * (float(future + 1u) / float(FUTURE_SAMPLES));
-        vec2 position = vec2(state[predicted], state[predicted + 1u]);
+        float2 position = float2(state[predicted], state[predicted + 1u]);
         position += weight * (velocity * time - position);
-        vec2 direction = vec2(state[predicted + 2u], state[predicted + 3u]);
+        float2 direction = float2(state[predicted + 2u], state[predicted + 3u]);
         direction = normalizeOrForward(direction + weight * (facing - direction));
-        vec2 rootVelocity = vec2(state[predicted + 4u], state[predicted + 5u]);
+        float2 rootVelocity = float2(state[predicted + 4u], state[predicted + 5u]);
         rootVelocity += weight * (velocity - rootVelocity);
         uint base = (PAST_SAMPLES + future) * 6u;
         motionInput[base + 0u] = position.x;

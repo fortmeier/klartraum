@@ -2,34 +2,32 @@
 //
 // SPDX-License-Identifier: MIT
 
-#version 450
-
 // Applies the network output to the state (controller.py: integrate): moves
 // and turns the root, appends it to the history, blends the predicted pose with
 // the previous one advanced by the predicted velocity, keeps the predicted
 // future trajectory, and writes the joints in world space and as COCO-18
 // OpenPose keypoints. One invocation updates the state in place.
 
-#include "character_common.glsl"
+import character_common;
 
-layout(local_size_x = 1) in;
-
-layout(std430, set = 0, binding = 0) buffer State { float state[]; };
-layout(std430, set = 0, binding = 1) readonly buffer Output { float outputData[]; };
-layout(std430, set = 0, binding = 2) buffer Joints { vec4 joints[]; };
-layout(std430, set = 0, binding = 3) writeonly buffer OpenPose { vec4 openpose[]; };
+[[vk::binding(0, 0)]] RWStructuredBuffer<float> state;
+[[vk::binding(1, 0)]] StructuredBuffer<float> outputData;
+[[vk::binding(2, 0)]] RWStructuredBuffer<float4> joints;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float4> openpose;
 
 // Controller joint of each COCO-18 keypoint; the neck (keypoint 1) is the middle of the shoulders.
-const uint OPENPOSE_JOINTS[18] = uint[](5u, 0u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 20u, 21u, 22u, 6u, 7u,
-                                        8u, 9u);
-const uint RIGHT_SHOULDER = 10u;
-const uint LEFT_SHOULDER = 13u;
+static const uint OPENPOSE_JOINTS[18] = { 5u, 0u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 20u, 21u, 22u,
+                                          6u, 7u, 8u, 9u };
+static const uint RIGHT_SHOULDER = 10u;
+static const uint LEFT_SHOULDER = 13u;
 
+[shader("compute")]
+[numthreads(1, 1, 1)]
 void main() {
-    vec2 root = vec2(state[0], state[1]);
+    float2 root = float2(state[0], state[1]);
     float angle = state[2];
-    vec2 delta = toWorld(vec2(outputData[0], outputData[1]), angle);
-    vec2 newRoot = root + delta;
+    float2 delta = toWorld(float2(outputData[0], outputData[1]), angle);
+    float2 newRoot = root + delta;
     float newAngle = angle + outputData[2];
 
     for (uint i = 0u; i + 1u < HISTORY; ++i) {
@@ -48,19 +46,19 @@ void main() {
     for (uint joint = 0u; joint < JOINT_COUNT; ++joint) {
         uint base = POSE_OFFSET + joint * 6u;
         uint predicted = 3u + joint * 6u;
-        vec3 previous = vec3(state[base], state[base + 1u], state[base + 2u]);
-        vec3 predictedPosition = vec3(outputData[predicted], outputData[predicted + 1u], outputData[predicted + 2u]);
-        vec3 predictedVelocity =
-            vec3(outputData[predicted + 3u], outputData[predicted + 4u], outputData[predicted + 5u]);
-        vec2 previousWorld = root + toWorld(previous.xz, angle);
-        vec2 carriedXZ = toLocal(previousWorld - newRoot, newAngle);
-        vec3 carried = vec3(carriedXZ.x, previous.y, carriedXZ.y) + predictedVelocity * frameTime;
-        vec3 position = predictedPosition + (1.0 - POSE_BLEND) * (carried - predictedPosition);
+        float3 previous = float3(state[base], state[base + 1u], state[base + 2u]);
+        float3 predictedPosition = float3(outputData[predicted], outputData[predicted + 1u], outputData[predicted + 2u]);
+        float3 predictedVelocity =
+            float3(outputData[predicted + 3u], outputData[predicted + 4u], outputData[predicted + 5u]);
+        float2 previousWorld = root + toWorld(previous.xz, angle);
+        float2 carriedXZ = toLocal(previousWorld - newRoot, newAngle);
+        float3 carried = float3(carriedXZ.x, previous.y, carriedXZ.y) + predictedVelocity * frameTime;
+        float3 position = predictedPosition + (1.0 - POSE_BLEND) * (carried - predictedPosition);
         int parent = CONSTRAINT_PARENTS[joint];
         if (parent >= 0) {
             uint parentBase = POSE_OFFSET + uint(parent) * 6u;
-            vec3 parentPosition = vec3(state[parentBase], state[parentBase + 1u], state[parentBase + 2u]);
-            vec3 bone = position - parentPosition;
+            float3 parentPosition = float3(state[parentBase], state[parentBase + 1u], state[parentBase + 2u]);
+            float3 bone = position - parentPosition;
             float boneLength = length(bone);
             if (boneLength > 1e-6) {
                 position = parentPosition + bone * (state[REST_OFFSET + joint] / boneLength);
@@ -72,8 +70,8 @@ void main() {
         state[base + 3u] = predictedVelocity.x;
         state[base + 4u] = predictedVelocity.y;
         state[base + 5u] = predictedVelocity.z;
-        vec2 world = newRoot + toWorld(position.xz, newAngle);
-        joints[joint] = vec4(world.x, position.y, world.y, 1.0);
+        float2 world = newRoot + toWorld(position.xz, newAngle);
+        joints[joint] = float4(world.x, position.y, world.y, 1.0);
     }
 
     uint futureStart = 3u + POSE_SIZE;
@@ -85,7 +83,7 @@ void main() {
     state[2] = newAngle;
 
     for (uint keypoint = 0u; keypoint < 18u; ++keypoint) {
-        openpose[keypoint] = keypoint == 1u ? vec4(0.5 * (joints[RIGHT_SHOULDER].xyz + joints[LEFT_SHOULDER].xyz), 1.0)
+        openpose[keypoint] = keypoint == 1u ? float4(0.5 * (joints[RIGHT_SHOULDER].xyz + joints[LEFT_SHOULDER].xyz), 1.0)
                                             : joints[OPENPOSE_JOINTS[keypoint]];
     }
 }
