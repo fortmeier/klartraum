@@ -46,7 +46,7 @@ public void matmul<Epilogue : IMatMulEpilogue>(uint3 localId, uint3 groupId, Mat
                                                RWStructuredBuffer<float> outputData) {
     const uint tx = localId.x;
     const uint ty = localId.y;
-    const uint thread = ty * 16 + tx;
+    const uint threadIndex = ty * 16 + tx;
     const uint rowBase = groupId.y * TILE_ROWS;
     const uint columnBase = groupId.x * TILE_COLUMNS;
     const uint batch = groupId.z;
@@ -55,10 +55,10 @@ public void matmul<Epilogue : IMatMulEpilogue>(uint3 localId, uint3 groupId, Mat
 
     // Each invocation stages eight values of each tile per step: the left tile
     // as 64 rows x 32 steps, the right tile as 32 steps x 128 columns.
-    const uint lhsLoadRow = thread / 4;           // 0..63
-    const uint lhsLoadStep = (thread % 4) * 8;    // 0, 8, 16, 24
-    const uint rhsLoadStep = thread / 32;         // 0..7, +8, +16, +24
-    const uint rhsLoadColumn = (thread % 32) * 4; // 0..124
+    const uint lhsLoadRow = threadIndex / 4;           // 0..63
+    const uint lhsLoadStep = (threadIndex % 4) * 8;    // 0, 8, 16, 24
+    const uint rhsLoadStep = threadIndex / 32;         // 0..7, +8, +16, +24
+    const uint rhsLoadColumn = (threadIndex % 32) * 4; // 0..124
 
     float4 accumulator[4][2];
     for (uint i = 0; i < 4; ++i) {

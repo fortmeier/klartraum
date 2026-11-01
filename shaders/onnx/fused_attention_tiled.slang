@@ -11,41 +11,38 @@
 //
 // Layouts: Q [batch, queryCount, depth], K [batch, depth, keyCount],
 // V [batch, keyCount, depth], output [batch, queryCount, depth].
+//
+// Shaders run tiledAttention() from a QUERIES_PER_GROUP-wide workgroup and
+// own the shared key and value tiles, KEY_TILE * HEAD_DEPTH floats each.
+module fused_attention_tiled;
 
-#ifndef HEAD_DEPTH
-#error "HEAD_DEPTH must be defined before including fused_attention_tiled.glsl"
-#endif
+public static const uint QUERIES_PER_GROUP = 64;
+static const uint KEY_BLOCK = 8;
+static const float lowestScore = -3.402823466e+38;
 
-#define QUERIES_PER_GROUP 64
-#ifndef KEY_TILE
-#define KEY_TILE 32
-#endif
-#define KEY_BLOCK 8
+public struct AttentionPushConstants {
+    public uint batchCount;
+    public uint queryCount;
+    public uint keyCount;
+    public uint queryDepth;
+    public uint valueDepth;
+};
 
-layout(local_size_x = QUERIES_PER_GROUP, local_size_y = 1, local_size_z = 1) in;
-layout(push_constant) uniform PushConstants {
-    uint batchCount;
-    uint queryCount;
-    uint keyCount;
-    uint queryDepth;
-    uint valueDepth;
-} pc;
-layout(set = 0, binding = 0) restrict readonly buffer QueryBuffer { float queryData[]; };
-layout(set = 0, binding = 1) restrict readonly buffer KeyBuffer { float keyData[]; };
-layout(set = 0, binding = 2) restrict readonly buffer ValueBuffer { float valueData[]; };
-layout(set = 0, binding = 3) restrict writeonly buffer OutputBuffer { float outputData[]; };
+// The shared key and value tiles. Both are stored key-major,
+// [KEY_TILE][HEAD_DEPTH], so all invocations read the same address in the
+// inner loops and the load is a broadcast.
+public interface IAttentionTiles {
+    static float key(uint index);
+    static void setKey(uint index, float value);
+    static float value(uint index);
+    static void setValue(uint index, float value);
+}
 
-// Both tiles are stored key-major, [KEY_TILE][HEAD_DEPTH], so all invocations
-// read the same address in the inner loops and the load is a broadcast.
-shared float sharedKey[KEY_TILE * HEAD_DEPTH];
-shared float sharedValue[KEY_TILE * HEAD_DEPTH];
-
-const float lowestScore = -3.402823466e+38;
-
-void main() {
-    const uint localIndex = gl_LocalInvocationID.x;
-    const uint batch = gl_WorkGroupID.y;
-    const uint queryIndex = gl_WorkGroupID.x * QUERIES_PER_GROUP + localIndex;
+public void tiledAttention<let HEAD_DEPTH : uint, let KEY_TILE : uint, Tiles : IAttentionTiles>(
+    uint localIndex, uint3 groupId, AttentionPushConstants pc, StructuredBuffer<float> queryData,
+    StructuredBuffer<float> keyData, StructuredBuffer<float> valueData, RWStructuredBuffer<float> outputData) {
+    const uint batch = groupId.y;
+    const uint queryIndex = groupId.x * QUERIES_PER_GROUP + localIndex;
     const bool queryIsValid = queryIndex < pc.queryCount;
 
     float query[HEAD_DEPTH];
@@ -67,16 +64,16 @@ void main() {
             const uint tileKey = element % KEY_TILE;
             const uint depth = element / KEY_TILE;
             const uint key = tileStart + tileKey;
-            sharedKey[tileKey * HEAD_DEPTH + depth] =
-                key < pc.keyCount ? keyData[keyBatchOffset + depth * pc.keyCount + key] : 0.0;
+            Tiles.setKey(tileKey * HEAD_DEPTH + depth,
+                         key < pc.keyCount ? keyData[keyBatchOffset + depth * pc.keyCount + key] : 0.0);
         }
         // V rows are contiguous, so the tile is one contiguous range.
         for (uint element = localIndex; element < KEY_TILE * HEAD_DEPTH; element += QUERIES_PER_GROUP) {
             const uint key = tileStart + element / HEAD_DEPTH;
-            sharedValue[element] =
-                key < pc.keyCount ? valueData[valueBatchOffset + tileStart * HEAD_DEPTH + element] : 0.0;
+            Tiles.setValue(element,
+                           key < pc.keyCount ? valueData[valueBatchOffset + tileStart * HEAD_DEPTH + element] : 0.0);
         }
-        barrier();
+        GroupMemoryBarrierWithGroupSync();
 
         for (uint blockStart = 0; blockStart < KEY_TILE; blockStart += KEY_BLOCK) {
             float scores[KEY_BLOCK];
@@ -85,7 +82,7 @@ void main() {
                 const uint tileKey = blockStart + blockKey;
                 float score = 0.0;
                 for (uint depth = 0; depth < HEAD_DEPTH; ++depth) {
-                    score += query[depth] * sharedKey[tileKey * HEAD_DEPTH + depth];
+                    score += query[depth] * Tiles.key(tileKey * HEAD_DEPTH + depth);
                 }
                 // Keys past keyCount get the lowest score, so their softmax
                 // weight is exactly zero once a real key has set the maximum.
@@ -102,12 +99,12 @@ void main() {
                 runningSum += weight;
                 const uint valueOffset = (blockStart + blockKey) * HEAD_DEPTH;
                 for (uint depth = 0; depth < HEAD_DEPTH; ++depth) {
-                    accumulated[depth] += weight * sharedValue[valueOffset + depth];
+                    accumulated[depth] += weight * Tiles.value(valueOffset + depth);
                 }
             }
             runningMaximum = nextMaximum;
         }
-        barrier();
+        GroupMemoryBarrierWithGroupSync();
     }
 
     if (!queryIsValid) return;

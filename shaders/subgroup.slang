@@ -12,3 +12,8 @@ public uint subgroupId() {
         result:$$uint = OpLoad builtin(SubgroupId:uint);
     };
 }
+
+// Returns `value` of the lane whose index is this lane's index XOR `mask`.
+public float subgroupShuffleXor(float value, uint mask) {
+    return WaveReadLaneAt(value, WaveGetLaneIndex() ^ mask);
+}
