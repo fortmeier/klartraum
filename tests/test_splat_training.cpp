@@ -13,11 +13,15 @@
  *   gradients with respect to every parameter of every Gaussian (position, log scale, rotation, colour, opacity) equal
  *   the CPU loss and its central differences, wherever the loss is smooth (central differences at two step sizes
  *   agree to 0.5 %); at most 10 % of the components are skipped as not smooth
+ * - trainingFitsRenderedViews: SplatTraining, from Gaussians on a sphere, fits 24 rendered views of the textured
+ *   synthetic pumpkin with densification, one submit per step; three held-out views reach a silhouette IoU above
+ *   0.97 and a PSNR inside the object above 29 dB
  **/
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <iostream>
 #include <cmath>
 #include <memory>
 #include <numeric>
@@ -32,6 +36,7 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/raster/mesh.hpp"
+#include "klartraum/raster/mesh_training.hpp"
 #include "klartraum/splatting/splat_training.hpp"
 
 using namespace klartraum;
@@ -391,4 +396,55 @@ TEST_F(SplatTrainingTest, gradientsMatchFiniteDifferences) {
               << " skipped as not smooth" << std::endl;
     EXPECT_LT(skipped, (checked + skipped) / 10);
     EXPECT_GT(nonzero, 200);
+}
+
+TEST_F(SplatTrainingTest, trainingFitsRenderedViews) {
+    splatting::SplatTrainingOptions options;
+    options.raster.width = options.raster.height = 128;
+    options.raster.capacity = 1u << 20;
+    options.steps = 3000;
+    options.densifyUntil = 2000;
+    std::vector<glm::mat4> cameras, heldOut;
+    for (const auto& [elevation, start] : {std::pair{-0.25f, 0.0f}, {0.3f, 0.39f}, {0.85f, 0.0f}}) {
+        const auto ring = raster::cameraRing(8, 3.5f, elevation, 0.8f, 1.0f, start);
+        cameras.insert(cameras.end(), ring.begin(), ring.end());
+    }
+    for (const float angle : {0.2f, 2.3f, 4.4f})
+        heldOut.push_back(raster::cameraRing(1, 3.5f, 0.05f + 0.1f * angle, 0.8f, 1.0f, angle)[0]);
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(4);
+    const std::vector<float> texture = raster::syntheticPumpkinTexture(64, 32);
+    const std::vector<float> targets = raster::renderImages(*vc, pumpkin, texture, 64, 32, cameras, 128, 128);
+    const std::vector<float> heldOutTargets = raster::renderImages(*vc, pumpkin, texture, 64, 32, heldOut, 128, 128);
+
+    std::vector<glm::vec3> points;
+    for (const auto& p : raster::icosphere(3).positions)
+        points.push_back(0.8f * p);
+    splatting::SplatTraining training(*vc, splatting::splatsAt(points, 0.06f), cameras, targets, options);
+    double first = 0.0, last = 0.0;
+    for (uint32_t step = 0; step < options.steps; ++step) {
+        training.step();
+        if (step < cameras.size())
+            first += training.loss();
+        if (step + cameras.size() >= options.steps)
+            last += training.loss();
+    }
+    const splatting::SplatSet fitted = training.splats();
+    const std::vector<float> images = splatting::renderSplats(*vc, fitted, heldOut, options.raster);
+    int both = 0, either = 0, count = 0;
+    double squaredError = 0.0;
+    for (size_t p = 0; p < images.size() / 4; ++p) {
+        const float *a = &images[4 * p], *b = &heldOutTargets[4 * p];
+        both += a[3] > 0.5f && b[3] > 0.5f;
+        either += a[3] > 0.5f || b[3] > 0.5f;
+        if (a[3] > 0.99f && b[3] > 0.99f)
+            for (int c = 0; c < 3; ++c, ++count)
+                squaredError += (a[c] - b[c]) * (a[c] - b[c]);
+    }
+    const double iou = double(both) / double(either), psnr = 10.0 * std::log10(count / squaredError);
+    std::cout << "splat training: " << fitted.size() << " Gaussians, loss " << first << " -> " << last
+              << ", held-out IoU " << iou << ", PSNR " << psnr << " dB, instances " << training.instanceCount()
+              << std::endl;
+    EXPECT_LT(last, 0.1 * first);
+    EXPECT_GT(iou, 0.97);
+    EXPECT_GT(psnr, 29.0);
 }
