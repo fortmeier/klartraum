@@ -29,7 +29,7 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/buffertransformation.hpp"
 #include "klartraum/draw_basics.hpp"
-#include "klartraum/gaussian_splat_rasterizer.hpp"
+#include "klartraum/rendering/gaussian_splat_rasterizer.hpp"
 #include "klartraum/vulkan_buffer.hpp"
 
 using namespace klartraum;

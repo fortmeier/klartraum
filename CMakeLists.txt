@@ -291,19 +291,19 @@ endif()
 set(KLARTRAUM_LIB_SRC
   src/glfw_frontend.cpp
   src/headless_frontend.cpp
-  src/vulkan_gaussian_splatting.cpp
-  src/vulkan_gaussian_splatting_raster.cpp
-  src/gaussian_data_standard.cpp
-  src/gaussian_transform.cpp
-  src/gaussian_splatting_factory.cpp
+  src/rendering/vulkan_gaussian_splatting.cpp
+  src/rendering/vulkan_gaussian_splatting_raster.cpp
+  src/rendering/gaussian_data_standard.cpp
+  src/rendering/gaussian_transform.cpp
+  src/rendering/gaussian_splatting_factory.cpp
   src/vulkan_helpers.cpp
   src/vulkan_context.cpp
   src/window.cpp
   src/klartraum_engine.cpp
   src/interface_camera_orbit.cpp
   src/draw_basics.cpp
-  src/gaussian_splat_rasterizer.cpp
-  src/gaussian_splat_mesh_rasterizer.cpp
+  src/rendering/gaussian_splat_rasterizer.cpp
+  src/rendering/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp

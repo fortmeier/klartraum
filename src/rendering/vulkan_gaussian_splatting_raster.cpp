@@ -9,7 +9,7 @@
 
 #include <glm/glm.hpp>
 
-#include "klartraum/vulkan_gaussian_splatting_raster.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_raster.hpp"
 #include "klartraum/draw_basics.hpp"
 
 namespace klartraum {
@@ -114,7 +114,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     cullAndCompact->setGroupCountX(numCullAndCompactWGs);
     cullAndCompact->setPushConstants({{N, 0.1f, config.alphaCullThreshold}});
 
-    // --- Stage A2: per-splat 2D attribute precompute (perf plan R1+R2) ---
+    // --- Stage A2: per-splat 2D attribute precompute ---
     // Projects covariance, eigendecomposes, and evaluates SH once per splat into
     // the Splat2D buffer the vertex shader reads verbatim (16 floats / splat,
     // 64-byte stride matching gsplat_raster_project.comp's scalar struct). Keyed
@@ -139,7 +139,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     project->setPushConstants({{N, (float)imageViewSrc->getImageExtent(0).width,
                                 (float)imageViewSrc->getImageExtent(0).height, 3.0f, config.shDegree}});
 
-    // --- Stage B: radix sort over the visible count (perf plan R3). The reused
+    // --- Stage B: radix sort over the visible count. The
     // sort operates on plain (uint key, uint index) pairs; 8 passes x 4 bits
     // sorts the full 32-bit key, and an even pass count returns the result to
     // the A buffers cullAndCompact wrote into. The dispatch group count stays fixed at
@@ -201,7 +201,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     }
 
     // --- Order compute writes (sorted indices + draw args) before the render
-    // pass reads them indirectly/in the vertex shader (guide §3.1). ---
+    // pass reads them indirectly/in the vertex shader. ---
     barrier = std::make_shared<BufferToGraphicsBarrier>();
     barrier->setName("RasterBarrier");
     barrier->addBuffer(indicesA);
@@ -262,9 +262,8 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
         GaussianSplatRasterPushConstants pushConstants{};
         pushConstants.resolution = glm::vec2((float)extent.width, (float)extent.height);
         pushConstants.focal = glm::vec2(1000.0f, 1000.0f);
-        // Sigma multiplier for the EWA-covariance quad extent — 3.0 covers ~99.7%
-        // of each Gaussian (guide §5C), the fragment shader's per-pixel conic
-        // evaluation handles the exact falloff within that quad.
+        // Sigma multiplier for the EWA-covariance quad extent. The fragment
+        // shader's per-pixel conic evaluation determines the falloff inside it.
         pushConstants.splatScale = 3.0f;
         pushConstants.shDegree = 0;
         pushConstants.numSplats = N;

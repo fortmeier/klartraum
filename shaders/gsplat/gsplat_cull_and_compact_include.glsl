@@ -68,7 +68,7 @@ bool visibleSplat(uint id, out uint key) {
         return false;
     }
 
-    // Opacity cull (perf plan R4): a splat with post-activation alpha below the
+    // Opacity cull: a splat with post-activation alpha below the
     // threshold contributes less than that alpha even at its centre, so at
     // ~1/255 it is invisible. Dropping it here removes its vertex, fragment and
     // sort work and raises the cull rate that the visible-count sort benefits

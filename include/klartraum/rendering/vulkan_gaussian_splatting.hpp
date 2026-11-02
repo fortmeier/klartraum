@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
-#define KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
+#ifndef KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_HPP
+#define KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_HPP
 
 #include <memory>
 #include <string>
@@ -17,7 +17,7 @@
 #include "klartraum/computegraph/rendergraphelement.hpp"
 #include "klartraum/computegraph/buffertransformation.hpp"
 #include "klartraum/vulkan_buffer.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -45,7 +45,7 @@ private:
     VulkanContext* vulkanContext = nullptr;
     uint32_t numberOfPaths = 0;
 
-    // Static SoA input buffers (position, rotation, scale, colour+alpha, SH
+    // SoA input buffers (position, rotation, scale, colour+alpha, SH
     // R/G/B) + splat count, injected by the caller. Held as shared handles so a
     // single upload can be shared across backends/viewports without reloading.
     GaussianSoABuffers buffers;
@@ -68,4 +68,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_HPP
+#endif // KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_HPP

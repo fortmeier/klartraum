@@ -4,11 +4,11 @@
 
 #include <stdexcept>
 
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 
-#include "klartraum/gaussian_data_standard.hpp"
-#include "klartraum/vulkan_gaussian_splatting.hpp"
-#include "klartraum/vulkan_gaussian_splatting_raster.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_raster.hpp"
 
 namespace klartraum {
 

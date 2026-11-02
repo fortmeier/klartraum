@@ -6,11 +6,11 @@
 #extension GL_EXT_mesh_shader : require
 #extension GL_EXT_scalar_block_layout : enable
 
-// Mesh-shader front end for the raster backend (perf plan R5), an additive,
-// device-gated alternative to gsplat_raster.vert. One workgroup emits a batch of
+// Mesh-shader front end for the raster backend, available on devices supporting
+// VK_EXT_mesh_shader. One workgroup emits a batch of
 // WG_SPLATS quads, reading the same precomputed Splat2D records the vertex path
-// uses (R1) dereferenced through the sorted index. Outputs match the vertex
-// shader's per-vertex interface so the existing gsplat_raster.frag is reused.
+// uses, dereferenced through the sorted index. Outputs match the vertex
+// shader's per-vertex interface and feed the shared gsplat_raster.frag.
 
 #define WG_SPLATS 32u
 

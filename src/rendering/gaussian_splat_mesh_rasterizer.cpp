@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <array>
 
-#include "klartraum/gaussian_splat_mesh_rasterizer.hpp"
+#include "klartraum/rendering/gaussian_splat_mesh_rasterizer.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 
 namespace klartraum {

@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
-#define KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
+#ifndef KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
+#define KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
 
 #include <memory>
 #include <string>
@@ -17,14 +17,14 @@
 #include "klartraum/computegraph/renderpass.hpp"
 #include "klartraum/computegraph/buffertographicsbarrier.hpp"
 #include "klartraum/vulkan_buffer.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
-#include "klartraum/gaussian_splat_rasterizer.hpp"
-#include "klartraum/gaussian_splat_mesh_rasterizer.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/gaussian_splat_rasterizer.hpp"
+#include "klartraum/rendering/gaussian_splat_mesh_rasterizer.hpp"
 
 namespace klartraum {
 
 /**
- * @brief Gaussian splatting backend that sorts the Gaussians once and draws them with hardware rasterization.
+ * @brief Gaussian splatting backend that globally sorts the Gaussians each frame and draws with hardware rasterization.
  *
  * The counterpart to VulkanGaussianSplatting, which rasterizes in compute shaders.
  * It reads the same Gaussian data and connects:
@@ -66,7 +66,7 @@ private:
 
     VulkanContext* vulkanContext = nullptr;
 
-    // Static SoA input buffers (position, rotation, scale, colour+alpha, SH
+    // SoA input buffers (position, rotation, scale, colour+alpha, SH
     // R/G/B) + splat count, injected by the caller. Held as shared handles so a
     // single upload can be shared across backends/viewports without reloading.
     GaussianSoABuffers buffers;
@@ -112,4 +112,4 @@ private:
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP
+#endif // KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_RASTER_HPP

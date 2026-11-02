@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include "klartraum/gaussian_transform.hpp"
+#include "klartraum/rendering/gaussian_transform.hpp"
 
 #include <cmath>
 #include <stdexcept>
