@@ -69,8 +69,8 @@ public:
         // the renderpass so vkQueuePresentKHR accepts it.  For headless
         // offscreen rendering GENERAL is fine. A viewport target overrides this
         // with TRANSFER_SRC_OPTIMAL so the Window composite can blit from it.
-        // Drawing over the image needs its contents, which its source left in
-        // GENERAL (see ImageViewSrc).
+        // Recording transitions the input from its reported output layout to
+        // GENERAL before this pass begins, preserving contents when loading.
         colorAttachment.initialLayout = loadExisting ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageLayout defaultFinal =
             vulkanContext.hasSurface() ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL;
@@ -79,6 +79,7 @@ public:
         } else {
             colorAttachment.finalLayout = defaultFinal;
         }
+        outputLayout = colorAttachment.finalLayout;
 
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;
@@ -155,7 +156,8 @@ public:
         VkImageMemoryBarrier barrierBack = {};
         barrierBack.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         // Keep the contents when drawing over them; else they are discarded.
-        barrierBack.oldLayout = loadExisting ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
+        auto source = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
+        barrierBack.oldLayout = loadExisting ? source->getOutputLayout() : VK_IMAGE_LAYOUT_UNDEFINED;
         barrierBack.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         barrierBack.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrierBack.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -199,10 +201,19 @@ public:
     /**
      * @brief Draw over the image's contents instead of clearing it first.
      *
-     * The image must be in VK_IMAGE_LAYOUT_GENERAL when the pass starts, as
-     * ImageViewSrc leaves it. Call before the pass is compiled.
+     * The pass transitions from its color producer's reported output layout to
+     * VK_IMAGE_LAYOUT_GENERAL while preserving the contents. Call before compilation.
      */
     void setLoadExisting(bool load) { loadExisting = load; }
+
+    VkImageLayout getOutputLayout() const override { return outputLayout; }
+    std::optional<VkImageLayout> getFinalLayoutOverride() const override {
+        if (inputs.empty())
+            return std::nullopt;
+        auto source =
+            std::dynamic_pointer_cast<ImageViewSrcInterface>(const_cast<RenderPass*>(this)->getInputElement(0));
+        return source ? source->getFinalLayoutOverride() : std::nullopt;
+    }
 
     void addDrawComponent(std::shared_ptr<DrawComponent> drawComponent) { drawComponents.push_back(drawComponent); }
 
@@ -257,7 +268,7 @@ public:
 
 private:
     VulkanContext* vulkanContext = nullptr;
-    VkRenderPass renderPass;
+    VkRenderPass renderPass = VK_NULL_HANDLE;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
 
@@ -268,6 +279,7 @@ private:
     std::vector<ComputeGraphElementPtr> computeDependencies;
 
     bool loadExisting = false;
+    VkImageLayout outputLayout = VK_IMAGE_LAYOUT_GENERAL;
 };
 
 typedef std::shared_ptr<RenderPass> RenderPassPtr;

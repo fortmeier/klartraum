@@ -23,6 +23,14 @@ The camera uniform buffer has the type `CameraUboType`, a
 ```{doxygenstruct} klartraum::CameraMVP
 ```
 
+`cropProjection()` creates an off-center view of a square window in the original
+projection's normalized device coordinates. `centre` gives the window's center
+and `halfExtent` its positive half-size; the resulting projection preserves depth.
+Use it for a cropped render or a higher-resolution view of part of the scene.
+
+```{doxygenfunction} klartraum::cropProjection
+```
+
 ## Input events
 
 ```{doxygenclass} klartraum::Event
