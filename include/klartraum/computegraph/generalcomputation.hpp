@@ -5,6 +5,7 @@
 #ifndef KLARTRAUM_COMPUTEGRAPH_GENERALCOMPUTATION_HPP
 #define KLARTRAUM_COMPUTEGRAPH_GENERALCOMPUTATION_HPP
 
+#include <algorithm>
 #include <array>
 #include <string>
 #include <vector>
@@ -467,7 +468,17 @@ private:
         }
     }
 
+    // Zeroes the scratch buffers marked for it. The fills wait for earlier accesses (the previous push-constant
+    // pass reads and writes them), and the dispatches after them wait for the fills.
     void recordScratchToZero(VkCommandBuffer commandBuffer, uint32_t pathId) {
+        if (std::find(otherInputsSetToZero.begin(), otherInputsSetToZero.end(), true) == otherInputsSetToZero.end())
+            return;
+        VkMemoryBarrier before{};
+        before.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        before.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
         for (size_t i = 0; i < otherInputs.size(); i++) {
             auto& scratch = otherInputs[i];
             if (otherInputsSetToZero[i]) {
@@ -476,6 +487,12 @@ private:
                 vkCmdFillBuffer(commandBuffer, scratchBuffer, 0, memsize, 0);
             }
         }
+        VkMemoryBarrier after{};
+        after.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &after, 0, nullptr, 0, nullptr);
     }
 
     void bind(VkCommandBuffer commandBuffer, uint32_t pathId, VkPipeline computePipeline) {
