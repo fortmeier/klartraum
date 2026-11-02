@@ -11,7 +11,7 @@
 
 #include <glm/glm.hpp>
 
-#include "klartraum/computegraph/computegraphgroup.hpp"
+#include "klartraum/rendering/gaussian_splatting_interface.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/rendergraphelement.hpp"
 #include "klartraum/computegraph/renderpass.hpp"
@@ -37,10 +37,10 @@ namespace klartraum {
  *   supported, a GaussianSplatMeshRasterizer) that draws instanced quads with
  *   premultiplied "over" blending.
  *
- * The internal RenderPass is the group's output element: the single
- * image-producing element through which the compute graph reaches all others.
+ * The group's outputs anchor the RGB render pass and optional depth calculation,
+ * so consumers run after both results are ready.
  */
-class VulkanGaussianSplattingRaster : public RenderGraphElement, public ComputeGraphGroup {
+class VulkanGaussianSplattingRaster : public GaussianSplattingInterface {
 public:
     VulkanGaussianSplattingRaster(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                                   std::shared_ptr<CameraUboType> cameraUBO, GaussianSoABuffers buffers,
@@ -54,11 +54,15 @@ public:
 
     virtual const char* getType() const override { return "GaussianSplattingRaster"; }
 
+    /// The depth buffer (see GsplatConfig::outputDepth), or nullptr if it was not requested.
+    std::shared_ptr<DepthBuffer> getDepth() const override { return depth; }
+
     void setPushConstants(const GaussianSplatRasterPushConstants& pushConstants) {
         rasterizer->setPushConstants(pushConstants);
     }
 
 private:
+    std::shared_ptr<BufferElement<VulkanBuffer<float>>> depth;
     void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                     std::shared_ptr<CameraUboType> cameraUBO, GsplatConfig config);
 
@@ -99,10 +103,15 @@ private:
     std::shared_ptr<BufferToGraphicsBarrier> barrier;
     std::shared_ptr<RenderPass> renderPass;
     std::shared_ptr<GaussianSplatRasterizer> rasterizer;
+    // Depth output (GsplatConfig::outputDepth): encoded depths written while
+    // rasterizing, decoded by a compute pass after the render pass.
+    void addDepthOutput(VulkanContext& vulkanContext, VkExtent2D extent);
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> depthBits;
+    std::shared_ptr<GeneralComputation<uint32_t>> depthResolve;
 
-    // Optional VK_EXT_mesh_shader draw path (perf plan R5), selected when
-    // config.useMeshShader && the device supports mesh shaders; otherwise the
-    // vertex `rasterizer` above is used. meshArgs holds the
+    // Optional VK_EXT_mesh_shader draw path, selected when requested on a
+    // supporting device with depth export disabled. Other configurations use
+    // the vertex rasterizer. meshArgs holds the
     // VkDrawMeshTasksIndirectCommandEXT filled by meshArgsOp from the visible
     // count.
     std::shared_ptr<BufferElement<VulkanBuffer<VkDrawMeshTasksIndirectCommandEXT>>> meshArgs;

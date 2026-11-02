@@ -19,6 +19,9 @@
 
 ## Backends
 
+```{doxygenclass} klartraum::GaussianSplattingInterface
+```
+
 {cpp:func}`klartraum::createGaussianSplatting` builds either backend from the
 same inputs.
 

@@ -27,7 +27,8 @@ Early development. What works today:
   frames;
 - rendering over offscreen targets: clearing, compositing and single-path
   images;
-- Gaussian splatting with a compute and a raster backend (`.spz` scenes);
+- Gaussian splatting with a compute and a raster backend (`.spz` scenes),
+  optionally writing a depth buffer for compositing other geometry;
 - buffers in device-local or host-visible memory, with staged uploads, and
   per-frame updates of Gaussians from the CPU before a frame is submitted;
 - ONNX models with the operators `Conv`, `ConvTranspose`, `Relu`, `Reshape`,
