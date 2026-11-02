@@ -6,6 +6,9 @@
  * TESTS:
  * - projection: Projection shader with 3 gaussians, verifies screen-space positions/depths
  * - fullPipeline: Full 9-stage pipeline with a single gaussian, verifies binning count > 0 and sorted order
+ * - radixSortSortsEveryCount: the radix sort with a GPU-side element count and 256 workgroups sorts random 32-bit
+ *   keys (and permutes their values alike) for counts whose split over the workgroups leaves a remainder, including
+ *   counts just above a multiple of 256 x 128
  * - singleRedGaussian: Full pipeline (manual stages) renders a red gaussian, checks pixel colors
  * - classWithSingleRedGaussian: VulkanGaussianSplatting class renders a single red gaussian, checks pixel colors
  * - classWithLanternScene: VulkanGaussianSplatting class renders the lantern SPZ scene and profiles GPU timing
@@ -871,6 +874,58 @@ static std::vector<uint8_t> render(VulkanContext& vc, const std::vector<Gaussian
 // Verifies byte2 (red channel) > 200 and byte0 (blue) < 50 in a
 // 60x60 window around the expected position.
 // ----------------------------------------------------------------
+TEST_F(GaussianSplattingTest, radixSortSortsEveryCount) {
+    using UintBuffer = BufferElement<VulkanBuffer<uint32_t>>;
+    const uint32_t capacity = 70000, groups = 256;
+    auto keys = std::make_shared<UintBuffer>(*vulkanContext, capacity);
+    auto values = std::make_shared<UintBuffer>(*vulkanContext, capacity);
+    auto keysScratch = std::make_shared<UintBuffer>(*vulkanContext, capacity);
+    auto valuesScratch = std::make_shared<UintBuffer>(*vulkanContext, capacity);
+    auto count = std::make_shared<UintBuffer>(*vulkanContext, 1);
+    auto sortOp = std::make_shared<RadixSort>(
+        *vulkanContext, std::vector<std::string>{"shaders/gsplat/gsplat_radix_sort_histogram.comp.spv",
+                                                 "shaders/gsplat/gsplat_radix_sort_hist_prefix_sum.comp.spv",
+                                                 "shaders/gsplat/gsplat_radix_sort_hist_scatter.comp.spv"});
+    sortOp->setInput(keys, 0);
+    sortOp->setInput(values, 1);
+    sortOp->setInput(keysScratch, 2);
+    sortOp->setInput(valuesScratch, 3);
+    sortOp->addScratchBufferElement(std::make_shared<UintBuffer>(*vulkanContext, 16), true);
+    sortOp->addScratchBufferElement(std::make_shared<UintBuffer>(*vulkanContext, groups + 1), true);
+    sortOp->addScratchBufferElement(count, false);
+    sortOp->addScratchBufferElement(std::make_shared<UintBuffer>(*vulkanContext, 16 * groups), true);
+    sortOp->setGroupCountX(groups);
+    std::vector<SortPushConstants> passes;
+    for (uint32_t pass = 0; pass < 8; ++pass)
+        passes.push_back({pass, capacity, 16, 1});
+    sortOp->setPushConstants(passes);
+    ComputeGraph graph(*vulkanContext, 1);
+    graph.compileFrom(sortOp);
+
+    std::mt19937 random(7);
+    for (const uint32_t n : {1000u, 32768u, 32769u, 33023u, 40000u, 65537u}) {
+        std::vector<uint32_t> keyValues(capacity), valueValues(capacity);
+        for (uint32_t i = 0; i < capacity; ++i) {
+            keyValues[i] = random();
+            valueValues[i] = i;
+        }
+        keys->getBuffer(0).memcopyFrom(keyValues);
+        values->getBuffer(0).memcopyFrom(valueValues);
+        count->getBuffer(0).memcopyFrom(std::vector<uint32_t>{n});
+        graph.submitAndWait(vulkanContext->getGraphicsQueue(), 0);
+        std::vector<uint32_t> sortedKeys(capacity), sortedValues(capacity);
+        keys->getBuffer(0).memcopyTo(sortedKeys);
+        values->getBuffer(0).memcopyTo(sortedValues);
+        std::vector<uint32_t> expected(keyValues.begin(), keyValues.begin() + n);
+        std::sort(expected.begin(), expected.end());
+        int wrong = 0;
+        for (uint32_t i = 0; i < n; ++i)
+            wrong +=
+                sortedKeys[i] != expected[i] || sortedValues[i] >= n || keyValues[sortedValues[i]] != sortedKeys[i];
+        EXPECT_EQ(wrong, 0) << "count " << n;
+    }
+}
+
 TEST_F(GaussianSplattingTest, singleRedGaussian) {
     const float W = BackendConfig::WIDTH;
     const float H = BackendConfig::HEIGHT;
