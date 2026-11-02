@@ -110,16 +110,23 @@ use `forward->setInput(operation, 0, 1)` to expose that image after the write.
 
 ## Layouts when keeping contents
 
-An uncleared source must already be in `GENERAL` when the graph uses it.
-Clearing transitions to `GENERAL`. The compositor also expects its target in
-`GENERAL`; its `sourceLayout` argument specifies the source's incoming layout,
-which it transitions to `GENERAL` and leaves there.
+An uncleared raw `ImageViewSrc` must already be in `GENERAL` when the graph
+uses it. Clearing transitions to `GENERAL`. The compositor obtains its target's
+incoming layout from the producer's `getOutputLayout()` and transitions it to
+`GENERAL`, preserving its contents. Its `sourceLayout` argument specifies the
+source's incoming layout. Both images are left in `GENERAL` after compositing.
+
+`RenderPass` with `setLoadExisting(true)` and both Gaussian backends also
+transition from their color producer's reported layout before drawing over it.
+This permits composition of successive writers within a graph.
 
 The Gaussian backends leave images in their target's final layout. For an
 offscreen target this is `TRANSFER_SRC_OPTIMAL`; for a swapchain image it is
 normally `PRESENT_SRC_KHR`. Before rendering over that image again with
-clearing disabled, a transition back to `GENERAL` must preserve its contents.
-That transition is not added automatically by an uncleared image source.
+clearing disabled on the raw source, a transition back to `GENERAL` must
+preserve its contents. An uncleared raw source reports `GENERAL` and does not
+track the layout left by writers during a previous graph execution, so it does
+not add that transition automatically.
 The example above renders once and does not rely on automatic transitions
 across repeated renders.
 
