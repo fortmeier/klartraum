@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 // Body of gsplat_binned_splatting.comp and gsplat_binned_splatting_depth.comp.
-// With OUTPUT_DEPTH defined, it also writes the median depth of every pixel:
-// the NDC depth of the Gaussian at which the transmittance first falls to 0.5
-// (+inf if it never does), into a row-major float buffer of screen size.
+// OUTPUT_DEPTH enables configurable accumulated-opacity or nearest-opaque-splat
+// depth. SCENE_DEPTH tests/updates an attachment snapshot, and DEPTH_ONLY omits
+// RGB output. Exported depth is +inf where no selected surface exists.
 
 #include "gsplat_types.glsl"
 
@@ -29,12 +29,17 @@ layout(scalar, set = 0, binding = 2) readonly buffer SortedColorAlpha { vec4  so
 layout(scalar, set = 0, binding = 3) readonly buffer CountBuf  { uint numberTotalGaussians; };
 layout(scalar, set = 0, binding = 4) readonly buffer BoundsBuf { StartAndEnd startAndEnd[];  };
 
+#ifndef DEPTH_ONLY
 layout(binding = 5, rgba8) uniform image2D outputImage;
+#endif
 
 #ifdef OUTPUT_DEPTH
 layout(scalar, set = 0, binding = 6) readonly buffer SortedZ { float sortedZ[]; };
 layout(scalar, set = 0, binding = 7) writeonly buffer DepthOutput { float depthOutput[]; };
-const float MEDIAN_TRANSMITTANCE = 0.5;
+#endif
+
+#ifdef SCENE_DEPTH
+layout(scalar, set = 0, binding = 8) buffer SceneDepth { float sceneDepth[]; };
 #endif
 
 layout(push_constant) uniform PushConstants {
@@ -44,18 +49,35 @@ layout(push_constant) uniform PushConstants {
     uint  binIndexY;
     float screenWidth;
     float screenHeight;
+    uint depthMode;
+    uint depthFlags;
+    float depthThreshold;
+    float depthAlphaCull;
 } pushConstants;
+
+#ifdef OUTPUT_DEPTH
+void selectDepth(float a, float transmittance, float z, inout float depth) {
+    if (pushConstants.depthMode == 2u) {
+        if (a >= pushConstants.depthThreshold) depth = min(depth, z);
+    } else {
+        float threshold = 1.0 - pushConstants.depthThreshold;
+        if (transmittance > threshold && transmittance * (1.0 - a) <= threshold) depth = z;
+    }
+}
+#endif
 
 // Shared memory batch — one slot per thread in the workgroup.
 struct GaussBatch {
     vec2 pos2D;
     vec4 covInv;
     vec4 colorAlpha;
-#ifdef OUTPUT_DEPTH
-    float z;
-#endif
 };
 shared GaussBatch sharedGauss[WORKGROUP_SIZE];
+#ifdef OUTPUT_DEPTH
+// Keep the RGB batch stride unchanged: adding z to its vec4-aligned struct
+// pads every entry and can increase shared-memory bank conflicts during loading.
+shared float sharedZ[WORKGROUP_SIZE];
+#endif
 
 // Number of threads that no longer need further batches, double-buffered by
 // batch parity: one slot is counted and read while the other is reset.
@@ -76,6 +98,10 @@ void main() {
     // shared memory (the other threads read those slots); they only skip
     // shading and the image write.
     const bool insideBin = all(lessThan(pixelCoord, binEnd));
+    uint pixelIndex = uint(pixelCoord.y) * uint(pushConstants.screenWidth) + uint(pixelCoord.x);
+#ifdef SCENE_DEPTH
+    float sceneLimit = insideBin ? sceneDepth[pixelIndex] : 1.0;
+#endif
     const vec2 pixelCoordF = vec2(pixelCoord);
 
     const StartAndEnd range = startAndEnd[
@@ -87,14 +113,16 @@ void main() {
 
     vec4  finalColor    = vec4(0.0, 0.0, 0.0, 1.0);
     float accum_opacity = 1.0;
+    float colorTransmittance = 1.0;
 #ifdef OUTPUT_DEPTH
-    float depth = uintBitsToFloat(0x7F800000u); // +inf until the transmittance reaches the median
+    float depth = uintBitsToFloat(0x7F800000u); // +inf until a surface is selected
 #endif
 
     // A pixel stops accumulating once it is (nearly) opaque, but keeps loading
     // its slot of each batch until the whole workgroup is done: the loop and
     // its barriers must stay in uniform control flow.
     bool accumulating = insideBin;
+    bool colorAccumulating = insideBin;
     if (gl_LocalInvocationIndex == 0u) {
         sharedDoneCount[0] = 0u;
         sharedDoneCount[1] = 0u;
@@ -107,7 +135,7 @@ void main() {
         sharedGauss[gl_LocalInvocationIndex].covInv     = sortedCovInv[li];
         sharedGauss[gl_LocalInvocationIndex].colorAlpha = sortedColorAlpha[li];
 #ifdef OUTPUT_DEPTH
-        sharedGauss[gl_LocalInvocationIndex].z          = sortedZ[li];
+        sharedZ[gl_LocalInvocationIndex] = sortedZ[li];
 #endif
         barrier();
 
@@ -121,6 +149,9 @@ void main() {
             vec2 mu   = sharedGauss[j].pos2D;
             vec4 ci   = sharedGauss[j].covInv;
             vec4 rgba = sharedGauss[j].colorAlpha;
+#ifdef DEPTH_ONLY
+            if (rgba.a < pushConstants.depthAlphaCull) continue;
+#endif
 
             // Inline Gaussian: exp(-0.5 * diff^T * covInv * diff)
             // Avoids mat2 construction + matrix-vector multiply.
@@ -129,15 +160,27 @@ void main() {
             float q  = ci.x * d.x * d.x + 2.0 * ci.y * d.x * d.y + ci.w * d.y * d.y;
             float a  = exp(-0.5 * q) * rgba.a;
 
-            finalColor   += vec4(rgba.rgb * (a * accum_opacity), 0.0);
+#if defined(SCENE_DEPTH) || defined(DEPTH_ONLY)
+            float z = sharedZ[j];
+#ifdef SCENE_DEPTH
+            if (z < 0.0 || z > 1.0 || ((pushConstants.depthFlags & 1u) != 0u && z > sceneLimit)) continue;
+#else
+            if (z < 0.0 || z > 1.0) continue;
+#endif
+#endif
+
+            if (colorAccumulating) finalColor += vec4(rgba.rgb * (a * accum_opacity), 0.0);
 #ifdef OUTPUT_DEPTH
-            if (accum_opacity > MEDIAN_TRANSMITTANCE && accum_opacity * (1.0 - a) <= MEDIAN_TRANSMITTANCE) {
-                depth = sharedGauss[j].z;
-            }
+            selectDepth(a, accum_opacity, sharedZ[j], depth);
 #endif
             accum_opacity *= (1.0 - a);
+            if (colorAccumulating) colorTransmittance = accum_opacity;
         }
-        if (accum_opacity <= 1.0 - 0.9999) accumulating = false;
+        if (accum_opacity <= 1.0 - 0.9999) colorAccumulating = false;
+        accumulating = colorAccumulating;
+#ifdef OUTPUT_DEPTH
+        accumulating = insideBin && (colorAccumulating || ((pushConstants.depthFlags & 6u) != 0u && isinf(depth)));
+#endif
         if (!accumulating) atomicAdd(sharedDoneCount[batch & 1u], 1u);
         barrier();
 
@@ -149,20 +192,36 @@ void main() {
         vec2 mu   = sortedPos2D[i];
         vec4 ci   = sortedCovInv[i];
         vec4 rgba = sortedColorAlpha[i];
+#ifdef DEPTH_ONLY
+        if (rgba.a < pushConstants.depthAlphaCull) continue;
+#endif
 
         vec2  d = pixelCoordF - mu;
         float q = ci.x * d.x * d.x + 2.0 * ci.y * d.x * d.y + ci.w * d.y * d.y;
         float a = exp(-0.5 * q) * rgba.a;
 
-        finalColor   += vec4(rgba.rgb * (a * accum_opacity), 0.0);
+#if defined(SCENE_DEPTH) || defined(DEPTH_ONLY)
+        float z = sortedZ[i];
+#ifdef SCENE_DEPTH
+        if (z < 0.0 || z > 1.0 || ((pushConstants.depthFlags & 1u) != 0u && z > sceneLimit)) continue;
+#else
+        if (z < 0.0 || z > 1.0) continue;
+#endif
+#endif
+
+        if (colorAccumulating) finalColor += vec4(rgba.rgb * (a * accum_opacity), 0.0);
 #ifdef OUTPUT_DEPTH
-        if (accum_opacity > MEDIAN_TRANSMITTANCE && accum_opacity * (1.0 - a) <= MEDIAN_TRANSMITTANCE) {
-            depth = sortedZ[i];
-        }
+        selectDepth(a, accum_opacity, sortedZ[i], depth);
 #endif
         accum_opacity *= (1.0 - a);
+        if (colorAccumulating) colorTransmittance = accum_opacity;
 
-        if (accum_opacity <= 1.0 - 0.9999) break;
+        if (accum_opacity <= 1.0 - 0.9999) colorAccumulating = false;
+#ifdef OUTPUT_DEPTH
+        if (!colorAccumulating && ((pushConstants.depthFlags & 6u) == 0u || !isinf(depth))) break;
+#else
+        if (!colorAccumulating) break;
+#endif
     }
 
     // finalColor.rgb holds the premultiplied "over" radiance Σ cᵢ·aᵢ·Tᵢ of the
@@ -170,12 +229,17 @@ void main() {
     // composited over what the image holds: rgb + T·background, and the
     // coverage 1 - T·(1 - background alpha).
     if (insideBin) {
+#ifndef DEPTH_ONLY
         vec4 background = imageLoad(outputImage, pixelCoord);
-        vec4 outputColor = vec4(clamp(finalColor.rgb + accum_opacity * background.rgb, vec3(0.0), vec3(1.0)),
-                                clamp(1.0 - accum_opacity * (1.0 - background.a), 0.0, 1.0));
+        vec4 outputColor = vec4(clamp(finalColor.rgb + colorTransmittance * background.rgb, vec3(0.0), vec3(1.0)),
+                                clamp(1.0 - colorTransmittance * (1.0 - background.a), 0.0, 1.0));
         imageStore(outputImage, pixelCoord, outputColor);
+#endif
 #ifdef OUTPUT_DEPTH
-        depthOutput[uint(pixelCoord.y) * uint(pushConstants.screenWidth) + uint(pixelCoord.x)] = depth;
+        if ((pushConstants.depthFlags & 4u) != 0u) depthOutput[pixelIndex] = depth;
+#endif
+#ifdef SCENE_DEPTH
+        if ((pushConstants.depthFlags & 2u) != 0u && !isinf(depth)) sceneDepth[pixelIndex] = depth;
 #endif
     }
 }

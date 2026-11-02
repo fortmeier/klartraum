@@ -88,9 +88,9 @@ mat2 computeCovarianceMatrix2D(vec3 p, vec4 rotation, vec3 gscale) {
     // The affine approximation is evaluated at the mean, with the projected x/y
     // limited to a [-1.3, 1.3] NDC guard band (keeping the depth) so Gaussians far
     // outside the view do not get an exploding Jacobian.
-    // The band is centered on the view. An off-center projection adds a constant
-    // to NDC, so its center is t.x / t.z = -P[2][0] / fx (and likewise y).
-    // The constant does not change the Jacobian.
+    // The band is centred on the view: an off-centre projection (e.g. cropProjection())
+    // adds a constant to the NDC, ndc.x = -fx * t.x / t.z - P[2][0], so the view's centre
+    // lies at t.x / t.z = -P[2][0] / fx. The constant does not change the Jacobian.
     float limX = 1.3 / abs(fx);
     float limY = 1.3 / abs(fy);
     float centreX = -ubo.proj[2][0] / fx;

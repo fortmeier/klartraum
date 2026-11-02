@@ -24,6 +24,7 @@ struct GaussianSplatRasterPushConstants {
     float splatScale;
     int32_t shDegree;
     uint32_t numSplats;
+    float depthThreshold = 0.5f;
 };
 
 /**
@@ -60,7 +61,9 @@ public:
      *
      * `depthBits` holds one uint per pixel, filled with the encoding of +inf
      * before the render pass; it is bound as set 1, binding 2 for the fragment
-     * shader. Call before initialize() and with exactly two splat buffers.
+     * shader. Native depth testing is supplied by the containing RenderPass;
+     * the opacity threshold is in the push constants. Call before initialize()
+     * and with exactly two splat buffers.
      */
     void setDepthOutput(std::shared_ptr<BufferElementInterface> depthBits);
 
