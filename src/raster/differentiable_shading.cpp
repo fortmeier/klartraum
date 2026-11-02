@@ -17,6 +17,11 @@ struct ShadingPushConstants {
     uint32_t width, height, textureWidth, textureHeight;
 };
 
+struct ImageLossPushConstants {
+    uint32_t width, height;
+    float maskWeight;
+};
+
 struct ViewCountPushConstants {
     uint32_t viewCount;
 };
@@ -57,6 +62,33 @@ ComputeGraphElementPtr shade(VulkanContext& vulkanContext, uint32_t width, uint3
 ComputeGraphElementPtr shadeBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
                                      uint32_t textureWidth, uint32_t textureHeight) {
     return shading(vulkanContext, "shaders/raster/shade_backward.comp.spv", width, height, textureWidth, textureHeight);
+}
+
+ComputeGraphElementPtr shadeColorBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                          uint32_t textureWidth, uint32_t textureHeight) {
+    return shading(vulkanContext, "shaders/raster/shade_color_backward.comp.spv", width, height, textureWidth,
+                   textureHeight);
+}
+
+ComputeGraphElementPtr antialias(VulkanContext& vulkanContext, uint32_t width, uint32_t height, uint32_t textureWidth,
+                                 uint32_t textureHeight) {
+    return shading(vulkanContext, "shaders/raster/antialias.comp.spv", width, height, textureWidth, textureHeight);
+}
+
+ComputeGraphElementPtr antialiasBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                         uint32_t textureWidth, uint32_t textureHeight) {
+    return shading(vulkanContext, "shaders/raster/antialias_backward.comp.spv", width, height, textureWidth,
+                   textureHeight);
+}
+
+ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight) {
+    if (width == 0 || height == 0)
+        throw std::invalid_argument("imageLoss: the image size must be positive");
+    auto operation =
+        vulkanContext.create<GeneralComputation<ImageLossPushConstants>>("shaders/raster/image_loss.comp.spv");
+    operation->setPushConstants({{width, height, maskWeight}});
+    operation->setGroupCountX((width * height + 255) / 256);
+    return operation;
 }
 
 ComputeGraphElementPtr clearBuffers(VulkanContext& vulkanContext) { return std::make_shared<ClearBuffers>(); }

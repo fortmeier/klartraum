@@ -41,6 +41,44 @@ ComputeGraphElementPtr shade(VulkanContext& vulkanContext, uint32_t width, uint3
 ComputeGraphElementPtr shadeBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
                                      uint32_t textureWidth, uint32_t textureHeight);
 
+/**
+ * @brief Gradients of the shading driven by per-pixel colour gradients (e.g. from antialiasBackward()).
+ *
+ * Slots: 7 colour gradients (four floats per pixel, rgb used), 8 vertex gradients, 9 texel gradients (four floats
+ * each, added to).
+ */
+ComputeGraphElementPtr shadeColorBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                          uint32_t textureWidth, uint32_t textureHeight);
+
+/**
+ * @brief Analytic antialiasing of silhouettes (shaders/raster/antialias.slang): where a mesh edge separates two
+ * neighbouring pixels, the pixel partly covered by the other surface blends towards its colour by the covered
+ * fraction, which is differentiable in the edge's vertices.
+ *
+ * Slots: 7 premultiplied colours (four floats per pixel, from shade()), 8 antialiased colours (four floats per
+ * pixel).
+ */
+ComputeGraphElementPtr antialias(VulkanContext& vulkanContext, uint32_t width, uint32_t height, uint32_t textureWidth,
+                                 uint32_t textureHeight);
+
+/**
+ * @brief Gradients of antialias(): to the colours it blends and, through the silhouette crossings, to the vertices.
+ *
+ * Slots: 7 premultiplied colours, 8 gradients of the antialiased colours (four floats per pixel), 9 colour gradients
+ * (four floats per pixel, added to), 10 vertex gradients (four floats per vertex, added to).
+ */
+ComputeGraphElementPtr antialiasBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                         uint32_t textureWidth, uint32_t textureHeight);
+
+/**
+ * @brief The image loss of premultiplied colours against a masked target and its gradients: the sum over pixels of
+ * (m |colour - target|^2 + maskWeight (coverage - m)^2) / (width x height), with m the target mask.
+ *
+ * Slots: 0 colours (four floats per pixel: premultiplied rgb, coverage), 1 targets (four floats per pixel and view:
+ * rgb and mask), 2 view index, 3 colour gradients (four floats per pixel, written), 4 loss (one float, added to).
+ */
+ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight);
+
 /** @brief Fills every buffer connected to it (slots 0, 1, ...) with zeros. */
 ComputeGraphElementPtr clearBuffers(VulkanContext& vulkanContext);
 
