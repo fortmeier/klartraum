@@ -12,6 +12,9 @@
  * - laplacianRegularizerMatchesFiniteDifferences: the vertex adjacency of the icosphere is symmetric with five or
  *   six neighbours per vertex, and the Laplacian smoothness loss of a perturbed icosphere and its gradients equal a
  *   CPU evaluation and its central differences
+ * - imageLossWithViewColorsMatchesFiniteDifferences: the image loss with a colour correction per view and its
+ *   gradients with respect to the colours, coverages and the drawn view's gain and offset equal a CPU evaluation and
+ *   its central differences, and the other views' corrections get no gradient
  * - fittingSceneRoundTrip: a non-square scene of three views written with writeFittingScene() loads back unchanged
  *   (targets, cameras, splits, enclosing sphere), targetsOf() and camerasOf() select views, and a truncated targets
  *   file is rejected
@@ -528,6 +531,92 @@ TEST_F(DifferentiableRasterTest, laplacianRegularizerMatchesFiniteDifferences) {
         }
         EXPECT_EQ(gpuGradients[4 * v + 3], 0.0f);
     }
+}
+
+TEST_F(DifferentiableRasterTest, imageLossWithViewColorsMatchesFiniteDifferences) {
+    const uint32_t width = 23, height = 17, pixels = width * height, views = 3, view = 1;
+    const float maskWeight = 1.5f, viewColorWeight = 0.3f;
+    std::vector<float> colors(4 * pixels), targets(4 * pixels * views), viewColors(8 * views);
+    for (uint32_t i = 0; i < pixels; ++i) {
+        const float a = (i % 5) / 4.0f; // coverage 0, 0.25, ..., 1
+        colors[4 * i + 3] = a;
+        for (int c = 0; c < 3; ++c)
+            colors[4 * i + c] = a * (0.2f + 0.6f * float((i * (c + 3)) % 11) / 11.0f);
+    }
+    for (size_t i = 0; i < targets.size() / 4; ++i) {
+        targets[4 * i + 3] = (i % 7) < 4 ? 1.0f : (i % 7 == 4 ? 0.5f : 0.0f);
+        for (int c = 0; c < 3; ++c)
+            targets[4 * i + c] = targets[4 * i + 3] * float((i * (c + 2)) % 13) / 13.0f;
+    }
+    for (uint32_t v = 0; v < views; ++v)
+        for (int c = 0; c < 3; ++c) {
+            viewColors[8 * v + c] = 1.0f + 0.1f * float(c) - 0.05f * float(v);
+            viewColors[8 * v + 4 + c] = 0.03f * float(c + v) - 0.04f;
+        }
+    const auto tensor = [&](uint32_t rows, uint32_t columns) {
+        return vc->create<TensorElement<float>>(std::vector<uint32_t>{rows, columns});
+    };
+    auto colorBuffer = tensor(pixels, 4), targetBuffer = tensor(pixels * views, 4), gradients = tensor(pixels, 4),
+         loss = tensor(1, 1), viewColorBuffer = tensor(2 * views, 4), viewColorGradients = tensor(2 * views, 4);
+    auto viewIndex = std::make_shared<UintBuffer>(*vc, 1);
+    auto clear = raster::clearBuffers(*vc);
+    clear->setInput(loss, 0);
+    clear->setInput(viewColorGradients, 1);
+    auto element = raster::imageLossWithViewColors(*vc, width, height, maskWeight, viewColorWeight);
+    element->setInput(colorBuffer, 0);
+    element->setInput(targetBuffer, 1);
+    element->setInput(viewIndex, 2);
+    element->setInput(gradients, 3);
+    element->setInput(clear, 4, 0);
+    element->setInput(viewColorBuffer, 5);
+    element->setInput(clear, 6, 1);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(element);
+    colorBuffer->getDataBuffer(0).memcopyFrom(colors);
+    targetBuffer->getDataBuffer(0).memcopyFrom(targets);
+    viewColorBuffer->getDataBuffer(0).memcopyFrom(viewColors);
+    viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{view});
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<float> gpuLoss(1), gpuGradients(4 * pixels), gpuViewGradients(8 * views);
+    loss->getDataBuffer(0).memcopyTo(gpuLoss);
+    gradients->getDataBuffer(0).memcopyTo(gpuGradients);
+    viewColorGradients->getDataBuffer(0).memcopyTo(gpuViewGradients);
+
+    std::vector<double> c(colors.begin(), colors.end()), g(viewColors.begin(), viewColors.end());
+    const auto cpuLoss = [&]() {
+        double sum = 0.0;
+        for (uint32_t i = 0; i < pixels; ++i) {
+            const float* t = &targets[4 * (size_t(view) * pixels + i)];
+            for (int k = 0; k < 3; ++k) {
+                const double d = g[8 * view + k] * c[4 * i + k] + g[8 * view + 4 + k] * c[4 * i + 3] - t[k];
+                sum += t[3] * d * d;
+            }
+            sum += maskWeight * (c[4 * i + 3] - t[3]) * (c[4 * i + 3] - t[3]);
+        }
+        double regularizer = 0.0;
+        for (int k = 0; k < 3; ++k)
+            regularizer +=
+                (g[8 * view + k] - 1.0) * (g[8 * view + k] - 1.0) + g[8 * view + 4 + k] * g[8 * view + 4 + k];
+        return sum / pixels + viewColorWeight * regularizer;
+    };
+    const auto difference = [&](double& value) {
+        const double original = value, h = 1e-4;
+        value = original + h;
+        const double up = cpuLoss();
+        value = original - h;
+        const double down = cpuLoss();
+        value = original;
+        return (up - down) / (2 * h);
+    };
+    EXPECT_NEAR(gpuLoss[0], cpuLoss(), 1e-5);
+    for (uint32_t i = 0; i < pixels; i += 3)
+        for (int k = 0; k < 4; ++k)
+            EXPECT_NEAR(gpuGradients[4 * i + k], difference(c[4 * i + k]), 1e-6) << "pixel " << i << " channel " << k;
+    for (uint32_t v = 0; v < views; ++v)
+        for (int k : {0, 1, 2, 4, 5, 6}) {
+            const double expected = v == view ? difference(g[8 * v + k]) : 0.0;
+            EXPECT_NEAR(gpuViewGradients[8 * v + k], expected, 1e-5) << "view " << v << " parameter " << k;
+        }
 }
 
 TEST_F(DifferentiableRasterTest, fittingSceneRoundTrip) {

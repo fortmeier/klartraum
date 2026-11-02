@@ -80,6 +80,16 @@ ComputeGraphElementPtr antialiasBackward(VulkanContext& vulkanContext, uint32_t 
 ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight);
 
 /**
+ * @brief imageLoss() with a colour correction per view: the colour c (coverage a) is compared as gain x c +
+ * offset x a with the drawn view's gain and offset (rgb), plus viewColorWeight x (|gain - 1|^2 + |offset|^2).
+ *
+ * Slots: 0-4 as imageLoss(); 5 view colours (eight floats per view: gain rgb, unused, offset rgb, unused), 6 their
+ * gradients (eight floats per view, added to; only the drawn view's change).
+ */
+ComputeGraphElementPtr imageLossWithViewColors(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                               float maskWeight, float viewColorWeight);
+
+/**
  * @brief The uniform Laplacian smoothness regularizer of a mesh: weight x sum over vertices of |p_v - mean of the
  * neighbours' positions|^2 / vertexCount, and its gradient.
  *

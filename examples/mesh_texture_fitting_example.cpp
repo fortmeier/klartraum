@@ -13,6 +13,7 @@
 // Usage: mesh_texture_fitting_example [--epochs N] [--size S] [--views V] [--scene DIR] [--texture-width W]
 //                                     [--laplacian L] [--final-lr F]
 //                                     [--display-view N]
+//                                     [--subdivisions S] [--view-colors] [--view-color-weight W]
 // Writes target views, progress frames of a held-out view and the fitted mesh with its texture to
 // build/TestingOutput/mesh_texture_fitting/ (a subdirectory per scene with --scene).
 
@@ -141,10 +142,13 @@ int uprightTurns(const glm::mat4& camera, glm::vec3 at, glm::vec3 up) {
 } // namespace
 
 int main(int argc, char** argv) {
-    uint32_t epochs = 60, size = 128, views = 24, textureWidth = 0;
-    float laplacianWeight = -1.0f; // negative: the default of MeshTrainingOptions
+    uint32_t epochs = 0, size = 128, views = 24, textureWidth = 0; // epochs 0: 60, or 150 with --scene
+    float laplacianWeight = -1.0f;                                 // negative: the default of MeshTrainingOptions
     float finalLearningRate = 0.1f;
-    int displayView = -1; // with --scene: the photo whose side of the object the progress frames show
+    uint32_t subdivisions = 0; // 0: 4, or 5 with --scene
+    bool viewColors = false;
+    float viewColorWeight = -1.0f; // negative: the default of MeshTrainingOptions
+    int displayView = -1;          // with --scene: the photo whose side of the object the progress frames show
     std::filesystem::path sceneDirectory;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
@@ -158,6 +162,12 @@ int main(int argc, char** argv) {
             sceneDirectory = argv[++i];
         else if (argument == "--texture-width" && i + 1 < argc)
             textureWidth = uint32_t(std::stoul(argv[++i]));
+        else if (argument == "--subdivisions" && i + 1 < argc)
+            subdivisions = uint32_t(std::stoul(argv[++i]));
+        else if (argument == "--view-color-weight" && i + 1 < argc)
+            viewColorWeight = std::stof(argv[++i]);
+        else if (argument == "--view-colors")
+            viewColors = true;
         else if (argument == "--display-view" && i + 1 < argc)
             displayView = std::stoi(argv[++i]);
         else if (argument == "--final-lr" && i + 1 < argc)
@@ -257,14 +267,21 @@ int main(int argc, char** argv) {
         options.textureWidth = 128;
         options.textureHeight = 64;
     }
+    options.viewColors = viewColors;
+    if (viewColorWeight >= 0.0f)
+        options.viewColorWeight = viewColorWeight;
     if (laplacianWeight >= 0.0f)
         options.laplacianWeight = laplacianWeight;
+    // Photographs carry more detail than the synthetic pumpkin: a finer start mesh, trained longer.
+    const bool photographs = !sceneDirectory.empty();
+    epochs = epochs > 0 ? epochs : (photographs ? 150 : 60);
+    subdivisions = subdivisions > 0 ? subdivisions : (photographs ? 5 : 4);
     if (textureWidth > 0) {
         options.textureWidth = textureWidth;
         options.textureHeight = std::max(1u, textureWidth / 2);
     }
     // The learning rates decay over the whole run, so the fit settles instead of jittering between views.
-    for (auto* adam : {&options.geometry, &options.texture}) {
+    for (auto* adam : {&options.geometry, &options.texture, &options.viewColor}) {
         adam->decaySteps = epochs * uint32_t(cameras.size());
         adam->finalFactor = finalLearningRate;
     }
@@ -276,7 +293,7 @@ int main(int argc, char** argv) {
         shown.push_back(&targets[4 * pixels * view]);
     writePpm(output / "targets.ppm", shown, width, height);
 
-    const raster::TriangleMesh start = raster::icosphere(4);
+    const raster::TriangleMesh start = raster::icosphere(subdivisions);
     raster::MeshTraining training(vulkanContext, start, cameras, options);
     training.setTargets(targets);
     const auto render = [&](const std::vector<glm::mat4>& views) {
@@ -320,7 +337,44 @@ int main(int argc, char** argv) {
     std::cout << steps << " steps in " << trainingSeconds << " s (" << 1000.0 * trainingSeconds / steps
               << " ms per step, including the loss readback)" << std::endl;
 
-    const auto [trainingIou, trainingPsnr] = compare(render(cameras), targets);
+    if (const std::vector<float> corrections = training.viewColors(); !corrections.empty()) {
+        glm::vec3 low(1e9f), high(-1e9f), mean(0.0f), offsetLow(1e9f), offsetHigh(-1e9f);
+        for (size_t v = 0; v < corrections.size() / 8; ++v) {
+            const glm::vec3 gain(corrections[8 * v], corrections[8 * v + 1], corrections[8 * v + 2]);
+            const glm::vec3 offset(corrections[8 * v + 4], corrections[8 * v + 5], corrections[8 * v + 6]);
+            low = glm::min(low, gain);
+            high = glm::max(high, gain);
+            mean += gain / float(corrections.size() / 8);
+            offsetLow = glm::min(offsetLow, offset);
+            offsetHigh = glm::max(offsetHigh, offset);
+        }
+        std::cout << "per-view gains: mean " << mean.r << " " << mean.g << " " << mean.b << ", range " << low.r << "-"
+                  << high.r << " " << low.g << "-" << high.g << " " << low.b << "-" << high.b << "; offsets "
+                  << offsetLow.r << "-" << offsetHigh.r << std::endl;
+    }
+    const std::vector<float> trainingImages = render(cameras);
+    // Residuals of four training views: target, fit and four times the colour error, one view per row.
+    {
+        std::ofstream out(output / "residuals.ppm", std::ios::binary);
+        out << "P6\n" << 3 * width << " " << 4 * height << "\n255\n";
+        for (size_t row = 0; row < 4; ++row) {
+            const size_t view = row * cameras.size() / 4;
+            const float* target = &targets[4 * pixels * view];
+            const float* fit = &trainingImages[4 * pixels * view];
+            for (uint32_t y = 0; y < height; ++y)
+                for (int panel = 0; panel < 3; ++panel)
+                    for (uint32_t x = 0; x < width; ++x) {
+                        const size_t p = 4 * (size_t(y) * width + x);
+                        for (int c = 0; c < 3; ++c) {
+                            const float value = panel == 0   ? target[p + c] + 1.0f - target[p + 3]
+                                                : panel == 1 ? fit[p + c] + 1.0f - fit[p + 3]
+                                                             : 4.0f * std::abs(fit[p + c] - target[p + c]);
+                            out.put(char(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f)));
+                        }
+                    }
+        }
+    }
+    const auto [trainingIou, trainingPsnr] = compare(trainingImages, targets);
     std::cout << "training views: silhouette IoU " << trainingIou << ", PSNR inside the object " << trainingPsnr
               << " dB" << std::endl;
     const auto [iou, psnr] = compare(render(heldOut), heldOutTargets);

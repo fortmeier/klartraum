@@ -24,6 +24,11 @@ struct ImageLossPushConstants {
     float maskWeight;
 };
 
+struct ViewColorLossPushConstants {
+    uint32_t width, height;
+    float maskWeight, viewColorWeight;
+};
+
 struct RegularizerPushConstants {
     uint32_t vertexCount;
     float weight;
@@ -94,6 +99,17 @@ ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, u
     auto operation =
         vulkanContext.create<GeneralComputation<ImageLossPushConstants>>("shaders/raster/image_loss.comp.spv");
     operation->setPushConstants({{width, height, maskWeight}});
+    operation->setGroupCountX((width * height + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr imageLossWithViewColors(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                               float maskWeight, float viewColorWeight) {
+    if (width == 0 || height == 0)
+        throw std::invalid_argument("imageLossWithViewColors: the image size must be positive");
+    auto operation = vulkanContext.create<GeneralComputation<ViewColorLossPushConstants>>(
+        "shaders/raster/image_loss_view_colors.comp.spv");
+    operation->setPushConstants({{width, height, maskWeight, viewColorWeight}});
     operation->setGroupCountX((width * height + 255) / 256);
     return operation;
 }

@@ -267,12 +267,15 @@ next to the true mesh.
 
 | Option | Meaning |
 |---|---|
-| `--epochs N` | Passes over all views (default 60) |
+| `--epochs N` | Passes over all views (default 60, or 150 with `--scene`) |
 | `--size S` | Image width and height in pixels (default 128) |
 | `--views V` | Training views, on three rings of V/3 (default 24) |
 | `--scene DIR` | Fit photographs prepared by `scripts/mesh_fitting/prepare_data.py` instead of the synthetic pumpkin |
 | `--texture-width W` | Texture width in texels, height W/2 (default 64, or 128 with `--scene`) |
 | `--laplacian L` | Weight of the Laplacian smoothness term (default 100) |
+| `--subdivisions S` | Subdivisions of the start icosphere (default 4, or 5 with `--scene`) |
+| `--view-colors` | Learn a colour gain and offset per training view (for photographs with varying exposure) |
+| `--view-color-weight W` | Pull of the per-view colour corrections towards identity (default 0.01) |
 | `--final-lr F` | Learning rates decay exponentially over the run to F times their start (default 0.1) |
 | `--display-view N` | With `--scene`: progress frames show photo N, turned upright, beside the fit seen upright from that side (default: the first validation view) |
 
@@ -284,7 +287,8 @@ With `--scene`, the example fits real photographs with masks and COLMAP
 camera poses instead. It trains on the scene's training views and evaluates on
 its validation views. The scene's enclosing sphere is mapped to the unit
 sphere, so the default step sizes apply at any scene scale. Output goes to a
-subdirectory named after the scene. Prepare a scene (images/, masks/ and
+subdirectory named after the scene and includes `residuals.ppm`: four training
+views as photo, fit and four times the colour error. Prepare a scene (images/, masks/ and
 `splat_poses.json` with OpenGL camera-to-world poses, pinhole intrinsics and
 OpenCV distortion) first:
 

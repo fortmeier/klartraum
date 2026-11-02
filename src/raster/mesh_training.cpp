@@ -111,7 +111,18 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
     connect(smoothing);
     smoothing->setInput(shading, 7, 7);
     smoothing->setInput(antialiased, 8);
-    auto loss = imageLoss(vulkanContext, w, h, options.maskWeight);
+    auto loss = options.viewColors
+                    ? imageLossWithViewColors(vulkanContext, w, h, options.maskWeight, options.viewColorWeight)
+                    : imageLoss(vulkanContext, w, h, options.maskWeight);
+    if (options.viewColors) {
+        viewColorValues = tensor(2 * views, 4);
+        viewColorGradients = tensor(2 * views, 4);
+        for (auto& moments : viewColorMoments)
+            moments = tensor(8 * views, 1);
+        clear->setInput(viewColorGradients, 4);
+        loss->setInput(viewColorValues, 5);
+        loss->setInput(clear, 6, 4);
+    }
     loss->setInput(smoothing, 0, 8);
     loss->setInput(targets, 1);
     loss->setInput(nextView, 2, 0);
@@ -158,8 +169,19 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
     textureStep->setInput(texelMoments[1], 3);
     textureStep->setInput(stepCount, 4);
     textureStep->addDependency(geometryStep);
+    ComputeGraphElementPtr last = textureStep;
+    if (options.viewColors) {
+        auto viewColorStep = training::adamStep(vulkanContext, 8 * views, options.viewColor);
+        viewColorStep->setInput(viewColorValues, 0);
+        viewColorStep->setInput(loss, 1, 6);
+        viewColorStep->setInput(viewColorMoments[0], 2);
+        viewColorStep->setInput(viewColorMoments[1], 3);
+        viewColorStep->setInput(stepCount, 4);
+        viewColorStep->addDependency(textureStep);
+        last = viewColorStep;
+    }
     trainingGraph = std::make_unique<ComputeGraph>(vulkanContext, 1);
-    trainingGraph->compileFrom(textureStep);
+    trainingGraph->compileFrom(last);
 
     positions->getDataBuffer(0).memcopyFrom(packPositions(start));
     triangles->getBuffer(0).memcopyFrom(packTriangles(start));
@@ -175,6 +197,14 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         for (auto& moment : *moments)
             moment->getDataBuffer(0).memcopyFrom(std::vector<float>(moment->getDataElementCount(), 0.0f));
     targets->getDataBuffer(0).memcopyFrom(std::vector<float>(targets->getDataElementCount(), 0.0f));
+    if (options.viewColors) { // identity: gain 1, offset 0
+        std::vector<float> identity(8 * size_t(views), 0.0f);
+        for (uint32_t v = 0; v < views; ++v)
+            std::fill_n(&identity[8 * size_t(v)], 3, 1.0f);
+        viewColorValues->getDataBuffer(0).memcopyFrom(identity);
+        for (auto& moment : viewColorMoments)
+            moment->getDataBuffer(0).memcopyFrom(std::vector<float>(8 * size_t(views), 0.0f));
+    }
     // A noise texture from a linear congruential generator.
     std::vector<float> noise(4 * size_t(texelCount), 1.0f);
     uint32_t state = options.seed * 747796405u + 2891336453u;
@@ -208,6 +238,14 @@ TriangleMesh MeshTraining::mesh() const {
     for (size_t v = 0; v < result.positions.size(); ++v)
         result.positions[v] = glm::vec3(values[4 * v], values[4 * v + 1], values[4 * v + 2]);
     return result;
+}
+
+std::vector<float> MeshTraining::viewColors() const {
+    if (!viewColorValues)
+        return {};
+    std::vector<float> values(viewColorValues->getDataElementCount());
+    viewColorValues->getDataBuffer(0).memcopyTo(values);
+    return values;
 }
 
 std::vector<float> MeshTraining::texture() const {
