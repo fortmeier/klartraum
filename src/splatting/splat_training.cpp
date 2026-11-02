@@ -33,6 +33,10 @@ struct RenderPushConstants {
     uint32_t width, height, tilesX;
 };
 
+struct ProjectBackwardPushConstants {
+    uint32_t count, width, height;
+};
+
 } // namespace
 
 SplatParameters createSplatParameters(VulkanContext& vulkanContext, uint32_t count) {
@@ -132,6 +136,52 @@ SplatForward::SplatForward(VulkanContext& vulkanContext, const SplatParameters& 
     blend->setInput(colors, 3);
     blend->setInput(lastContributor, 4);
     render = blend;
+}
+
+SplatBackward::SplatBackward(VulkanContext& vulkanContext, const SplatParameters& parameters,
+                             const std::shared_ptr<TensorElement<float>>& cameras,
+                             const ComputeGraphElementPtr& viewSource, int viewSlot, const SplatForward& forward,
+                             const ComputeGraphElementPtr& imageGradientSource, int imageGradientSlot) {
+    const uint32_t count = parameters.count;
+    splatGradients = vulkanContext.create<TensorElement<float>>(std::vector<uint32_t>{count, 12});
+    gradients = createSplatParameters(vulkanContext, count);
+    statistics = vulkanContext.create<TensorElement<float>>(std::vector<uint32_t>{count, 2});
+
+    clear = raster::clearBuffers(vulkanContext);
+    clear->setInput(splatGradients, 0);
+
+    auto blendBackward = vulkanContext.create<GeneralComputation<RenderPushConstants>>(
+        "shaders/splatting/splat_render_backward.comp.spv");
+    blendBackward->setPushConstants({{forward.options.width, forward.options.height, forward.tilesX}});
+    blendBackward->setGroupCount(forward.tilesX, forward.tilesY, 1);
+    blendBackward->setInput(forward.project, 0, 7);
+    blendBackward->setInput(forward.sort, 1, 1);
+    blendBackward->setInput(forward.ranges, 2, 2);
+    blendBackward->setInput(forward.render, 3, 3);
+    blendBackward->setInput(forward.render, 4, 4);
+    blendBackward->setInput(imageGradientSource, 5, imageGradientSlot);
+    blendBackward->setInput(clear, 6, 0);
+    renderBackward = blendBackward;
+
+    auto projection = vulkanContext.create<GeneralComputation<ProjectBackwardPushConstants>>(
+        "shaders/splatting/splat_project_backward.comp.spv");
+    projection->setPushConstants({{count, forward.options.width, forward.options.height}});
+    projection->setGroupCountX((count + 127) / 128);
+    projection->setInput(parameters.means, 0);
+    projection->setInput(parameters.logScales, 1);
+    projection->setInput(parameters.rotations, 2);
+    projection->setInput(parameters.opacities, 3);
+    projection->setInput(cameras, 4);
+    projection->setInput(viewSource, 5, viewSlot);
+    projection->setInput(forward.project, 6, 7);
+    projection->setInput(renderBackward, 7, 6);
+    projection->setInput(gradients.means, 8);
+    projection->setInput(gradients.logScales, 9);
+    projection->setInput(gradients.rotations, 10);
+    projection->setInput(gradients.colors, 11);
+    projection->setInput(gradients.opacities, 12);
+    projection->setInput(statistics, 13);
+    projectBackward = projection;
 }
 
 } // namespace klartraum::splatting

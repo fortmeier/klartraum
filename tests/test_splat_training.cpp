@@ -9,6 +9,10 @@
  * - renderMatchesCpu: the blended colours and coverages of a few dozen Gaussians over an image of several tiles
  *   (partial ones at the edges) equal CPU front-to-back blending in depth order with the same tile, alpha and
  *   transmittance rules, and the emitted instance count is the sum of the tiles the Gaussians touch
+ * - gradientsMatchFiniteDifferences: the image loss of the render (colour in the mask, coverage everywhere) and its
+ *   gradients with respect to every parameter of every Gaussian (position, log scale, rotation, colour, opacity) equal
+ *   the CPU loss and its central differences, wherever the loss is smooth (central differences at two step sizes
+ *   agree to 0.5 %); at most 10 % of the components are skipped as not smooth
  **/
 
 #include <gtest/gtest.h>
@@ -26,6 +30,7 @@
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/splatting/splat_training.hpp"
 
@@ -126,6 +131,50 @@ bool cpuTiles(const Projected& r, glm::dvec2 size, glm::ivec2 tiles, glm::ivec2&
     return true;
 }
 
+// The CPU image of `g`: per pixel premultiplied rgb and coverage, blending front to back in depth order with the
+// tile, alpha and transmittance rules of splat_render.comp.slang.
+std::vector<glm::dvec4> cpuRender(const Gaussians& g, const glm::mat4& camera, uint32_t width, uint32_t height) {
+    const glm::dvec2 size(width, height);
+    const glm::ivec2 tiles((width + 15) / 16, (height + 15) / 16);
+    std::vector<Projected> projected;
+    std::vector<glm::ivec4> rects;
+    for (size_t i = 0; i < g.size(); ++i) {
+        projected.push_back(cpuProject(g, i, camera, size));
+        glm::ivec2 low(0), high(-1);
+        cpuTiles(projected.back(), size, tiles, low, high);
+        rects.emplace_back(low, high);
+    }
+    std::vector<size_t> order(g.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return projected[a].depth < projected[b].depth; });
+    std::vector<glm::dvec4> image;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const glm::ivec2 tile(x / 16, y / 16);
+            const glm::dvec2 centre(x + 0.5, y + 0.5);
+            glm::dvec3 color(0.0);
+            double transmittance = 1.0;
+            for (const size_t i : order) {
+                const glm::ivec4 rect = rects[i];
+                if (tile.x < rect.x || tile.y < rect.y || tile.x > rect.z || tile.y > rect.w)
+                    continue;
+                const Projected& r = projected[i];
+                const glm::dvec2 d = centre - r.mean;
+                const double power = -0.5 * (r.conic.x * d.x * d.x + r.conic.z * d.y * d.y) - r.conic.y * d.x * d.y;
+                const double alpha = std::min(r.opacity * std::exp(std::min(power, 0.0)), 0.99);
+                if (alpha < 1.0 / 255.0)
+                    continue;
+                if (transmittance * (1.0 - alpha) < 1e-4)
+                    break;
+                color += r.color * alpha * transmittance;
+                transmittance *= 1.0 - alpha;
+            }
+            image.emplace_back(color, 1.0 - transmittance);
+        }
+    }
+    return image;
+}
+
 // Uploads `g` into freshly created parameter tensors (after the graph using them is compiled).
 void upload(const splatting::SplatParameters& p, const Gaussians& g) {
     p.means->getDataBuffer(0).memcopyFrom(g.means);
@@ -221,38 +270,125 @@ TEST_F(SplatTrainingTest, renderMatchesCpu) {
         rects.emplace_back(low, high);
     }
     EXPECT_EQ(counters[0], instances);
-    std::vector<size_t> order(g.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return projected[a].depth < projected[b].depth; });
-
+    const std::vector<glm::dvec4> expected = cpuRender(g, camera, options.width, options.height);
     double covered = 0.0;
-    for (uint32_t y = 0; y < options.height; ++y) {
-        for (uint32_t x = 0; x < options.width; ++x) {
-            const glm::ivec2 tile(x / 16, y / 16);
-            const glm::dvec2 centre(x + 0.5, y + 0.5);
-            glm::dvec3 color(0.0);
-            double transmittance = 1.0;
-            for (const size_t i : order) {
-                const glm::ivec4 rect = rects[i];
-                if (tile.x < rect.x || tile.y < rect.y || tile.x > rect.z || tile.y > rect.w)
-                    continue;
-                const Projected& r = projected[i];
-                const glm::dvec2 d = centre - r.mean;
-                const double power = -0.5 * (r.conic.x * d.x * d.x + r.conic.z * d.y * d.y) - r.conic.y * d.x * d.y;
-                const double alpha = std::min(r.opacity * std::exp(std::min(power, 0.0)), 0.99);
-                if (alpha < 1.0 / 255.0)
-                    continue;
-                if (transmittance * (1.0 - alpha) < 1e-4)
-                    break;
-                color += r.color * alpha * transmittance;
-                transmittance *= 1.0 - alpha;
-            }
-            const float* gpu = &colors[4 * (size_t(y) * options.width + x)];
-            for (int c = 0; c < 3; ++c)
-                ASSERT_NEAR(gpu[c], color[c], 2e-4) << "pixel " << x << ", " << y;
-            ASSERT_NEAR(gpu[3], 1.0 - transmittance, 2e-4) << "pixel " << x << ", " << y;
-            covered += 1.0 - transmittance;
-        }
+    for (uint32_t pixel = 0; pixel < pixels; ++pixel) {
+        for (int c = 0; c < 4; ++c)
+            ASSERT_NEAR(colors[4 * pixel + c], expected[pixel][c], 2e-4)
+                << "pixel " << pixel % options.width << ", " << pixel / options.width;
+        covered += expected[pixel].a;
     }
     EXPECT_GT(covered, 0.2 * pixels); // the Gaussians fill a good part of the image
+}
+
+TEST_F(SplatTrainingTest, gradientsMatchFiniteDifferences) {
+    Gaussians g = randomGaussians(30, 0.6f, 0.15f);
+    const glm::mat4 camera = raster::cameraRing(1, 3.0f, 0.3f, 0.8f, 40.0f / 32.0f, 0.9f)[0];
+    splatting::SplatRasterOptions options;
+    options.width = 40;
+    options.height = 32;
+    options.capacity = 4096;
+    const uint32_t pixels = options.width * options.height;
+    const float maskWeight = 1.5f;
+    const auto parameters = splatting::createSplatParameters(*vc, uint32_t(g.size()));
+    auto cameras = vc->create<TensorElement<float>>(std::vector<uint32_t>{1, 16});
+    auto viewIndex = std::make_shared<UintBuffer>(*vc, 1);
+    auto targets = vc->create<TensorElement<float>>(std::vector<uint32_t>{pixels, 4});
+    auto imageGradients = vc->create<TensorElement<float>>(std::vector<uint32_t>{pixels, 4});
+    auto loss = vc->create<TensorElement<float>>(std::vector<uint32_t>{1});
+    splatting::SplatForward forward(*vc, parameters, cameras, viewIndex, -1, options);
+    auto clearLoss = raster::clearBuffers(*vc);
+    clearLoss->setInput(loss, 0);
+    auto imageLoss = raster::imageLoss(*vc, options.width, options.height, maskWeight);
+    imageLoss->setInput(forward.render, 0, 3);
+    imageLoss->setInput(targets, 1);
+    imageLoss->setInput(viewIndex, 2);
+    imageLoss->setInput(imageGradients, 3);
+    imageLoss->setInput(clearLoss, 4, 0);
+    splatting::SplatBackward backward(*vc, parameters, cameras, viewIndex, -1, forward, imageLoss, 3);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(backward.projectBackward);
+    upload(parameters, g);
+    cameras->getDataBuffer(0).memcopyFrom(std::vector<float>(glm::value_ptr(camera), glm::value_ptr(camera) + 16));
+    viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{0});
+    // Targets: a pattern inside a disc.
+    std::vector<float> target(4 * pixels);
+    for (uint32_t i = 0; i < pixels; ++i) {
+        const float x = float(i % options.width) - 20.0f, y = float(i / options.width) - 16.0f;
+        const float mask = x * x + y * y < 150.0f ? 1.0f : 0.0f;
+        target[4 * i] = mask * (0.3f + 0.5f * float(i % 7) / 7.0f);
+        target[4 * i + 1] = mask * 0.4f;
+        target[4 * i + 2] = mask * float(i / options.width) / 32.0f;
+        target[4 * i + 3] = mask;
+    }
+    targets->getDataBuffer(0).memcopyFrom(target);
+    backward.statistics->getDataBuffer(0).memcopyFrom(std::vector<float>(2 * g.size(), 0.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<float> gpuLoss(1);
+    loss->getDataBuffer(0).memcopyTo(gpuLoss);
+    const auto read = [](const std::shared_ptr<TensorElement<float>>& tensor) {
+        std::vector<float> values(tensor->getDataElementCount());
+        tensor->getDataBuffer(0).memcopyTo(values);
+        return values;
+    };
+    const std::vector<std::vector<float>> gpu = {read(backward.gradients.means), read(backward.gradients.logScales),
+                                                 read(backward.gradients.rotations), read(backward.gradients.colors),
+                                                 read(backward.gradients.opacities)};
+
+    const auto cpuLoss = [&](const Gaussians& gaussians) {
+        const std::vector<glm::dvec4> image = cpuRender(gaussians, camera, options.width, options.height);
+        double sum = 0.0;
+        for (uint32_t i = 0; i < pixels; ++i) {
+            const float* t = &target[4 * i];
+            const glm::dvec3 d = glm::dvec3(image[i]) - glm::dvec3(t[0], t[1], t[2]);
+            sum += t[3] * glm::dot(d, d) + maskWeight * (image[i].a - t[3]) * (image[i].a - t[3]);
+        }
+        return sum / pixels;
+    };
+    EXPECT_NEAR(gpuLoss[0], cpuLoss(g), 1e-5);
+
+    // Parameter groups: the vector, its components per Gaussian, the step.
+    struct Group {
+        std::vector<float> Gaussians::* values;
+        int stride, components;
+        double step;
+        const char* name;
+    };
+    const Group groups[] = {{&Gaussians::means, 4, 3, 1e-4, "mean"},
+                            {&Gaussians::logScales, 4, 3, 1e-4, "log scale"},
+                            {&Gaussians::rotations, 4, 4, 1e-4, "rotation"},
+                            {&Gaussians::colors, 4, 3, 1e-3, "colour"},
+                            {&Gaussians::opacities, 1, 1, 1e-3, "opacity"}};
+    int checked = 0, skipped = 0, nonzero = 0;
+    for (size_t group = 0; group < 5; ++group) {
+        const Group& p = groups[group];
+        for (size_t i = 0; i < g.size(); ++i) {
+            for (int c = 0; c < p.components; ++c) {
+                float& value = (g.*p.values)[p.stride * i + c];
+                const float original = value;
+                const auto difference = [&](double h) {
+                    value = float(original + h);
+                    const double up = cpuLoss(g);
+                    value = float(original - h);
+                    const double down = cpuLoss(g);
+                    value = original;
+                    return (up - down) / (double(float(original + h)) - double(float(original - h)));
+                };
+                const double coarse = difference(p.step), fine = difference(0.5 * p.step);
+                // Near a kink of the loss (a splat at an alpha or tile threshold) the differences depend on the step.
+                if (std::abs(coarse - fine) > 1e-6 + 0.005 * std::abs(fine)) {
+                    ++skipped;
+                    continue;
+                }
+                ++checked;
+                nonzero += fine != 0.0;
+                EXPECT_NEAR(gpu[group][p.stride * i + c], fine, 2e-6 + 0.02 * std::abs(fine))
+                    << p.name << " " << c << " of Gaussian " << i;
+            }
+        }
+    }
+    std::cout << "gradients: " << checked << " components checked (" << nonzero << " non-zero), " << skipped
+              << " skipped as not smooth" << std::endl;
+    EXPECT_LT(skipped, (checked + skipped) / 10);
+    EXPECT_GT(nonzero, 200);
 }
