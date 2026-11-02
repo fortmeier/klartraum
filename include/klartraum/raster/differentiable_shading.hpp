@@ -79,6 +79,15 @@ ComputeGraphElementPtr antialiasBackward(VulkanContext& vulkanContext, uint32_t 
  */
 ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight);
 
+/**
+ * @brief The uniform Laplacian smoothness regularizer of a mesh: weight x sum over vertices of |p_v - mean of the
+ * neighbours' positions|^2 / vertexCount, and its gradient.
+ *
+ * Slots: 0 positions (four floats per vertex), 1 adjacency offsets and 2 neighbours (VertexAdjacency, uint32), 3
+ * vertex gradients (four floats per vertex, added to), 4 loss (one float, added to).
+ */
+ComputeGraphElementPtr laplacianRegularizer(VulkanContext& vulkanContext, uint32_t vertexCount, float weight);
+
 /** @brief Fills every buffer connected to it (slots 0, 1, ...) with zeros. */
 ComputeGraphElementPtr clearBuffers(VulkanContext& vulkanContext);
 

@@ -5,6 +5,8 @@
 #include "klartraum/raster/differentiable_shading.hpp"
 
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
@@ -20,6 +22,11 @@ struct ShadingPushConstants {
 struct ImageLossPushConstants {
     uint32_t width, height;
     float maskWeight;
+};
+
+struct RegularizerPushConstants {
+    uint32_t vertexCount;
+    float weight;
 };
 
 struct ViewCountPushConstants {
@@ -88,6 +95,19 @@ ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, u
         vulkanContext.create<GeneralComputation<ImageLossPushConstants>>("shaders/raster/image_loss.comp.spv");
     operation->setPushConstants({{width, height, maskWeight}});
     operation->setGroupCountX((width * height + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr laplacianRegularizer(VulkanContext& vulkanContext, uint32_t vertexCount, float weight) {
+    if (vertexCount == 0)
+        throw std::invalid_argument("laplacianRegularizer: the vertex count must be positive");
+    auto operation = vulkanContext.create<GeneralComputation<RegularizerPushConstants>>(
+        std::vector<std::string>{"shaders/raster/laplacian.comp.spv", "shaders/raster/laplacian_gradient.comp.spv"});
+    operation->setPushConstants({{vertexCount, weight}});
+    // The first pass writes every vertex's Laplacian before the second reads it.
+    operation->addScratchBufferElement(
+        std::make_shared<BufferElement<VulkanBuffer<float>>>(vulkanContext, size_t(vertexCount) * 4), false);
+    operation->setGroupCountX((vertexCount + 255) / 256);
     return operation;
 }
 

@@ -9,6 +9,9 @@
  * - icosphereIsClosedAndOutward: the icosphere is a closed surface (Euler characteristic 2, every edge shared by two
  *   triangles), its triangles face outwards, and its corner texture coordinates lie in [0, 2) x [0, 1] with no
  *   triangle spanning more than a quarter turn in u
+ * - laplacianRegularizerMatchesFiniteDifferences: the vertex adjacency of the icosphere is symmetric with five or
+ *   six neighbours per vertex, and the Laplacian smoothness loss of a perturbed icosphere and its gradients equal a
+ *   CPU evaluation and its central differences
  * - visibilityMatchesCpuRasterization: the visibility pass of a pumpkin mesh from two ring cameras, the second
  *   selected through the view-index buffer, equals a CPU rasterization (nearest triangle containing the pixel centre)
  *   at every pixel whose answer is unambiguous, background included
@@ -442,6 +445,78 @@ TEST_F(DifferentiableRasterTest, icosphereIsClosedAndOutward) {
             hi = std::max(hi, uv.x);
         }
         EXPECT_LT(hi - lo, 0.25f) << "triangle " << t;
+    }
+}
+
+TEST_F(DifferentiableRasterTest, laplacianRegularizerMatchesFiniteDifferences) {
+    raster::TriangleMesh mesh = raster::icosphere(2);
+    for (size_t v = 0; v < mesh.positions.size(); ++v)
+        mesh.positions[v] *= 1.0f + 0.1f * std::sin(3.7f * float(v)); // bumps to smooth
+    const auto adjacency = raster::vertexAdjacency(mesh);
+    const uint32_t vertexCount = uint32_t(mesh.positions.size());
+    ASSERT_EQ(adjacency.offsets.size(), vertexCount + 1);
+    for (uint32_t v = 0; v < vertexCount; ++v) {
+        const uint32_t degree = adjacency.offsets[v + 1] - adjacency.offsets[v];
+        EXPECT_TRUE(degree == 5 || degree == 6) << "vertex " << v;
+        for (uint32_t k = adjacency.offsets[v]; k < adjacency.offsets[v + 1]; ++k) {
+            const uint32_t n = adjacency.neighbours[k];
+            const auto begin = adjacency.neighbours.begin();
+            EXPECT_TRUE(std::binary_search(begin + adjacency.offsets[n], begin + adjacency.offsets[n + 1], v));
+        }
+    }
+
+    const float weight = 3.0f;
+    auto positions = vc->create<TensorElement<float>>(std::vector<uint32_t>{vertexCount, 4});
+    auto offsets = std::make_shared<UintBuffer>(*vc, adjacency.offsets.size());
+    auto neighbours = std::make_shared<UintBuffer>(*vc, adjacency.neighbours.size());
+    auto gradients = vc->create<TensorElement<float>>(std::vector<uint32_t>{vertexCount, 4});
+    auto loss = vc->create<TensorElement<float>>(std::vector<uint32_t>{1});
+    auto clear = raster::clearBuffers(*vc);
+    clear->setInput(gradients, 0);
+    clear->setInput(loss, 1);
+    auto regularizer = raster::laplacianRegularizer(*vc, vertexCount, weight);
+    regularizer->setInput(positions, 0);
+    regularizer->setInput(offsets, 1);
+    regularizer->setInput(neighbours, 2);
+    regularizer->setInput(clear, 3, 0);
+    regularizer->setInput(clear, 4, 1);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(regularizer);
+    positions->getDataBuffer(0).memcopyFrom(packPositions(mesh));
+    offsets->getBuffer(0).memcopyFrom(adjacency.offsets);
+    neighbours->getBuffer(0).memcopyFrom(adjacency.neighbours);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<float> gpuLoss(1), gpuGradients(4 * vertexCount);
+    loss->getDataBuffer(0).memcopyTo(gpuLoss);
+    gradients->getDataBuffer(0).memcopyTo(gpuGradients);
+
+    std::vector<glm::dvec3> p(mesh.positions.begin(), mesh.positions.end());
+    auto cpuLoss = [&]() {
+        double sum = 0.0;
+        for (uint32_t v = 0; v < vertexCount; ++v) {
+            glm::dvec3 mean(0.0);
+            for (uint32_t k = adjacency.offsets[v]; k < adjacency.offsets[v + 1]; ++k)
+                mean += p[adjacency.neighbours[k]];
+            const glm::dvec3 l = p[v] - mean / double(adjacency.offsets[v + 1] - adjacency.offsets[v]);
+            sum += glm::dot(l, l);
+        }
+        return weight * sum / double(vertexCount);
+    };
+    const double reference = cpuLoss();
+    ASSERT_GT(reference, 1e-4);
+    EXPECT_NEAR(gpuLoss[0], reference, 1e-5 * reference);
+    for (uint32_t v = 0; v < vertexCount; v += 3) {
+        for (int c = 0; c < 3; ++c) {
+            const double original = p[v][c], h = 1e-5;
+            p[v][c] = original + h;
+            const double up = cpuLoss();
+            p[v][c] = original - h;
+            const double down = cpuLoss();
+            p[v][c] = original;
+            const double expected = (up - down) / (2 * h);
+            EXPECT_NEAR(gpuGradients[4 * v + c], expected, 1e-6 + 1e-3 * std::abs(expected)) << "vertex " << v;
+        }
+        EXPECT_EQ(gpuGradients[4 * v + 3], 0.0f);
     }
 }
 
