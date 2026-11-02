@@ -11,7 +11,7 @@
 #include "klartraum/storage_draw_component.hpp"
 #include "klartraum/tree/tree_render_inputs.hpp"
 #include "klartraum/tree/tree_tiles.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 

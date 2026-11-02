@@ -1,0 +1,80 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+import glsl;
+
+// The grass near the camera (TreeGrass): one invocation per cell of the grid
+// of counts.x x counts.x cells around the camera (treeGrassCell(), the same
+// grid as treeGrassAround()). A clump whose box is in the view is appended to
+// the visible clumps with the ground's slope, the snow on it, the albedo of
+// the open land it grows on (treeTerrainAlbedo()) and how much sun the
+// terrain lets through. Clumps beyond the capacity are counted. Nothing is
+// evaluated while the camera is too high above the ground for grass.
+
+#define TREE_CAMERA_SET 0
+#define TREE_CAMERA_BINDING 1
+#include "tree_render_common.slang"
+
+[[vk::binding(0, 0)]] StructuredBuffer<TreeGrassSetup> setupBuffer;
+[[vk::binding(2, 0)]] StructuredBuffer<TreeRenderSettings> settings;
+[[vk::binding(3, 0)]] RWStructuredBuffer<TreeGrassVisible> visibleList;
+// [1] x 1 while grass can be in reach of the camera (TreeGrass::setView()).
+[[vk::binding(5, 0)]] StructuredBuffer<vec4> frame;
+// [0] clumps visible (also beyond the capacity), [1] clumps left out for lack of room; zeroed before the pass.
+[[vk::binding(4, 0)]] RWStructuredBuffer<uint> counter;
+
+struct Push {
+    uint capacity;
+};
+[[vk::push_constant]] ConstantBuffer<Push> pc;
+
+[shader("compute")]
+[numthreads(16, 16, 1)]
+void main() {
+    TreeTerrainParams t = setupBuffer[0].terrain;
+    TreeGrassParams g = setupBuffer[0].grass;
+    uint n = g.counts.x;
+    if (frame[1].x == 0.0f || gl_GlobalInvocationID.x >= n || gl_GlobalInvocationID.y >= n) {
+        return;
+    }
+    vec3 eye = camera.cameraWorldPos.xyz;
+    int mid = int(n / 2u);
+    int cx = int(floor(eye.x / g.grid.x)) - mid + 1 + int(gl_GlobalInvocationID.x);
+    int cz = int(floor(eye.z / g.grid.x)) - mid + 1 + int(gl_GlobalInvocationID.y);
+    TreeRenderSettings s = settings[0];
+    TreeGrassClump c = treeGrassCell(t, g, cx, cz, eye, s.season.x);
+    if (c.kind.x <= 0.0f) {
+        return;
+    }
+    vec3 foot = c.posHeight.xyz;
+    float h = c.posHeight.w;
+    vec3 r = vec3(0.75f * g.grid.x + 0.5f * h, 0.25f * g.grid.x, 0.75f * g.grid.x + 0.5f * h);
+    if (treeBoxOutsideFrustum(camera.proj * camera.view, foot - r, foot + r + vec3(0.0f, 1.3f * h, 0.0f))) {
+        return;
+    }
+    float e = 0.5f * g.grid.x;
+    float dx = (treeTerrainHeight(t, foot.x + e, foot.z) - foot.y) / e;
+    float dz = (treeTerrainHeight(t, foot.x, foot.z + e) - foot.y) / e;
+    vec3 normal = normalize(vec3(-dx, 1.0f, -dz));
+
+    // The open land's materials only, as if the clump stood in pure meadow, field or scrub.
+    TreeLandCover cover = treeLandCover(t, foot.x, foot.z);
+    vec4 open = vec4(0.0f, cover.vegetation.y, cover.vegetation.z, cover.vegetation.w);
+    cover.vegetation = open / max(open.y + open.z + open.w, 1e-4f);
+    cover.bare = vec4(0.0f);
+    vec3 albedo = treeTerrainAlbedo(t, cover, foot, g.grid.x, s.season.x) * (0.85f + 0.3f * c.kind.w);
+
+    TreeGrassVisible v;
+    v.posHeight = c.posHeight;
+    v.kind = c.kind;
+    v.kind.z = treeTerrainSunVisibility(t, foot + vec3(0.0f, 0.5f * h, 0.0f), s.sun.xyz);
+    v.ground = vec4(dx, dz, treeTerrainSnow(t, foot, normal, s.season.x, s.season.y), distance(foot, eye));
+    v.albedo = vec4(albedo, 0.0f);
+    uint k = atomicAdd(counter[0], 1u);
+    if (k < pc.capacity) {
+        visibleList[k] = v;
+    } else {
+        atomicAdd(counter[1], 1u);
+    }
+}

@@ -10,10 +10,10 @@
 #include <memory>
 
 #include "klartraum/computegraph/computegraphelement.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/vulkan_context.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 

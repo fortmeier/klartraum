@@ -5,7 +5,7 @@
 #ifndef KLARTRAUM_TREE_TREE_RENDER_INPUTS_HPP
 #define KLARTRAUM_TREE_TREE_RENDER_INPUTS_HPP
 
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 

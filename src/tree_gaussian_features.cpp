@@ -9,7 +9,7 @@
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 
 namespace klartraum {
 
@@ -55,6 +55,7 @@ GaussianFeatures splatGaussianFeatures(VulkanContext& vulkanContext, const Gauss
     GsplatConfig featureConfig;
     featureConfig.shDegree = 0;
     ComputeGraphElementPtr previous = after;
+    std::shared_ptr<GaussianSplattingInterface> featureB; // gives the depth
     for (int k = 0; k < 2; ++k) {
         result.targets[k] = std::make_shared<OffscreenTarget>(vulkanContext, extent, numberPaths);
         GaussianSoABuffers featureSplats = splats;
@@ -62,20 +63,21 @@ GaussianFeatures splatGaussianFeatures(VulkanContext& vulkanContext, const Gauss
         // Feature B's splatting also gives the depth for the noise per pixel, of translucent foliage too.
         GsplatConfig config = featureConfig;
         config.outputDepth = k == 1;
-        config.depthOpacity = 0.1f;
+        config.depthOpacityThreshold = 0.1f;
         auto splatting =
             createGaussianSplatting(vulkanContext, backend, result.targets[k], camera, featureSplats, config);
         if (previous) {
             splatting->addDependency(previous);
         }
         previous = splatting;
+        featureB = splatting;
     }
 
     // Noise per pixel of the world positions (tree_pixel_noise.comp) into feature B's third channel.
     auto noise =
         std::make_shared<GeneralComputation<PixelNoisePush>>(vulkanContext, "shaders/tree/tree_pixel_noise.comp.spv");
     noise->setName("TreePixelNoise");
-    noise->setInput(getGaussianSplattingDepth(previous), 0);
+    noise->setInput(featureB->getDepth(), 0);
     noise->setInput(camera, 1);
     noise->setInput(result.targets[1], 2);
     noise->setImageLayoutTransition(2, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,

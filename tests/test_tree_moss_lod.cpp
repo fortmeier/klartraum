@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <memory>
 
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/tree/tree_moss_lod.hpp"
 

@@ -13,7 +13,7 @@
 
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/draw_component.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 

@@ -6,12 +6,13 @@
 // (HPG 2025), which extends Weber and Penn, "Creation and Rendering of Realistic
 // Trees" (SIGGRAPH 1995).
 //
-// This file is both GLSL and C++: the tree shaders include it, and so does
+// This file is both Slang and C++: the tree shaders include it, and so does
 // tree_model.hpp, which runs the same generation on the CPU as the reference
 // the GPU results are tested against. It is written in the subset both
 // languages share: float literals carry an `f`, structs are filled member by
-// member, and there are no swizzles. The includer defines vec2/vec3/vec4/uvec4/
-// uint and the GLSL functions (glm in C++), and TREE_FN, which prefixes every
+// member, global constants are `static const`, and there are no swizzles. The
+// shaders get vec2/vec3/vec4/uvec4 and the GLSL functions from Slang's glsl
+// module, C++ from glm; the includer defines TREE_FN, which prefixes every
 // function (`inline` in C++), before including this file. The
 // generation itself, which needs inputs and outputs, is in tree_generate.hpp.
 //
@@ -283,24 +284,24 @@ struct TreeLandCover {
     vec4 bare;       // x rock, y water (reserved, always 0), zw unused
 };
 
-const float TREE_PI = 3.14159265f;
+static const float TREE_PI = 3.14159265f;
 
 // Stem draw buckets: bucket b holds segments that need at most
 // treeStemBucketAround(b) x treeStemBucketAlong(b) quads.
 #define TREE_STEM_BUCKETS 5u
 
 // Random keys, one range per purpose so that the decisions are independent.
-const uint TREE_KEY_SCALE = 1u;
-const uint TREE_KEY_LENGTH = 2u;
-const uint TREE_KEY_COUNT = 3u;
-const uint TREE_KEY_CURVE = 0x100u;
-const uint TREE_KEY_SPLIT_ANGLE = 0x200u;
-const uint TREE_KEY_SPLIT_PHI = 0x300u;
-const uint TREE_KEY_CHILD = 0x10000u;
-const uint TREE_KEY_SHARE = 0x20000u;
-const uint TREE_KEY_LENGTH_V = 0x30000u;
-const uint TREE_KEY_ROTATE_V = 0x40000u;
-const uint TREE_KEY_DOWN_V = 0x50000u;
+static const uint TREE_KEY_SCALE = 1u;
+static const uint TREE_KEY_LENGTH = 2u;
+static const uint TREE_KEY_COUNT = 3u;
+static const uint TREE_KEY_CURVE = 0x100u;
+static const uint TREE_KEY_SPLIT_ANGLE = 0x200u;
+static const uint TREE_KEY_SPLIT_PHI = 0x300u;
+static const uint TREE_KEY_CHILD = 0x10000u;
+static const uint TREE_KEY_SHARE = 0x20000u;
+static const uint TREE_KEY_LENGTH_V = 0x30000u;
+static const uint TREE_KEY_ROTATE_V = 0x40000u;
+static const uint TREE_KEY_DOWN_V = 0x50000u;
 
 // --- hashing -------------------------------------------------------------
 
@@ -1403,7 +1404,7 @@ TREE_FN uint treeLodReserved(TreeLodPatch source, float pixels, vec3 boundaries,
 // TREE_LOD_FIT_STEPS: from 1 up to 2^3.75 in steps of 2^0.25.
 #define TREE_LOD_FIT_STEPS 16u
 
-TREE_FN float treeLodFitFactor(uint step) { return exp2(0.25f * float(step)); }
+TREE_FN float treeLodFitFactor(uint fitStep) { return exp2(0.25f * float(fitStep)); }
 
 // --- stem tessellation (Kuth et al., Sec. 3.2) ----------------------------
 

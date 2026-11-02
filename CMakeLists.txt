@@ -125,10 +125,18 @@ foreach(SLANG ${SLANG_SOURCE_FILES})
   string(REGEX REPLACE "\\.slang$" "" FILE_NAME ${FILE_NAME})
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
+  set(SHADER_OPTIONS ${SLANGC_OPTIONS})
+  if(FILE_NAME MATCHES "^tree/")
+    # The tree shaders include the model they share with the C++ code (include/klartraum/tree/*.hpp) and are
+    # written with GLSL names (import glsl) and GLSL matrix semantics: m[i] is column i and m * v the matrix product.
+    # Slang gives those semantics on GLM's column-major memory with its default (row-major) matrix layout.
+    list(REMOVE_ITEM SHADER_OPTIONS -matrix-layout-column-major)
+    list(APPEND SHADER_OPTIONS -matrix-layout-row-major -I ${PROJECT_SOURCE_DIR}/include)
+  endif()
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${SLANGC} ${SLANG} ${SLANGC_OPTIONS} -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
+    COMMAND ${SLANGC} ${SLANG} ${SHADER_OPTIONS} -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
     DEPFILE ${SPIRV}.d
     DEPENDS ${SLANG} ${SLANG_MODULE_FILES}
     COMMENT "Compiling ${SLANG} to ${SPIRV}"

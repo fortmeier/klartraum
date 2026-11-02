@@ -12,7 +12,7 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/tree/tree_model.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 

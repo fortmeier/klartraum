@@ -51,7 +51,7 @@
 #include "klartraum/interface_camera_orbit.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/offscreen_target.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 
 #include "test_scene.hpp"
 

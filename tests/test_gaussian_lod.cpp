@@ -24,7 +24,7 @@
 #include <cmath>
 #include <set>
 
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/gaussian_lod.hpp"
 #include "klartraum/tree/bonsai_scene.hpp"
 #include "klartraum/tree/tree_model.hpp"

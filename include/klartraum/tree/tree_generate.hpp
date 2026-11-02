@@ -6,7 +6,7 @@
 // and the CPU reference (see tree_shared.hpp for the language subset). Before
 // including this file, the includer defines
 // - TREE_CTX_PARAM / TREE_CTX_ARG: an extra trailing parameter/argument through
-//   which C++ passes its inputs and output lists (empty in GLSL),
+//   which C++ passes its inputs and output lists (empty in the shaders),
 // - TREE_PARAMS(type), TREE_INSTANCE(index), TREE_FRAME: the read-only inputs,
 // - treeEmitStem(), treeEmitSegment(), treeEmitLeaf(): append a record.
 

@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "klartraum/gaussian_transform.hpp"
+#include "klartraum/rendering/gaussian_transform.hpp"
 #include "klartraum/tree/tree_placement.hpp"
 
 namespace klartraum {
@@ -209,7 +209,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         splatConfig.outputDepth = true;
         auto splatting =
             createGaussianSplatting(vulkanContext, config.backend, renderTarget, camera, splats, splatConfig);
-        const TreeRenderInputs inputs{BufferRef{getGaussianSplattingDepth(splatting), -1}, lightVolume->getLight()};
+        const TreeRenderInputs inputs{BufferRef{splatting->getDepth(), -1}, lightVolume->getLight()};
 
         auto toGeneral = std::make_shared<ImageToGeneral>();
         toGeneral->setInput(renderTarget, 0);

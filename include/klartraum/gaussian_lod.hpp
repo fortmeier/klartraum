@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 

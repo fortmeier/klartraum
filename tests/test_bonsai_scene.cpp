@@ -479,7 +479,7 @@ TEST_F(BonsaiRenderingTest, classicalGeometryIsHiddenBehindSplats) {
         values.sky = values.ground = glm::vec4(1.0f);
         auto settings = std::make_shared<HostValues<TreeRenderSettings>>(*vc, std::vector<TreeRenderSettings>{values});
         SceneMeshRenderer meshes(*vc, mesh, settings, extent,
-                                 TreeRenderInputs{BufferRef{getGaussianSplattingDepth(splatting), -1}, {}});
+                                 TreeRenderInputs{BufferRef{splatting->getDepth(), -1}, {}});
         auto pass = std::make_shared<RenderPass>(vc->getSwapChainImageFormat(), extent);
         pass->setInput(toGeneral, 0);
         pass->setInput(camera, 1);

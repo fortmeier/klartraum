@@ -69,7 +69,7 @@
 #include <memory>
 #include <string>
 
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/lod_metrics.hpp"
 #include "klartraum/tree/bonsai_flight.hpp"

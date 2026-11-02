@@ -40,7 +40,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "klartraum/computegraph/computegraph.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/lod_metrics.hpp"
