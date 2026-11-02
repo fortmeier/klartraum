@@ -10,6 +10,8 @@
  *   outputs match central differences of the loss, and the squared errors are each element's
  * - columnSumAddsRows: the column sums of a matrix add its rows
  * - adamStepMatchesReference: three Adam steps with the step number from the GPU counter match a CPU Adam
+ * - adamLearningRateDecays: with an exponential decay over three steps to a tenth, five Adam steps (two after the
+ *   decay ends) match a CPU Adam with the same schedule
  * - mlpGradientsMatchFiniteDifferences: the weight and bias gradients of a three-layer ReLU network, from one
  *   training step with learning rate zero, match central differences of a CPU forward pass, and the loss is
  *   the CPU loss
@@ -19,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -37,6 +40,13 @@ namespace {
 
 using Tensor = TensorElement<float>;
 
+std::vector<float> ramp(size_t count, float scale, float offset) {
+    std::vector<float> values(count);
+    for (size_t i = 0; i < count; ++i)
+        values[i] = offset + scale * float((i * 7) % 23);
+    return values;
+}
+
 class TrainingTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -45,6 +55,50 @@ protected:
     }
 
     std::shared_ptr<Tensor> tensor(const Shape& shape) { return vc->create<Tensor>(shape); }
+
+    // Runs `steps` Adam steps with the step number from the GPU counter on changing gradients and compares the
+    // parameters with a CPU Adam (including the learning rate schedule).
+    void expectAdamMatchesReference(const training::AdamParameters& adam, int steps) {
+        const uint32_t count = 300;
+        auto parameters = tensor({count}), gradients = tensor({count}), m = tensor({count}), v = tensor({count});
+        auto step = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vc, 1);
+        auto counter = training::stepCounter(*vc);
+        counter->setInput(step, 0);
+        auto update = training::adamStep(*vc, count, adam);
+        update->setInput(parameters, 0);
+        update->setInput(gradients, 1);
+        update->setInput(m, 2);
+        update->setInput(v, 3);
+        update->setInput(step, 4);
+        update->addDependency(counter);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(update);
+        auto p = ramp(count, 0.2f, -2.0f);
+        const std::vector<float> zeros(count, 0.0f);
+        parameters->getDataBuffer(0).memcopyFrom(p);
+        m->getDataBuffer(0).memcopyFrom(zeros);
+        v->getDataBuffer(0).memcopyFrom(zeros);
+        step->getBuffer(0).memcopyFrom(std::vector<uint32_t>{0});
+        std::vector<double> reference(p.begin(), p.end()), mr(count, 0.0), vr(count, 0.0);
+        for (int t = 1; t <= steps; ++t) {
+            const auto g = ramp(count, 0.05f * float(t), -0.3f);
+            gradients->getDataBuffer(0).memcopyFrom(g);
+            graph.submitAndWait(vc->getGraphicsQueue(), 0);
+            double learningRate = adam.learningRate;
+            if (adam.decaySteps > 0)
+                learningRate *= std::pow(double(adam.finalFactor), std::min(double(t) / adam.decaySteps, 1.0));
+            for (uint32_t i = 0; i < count; ++i) {
+                mr[i] = adam.beta1 * mr[i] + (1 - adam.beta1) * g[i];
+                vr[i] = adam.beta2 * vr[i] + (1 - adam.beta2) * double(g[i]) * g[i];
+                const double mHat = mr[i] / (1 - std::pow(double(adam.beta1), t));
+                const double vHat = vr[i] / (1 - std::pow(double(adam.beta2), t));
+                reference[i] -= learningRate * mHat / (std::sqrt(vHat) + adam.epsilon);
+            }
+        }
+        parameters->getDataBuffer(0).memcopyTo(p);
+        for (uint32_t i = 0; i < count; ++i)
+            EXPECT_NEAR(p[i], reference[i], 1e-5) << i;
+    }
 
     // Runs `element` with `inputs` in its first slots and `outputs` after them; returns the outputs.
     std::vector<std::vector<float>> run(const ComputeGraphElementPtr& element,
@@ -76,13 +130,6 @@ protected:
     std::unique_ptr<HeadlessFrontend> frontend;
     VulkanContext* vc = nullptr;
 };
-
-std::vector<float> ramp(size_t count, float scale, float offset) {
-    std::vector<float> values(count);
-    for (size_t i = 0; i < count; ++i)
-        values[i] = offset + scale * float((i * 7) % 23);
-    return values;
-}
 
 double sigmoid(double x) { return 1.0 / (1.0 + std::exp(-x)); }
 
@@ -135,44 +182,13 @@ TEST_F(TrainingTest, columnSumAddsRows) {
     }
 }
 
-TEST_F(TrainingTest, adamStepMatchesReference) {
-    const uint32_t count = 300;
+TEST_F(TrainingTest, adamStepMatchesReference) { expectAdamMatchesReference({0.01f, 0.9f, 0.999f, 1e-8f}, 3); }
+
+TEST_F(TrainingTest, adamLearningRateDecays) {
     training::AdamParameters adam{0.01f, 0.9f, 0.999f, 1e-8f};
-    auto parameters = tensor({count}), gradients = tensor({count}), m = tensor({count}), v = tensor({count});
-    auto step = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(*vc, 1);
-    auto counter = training::stepCounter(*vc);
-    counter->setInput(step, 0);
-    auto update = training::adamStep(*vc, count, adam);
-    update->setInput(parameters, 0);
-    update->setInput(gradients, 1);
-    update->setInput(m, 2);
-    update->setInput(v, 3);
-    update->setInput(step, 4);
-    update->addDependency(counter);
-    ComputeGraph graph(*vc, 1);
-    graph.compileFrom(update);
-    auto p = ramp(count, 0.2f, -2.0f);
-    const std::vector<float> zeros(count, 0.0f);
-    parameters->getDataBuffer(0).memcopyFrom(p);
-    m->getDataBuffer(0).memcopyFrom(zeros);
-    v->getDataBuffer(0).memcopyFrom(zeros);
-    step->getBuffer(0).memcopyFrom(std::vector<uint32_t>{0});
-    std::vector<double> reference(p.begin(), p.end()), mr(count, 0.0), vr(count, 0.0);
-    for (int t = 1; t <= 3; ++t) {
-        const auto g = ramp(count, 0.05f * float(t), -0.3f);
-        gradients->getDataBuffer(0).memcopyFrom(g);
-        graph.submitAndWait(vc->getGraphicsQueue(), 0);
-        for (uint32_t i = 0; i < count; ++i) {
-            mr[i] = adam.beta1 * mr[i] + (1 - adam.beta1) * g[i];
-            vr[i] = adam.beta2 * vr[i] + (1 - adam.beta2) * double(g[i]) * g[i];
-            const double mHat = mr[i] / (1 - std::pow(double(adam.beta1), t));
-            const double vHat = vr[i] / (1 - std::pow(double(adam.beta2), t));
-            reference[i] -= adam.learningRate * mHat / (std::sqrt(vHat) + adam.epsilon);
-        }
-    }
-    parameters->getDataBuffer(0).memcopyTo(p);
-    for (uint32_t i = 0; i < count; ++i)
-        EXPECT_NEAR(p[i], reference[i], 1e-5) << i;
+    adam.decaySteps = 3;
+    adam.finalFactor = 0.1f;
+    expectAdamMatchesReference(adam, 5);
 }
 
 TEST_F(TrainingTest, mlpGradientsMatchFiniteDifferences) {
