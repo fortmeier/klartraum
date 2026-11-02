@@ -201,7 +201,30 @@ int main(int argc, char** argv) {
         const raster::FittingScene scene = raster::loadFittingScene(sceneDirectory);
         options.width = scene.width;
         options.height = scene.height;
-        sceneFromUnit = glm::scale(glm::translate(glm::mat4(1.0f), scene.centre), glm::vec3(scene.radius));
+        // The rotation turns the sphere's pole (+y) to the scene's up. The object rests on the ground, so the part
+        // of its enclosing sphere that no camera sees over the horizon faces down; up is opposite its mean
+        // direction (or, if the cameras see all around, the mean direction to the cameras). The top of the object
+        // then maps to the top of the texture and the unseen underside to its bottom pole.
+        glm::vec3 sceneUp(0.0f), unseen(0.0f);
+        std::vector<glm::vec3> cameraOffsets;
+        for (const auto& camera : scene.cameras) {
+            cameraOffsets.push_back(cameraCentre(camera) - scene.centre);
+            sceneUp += glm::normalize(cameraOffsets.back());
+        }
+        for (const auto& direction : raster::icosphere(3).positions) {
+            bool seen = false;
+            for (const auto& offset : cameraOffsets)
+                seen = seen || glm::dot(direction, offset) > scene.radius;
+            if (!seen)
+                unseen += direction;
+        }
+        sceneUp = glm::normalize(glm::length(unseen) > 0.0f ? -unseen : sceneUp);
+        const glm::vec3 across =
+            glm::normalize(glm::cross(sceneUp, std::abs(sceneUp.x) < 0.9f ? glm::vec3(1, 0, 0) : glm::vec3(0, 0, 1)));
+        const glm::mat4 rotation(glm::vec4(across, 0.0f), glm::vec4(sceneUp, 0.0f),
+                                 glm::vec4(glm::cross(across, sceneUp), 0.0f), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        sceneFromUnit = glm::translate(glm::mat4(1.0f), scene.centre) * rotation *
+                        glm::scale(glm::mat4(1.0f), glm::vec3(scene.radius));
         for (const auto& camera : scene.camerasOf(scene.train))
             cameras.push_back(camera * sceneFromUnit);
         for (const auto& camera : scene.camerasOf(scene.validation))
