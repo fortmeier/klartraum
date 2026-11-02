@@ -337,6 +337,7 @@ set(KLARTRAUM_LIB_SRC
   src/layers.cpp
   src/training.cpp
   src/mlp_training.cpp
+  src/raster/differentiable_shading.cpp
   src/raster/mesh.cpp
   src/raster/visibility_pass.cpp
   src/glyph_atlas.cpp

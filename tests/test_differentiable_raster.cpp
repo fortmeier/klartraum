@@ -12,6 +12,13 @@
  * - visibilityMatchesCpuRasterization: the visibility pass of a pumpkin mesh from two ring cameras, the second
  *   selected through the view-index buffer, equals a CPU rasterization (nearest triangle containing the pixel centre)
  *   at every pixel whose answer is unambiguous, background included
+ * - shadingMatchesCpu: the shaded colour of every covered pixel equals a CPU evaluation of the projection,
+ *   perspective-correct barycentrics, texture coordinate and bilinear lookup, and background pixels are zero
+ * - shadingGradientsMatchFiniteDifferences: the masked colour loss and its gradients with respect to sampled texels
+ *   and vertex positions equal the CPU loss and its central differences, with the visibility of the GPU held fixed
+ * - textureRecoveryOnFixedGeometry: training only the texture of the pumpkin from a noise start on eight rendered
+ *   views, one submit per step with the view advanced on the GPU, cuts the loss below 2 % of its first value and
+ *   reproduces a held-out view with a PSNR above 30 dB inside the mesh
  **/
 
 #include <gtest/gtest.h>
@@ -30,6 +37,8 @@
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/layers/training.hpp"
+#include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/raster/visibility_pass.hpp"
 
@@ -118,6 +127,105 @@ int cpuVisibility(const raster::TriangleMesh& mesh, const glm::mat4& camera, uin
     if (ambiguous || (best != 0 && second - nearest < 1e-5f))
         return -1;
     return best;
+}
+
+// A textured mesh seen by a set of cameras, with the GPU buffers of the visibility pass and the shading elements.
+struct Scene {
+    raster::TriangleMesh mesh;
+    std::vector<glm::mat4> cameras;
+    std::vector<float> texture; // four floats per texel
+    uint32_t width = 0, height = 0, textureWidth = 0, textureHeight = 0;
+    std::shared_ptr<TensorElement<float>> positions, cornerUvs, texels, cameraBuffer;
+    std::shared_ptr<UintBuffer> triangles, viewIndex, visibility;
+    std::shared_ptr<raster::VisibilityPass> pass;
+
+    // Elements and tensors belong to one graph each: a scene serves one graph.
+    Scene(VulkanContext& vc, uint32_t width, uint32_t height, uint32_t textureWidth, uint32_t textureHeight,
+          std::vector<glm::mat4> sceneCameras = {})
+        : mesh(raster::syntheticPumpkin(2)),
+          width(width),
+          height(height),
+          textureWidth(textureWidth),
+          textureHeight(textureHeight) {
+        cameras = sceneCameras.empty() ? raster::cameraRing(3, 3.0f, 0.4f, 0.8f, float(width) / float(height))
+                                       : std::move(sceneCameras);
+        for (uint32_t j = 0; j < textureHeight; ++j)
+            for (uint32_t i = 0; i < textureWidth; ++i)
+                texture.insert(texture.end(), {0.5f + 0.4f * std::sin(0.9f * float(i)), 0.3f + 0.02f * float(j),
+                                               float((i * 7 + j * 3) % 11) / 11.0f, 1.0f});
+        const uint32_t vertices = uint32_t(mesh.positions.size()), triangleCount = uint32_t(mesh.triangles.size());
+        positions = vc.create<TensorElement<float>>(std::vector<uint32_t>{vertices, 4});
+        cornerUvs = vc.create<TensorElement<float>>(std::vector<uint32_t>{3 * triangleCount, 2});
+        texels = vc.create<TensorElement<float>>(std::vector<uint32_t>{textureWidth * textureHeight, 4});
+        cameraBuffer = vc.create<TensorElement<float>>(std::vector<uint32_t>{uint32_t(cameras.size()), 16});
+        triangles = std::make_shared<UintBuffer>(vc, 3 * triangleCount);
+        viewIndex = std::make_shared<UintBuffer>(vc, 1);
+        visibility = std::make_shared<UintBuffer>(vc, width * height);
+        pass = std::make_shared<raster::VisibilityPass>(vc, width, height, triangleCount);
+        pass->setInput(positions, 0);
+        pass->setInput(triangles, 1);
+        pass->setInput(cameraBuffer, 2);
+        pass->setInput(viewIndex, 3);
+        pass->setInput(visibility, 4);
+    }
+
+    // Connects the shared shading slots 0-6 of `element`, the visibility from the pass.
+    void connectShading(const ComputeGraphElementPtr& element) const {
+        element->setInput(positions, 0);
+        element->setInput(triangles, 1);
+        element->setInput(cornerUvs, 2);
+        element->setInput(texels, 3);
+        element->setInput(cameraBuffer, 4);
+        element->setInput(viewIndex, 5);
+        element->setInput(pass, 6, 4);
+    }
+
+    // Uploads the mesh, texture and cameras and selects `view`; call after compiling.
+    void upload(uint32_t view) const {
+        positions->getDataBuffer(0).memcopyFrom(packPositions(mesh));
+        triangles->getBuffer(0).memcopyFrom(packTriangles(mesh));
+        std::vector<float> uvs;
+        for (const auto& uv : mesh.cornerUvs)
+            uvs.insert(uvs.end(), {uv.x, uv.y});
+        cornerUvs->getDataBuffer(0).memcopyFrom(uvs);
+        texels->getDataBuffer(0).memcopyFrom(texture);
+        cameraBuffer->getDataBuffer(0).memcopyFrom(packCameras(cameras));
+        viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{view});
+    }
+};
+
+// The CPU shading of pixel (x, y) showing `triangle`, in double precision (as differentiable_shading.slang).
+glm::dvec3 cpuShade(const raster::TriangleMesh& mesh, const std::vector<double>& texture, uint32_t textureWidth,
+                    uint32_t textureHeight, const glm::mat4& camera, uint32_t width, uint32_t height, uint32_t triangle,
+                    uint32_t x, uint32_t y, const std::vector<glm::dvec3>* positions = nullptr) {
+    const glm::dvec2 pixel(x + 0.5, y + 0.5), size(width, height);
+    glm::dvec2 s[3], uv[3];
+    double w[3];
+    for (int c = 0; c < 3; ++c) {
+        const uint32_t vertex = mesh.triangles[triangle][c];
+        const glm::dvec3 p = positions ? (*positions)[vertex] : glm::dvec3(mesh.positions[vertex]);
+        const glm::dvec4 clip = glm::dmat4(camera) * glm::dvec4(p, 1.0);
+        s[c] = (glm::dvec2(clip) / clip.w * 0.5 + 0.5) * size;
+        w[c] = clip.w;
+        uv[c] = glm::dvec2(mesh.cornerUvs[3 * triangle + c]);
+    }
+    const double area = (s[1].x - s[0].x) * (s[2].y - s[0].y) - (s[1].y - s[0].y) * (s[2].x - s[0].x);
+    const double l0 = ((s[1].x - pixel.x) * (s[2].y - pixel.y) - (s[1].y - pixel.y) * (s[2].x - pixel.x)) / area;
+    const double l1 = ((s[2].x - pixel.x) * (s[0].y - pixel.y) - (s[2].y - pixel.y) * (s[0].x - pixel.x)) / area;
+    const double l2 = 1.0 - l0 - l1;
+    const double q0 = l0 / w[0], q1 = l1 / w[1], q2 = l2 / w[2];
+    const glm::dvec2 coordinate = (q0 * uv[0] + q1 * uv[1] + q2 * uv[2]) / (q0 + q1 + q2);
+    const double tx = coordinate.x * textureWidth - 0.5, ty = coordinate.y * textureHeight - 0.5;
+    const double fx = std::floor(tx), fy = std::floor(ty);
+    const int tw = int(textureWidth), th = int(textureHeight);
+    const int i0 = ((int(fx) % tw) + tw) % tw, i1 = (i0 + 1) % tw;
+    const int j0 = std::clamp(int(fy), 0, th - 1), j1 = std::clamp(int(fy) + 1, 0, th - 1);
+    auto texel = [&](int i, int j) {
+        const size_t k = 4 * size_t(j * tw + i);
+        return glm::dvec3(texture[k], texture[k + 1], texture[k + 2]);
+    };
+    const double ax = tx - fx, ay = ty - fy;
+    return glm::mix(glm::mix(texel(i0, j0), texel(i1, j0), ax), glm::mix(texel(i0, j1), texel(i1, j1), ax), ay);
 }
 
 } // namespace
@@ -217,4 +325,247 @@ TEST_F(DifferentiableRasterTest, visibilityMatchesCpuRasterization) {
         EXPECT_GT(compared, int(width * height) * 8 / 10) << "view " << view; // most pixels are unambiguous
         EXPECT_GT(covered, int(width * height) / 10) << "view " << view;      // the pumpkin is in the picture
     }
+}
+
+TEST_F(DifferentiableRasterTest, shadingMatchesCpu) {
+    Scene scene(*vc, 80, 64, 32, 16);
+    auto shading = raster::shade(*vc, scene.width, scene.height, scene.textureWidth, scene.textureHeight);
+    scene.connectShading(shading);
+    auto colors = vc->create<TensorElement<float>>(std::vector<uint32_t>{scene.width * scene.height, 4});
+    shading->setInput(colors, 7);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(shading);
+    scene.upload(1);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<uint32_t> ids(scene.width * scene.height);
+    scene.visibility->getBuffer(0).memcopyTo(ids);
+    std::vector<float> rgba(4 * ids.size());
+    colors->getDataBuffer(0).memcopyTo(rgba);
+    const std::vector<double> texture(scene.texture.begin(), scene.texture.end());
+    int covered = 0;
+    for (uint32_t y = 0; y < scene.height; ++y) {
+        for (uint32_t x = 0; x < scene.width; ++x) {
+            const uint32_t pixel = y * scene.width + x;
+            if (ids[pixel] == 0) {
+                for (int c = 0; c < 4; ++c)
+                    EXPECT_EQ(rgba[4 * pixel + c], 0.0f);
+                continue;
+            }
+            ++covered;
+            const glm::dvec3 expected = cpuShade(scene.mesh, texture, scene.textureWidth, scene.textureHeight,
+                                                 scene.cameras[1], scene.width, scene.height, ids[pixel] - 1, x, y);
+            for (int c = 0; c < 3; ++c)
+                ASSERT_NEAR(rgba[4 * pixel + c], expected[c], 2e-4) << "pixel " << x << ", " << y;
+            EXPECT_EQ(rgba[4 * pixel + 3], 1.0f);
+        }
+    }
+    EXPECT_GT(covered, int(scene.width * scene.height) / 10);
+}
+
+TEST_F(DifferentiableRasterTest, shadingGradientsMatchFiniteDifferences) {
+    Scene scene(*vc, 64, 48, 16, 8);
+    const uint32_t pixels = scene.width * scene.height, view = 2;
+    const uint32_t vertexCount = uint32_t(scene.mesh.positions.size()),
+                   texelCount = scene.textureWidth * scene.textureHeight;
+    auto targets = vc->create<TensorElement<float>>(std::vector<uint32_t>{uint32_t(scene.cameras.size()) * pixels, 4});
+    auto vertexGradients = vc->create<TensorElement<float>>(std::vector<uint32_t>{vertexCount, 4});
+    auto textureGradients = vc->create<TensorElement<float>>(std::vector<uint32_t>{texelCount, 4});
+    auto loss = vc->create<TensorElement<float>>(std::vector<uint32_t>{1});
+    auto clear = raster::clearBuffers(*vc);
+    clear->setInput(vertexGradients, 0);
+    clear->setInput(textureGradients, 1);
+    clear->setInput(loss, 2);
+    auto backward = raster::shadeBackward(*vc, scene.width, scene.height, scene.textureWidth, scene.textureHeight);
+    scene.connectShading(backward);
+    backward->setInput(targets, 7);
+    backward->setInput(clear, 8, 0);
+    backward->setInput(clear, 9, 1);
+    backward->setInput(clear, 10, 2);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(backward);
+    scene.upload(view);
+    // Targets: a pattern, masked out on a diagonal band.
+    std::vector<float> target(4 * size_t(scene.cameras.size()) * pixels);
+    for (size_t i = 0; i < target.size() / 4; ++i) {
+        const uint32_t x = uint32_t(i % scene.width), y = uint32_t(i / scene.width % scene.height);
+        target[4 * i] = 0.2f + 0.6f * float((x * 5 + y) % 7) / 7.0f;
+        target[4 * i + 1] = 0.4f;
+        target[4 * i + 2] = float(y) / float(scene.height);
+        target[4 * i + 3] = (x + y) % 9 == 0 ? 0.0f : 1.0f;
+    }
+    targets->getDataBuffer(0).memcopyFrom(target);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+
+    std::vector<uint32_t> ids(pixels);
+    scene.visibility->getBuffer(0).memcopyTo(ids);
+    std::vector<float> gpuLoss(1), gpuVertex(4 * vertexCount), gpuTexture(4 * texelCount);
+    loss->getDataBuffer(0).memcopyTo(gpuLoss);
+    vertexGradients->getDataBuffer(0).memcopyTo(gpuVertex);
+    textureGradients->getDataBuffer(0).memcopyTo(gpuTexture);
+
+    std::vector<double> texture(scene.texture.begin(), scene.texture.end());
+    std::vector<glm::dvec3> positions(scene.mesh.positions.begin(), scene.mesh.positions.end());
+    auto cpuLoss = [&]() {
+        double sum = 0.0;
+        for (uint32_t pixel = 0; pixel < pixels; ++pixel) {
+            const float* t = &target[4 * (size_t(view) * pixels + pixel)];
+            if (ids[pixel] == 0 || t[3] < 0.5f)
+                continue;
+            const glm::dvec3 color =
+                cpuShade(scene.mesh, texture, scene.textureWidth, scene.textureHeight, scene.cameras[view], scene.width,
+                         scene.height, ids[pixel] - 1, pixel % scene.width, pixel / scene.width, &positions);
+            const glm::dvec3 d = color - glm::dvec3(t[0], t[1], t[2]);
+            sum += glm::dot(d, d);
+        }
+        return sum / double(pixels);
+    };
+    const double reference = cpuLoss();
+    ASSERT_GT(reference, 1e-4);
+    EXPECT_NEAR(gpuLoss[0], reference, 1e-5 * std::max(1.0, reference));
+
+    int texelsChecked = 0, verticesChecked = 0;
+    for (uint32_t texel = 0; texel < texelCount; texel += 3) {
+        for (int c = 0; c < 3; ++c) {
+            const double original = texture[4 * texel + c], h = 1e-3;
+            texture[4 * texel + c] = original + h;
+            const double up = cpuLoss();
+            texture[4 * texel + c] = original - h;
+            const double down = cpuLoss();
+            texture[4 * texel + c] = original;
+            const double expected = (up - down) / (2 * h);
+            texelsChecked += expected != 0.0;
+            EXPECT_NEAR(gpuTexture[4 * texel + c], expected, 1e-6 + 1e-3 * std::abs(expected)) << "texel " << texel;
+        }
+    }
+    for (uint32_t vertex = 0; vertex < vertexCount; vertex += 5) {
+        for (int c = 0; c < 3; ++c) {
+            const double original = positions[vertex][c], h = 1e-5;
+            positions[vertex][c] = original + h;
+            const double up = cpuLoss();
+            positions[vertex][c] = original - h;
+            const double down = cpuLoss();
+            positions[vertex][c] = original;
+            const double expected = (up - down) / (2 * h);
+            verticesChecked += expected != 0.0;
+            EXPECT_NEAR(gpuVertex[4 * vertex + c], expected, 2e-5 + 2e-2 * std::abs(expected))
+                << "vertex " << vertex << " axis " << c;
+        }
+    }
+    EXPECT_GT(texelsChecked, 20);
+    EXPECT_GT(verticesChecked, 20);
+}
+
+TEST_F(DifferentiableRasterTest, textureRecoveryOnFixedGeometry) {
+    const uint32_t width = 64, height = 64, textureWidth = 32, textureHeight = 16;
+    // Eight training views on two rings and one held-out view between them (the last camera).
+    std::vector<glm::mat4> cameras = raster::cameraRing(4, 3.0f, 0.15f, 0.8f, 1.0f);
+    const auto upper = raster::cameraRing(4, 3.0f, 0.7f, 0.8f, 1.0f, 0.785f);
+    cameras.insert(cameras.end(), upper.begin(), upper.end());
+    cameras.push_back(raster::cameraRing(1, 3.0f, 0.4f, 0.8f, 1.0f, 0.4f)[0]);
+    const uint32_t trainingViews = 8, heldOut = 8, pixels = width * height, texelCount = textureWidth * textureHeight;
+
+    // Renders every view of a scene with `texture`: colour plus coverage, views one after another.
+    auto renderViews = [&](const std::vector<float>& texture) {
+        Scene scene(*vc, width, height, textureWidth, textureHeight, cameras);
+        scene.texture = texture;
+        auto colors = vc->create<TensorElement<float>>(std::vector<uint32_t>{pixels, 4});
+        auto render = raster::shade(*vc, width, height, textureWidth, textureHeight);
+        scene.connectShading(render);
+        render->setInput(colors, 7);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(render);
+        scene.upload(0);
+        std::vector<float> images;
+        for (uint32_t view = 0; view < uint32_t(cameras.size()); ++view) {
+            scene.viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{view});
+            graph.submitAndWait(vc->getGraphicsQueue(), 0);
+            std::vector<float> image(4 * pixels);
+            colors->getDataBuffer(0).memcopyTo(image);
+            images.insert(images.end(), image.begin(), image.end());
+        }
+        return images;
+    };
+    const std::vector<float> truth = Scene(*vc, width, height, textureWidth, textureHeight, cameras).texture;
+    const std::vector<float> targets = renderViews(truth);
+
+    // The training step: next view, visibility, clear, loss and gradients, Adam on the texels.
+    Scene scene(*vc, width, height, textureWidth, textureHeight, cameras);
+    auto targetBuffer = vc->create<TensorElement<float>>(std::vector<uint32_t>{uint32_t(cameras.size()) * pixels, 4});
+    auto vertexGradients =
+        vc->create<TensorElement<float>>(std::vector<uint32_t>{uint32_t(scene.mesh.positions.size()), 4});
+    auto textureGradients = vc->create<TensorElement<float>>(std::vector<uint32_t>{texelCount, 4});
+    auto loss = vc->create<TensorElement<float>>(std::vector<uint32_t>{1});
+    auto moments0 = vc->create<TensorElement<float>>(std::vector<uint32_t>{4 * texelCount});
+    auto moments1 = vc->create<TensorElement<float>>(std::vector<uint32_t>{4 * texelCount});
+    auto step = std::make_shared<UintBuffer>(*vc, 1);
+    auto nextView = raster::cycleView(*vc, trainingViews);
+    nextView->setInput(scene.viewIndex, 0);
+    scene.pass->setInput(nextView, 3, 0);
+    auto clear = raster::clearBuffers(*vc);
+    clear->setInput(vertexGradients, 0);
+    clear->setInput(textureGradients, 1);
+    clear->setInput(loss, 2);
+    auto backward = raster::shadeBackward(*vc, width, height, textureWidth, textureHeight);
+    scene.connectShading(backward);
+    backward->setInput(nextView, 5, 0);
+    backward->setInput(targetBuffer, 7);
+    backward->setInput(clear, 8, 0);
+    backward->setInput(clear, 9, 1);
+    backward->setInput(clear, 10, 2);
+    auto counter = training::stepCounter(*vc);
+    counter->setInput(step, 0);
+    auto adam = training::adamStep(*vc, 4 * texelCount, {0.02f, 0.9f, 0.999f, 1e-8f});
+    adam->setInput(scene.texels, 0);
+    adam->setInput(backward, 1, 9);
+    adam->setInput(moments0, 2);
+    adam->setInput(moments1, 3);
+    adam->setInput(step, 4);
+    adam->addDependency(counter);
+    ComputeGraph trainGraph(*vc, 1);
+    trainGraph.compileFrom(adam);
+    for (size_t i = 0; i < scene.texture.size(); ++i)
+        scene.texture[i] = float((i * 2654435761u) % 1000) / 1000.0f; // noise
+    scene.upload(trainingViews - 1);                                  // the first step advances to view 0
+    targetBuffer->getDataBuffer(0).memcopyFrom(targets);
+    for (auto* moments : {&moments0, &moments1})
+        (*moments)->getDataBuffer(0).memcopyFrom(std::vector<float>(4 * texelCount, 0.0f));
+    step->getBuffer(0).memcopyFrom(std::vector<uint32_t>{0});
+
+    auto epochLoss = [&]() {
+        double sum = 0.0;
+        for (uint32_t v = 0; v < trainingViews; ++v) {
+            trainGraph.submitAndWait(vc->getGraphicsQueue(), 0);
+            std::vector<float> value(1);
+            loss->getDataBuffer(0).memcopyTo(value);
+            sum += value[0];
+        }
+        return sum;
+    };
+    const double first = epochLoss();
+    for (int epoch = 0; epoch < 60; ++epoch)
+        epochLoss();
+    const double last = epochLoss();
+    EXPECT_LT(last, 0.02 * first) << "first " << first << " last " << last;
+
+    // The held-out view, rendered with the trained texture, against its target inside the mesh.
+    std::vector<float> trained(4 * texelCount);
+    scene.texels->getDataBuffer(0).memcopyTo(trained);
+    const std::vector<float> images = renderViews(trained);
+    double squaredError = 0.0;
+    int count = 0;
+    for (uint32_t pixel = 0; pixel < pixels; ++pixel) {
+        const size_t i = 4 * (size_t(heldOut) * pixels + pixel);
+        if (targets[i + 3] < 0.5f)
+            continue;
+        for (int c = 0; c < 3; ++c) {
+            const double d = images[i + c] - targets[i + c];
+            squaredError += d * d;
+            ++count;
+        }
+    }
+    ASSERT_GT(count, int(pixels) / 10);
+    const double psnr = 10.0 * std::log10(1.0 / (squaredError / count));
+    EXPECT_GT(psnr, 30.0) << "held-out PSNR " << psnr << " dB";
+    std::cout << "texture recovery: loss " << first << " -> " << last << ", held-out PSNR " << psnr << " dB"
+              << std::endl;
 }
