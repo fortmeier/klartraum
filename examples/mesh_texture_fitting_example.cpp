@@ -285,6 +285,7 @@ int main(int argc, char** argv) {
         adam->decaySteps = epochs * uint32_t(cameras.size());
         adam->finalFactor = finalLearningRate;
     }
+    std::filesystem::remove_all(output / "frames"); // frames of an earlier, longer run would follow this one's
     std::filesystem::create_directories(output / "frames");
     const uint32_t width = options.width, height = options.height;
     const size_t pixels = size_t(width) * height;
