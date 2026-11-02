@@ -5,6 +5,8 @@
 // Bindings, push constants and the visibility test shared by the three passes of the
 // raster backend's cull + compaction (gsplat_cull_and_compact_count.comp, gsplat_cull_and_compact_scan.comp,
 // gsplat_cull_and_compact_scatter.comp). The passes share one descriptor set and dispatch size.
+#include "gsplat_raster_visibility.glsl"
+
 layout(scalar, set = 0, binding = 0) readonly buffer Positions { vec3 positions[]; };
 
 layout(set = 0, binding = 1) uniform UBO {
@@ -63,8 +65,7 @@ bool visibleSplat(uint id, out uint key) {
 
     // Frustum-cull on the (dilated) splat center; the dilation keeps splats
     // whose footprint still overlaps the screen near the edges.
-    float clip = 1.0 + pc.frustumDilation;
-    if (abs(ndc.x) > clip || abs(ndc.y) > clip || ndc.z < -pc.frustumDilation || ndc.z > 1.0) {
+    if (!gaussianRasterCenterVisible(ndc.xyz, pc.frustumDilation)) {
         return false;
     }
 

@@ -319,6 +319,7 @@ public:
     // The pipelineStatisticsQuery feature is enabled when the physical device
     // supports it. Apple GPUs (MoltenVK, KosmicKrisp) do not.
     bool isPipelineStatisticsQuerySupported() const { return pipelineStatisticsQuerySupported; }
+    bool isFragmentStoresAndAtomicsSupported() const { return fragmentStoresAndAtomicsSupported; }
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
@@ -334,6 +335,7 @@ public:
 
     bool meshShaderSupported = false;
     bool pipelineStatisticsQuerySupported = false;
+    bool fragmentStoresAndAtomicsSupported = false;
     PFN_vkCmdDrawMeshTasksIndirectEXT pfnCmdDrawMeshTasksIndirectEXT = nullptr;
 };
 

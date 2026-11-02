@@ -55,7 +55,7 @@ void GaussianSplatRasterizer::createSplatDescriptorSetLayout() {
         layoutBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         layoutBindings[i].pImmutableSamplers = nullptr;
         // The depth output (the last binding when enabled) is written by the fragment shader.
-        const bool depthBinding = outputDepth && i + 1 == splatBuffers.size();
+        const bool depthBinding = outputDepth && i >= 2;
         layoutBindings[i].stageFlags = depthBinding ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
     }
 
@@ -259,7 +259,8 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = nullptr;
+    auto depthInfo = pipelineDepthState();
+    pipelineInfo.pDepthStencilState = &depthInfo;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;

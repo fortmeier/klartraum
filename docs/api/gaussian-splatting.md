@@ -37,6 +37,9 @@ same inputs.
 ```{doxygenstruct} klartraum::GsplatConfig
 ```
 
+```{doxygenenum} klartraum::GaussianDepthMode
+```
+
 ## Draw components of the raster backend
 
 ```{doxygenclass} klartraum::GaussianSplatRasterizer

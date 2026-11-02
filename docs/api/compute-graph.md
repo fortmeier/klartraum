@@ -25,6 +25,16 @@ For timing measurements, warm-up, graph-chain readback and export, see
 ```{doxygenclass} klartraum::ComputeGraphElement
 ```
 
+## Depth attachments
+
+See {doc}`../guides/gaussian-splatting` for raster and Gaussian composition.
+
+```{doxygenclass} klartraum::DepthAttachment
+```
+
+```{doxygenstruct} klartraum::DepthState
+```
+
 ## Chains
 
 ```{doxygenclass} klartraum::GraphChain
