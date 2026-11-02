@@ -296,3 +296,38 @@ OpenCV distortion) first:
 uv run scripts/mesh_fitting/prepare_data.py SCENE_DIR build/TestingOutput/real_data/SCENE
 ./build/examples/mesh_texture_fitting_example --scene build/TestingOutput/real_data/SCENE
 ```
+
+
+### `splat_training_example`
+
+Trains 3D Gaussian splats (Kerbl et al. 2023) on photographs with masks and
+COLMAP camera poses. Prepare the scene with
+`scripts/mesh_fitting/prepare_data.py`, which also writes the surface points of
+the visual hull carved from the masks. The Gaussians start at those points. Each
+training step is one pre-recorded command buffer and one queue submit:
+- project the Gaussians (with an EWA covariance);
+- emit tile instances, radix sort them by tile and depth, and blend each tile
+  front to back;
+- compute the image loss (colour inside the mask, coverage everywhere);
+- run the backward pass (back to front per pixel, then through the projection
+  via Slang's `bwd_diff`);
+- take an Adam step per parameter group.
+
+Densification (clone, split, prune) runs between steps
+(`splatting::SplatTraining`). The example prints silhouette IoU and PSNR on the
+scene's training and validation views. It writes the following to
+`build/TestingOutput/splat_training/<scene>/`: progress frames (a photo turned
+upright beside the splats seen upright from its side), residuals of four
+training views, and the Gaussians as `splats.ply` in scene coordinates, readable
+by common splat viewers.
+
+| Option | Meaning |
+|---|---|
+| `--scene DIR` | Scene prepared by `prepare_data.py` (required) |
+| `--steps N` | Training steps (default 6000); densification runs during the first half |
+| `--display-view N` | Photo the progress frames show (default: the first validation view) |
+
+```bash
+uv run scripts/mesh_fitting/prepare_data.py SCENE_DIR build/TestingOutput/real_data/SCENE
+./build/examples/splat_training_example --scene build/TestingOutput/real_data/SCENE
+```

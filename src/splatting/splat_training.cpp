@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -240,6 +241,61 @@ std::vector<float> renderSplats(VulkanContext& vulkanContext, const SplatSet& sp
         images.insert(images.end(), image.begin(), image.end());
     }
     return images;
+}
+
+SplatSet transformSplats(const SplatSet& splats, const glm::mat4& similarity) {
+    const glm::mat3 linear(similarity);
+    const float scale = std::cbrt(glm::determinant(linear));
+    const glm::quat turn = glm::quat_cast(linear / scale);
+    SplatSet result = splats;
+    for (uint32_t i = 0; i < splats.size(); ++i) {
+        const glm::vec4 p =
+            similarity * glm::vec4(splats.means[4 * i], splats.means[4 * i + 1], splats.means[4 * i + 2], 1.0f);
+        for (int c = 0; c < 3; ++c) {
+            result.means[4 * i + c] = p[c];
+            result.logScales[4 * i + c] += std::log(scale);
+        }
+        // Quaternions as (x, y, z, w); glm::quat takes (w, x, y, z).
+        const glm::quat q = turn * glm::quat(splats.rotations[4 * i + 3], splats.rotations[4 * i],
+                                             splats.rotations[4 * i + 1], splats.rotations[4 * i + 2]);
+        result.rotations[4 * i] = q.x;
+        result.rotations[4 * i + 1] = q.y;
+        result.rotations[4 * i + 2] = q.z;
+        result.rotations[4 * i + 3] = q.w;
+    }
+    return result;
+}
+
+void writeSplatPly(const SplatSet& splats, const std::filesystem::path& path) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out)
+        throw std::runtime_error("writeSplatPly: cannot open " + path.string());
+    out << "ply\nformat binary_little_endian 1.0\nelement vertex " << splats.size() << "\n";
+    for (const char* name : {"x", "y", "z", "nx", "ny", "nz", "f_dc_0", "f_dc_1", "f_dc_2", "opacity", "scale_0",
+                             "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"})
+        out << "property float " << name << "\n";
+    out << "end_header\n";
+    const float shBase = 0.28209479f; // the constant of degree-0 spherical harmonics: colour = 0.5 + shBase f_dc
+    for (uint32_t i = 0; i < splats.size(); ++i) {
+        const float row[17] = {splats.means[4 * i],
+                               splats.means[4 * i + 1],
+                               splats.means[4 * i + 2],
+                               0.0f,
+                               0.0f,
+                               0.0f,
+                               (splats.colors[4 * i] - 0.5f) / shBase,
+                               (splats.colors[4 * i + 1] - 0.5f) / shBase,
+                               (splats.colors[4 * i + 2] - 0.5f) / shBase,
+                               splats.opacities[i],
+                               splats.logScales[4 * i],
+                               splats.logScales[4 * i + 1],
+                               splats.logScales[4 * i + 2],
+                               splats.rotations[4 * i + 3],
+                               splats.rotations[4 * i],
+                               splats.rotations[4 * i + 1],
+                               splats.rotations[4 * i + 2]};
+        out.write(reinterpret_cast<const char*>(row), sizeof(row));
+    }
 }
 
 SplatTraining::SplatTraining(VulkanContext& vulkanContext, const SplatSet& start, const std::vector<glm::mat4>& cameras,

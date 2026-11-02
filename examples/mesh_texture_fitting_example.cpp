@@ -80,65 +80,6 @@ std::pair<double, double> compare(const std::vector<float>& images, const std::v
     return {double(both) / double(std::max(either, 1)), 10.0 * std::log10(count / std::max(squaredError, 1e-12))};
 }
 
-// The position of the camera of a clip-from-world matrix: the point with clip x, y and w zero.
-glm::vec3 cameraCentre(const glm::mat4& clipFromWorld) {
-    glm::mat3 rows;
-    glm::vec3 offsets;
-    for (int r = 0, i = 0; r < 4; ++r) {
-        if (r == 2)
-            continue;
-        rows[0][i] = clipFromWorld[0][r]; // glm: [column][row]
-        rows[1][i] = clipFromWorld[1][r];
-        rows[2][i] = clipFromWorld[2][r];
-        offsets[i++] = -clipFromWorld[3][r];
-    }
-    return glm::inverse(rows) * offsets;
-}
-
-// An image of four floats per pixel with its size.
-struct Image {
-    std::vector<float> pixels;
-    uint32_t width = 0, height = 0;
-};
-
-// Turns an image by 90 degrees clockwise.
-Image turnClockwise(const Image& image) {
-    Image result{std::vector<float>(image.pixels.size()), image.height, image.width};
-    for (uint32_t y = 0; y < result.height; ++y)
-        for (uint32_t x = 0; x < result.width; ++x)
-            for (int c = 0; c < 4; ++c)
-                result.pixels[4 * (size_t(y) * result.width + x) + c] =
-                    image.pixels[4 * (size_t(image.height - 1 - x) * image.width + y) + c];
-    return result;
-}
-
-// Centres an image on a transparent square of side `side`.
-Image padToSquare(const Image& image, uint32_t side) {
-    Image result{std::vector<float>(4 * size_t(side) * side, 0.0f), side, side};
-    const uint32_t left = (side - image.width) / 2, top = (side - image.height) / 2;
-    for (uint32_t y = 0; y < image.height; ++y)
-        std::copy_n(&image.pixels[4 * size_t(y) * image.width], 4 * image.width,
-                    &result.pixels[4 * (size_t(y + top) * side + left)]);
-    return result;
-}
-
-// How many clockwise quarter turns make `up`, seen by `camera` from the point `at`, point up on the screen.
-int uprightTurns(const glm::mat4& camera, glm::vec3 at, glm::vec3 up) {
-    const glm::vec4 a = camera * glm::vec4(at, 1.0f), b = camera * glm::vec4(at + 0.1f * up, 1.0f);
-    glm::vec2 direction = glm::vec2(b) / b.w - glm::vec2(a) / a.w; // y down, like the screen
-    int best = 0;
-    float bestUp = -2.0f;
-    for (int turns = 0; turns < 4; ++turns) {
-        const float upness = -glm::normalize(direction).y;
-        if (upness > bestUp) {
-            bestUp = upness;
-            best = turns;
-        }
-        direction = glm::vec2(-direction.y, direction.x); // a clockwise quarter turn on the screen
-    }
-    return best;
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -186,8 +127,7 @@ int main(int argc, char** argv) {
     std::filesystem::path output = "build/TestingOutput/mesh_texture_fitting";
     raster::TriangleMesh truth;
     // With --scene, the progress frames show a photo (turned upright) beside the fit seen upright from that side.
-    Image displayPhoto;
-    glm::mat4 displayCamera(1.0f);
+    raster::DisplayView display;
 
     if (sceneDirectory.empty()) {
         // The synthetic pumpkin, rendered from training views on three rings (below, at and above the equator) and
@@ -211,30 +151,7 @@ int main(int argc, char** argv) {
         const raster::FittingScene scene = raster::loadFittingScene(sceneDirectory);
         options.width = scene.width;
         options.height = scene.height;
-        // The rotation turns the sphere's pole (+y) to the scene's up. The object rests on the ground, so the part
-        // of its enclosing sphere that no camera sees over the horizon faces down; up is opposite its mean
-        // direction (or, if the cameras see all around, the mean direction to the cameras). The top of the object
-        // then maps to the top of the texture and the unseen underside to its bottom pole.
-        glm::vec3 sceneUp(0.0f), unseen(0.0f);
-        std::vector<glm::vec3> cameraOffsets;
-        for (const auto& camera : scene.cameras) {
-            cameraOffsets.push_back(cameraCentre(camera) - scene.centre);
-            sceneUp += glm::normalize(cameraOffsets.back());
-        }
-        for (const auto& direction : raster::icosphere(3).positions) {
-            bool seen = false;
-            for (const auto& offset : cameraOffsets)
-                seen = seen || glm::dot(direction, offset) > scene.radius;
-            if (!seen)
-                unseen += direction;
-        }
-        sceneUp = glm::normalize(glm::length(unseen) > 0.0f ? -unseen : sceneUp);
-        const glm::vec3 across =
-            glm::normalize(glm::cross(sceneUp, std::abs(sceneUp.x) < 0.9f ? glm::vec3(1, 0, 0) : glm::vec3(0, 0, 1)));
-        const glm::mat4 rotation(glm::vec4(across, 0.0f), glm::vec4(sceneUp, 0.0f),
-                                 glm::vec4(glm::cross(across, sceneUp), 0.0f), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        sceneFromUnit = glm::translate(glm::mat4(1.0f), scene.centre) * rotation *
-                        glm::scale(glm::mat4(1.0f), glm::vec3(scene.radius));
+        sceneFromUnit = scene.sceneFromUnitSphere();
         for (const auto& camera : scene.camerasOf(scene.train))
             cameras.push_back(camera * sceneFromUnit);
         for (const auto& camera : scene.camerasOf(scene.validation))
@@ -242,26 +159,8 @@ int main(int argc, char** argv) {
         targets = scene.targetsOf(scene.train);
         heldOutTargets = scene.targetsOf(scene.validation);
         output /= sceneDirectory.filename();
-        // Up: the cameras stand above the ground, so their mean direction from the object. The display camera looks
-        // horizontally at the side the display photo shows, from a little above.
-        glm::vec3 up(0.0f);
-        std::vector<glm::mat4> unitCameras;
-        for (const auto& camera : scene.cameras) {
-            unitCameras.push_back(camera * sceneFromUnit);
-            up += glm::normalize(cameraCentre(unitCameras.back()));
-        }
-        up = glm::normalize(up);
         const uint32_t shown = displayView >= 0 ? uint32_t(displayView) : scene.validation.at(0);
-        const glm::vec3 seen = cameraCentre(unitCameras.at(shown));
-        const glm::vec3 side = glm::normalize(seen - glm::dot(seen, up) * up);
-        const float elevation = 0.3f;
-        const glm::vec3 eye = 3.5f * (std::cos(elevation) * side + std::sin(elevation) * up);
-        glm::mat4 projection = glm::perspectiveRH_ZO(0.8f, 1.0f, 0.1f, 20.0f);
-        projection[1][1] *= -1.0f; // Vulkan: y down
-        displayCamera = projection * glm::lookAtRH(eye, glm::vec3(0.0f), up);
-        displayPhoto = {scene.targetsOf({shown}), scene.width, scene.height};
-        for (int turn = uprightTurns(unitCameras[shown], glm::vec3(0.0f), up); turn > 0; --turn)
-            displayPhoto = turnClockwise(displayPhoto);
+        display = raster::displayView(scene, shown);
         std::cout << "progress frames: view " << shown << " (turned upright) beside the fit seen from its side"
                   << std::endl;
         options.textureWidth = 128;
@@ -311,16 +210,14 @@ int main(int argc, char** argv) {
         // photo beside the fit seen upright from its side.
         std::ostringstream name;
         name << "epoch_" << std::setw(4) << std::setfill('0') << epoch << ".ppm";
-        if (displayPhoto.pixels.empty()) {
+        if (display.photo.empty()) {
             const std::vector<float> image = render({heldOut[0]});
             writePpm(output / "frames" / name.str(), {heldOutTargets.data(), image.data()}, width, height);
         } else {
-            const uint32_t side = std::max(width, height);
             const std::vector<float> fit =
                 raster::renderImages(vulkanContext, training.mesh(), training.texture(), options.textureWidth,
-                                     options.textureHeight, {displayCamera}, side, side);
-            const Image photo = padToSquare(displayPhoto, side);
-            writePpm(output / "frames" / name.str(), {photo.pixels.data(), fit.data()}, side, side);
+                                     options.textureHeight, {display.camera}, display.side, display.side);
+            writePpm(output / "frames" / name.str(), {display.photo.data(), fit.data()}, display.side, display.side);
         }
         if (epoch == epochs)
             break;

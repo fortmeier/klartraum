@@ -13,6 +13,9 @@
  *   gradients with respect to every parameter of every Gaussian (position, log scale, rotation, colour, opacity) equal
  *   the CPU loss and its central differences, wherever the loss is smooth (central differences at two step sizes
  *   agree to 0.5 %); at most 10 % of the components are skipped as not smooth
+ * - transformedSplatsRenderAlike: Gaussians moved by a similarity transform (rotation, scale, translation) and seen
+ *   by the camera moved alike render the same image (up to float rounding), and writeSplatPly() writes a header
+ *   for every Gaussian and 17 floats each
  * - trainingFitsRenderedViews: SplatTraining, from Gaussians on a sphere, fits 24 rendered views of the textured
  *   synthetic pumpkin with densification, one submit per step; three held-out views reach a silhouette IoU above
  *   0.97 and a PSNR inside the object above 29 dB
@@ -23,11 +26,15 @@
 #include <algorithm>
 #include <iostream>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <memory>
 #include <numeric>
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include "klartraum/computegraph/bufferelement.hpp"
@@ -396,6 +403,49 @@ TEST_F(SplatTrainingTest, gradientsMatchFiniteDifferences) {
               << " skipped as not smooth" << std::endl;
     EXPECT_LT(skipped, (checked + skipped) / 10);
     EXPECT_GT(nonzero, 200);
+}
+
+TEST_F(SplatTrainingTest, transformedSplatsRenderAlike) {
+    const Gaussians g = randomGaussians(80, 0.6f, 0.12f);
+    const splatting::SplatSet splats{g.means, g.logScales, g.rotations, g.colors, g.opacities};
+    const glm::mat4 camera = raster::cameraRing(1, 3.0f, 0.3f, 0.8f, 1.0f, 0.7f)[0];
+    const glm::mat4 similarity = glm::translate(glm::mat4(1.0f), glm::vec3(0.3f, -1.2f, 2.0f)) *
+                                 glm::rotate(glm::mat4(1.0f), 1.1f, glm::normalize(glm::vec3(1.0f, 2.0f, -0.5f))) *
+                                 glm::scale(glm::mat4(1.0f), glm::vec3(0.37f));
+    splatting::SplatRasterOptions options;
+    options.width = options.height = 48;
+    options.capacity = 8192;
+    options.depthScale = 1024.0f;
+    options.nearDepth = 0.01f;
+    const std::vector<float> original = splatting::renderSplats(*vc, splats, {camera}, options);
+    // Depths shrink with the scale: quantize them as finely.
+    options.depthScale = 1024.0f / 0.37f;
+    options.nearDepth = 0.01f * 0.37f;
+    const std::vector<float> moved = splatting::renderSplats(*vc, splatting::transformSplats(splats, similarity),
+                                                             {camera * glm::inverse(similarity)}, options);
+    double coverage = 0.0;
+    double difference = 0.0;
+    for (size_t i = 0; i < original.size(); ++i) {
+        // Single values differ by float rounding of the moved parameters; on average they agree closely.
+        ASSERT_NEAR(moved[i], original[i], 5e-3) << "value " << i;
+        difference += std::abs(moved[i] - original[i]);
+        coverage += i % 4 == 3 ? original[i] : 0.0;
+    }
+    EXPECT_LT(difference / original.size(), 1e-4);
+    EXPECT_GT(coverage, 0.2 * 48 * 48);
+
+    std::filesystem::create_directories("build/TestingOutput");
+    const std::filesystem::path path = "build/TestingOutput/splats.ply";
+    splatting::writeSplatPly(splats, path);
+    std::ifstream in(path, std::ios::binary);
+    std::string header, line;
+    while (std::getline(in, line) && line != "end_header")
+        header += line + "\n";
+    EXPECT_NE(header.find("element vertex 80\n"), std::string::npos);
+    EXPECT_NE(header.find("property float rot_3\n"), std::string::npos);
+    const auto bodyStart = in.tellg();
+    in.seekg(0, std::ios::end);
+    EXPECT_EQ(size_t(in.tellg() - bodyStart), 80 * 17 * sizeof(float));
 }
 
 TEST_F(SplatTrainingTest, trainingFitsRenderedViews) {
