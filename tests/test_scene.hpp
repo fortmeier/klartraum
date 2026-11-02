@@ -15,7 +15,7 @@
 
 #include <glm/glm.hpp>
 
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 namespace klartraum::test_scene {

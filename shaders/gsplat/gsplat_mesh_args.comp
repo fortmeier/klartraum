@@ -6,7 +6,7 @@
 #extension GL_EXT_scalar_block_layout : enable
 
 // Fills the VkDrawMeshTasksIndirectCommandEXT buffer for the raster backend's
-// mesh-shader draw (perf plan R5): groupCountX = ceil(visible / WG_SPLATS),
+// mesh-shader draw: groupCountX = ceil(visible / WG_SPLATS),
 // matching gsplat_raster.mesh's WG_SPLATS splats per workgroup. Reads the
 // visible count from the sort's count buffer (the value GaussianCullAndCompact wrote). Runs after
 // GaussianCullAndCompact (via its dependency edge) and before the mesh draw (via the barrier).

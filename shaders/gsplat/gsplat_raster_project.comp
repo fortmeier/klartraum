@@ -5,12 +5,10 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
 
-// Per-splat 2D attribute precompute for the raster backend (perf plan R1+R2).
-// Runs once per splat and writes a compact Splat2D record the vertex shader
-// reads verbatim — moving the covariance projection, 2x2 eigendecomposition and
-// SH evaluation out of the vertex stage, where the same math previously ran four
-// times per splat (once per quad corner). The math is identical to the prior
-// gsplat_raster.vert / gsplat_projection.comp implementation.
+// Per-splat 2D attribute precompute for the raster backend. Covariance projection,
+// 2x2 eigendecomposition and SH evaluation run once per splat. The vertex and mesh
+// shaders read the resulting Splat2D record to place the quad and pass its attributes
+// to the fragment shader.
 
 layout(local_size_x = 256) in;
 
@@ -111,9 +109,8 @@ mat2 computeCovarianceMatrix2D(vec3 p, vec4 rotation, vec3 gscale) {
 }
 
 // World-space SH evaluation, gated on `deg`: bands beyond the requested degree
-// are neither read from memory nor evaluated (perf plan R2). For deg == 3 the
-// accumulation order matches the prior unconditional degree-3 loop, so a
-// full-degree scene reproduces the previous result.
+// are neither read from memory nor evaluated. Degree 3 evaluates all 15 non-DC
+// coefficients in band order.
 float computeSH(float base, float c[15], vec3 dir, int deg) {
     float value = 0.5 + base * 0.282095;
     if (deg < 1) return value;
@@ -177,7 +174,7 @@ void main() {
         : ((covA >= covD) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
     vec2 minorDir = vec2(-majorDir.y, majorDir.x);
 
-    // Opacity-aware quad extent (perf plan R4): shrink the quad to the radius
+    // Opacity-aware quad extent: limit the quad to the radius
     // where the splat's actual contribution alpha*exp(-0.5*q) drops to 1/255,
     // instead of always using splatScale sigma. At an s-sigma edge the
     // Mahalanobis distance q = s^2, so the cutoff is s = sqrt(2*ln(255*alpha)).

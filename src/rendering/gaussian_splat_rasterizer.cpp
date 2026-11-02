@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <array>
 
-#include "klartraum/gaussian_splat_rasterizer.hpp"
+#include "klartraum/rendering/gaussian_splat_rasterizer.hpp"
 #include "klartraum/vulkan_helpers.hpp"
 
 namespace klartraum {
@@ -147,7 +147,7 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     dynamicState.pDynamicStates = dynamicStates.data();
 
     // No vertex buffer — quad corners are generated in the vertex shader from
-    // gl_VertexIndex (klartraum_rasterized_gs_backend_guide.md §3.4).
+    // gl_VertexIndex.
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertexInputInfo.vertexBindingDescriptionCount = 0;
@@ -197,8 +197,7 @@ void GaussianSplatRasterizer::createGraphicsPipeline() {
     multisampling.alphaToOneEnable = VK_FALSE;
 
     // Premultiplied "over": the fragment shader outputs rgb already multiplied
-    // by alpha, so splats composite back-to-front via the hardware blender
-    // (klartraum_rasterized_gs_backend_guide.md §3.4 / §5C).
+    // by alpha, so splats composite back-to-front via the hardware blender.
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;

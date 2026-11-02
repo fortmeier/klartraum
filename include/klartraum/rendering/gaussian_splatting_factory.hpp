@@ -2,15 +2,15 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_GAUSSIAN_SPLATTING_FACTORY_HPP
-#define KLARTRAUM_GAUSSIAN_SPLATTING_FACTORY_HPP
+#ifndef KLARTRAUM_RENDERING_GAUSSIAN_SPLATTING_FACTORY_HPP
+#define KLARTRAUM_RENDERING_GAUSSIAN_SPLATTING_FACTORY_HPP
 
 #include <memory>
 
 #include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/draw_component.hpp" // for CameraUboType
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -55,4 +55,4 @@ std::shared_ptr<ComputeGraphElement> createGaussianSplatting(VulkanContext& vulk
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_GAUSSIAN_SPLATTING_FACTORY_HPP
+#endif // KLARTRAUM_RENDERING_GAUSSIAN_SPLATTING_FACTORY_HPP

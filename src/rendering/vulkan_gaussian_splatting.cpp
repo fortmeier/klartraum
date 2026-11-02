@@ -9,7 +9,7 @@
 #include <glm/glm.hpp>
 
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/vulkan_gaussian_splatting.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting.hpp"
 
 namespace klartraum {
 

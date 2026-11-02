@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: MIT
 
-#ifndef KLARTRAUM_COMPUTEGRAPH_GAUSSIANMERGE_HPP
-#define KLARTRAUM_COMPUTEGRAPH_GAUSSIANMERGE_HPP
+#ifndef KLARTRAUM_RENDERING_GAUSSIANMERGE_HPP
+#define KLARTRAUM_RENDERING_GAUSSIANMERGE_HPP
 
 #include <cstdint>
 #include <memory>
 
 #include "klartraum/computegraph/generalcomputation.hpp"
-#include "klartraum/vulkan_gaussian_splatting_types.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
 namespace klartraum {
 
@@ -57,4 +57,4 @@ inline GaussianMergeResult createGaussianMerge(VulkanContext& vulkanContext, con
 
 } // namespace klartraum
 
-#endif // KLARTRAUM_COMPUTEGRAPH_GAUSSIANMERGE_HPP
+#endif // KLARTRAUM_RENDERING_GAUSSIANMERGE_HPP

@@ -32,8 +32,8 @@
 
 #include "klartraum/glfw_frontend.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
-#include "klartraum/gaussian_splatting_factory.hpp"
-#include "klartraum/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/interface_camera_orbit.hpp"
 
 #include "test_scene.hpp"
