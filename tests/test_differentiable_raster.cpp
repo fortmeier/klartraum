@@ -12,6 +12,9 @@
  * - laplacianRegularizerMatchesFiniteDifferences: the vertex adjacency of the icosphere is symmetric with five or
  *   six neighbours per vertex, and the Laplacian smoothness loss of a perturbed icosphere and its gradients equal a
  *   CPU evaluation and its central differences
+ * - fittingSceneRoundTrip: a non-square scene of three views written with writeFittingScene() loads back unchanged
+ *   (targets, cameras, splits, enclosing sphere), targetsOf() and camerasOf() select views, and a truncated targets
+ *   file is rejected
  * - visibilityMatchesCpuRasterization: the visibility pass of a pumpkin mesh from two ring cameras, the second
  *   selected through the view-index buffer, equals a CPU rasterization (nearest triangle containing the pixel centre)
  *   at every pixel whose answer is unambiguous, background included
@@ -54,6 +57,7 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/layers/training.hpp"
 #include "klartraum/raster/differentiable_shading.hpp"
+#include "klartraum/raster/fitting_scene.hpp"
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/raster/mesh_training.hpp"
 #include "klartraum/raster/visibility_pass.hpp"
@@ -524,6 +528,41 @@ TEST_F(DifferentiableRasterTest, laplacianRegularizerMatchesFiniteDifferences) {
         }
         EXPECT_EQ(gpuGradients[4 * v + 3], 0.0f);
     }
+}
+
+TEST_F(DifferentiableRasterTest, fittingSceneRoundTrip) {
+    raster::FittingScene scene;
+    scene.width = 6;
+    scene.height = 4;
+    scene.cameras = raster::cameraRing(3, 2.0f, 0.3f, 0.9f, 1.5f);
+    for (size_t i = 0; i < 4 * size_t(scene.width) * scene.height * 3; ++i)
+        scene.targets.push_back(float(i % 97) / 97.0f + 1e-7f * float(i));
+    scene.train = {0, 2};
+    scene.validation = {1};
+    scene.centre = glm::vec3(0.1f, -0.25f, 0.3333333f);
+    scene.radius = 0.2340051f;
+    const std::filesystem::path directory = "build/TestingOutput/fitting_scene_round_trip";
+    raster::writeFittingScene(scene, directory);
+    const raster::FittingScene loaded = raster::loadFittingScene(directory);
+    EXPECT_EQ(loaded.width, scene.width);
+    EXPECT_EQ(loaded.height, scene.height);
+    EXPECT_EQ(loaded.targets, scene.targets);
+    ASSERT_EQ(loaded.cameras.size(), scene.cameras.size());
+    for (size_t view = 0; view < scene.cameras.size(); ++view)
+        EXPECT_EQ(loaded.cameras[view], scene.cameras[view]) << "view " << view;
+    EXPECT_EQ(loaded.train, scene.train);
+    EXPECT_EQ(loaded.validation, scene.validation);
+    EXPECT_EQ(loaded.centre, scene.centre);
+    EXPECT_EQ(loaded.radius, scene.radius);
+
+    const size_t viewSize = 4 * size_t(scene.width) * scene.height;
+    const std::vector<float> train = loaded.targetsOf(loaded.train);
+    ASSERT_EQ(train.size(), 2 * viewSize);
+    EXPECT_TRUE(std::equal(train.begin() + viewSize, train.end(), scene.targets.begin() + 2 * viewSize));
+    EXPECT_EQ(loaded.camerasOf(loaded.validation)[0], scene.cameras[1]);
+
+    std::filesystem::resize_file(directory / "targets.bin", sizeof(float) * (3 * viewSize - 1));
+    EXPECT_THROW(raster::loadFittingScene(directory), std::runtime_error);
 }
 
 TEST_F(DifferentiableRasterTest, visibilityMatchesCpuRasterization) {

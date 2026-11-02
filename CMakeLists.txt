@@ -339,6 +339,7 @@ set(KLARTRAUM_LIB_SRC
   src/mlp_training.cpp
   src/raster/differentiable_shading.cpp
   src/raster/mesh.cpp
+  src/raster/fitting_scene.cpp
   src/raster/mesh_training.cpp
   src/raster/visibility_pass.cpp
   src/glyph_atlas.cpp

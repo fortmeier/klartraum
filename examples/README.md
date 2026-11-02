@@ -270,7 +270,23 @@ next to the true mesh.
 | `--epochs N` | Passes over all views (default 60) |
 | `--size S` | Image width and height in pixels (default 128) |
 | `--views V` | Training views, on three rings of V/3 (default 24) |
+| `--scene DIR` | Fit photographs prepared by `scripts/mesh_fitting/prepare_data.py` instead of the synthetic pumpkin |
+| `--texture-width W` | Texture width in texels, height W/2 (default 64, or 128 with `--scene`) |
+| `--laplacian L` | Weight of the Laplacian smoothness term (default 100) |
 
 ```bash
 ./build/examples/mesh_texture_fitting_example
+```
+
+With `--scene`, the example fits real photographs with masks and COLMAP
+camera poses instead. It trains on the scene's training views and evaluates on
+its validation views. The scene's enclosing sphere is mapped to the unit
+sphere, so the default step sizes apply at any scene scale. Output goes to a
+subdirectory named after the scene. Prepare a scene (images/, masks/ and
+`splat_poses.json` with OpenGL camera-to-world poses, pinhole intrinsics and
+OpenCV distortion) first:
+
+```bash
+uv run scripts/mesh_fitting/prepare_data.py SCENE_DIR build/TestingOutput/real_data/SCENE
+./build/examples/mesh_texture_fitting_example --scene build/TestingOutput/real_data/SCENE
 ```
