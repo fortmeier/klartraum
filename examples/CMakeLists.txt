@@ -101,3 +101,14 @@ target_link_libraries(autodiff_training_example
 )
 
 add_dependencies(autodiff_training_example Shaders)
+
+# Fitting a mesh and its texture to masked images with differentiable rasterization
+add_executable(mesh_texture_fitting_example
+    mesh_texture_fitting_example.cpp
+)
+
+target_link_libraries(mesh_texture_fitting_example
+    klartraum_lib
+)
+
+add_dependencies(mesh_texture_fitting_example Shaders)

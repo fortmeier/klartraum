@@ -247,3 +247,30 @@ parameters. Each training step is one pre-recorded compute graph.
 ```bash
 ./build/examples/autodiff_training_example
 ```
+
+### `mesh_texture_fitting_example`
+
+Recovers the shape and texture of a synthetic pumpkin from rendered, masked
+views with differentiable rasterization (in the style of nvdiffrast). Training
+starts from an icosphere with a noise texture. Each training step renders one
+view: the hardware rasterizer decides which triangle covers each pixel, and
+Slang compute shaders recompute the shading and antialias the silhouettes as
+`[Differentiable]` functions. Their gradients (from `bwd_diff`), plus a
+Laplacian smoothness term, move the vertices and texels through Adam. Each step
+is one pre-recorded command buffer and one queue submit, with the view chosen
+on the GPU (`raster::MeshTraining`). The example prints the silhouette IoU and
+PSNR of a held-out view. It writes the following to
+`build/TestingOutput/mesh_texture_fitting/`: three target views, a progress
+frame per epoch in `frames/` (the held-out target beside the current fit), and
+the fitted mesh with its texture (`fitted.obj`, `.mtl`, `fitted_texture.ppm`)
+next to the true mesh.
+
+| Option | Meaning |
+|---|---|
+| `--epochs N` | Passes over all views (default 60) |
+| `--size S` | Image width and height in pixels (default 128) |
+| `--views V` | Training views, on three rings of V/3 (default 24) |
+
+```bash
+./build/examples/mesh_texture_fitting_example
+```

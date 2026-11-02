@@ -1073,15 +1073,8 @@ TEST_F(DifferentiableRasterTest, pumpkinReconstruction) {
         heldOut.push_back(ring[0]);
     }
     const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(4);
-    std::vector<float> truthTexture;
-    for (uint32_t j = 0; j < options.textureHeight; ++j)
-        for (uint32_t i = 0; i < options.textureWidth; ++i) {
-            const float u = (float(i) + 0.5f) / float(options.textureWidth),
-                        v = (float(j) + 0.5f) / float(options.textureHeight);
-            const float rib = 0.75f + 0.25f * std::cos(10.0f * 6.2831853f * u);
-            const glm::vec3 color = v < 0.12f ? glm::vec3(0.25f, 0.45f, 0.15f) : rib * glm::vec3(0.95f, 0.5f, 0.1f);
-            truthTexture.insert(truthTexture.end(), {color.r, color.g, color.b, 1.0f});
-        }
+    const std::vector<float> truthTexture =
+        raster::syntheticPumpkinTexture(options.textureWidth, options.textureHeight);
     const auto render = [&](const raster::TriangleMesh& mesh, const std::vector<float>& texture,
                             const std::vector<glm::mat4>& views) {
         return raster::renderImages(*vc, mesh, texture, options.textureWidth, options.textureHeight, views,
