@@ -5,6 +5,8 @@
 #ifndef KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
 #define KLARTRAUM_RENDERING_VULKAN_GAUSSIAN_SPLATTING_TYPES_HPP
 
+#include "klartraum/depth_attachment.hpp"
+
 #include <array>
 #include <memory>
 
@@ -19,8 +21,14 @@
 
 namespace klartraum {
 
-// Runtime-tunable knobs for the Gaussian splatting pipeline.
-// Different hardware benefits from different settings; adjust before construction.
+/** @brief How a Gaussian surface depth is selected, independently of the RGB rendering backend. */
+enum class GaussianDepthMode : uint32_t {
+    BackendDefault = 0,
+    AccumulatedOpacity = 1,
+    NearestOpaqueSplat = 2,
+};
+
+// Settings are captured when the backend is constructed, before graph compilation.
 struct GsplatConfig {
     // Gaussian footprint multiplier used in bin overlap tests (default 2.5 = 2.5 sigma).
     // Smaller → fewer bins touched, faster binning, slight clipping at edges.
@@ -58,11 +66,17 @@ struct GsplatConfig {
     // the raster backend falls back to the vertex path. Default off (portable).
     bool useMeshShader = false;
 
-    // Export a per-path, row-major float depth buffer through getDepth().
-    // Compute selects the first 50% cumulative-opacity crossing; raster selects
-    // the nearest splat with per-pixel opacity at least 0.5. Values are NDC depth
-    // (clip.z / clip.w), with +inf where no surface is selected. RGB is unchanged.
+    // Export a per-path, row-major float depth buffer through getDepth(), independently
+    // of the optional attachment. NDC depths are clip.z / clip.w; no surface is +inf.
     bool outputDepth = false;
+    // BackendDefault selects accumulated opacity on compute and nearest opaque splat on raster.
+    GaussianDepthMode depthMode = GaussianDepthMode::BackendDefault;
+    // Per-pixel cumulative or individual opacity threshold, in (0, 1].
+    float depthOpacityThreshold = 0.5f;
+    // Optional shared native depth image. No attachment means no depth testing or writing.
+    std::shared_ptr<DepthAttachment> depthAttachment;
+    // Independent testing and writing controls when an attachment is supplied.
+    DepthState depthState{};
 };
 
 /**
@@ -153,11 +167,16 @@ inline GaussianSoABuffers addGaussianOutputs(VulkanContext& vulkanContext, const
     return output;
 }
 
+// NDC center-culling margin shared by raster color rendering and its depth-only compute pipeline.
+inline constexpr float kGaussianRasterFrustumDilation = 0.1f;
+
 struct ProjectionPushConstants {
     uint32_t numElements;
     uint32_t gridSize;
     float screenWidth;
     float screenHeight;
+    // A negative value disables raster center culling for ordinary compute rendering.
+    float rasterFrustumDilation = -1.0f;
 };
 
 typedef GeneralComputation<ProjectionPushConstants> GaussianProjection;
@@ -188,6 +207,15 @@ struct SplatPushConstants {
     uint32_t gridY;
     float screenWidth;
     float screenHeight;
+    uint32_t depthMode = 1;
+    uint32_t depthFlags = 0;
+    float depthThreshold = 0.5f;
+    float depthAlphaCull = 0.0f;
+};
+
+struct DepthResolvePushConstants {
+    uint32_t pixelCount;
+    uint32_t flags;
 };
 
 struct CullAndCompactPushConstants {
