@@ -12,18 +12,19 @@
 
 namespace klartraum {
 
-std::shared_ptr<ComputeGraphElement> createGaussianSplatting(VulkanContext& vulkanContext, GsplatBackend backend,
-                                                             std::shared_ptr<ImageViewSrc> imageViewSrc,
-                                                             std::shared_ptr<CameraUboType> cameraUBO,
-                                                             std::shared_ptr<GaussianDataStandard> model,
-                                                             GsplatConfig config) {
+std::shared_ptr<GaussianSplattingInterface> createGaussianSplatting(VulkanContext& vulkanContext, GsplatBackend backend,
+                                                                    std::shared_ptr<ImageViewSrc> imageViewSrc,
+                                                                    std::shared_ptr<CameraUboType> cameraUBO,
+                                                                    std::shared_ptr<GaussianDataStandard> model,
+                                                                    GsplatConfig config) {
     return createGaussianSplatting(vulkanContext, backend, imageViewSrc, cameraUBO, model->buffers(), config);
 }
 
-std::shared_ptr<ComputeGraphElement> createGaussianSplatting(VulkanContext& vulkanContext, GsplatBackend backend,
-                                                             std::shared_ptr<ImageViewSrc> imageViewSrc,
-                                                             std::shared_ptr<CameraUboType> cameraUBO,
-                                                             const GaussianSoABuffers& buffers, GsplatConfig config) {
+std::shared_ptr<GaussianSplattingInterface> createGaussianSplatting(VulkanContext& vulkanContext, GsplatBackend backend,
+                                                                    std::shared_ptr<ImageViewSrc> imageViewSrc,
+                                                                    std::shared_ptr<CameraUboType> cameraUBO,
+                                                                    const GaussianSoABuffers& buffers,
+                                                                    GsplatConfig config) {
     switch (backend) {
     case GsplatBackend::Compute:
         return vulkanContext.create<VulkanGaussianSplatting>(imageViewSrc, cameraUBO, buffers, config);

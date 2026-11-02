@@ -12,9 +12,9 @@ viewports, so the scene is loaded only once.
 
 ## Backends
 
-`createGaussianSplatting()` builds a splatting element with one of two
-backends. Both have the same inputs, so switching the backend does not change
-the surrounding graph.
+`createGaussianSplatting()` returns a {cpp:class}`klartraum::GaussianSplattingInterface`
+with one of two rendering implementations. Both accept the same inputs and
+expose optional depth through `getDepth()`.
 
 | Backend | Class | How it works |
 |---|---|---|
@@ -56,6 +56,20 @@ benefits from, for example the footprint multiplier used for binning, the
 radix-sort workgroup cap, the splatting tile size and the spherical-harmonics
 degree. Set them before the splatting element is created.
 
+## Depth output
+
+Set `GsplatConfig::outputDepth` to export a per-path, row-major float storage
+buffer through `splatting->getDepth()`. Values are the selected Gaussian's
+NDC depth (`clip.z / clip.w`), or positive infinity where no surface is found.
+Consumers must depend on the splatting backend as well as bind the buffer.
+
+The compute backend selects the first Gaussian where cumulative opacity
+reaches 0.5. The raster backend selects the nearest Gaussian whose individual
+per-pixel opacity reaches 0.5. Several translucent splats can jointly reach
+50% opacity without any single splat reaching it. Depth export leaves RGB
+unchanged. Raster depth export uses the vertex path and requires fragment
+storage atomics.
+
 ## Operating on Gaussians
 
 Gaussians can be changed on the GPU every frame before they are rendered:
@@ -65,5 +79,5 @@ Gaussians can be changed on the GPU every frame before they are rendered:
 
 ## Current limitations
 
-- Depth values are not written, so splats are not occluded by other geometry.
+- Exported Gaussian depth is a surface estimate; native raster geometry and splats do not share a depth attachment.
 - The compute pipeline is not fully optimized yet.

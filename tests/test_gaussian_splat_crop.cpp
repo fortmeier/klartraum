@@ -7,7 +7,7 @@
  * - cropProjectionMapsWindowToView: cropProjection() maps the corners of the window to the corners of the view and
  *   leaves the depth unchanged
  * - croppedRenderMatchesFullRender: rendering with a projection cropped to an off-centre window gives the pixels the
- *   full render has in that window, colour, in both backends
+ *   full render has in that window, colour and depth, in both backends
  **/
 
 #include <gtest/gtest.h>
@@ -62,6 +62,7 @@ std::vector<Gaussian3D> gaussianGrid() {
 
 struct Render {
     std::vector<uint8_t> bgra;
+    std::vector<float> depth;
 };
 
 std::vector<uint8_t> readImage(VulkanContext& vc, VkImage image, VkImageLayout layout, VkExtent2D extent) {
@@ -90,6 +91,7 @@ Render render(VulkanContext& vc, GsplatBackend backend, const CameraMVP& matrice
     auto camera = std::make_shared<CameraUboType>();
     camera->ubo = matrices;
     GsplatConfig config;
+    config.outputDepth = true;
     config.maxMod = 8;
     auto splatting = createGaussianSplatting(vc, backend, target, camera,
                                              std::make_shared<GaussianDataStandard>(vc, gaussianGrid()), config);
@@ -99,6 +101,8 @@ Render render(VulkanContext& vc, GsplatBackend backend, const CameraMVP& matrice
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     Render result;
     result.bgra = readImage(vc, target->getImage(0), *target->getFinalLayoutOverride(), extent);
+    result.depth.resize(size_t(extent.width) * extent.height);
+    splatting->getDepth()->getBuffer(0).memcopyTo(result.depth);
     return result;
 }
 
@@ -139,7 +143,7 @@ TEST(GaussianSplatCrop, croppedRenderMatchesFullRender) {
         const Render crop = render(vc, backend, matrices, cropExtent);
 
         double colourDifference = 0.0;
-        size_t covered = 0;
+        size_t covered = 0, depthMismatches = 0;
         for (uint32_t y = 0; y < cropExtent.height; ++y) {
             for (uint32_t x = 0; x < cropExtent.width; ++x) {
                 const size_t c = size_t(y) * cropExtent.width + x;
@@ -148,11 +152,16 @@ TEST(GaussianSplatCrop, croppedRenderMatchesFullRender) {
                     colourDifference += std::abs(int(crop.bgra[4 * c + channel]) - int(full.bgra[4 * f + channel]));
                 }
                 covered += (full.bgra[4 * f] | full.bgra[4 * f + 1] | full.bgra[4 * f + 2]) != 0 ? 1 : 0;
+                const bool same = std::isfinite(crop.depth[c]) == std::isfinite(full.depth[f]) &&
+                                  (!std::isfinite(full.depth[f]) || std::abs(crop.depth[c] - full.depth[f]) < 1e-5f);
+                depthMismatches += same ? 0 : 1;
             }
         }
         ASSERT_GT(covered, 300u) << "the window must show Gaussians";
         const double meanDifference = colourDifference / (3.0 * cropExtent.width * cropExtent.height);
-        std::cout << "mean colour difference " << meanDifference << std::endl;
+        std::cout << "mean colour difference " << meanDifference << ", depth mismatches " << depthMismatches
+                  << std::endl;
         EXPECT_LT(meanDifference, 2.0);
+        EXPECT_LT(depthMismatches, 20u);
     }
 }

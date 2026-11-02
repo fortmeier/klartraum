@@ -57,6 +57,12 @@ struct GsplatConfig {
     // path. Only takes effect when the device supports mesh shaders; otherwise
     // the raster backend falls back to the vertex path. Default off (portable).
     bool useMeshShader = false;
+
+    // Export a per-path, row-major float depth buffer through getDepth().
+    // Compute selects the first 50% cumulative-opacity crossing; raster selects
+    // the nearest splat with per-pixel opacity at least 0.5. Values are NDC depth
+    // (clip.z / clip.w), with +inf where no surface is selected. RGB is unchanged.
+    bool outputDepth = false;
 };
 
 /**
