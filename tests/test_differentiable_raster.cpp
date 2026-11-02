@@ -29,12 +29,17 @@
  *   included, equal the CPU loss and its central differences, with the visibility of the GPU held fixed
  * - silhouetteFittingFromMasks: training only the vertex positions of a sphere on the antialiased masks of eight
  *   views of an ellipsoid, one submit per step, reaches a silhouette IoU above 0.95 on a held-out view
+ * - pumpkinReconstruction: MeshTraining with its default options fits geometry and texture of a noise-textured
+ *   icosphere to 24 rendered views of the synthetic pumpkin; three held-out views reach a silhouette IoU above 0.97
+ *   and a PSNR inside the object above 29 dB, and the mean distance of the vertices to the true surface drops from
+ *   0.098 below 0.025
  **/
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -50,6 +55,7 @@
 #include "klartraum/layers/training.hpp"
 #include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/raster/mesh.hpp"
+#include "klartraum/raster/mesh_training.hpp"
 #include "klartraum/raster/visibility_pass.hpp"
 
 using namespace klartraum;
@@ -1048,4 +1054,91 @@ TEST_F(DifferentiableRasterTest, silhouetteFittingFromMasks) {
               << iou << std::endl;
     EXPECT_LT(last, 0.2 * first);
     EXPECT_GT(iou, 0.95);
+}
+
+TEST_F(DifferentiableRasterTest, pumpkinReconstruction) {
+    raster::MeshTrainingOptions options;
+    options.width = options.height = 128;
+    options.textureWidth = 64;
+    options.textureHeight = 32;
+    const int epochs = 60;
+    // 24 training views on three rings, three held-out views between them.
+    std::vector<glm::mat4> cameras, heldOut;
+    for (const auto& [elevation, start] : {std::pair{-0.25f, 0.0f}, {0.3f, 0.39f}, {0.85f, 0.0f}}) {
+        const auto ring = raster::cameraRing(8, 3.5f, elevation, 0.8f, 1.0f, start);
+        cameras.insert(cameras.end(), ring.begin(), ring.end());
+    }
+    for (const float angle : {0.2f, 2.3f, 4.4f}) {
+        const auto ring = raster::cameraRing(1, 3.5f, 0.05f + 0.1f * angle, 0.8f, 1.0f, angle);
+        heldOut.push_back(ring[0]);
+    }
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(4);
+    std::vector<float> truthTexture;
+    for (uint32_t j = 0; j < options.textureHeight; ++j)
+        for (uint32_t i = 0; i < options.textureWidth; ++i) {
+            const float u = (float(i) + 0.5f) / float(options.textureWidth),
+                        v = (float(j) + 0.5f) / float(options.textureHeight);
+            const float rib = 0.75f + 0.25f * std::cos(10.0f * 6.2831853f * u);
+            const glm::vec3 color = v < 0.12f ? glm::vec3(0.25f, 0.45f, 0.15f) : rib * glm::vec3(0.95f, 0.5f, 0.1f);
+            truthTexture.insert(truthTexture.end(), {color.r, color.g, color.b, 1.0f});
+        }
+    const auto render = [&](const raster::TriangleMesh& mesh, const std::vector<float>& texture,
+                            const std::vector<glm::mat4>& views) {
+        return raster::renderImages(*vc, mesh, texture, options.textureWidth, options.textureHeight, views,
+                                    options.width, options.height);
+    };
+    const uint32_t pixels = options.width * options.height;
+    const std::vector<float> targets = render(pumpkin, truthTexture, cameras);
+    const std::vector<float> heldOutTargets = render(pumpkin, truthTexture, heldOut);
+
+    raster::MeshTraining training(*vc, raster::icosphere(4), cameras, options);
+    training.setTargets(targets);
+    double first = 0.0, last = 0.0;
+    for (int epoch = 0; epoch < epochs; ++epoch) {
+        double sum = 0.0;
+        for (size_t v = 0; v < cameras.size(); ++v) {
+            training.step();
+            sum += training.loss();
+        }
+        (epoch == 0 ? first : last) = sum;
+    }
+
+    const raster::TriangleMesh fitted = training.mesh();
+    const std::vector<float> images = render(fitted, training.texture(), heldOut);
+    int both = 0, either = 0, colorCount = 0;
+    double squaredError = 0.0;
+    for (size_t pixel = 0; pixel < heldOut.size() * pixels; ++pixel) {
+        const float* a = &images[4 * pixel];
+        const float* b = &heldOutTargets[4 * pixel];
+        both += a[3] > 0.5f && b[3] > 0.5f;
+        either += a[3] > 0.5f || b[3] > 0.5f;
+        if (b[3] > 0.99f && a[3] > 0.99f) // interior pixels of both
+            for (int c = 0; c < 3; ++c) {
+                squaredError += (a[c] - b[c]) * (a[c] - b[c]);
+                ++colorCount;
+            }
+    }
+    const double iou = double(both) / double(either);
+    const double psnr = 10.0 * std::log10(colorCount / squaredError);
+    // Mean distance from the vertices to the true surface, sampled densely by the vertices of a finer pumpkin.
+    const raster::TriangleMesh surface = raster::syntheticPumpkin(6);
+    const auto surfaceDistance = [&](const raster::TriangleMesh& mesh) {
+        double sum = 0.0;
+        for (const auto& p : mesh.positions) {
+            float nearest = std::numeric_limits<float>::max();
+            for (const auto& q : surface.positions)
+                nearest = std::min(nearest, glm::dot(p - q, p - q));
+            sum += std::sqrt(double(nearest));
+        }
+        return sum / double(mesh.positions.size());
+    };
+    const double distance = surfaceDistance(fitted), startDistance = surfaceDistance(raster::icosphere(4));
+    std::filesystem::create_directories("build/TestingOutput");
+    raster::writeObj(fitted, "build/TestingOutput/pumpkin_reconstruction.obj");
+    std::cout << "pumpkin reconstruction: loss " << first << " -> " << last << ", held-out IoU " << iou << ", PSNR "
+              << psnr << " dB, surface distance " << startDistance << " -> " << distance << std::endl;
+    EXPECT_LT(last, 0.1 * first);
+    EXPECT_GT(iou, 0.97);
+    EXPECT_GT(psnr, 29.0);
+    EXPECT_LT(distance, 0.025);
 }
