@@ -265,6 +265,7 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_differentiable_raster.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
   tests/test_buffertransformation.cpp
@@ -336,6 +337,8 @@ set(KLARTRAUM_LIB_SRC
   src/layers.cpp
   src/training.cpp
   src/mlp_training.cpp
+  src/raster/mesh.cpp
+  src/raster/visibility_pass.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
