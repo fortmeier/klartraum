@@ -28,6 +28,7 @@ layout(scalar, set = 1, binding = 1) readonly buffer SortedIndices{ uint   sorte
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec3 outConic;
 layout(location = 2) out vec2 outCenterPx;
+layout(location = 3) flat out float outDepth; // the splat's NDC depth, for gsplat_raster_depth.frag
 
 // {(-1,-1), (1,-1), (-1,1), (1,1)} — a triangle-strip quad from gl_VertexIndex,
 // drawn with no vertex buffer. The axes the corner scales along are the
@@ -49,4 +50,5 @@ void main() {
     outColor    = s.color;
     outConic    = s.conic;
     outCenterPx = s.centerPx;
+    outDepth    = s.depth;
 }

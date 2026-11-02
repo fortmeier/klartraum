@@ -57,6 +57,7 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     this->config = config;
     this->setInput(imageViewSrc, 0);
     this->setInput(cameraUBO, 1);
+    configureOutputLayout(vulkanContext);
 
     const uint32_t N = buffers.count;
 
@@ -222,9 +223,9 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
     renderPass->setInput(imageViewSrc, 0);
     renderPass->setInput(cameraUBO, 1);
 
-    // Mesh-shader path (perf plan R5) is selected only when requested and the
-    // device supports VK_EXT_mesh_shader; otherwise fall back to the vertex path.
-    const bool useMesh = config.useMeshShader && vulkanContext.isMeshShaderSupported();
+    // The mesh-shader path requires VK_EXT_mesh_shader and disabled depth export.
+    // Depth export uses the vertex path's fragment shader.
+    const bool useMesh = config.useMeshShader && vulkanContext.isMeshShaderSupported() && !config.outputDepth;
 
     if (useMesh) {
         // VkDrawMeshTasksIndirectCommandEXT filled from the visible count by
@@ -268,12 +269,44 @@ void VulkanGaussianSplattingRaster::initialize(VulkanContext& vulkanContext, std
         pushConstants.shDegree = 0;
         pushConstants.numSplats = N;
         rasterizer->setPushConstants(pushConstants);
+        if (config.outputDepth) {
+            addDepthOutput(vulkanContext, extent);
+        }
         renderPass->addDrawComponent(rasterizer);
     }
 
     renderPass->addComputeDependency(barrier);
 
     outputElements[0] = renderPass;
+    if (depthResolve) {
+        outputElements[1] = depthResolve;
+    }
+}
+
+void VulkanGaussianSplattingRaster::addDepthOutput(VulkanContext& vulkanContext, VkExtent2D extent) {
+    const uint32_t pixels = extent.width * extent.height;
+    // Encoded depths (gsplat_depth_encoding.glsl), reset to "no surface" before every render pass.
+    constexpr uint32_t kNoSurface = 0xFF800000u;
+    depthBits = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
+        vulkanContext, pixels, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    depthBits->setName("RasterDepthBits");
+    depthBits->setRecordToFill(kNoSurface);
+    rasterizer->setDepthOutput(depthBits);
+    renderPass->addComputeDependency(depthBits);
+
+    depth = std::make_shared<BufferElement<VulkanBuffer<float>>>(
+        vulkanContext, pixels,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    depth->setName("RasterDepth");
+    depthResolve = vulkanContext.create<GeneralComputation<uint32_t>>("shaders/gsplat/gsplat_depth_resolve.comp.spv");
+    depthResolve->setName("RasterDepthResolve");
+    depthResolve->setInput(depthBits, 0);
+    depthResolve->setInput(depth, 1);
+    depthResolve->setPushConstants({pixels});
+    depthResolve->setGroupCountX((pixels + 255) / 256);
+    depthResolve->addDependency(renderPass);
 }
 
 } // namespace klartraum

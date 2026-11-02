@@ -12,7 +12,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include "klartraum/computegraph/computegraphgroup.hpp"
+#include "klartraum/rendering/gaussian_splatting_interface.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
 #include "klartraum/computegraph/rendergraphelement.hpp"
 #include "klartraum/computegraph/buffertransformation.hpp"
@@ -21,7 +21,7 @@
 
 namespace klartraum {
 
-class VulkanGaussianSplatting : virtual public RenderGraphElement, virtual public ComputeGraphGroup {
+class VulkanGaussianSplatting : public GaussianSplattingInterface {
 public:
     VulkanGaussianSplatting(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
                             std::shared_ptr<CameraUboType> cameraUBO, GaussianSoABuffers buffers,
@@ -35,6 +35,9 @@ public:
     virtual void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override;
 
     virtual const char* getType() const override { return "GaussianSplatting"; }
+
+    /// The depth buffer (see GsplatConfig::outputDepth), or nullptr if it was not requested.
+    std::shared_ptr<DepthBuffer> getDepth() const override { return depth; }
 
 private:
     void initialize(VulkanContext& vulkanContext, std::shared_ptr<ImageViewSrc> imageViewSrc,
@@ -60,6 +63,7 @@ private:
     std::shared_ptr<GeneralComputation<>> gatherSorted;
     std::shared_ptr<GeneralComputation<>> computeBounds;
     std::shared_ptr<GaussianSplatting> splat;
+    std::shared_ptr<BufferElement<VulkanBuffer<float>>> depth;
 
     // Sort ping-pong value buffers (stored as members for _record pre-fill)
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> sortRadixValA;
