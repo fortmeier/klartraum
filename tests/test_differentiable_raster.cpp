@@ -45,6 +45,10 @@
  * - splattedPicturesBecomeTargets: Gaussians splatted by the raster backend into a transparent offscreen target
  *   become one view of training targets (imageTarget) that agree with the training renderer's picture of the same
  *   Gaussians from the same camera (silhouette IoU above 0.9, colours within 0.08), the other views untouched
+ * - liveMorphFromSplattedPictures: a sphere morphs towards Gaussians on the synthetic pumpkin's surface within one
+ *   graph per frame (MeshMorph: splatted target pictures, targets, 12 training steps, the mesh drawn over a white
+ *   frame): the loss falls, after 60 frames the mesh matches the target pictures (mean silhouette IoU above 0.9),
+ *   and the frame is white where no mesh covers it
  * - severalStepsPerSubmission: the same training recorded 24 steps to a submission reaches the same quality on the
  *   held-out views (silhouette IoU above 0.97, PSNR above 29 dB) in 60 submissions
  **/
@@ -70,6 +74,7 @@
 #include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/raster/fitting_scene.hpp"
 #include "klartraum/raster/image_target.hpp"
+#include "klartraum/raster/mesh_morph.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/rendering/gaussian_splatting_factory.hpp"
@@ -77,6 +82,8 @@
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/raster/mesh_training.hpp"
 #include "klartraum/raster/visibility_pass.hpp"
+
+#include "tree_test_helpers.hpp"
 
 using namespace klartraum;
 
@@ -1394,4 +1401,66 @@ TEST_F(DifferentiableRasterTest, splattedPicturesBecomeTargets) {
     EXPECT_GT(double(both) / either, 0.9);
     ASSERT_GT(compared, 0);
     EXPECT_LT(difference / compared, 0.08);
+}
+
+TEST_F(DifferentiableRasterTest, liveMorphFromSplattedPictures) {
+    const splatting::SplatSet splats =
+        splatting::splatsAt(raster::syntheticPumpkin(3).positions, 0.08f, glm::vec3(0.9f, 0.45f, 0.1f), 0.95f);
+    auto data = std::make_shared<GaussianDataStandard>(*vc, splatting::gaussiansFromSplats(splats));
+    raster::MeshMorphOptions options;
+    for (const auto& [elevation, start] : {std::pair{-0.25f, 0.0f}, {0.3f, 0.39f}, {0.85f, 0.0f}})
+        for (int k = 0; k < 4; ++k) {
+            const float angle = start + float(k) * 1.5708f;
+            const glm::vec3 eye = 3.5f * glm::vec3(std::cos(elevation) * std::cos(angle), std::sin(elevation),
+                                                   std::cos(elevation) * std::sin(angle));
+            CameraMVP view{};
+            view.model = glm::mat4(1.0f);
+            view.view = glm::lookAt(eye, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            view.proj = raster::perspective(0.8f, 1.0f, 0.1f, 20.0f);
+            view.cameraWorldPos = glm::vec4(eye, 1.0f);
+            options.views.push_back(view);
+        }
+    options.training.stepsPerSubmit = 12;
+    options.frame = VkExtent2D{160, 120};
+    auto frame = std::make_shared<OffscreenTarget>(*vc, options.frame, 1);
+    frame->setClearColor({{1.0f, 1.0f, 1.0f, 1.0f}});
+    raster::MeshMorph morph(*vc, raster::icosphere(4), data->buffers(), frame, VK_IMAGE_LAYOUT_GENERAL, nullptr,
+                            options);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(morph.getOutput());
+    morph.initialize();
+    morph.setCamera(raster::perspective(0.8f, 160.0f / 120.0f, 0.1f, 20.0f) *
+                    glm::lookAt(glm::vec3(0.0f, 1.0f, 3.4f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)));
+    float first = 0.0f;
+    for (int f = 0; f < 60; ++f) {
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        if (f == 0)
+            first = morph.getTraining().loss();
+    }
+    EXPECT_LT(morph.getTraining().loss(), 0.2f * first);
+
+    // The mesh against the pictures it learnt from.
+    std::vector<float> targets(morph.getTraining().getTargets()->getDataElementCount());
+    morph.getTraining().getTargets()->getDataBuffer(0).memcopyTo(targets);
+    std::vector<glm::mat4> cameras;
+    for (const CameraMVP& view : options.views)
+        cameras.push_back(view.proj * view.view);
+    const std::vector<float> images =
+        raster::renderImages(*vc, morph.getTraining().mesh(), morph.getTraining().texture(), 64, 32, cameras, 128, 128);
+    int both = 0, either = 0;
+    for (size_t p = 0; p < images.size() / 4; ++p) {
+        both += images[4 * p + 3] > 0.5f && targets[4 * p + 3] > 0.5f;
+        either += images[4 * p + 3] > 0.5f || targets[4 * p + 3] > 0.5f;
+    }
+    EXPECT_GT(double(both) / either, 0.9);
+
+    const auto image = tree_test::readImage(*vc, frame->getImage(0), VK_IMAGE_LAYOUT_GENERAL, options.frame);
+    tree_test::writePpm("live_morph", image, options.frame);
+    int coloured = 0;
+    for (size_t p = 0; p < image.size() / 4; ++p)
+        coloured += image[4 * p] < 250 || image[4 * p + 1] < 250 || image[4 * p + 2] < 250;
+    EXPECT_GT(coloured, 160 * 120 / 20);
+    for (const size_t p : {size_t(0), size_t(159), size_t(160 * 119)})
+        for (int c = 0; c < 3; ++c)
+            EXPECT_GE(image[4 * p + c], 250) << "pixel " << p;
 }
