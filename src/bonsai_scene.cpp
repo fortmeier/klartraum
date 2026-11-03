@@ -275,6 +275,38 @@ float BonsaiScene::potMeasure(float x, float z, float scale) const {
 
 float BonsaiScene::soilHeight(float x, float z) const { return tree::treeTerrainHeight(terrain, x, z); }
 
+BonsaiObject bonsaiObjectFromMesh(const raster::TriangleMesh& mesh, const std::vector<float>& texels, uint32_t width,
+                                  uint32_t height) {
+    BonsaiObject object;
+    // Smooth normals: the area-weighted face normals around each vertex.
+    std::vector<glm::vec3> normals(mesh.positions.size(), glm::vec3(0.0f));
+    for (const auto& t : mesh.triangles) {
+        const glm::vec3 n =
+            glm::cross(mesh.positions[t.y] - mesh.positions[t.x], mesh.positions[t.z] - mesh.positions[t.x]);
+        for (int c = 0; c < 3; ++c)
+            normals[t[c]] += n;
+    }
+    // The texture bilinearly at a corner's coordinate: u wraps, v is clamped, texel centres at (i + 0.5) / size.
+    const auto sample = [&](glm::vec2 uv) {
+        const float x = uv.x * float(width) - 0.5f, y = uv.y * float(height) - 0.5f;
+        const float fx = std::floor(x), fy = std::floor(y);
+        const int w = int(width), h = int(height);
+        const int i0 = ((int(fx) % w) + w) % w, i1 = (i0 + 1) % w;
+        const int j0 = std::clamp(int(fy), 0, h - 1), j1 = std::clamp(int(fy) + 1, 0, h - 1);
+        const auto texel = [&](int i, int j) { return glm::make_vec3(&texels[4 * size_t(j * w + i)]); };
+        return glm::mix(glm::mix(texel(i0, j0), texel(i1, j0), x - fx), glm::mix(texel(i0, j1), texel(i1, j1), x - fx),
+                        y - fy);
+    };
+    for (size_t t = 0; t < mesh.triangles.size(); ++t)
+        for (int c = 0; c < 3; ++c) {
+            const uint32_t v = mesh.triangles[t][c];
+            object.mesh.push_back({glm::vec4(mesh.positions[v], 0.0f), glm::vec4(glm::normalize(normals[v]), 0.0f),
+                                   glm::vec4(sample(mesh.cornerUvs[3 * t + c]), TREE_MATERIAL_CAPTURED)});
+        }
+    measureObject(object, mesh.positions);
+    return object;
+}
+
 BonsaiObject loadBonsaiObject(const std::string& path) {
     BonsaiObject object;
     std::vector<glm::vec3> points;
@@ -290,37 +322,21 @@ BonsaiObject loadBonsaiObject(const std::string& path) {
         uint32_t width = 1, height = 1;
         const std::vector<float> texels = texturePath.empty() ? std::vector<float>{0.6f, 0.6f, 0.6f, 1.0f}
                                                               : raster::readTexturePpm(texturePath, width, height);
-        // Smooth normals: the area-weighted face normals around each vertex.
-        std::vector<glm::vec3> normals(mesh.positions.size(), glm::vec3(0.0f));
-        for (const auto& t : mesh.triangles) {
-            const glm::vec3 n =
-                glm::cross(mesh.positions[t.y] - mesh.positions[t.x], mesh.positions[t.z] - mesh.positions[t.x]);
-            for (int c = 0; c < 3; ++c)
-                normals[t[c]] += n;
-        }
-        // The texture bilinearly at a corner's coordinate: u wraps, v is clamped, texel centres at (i + 0.5) / size.
-        const auto sample = [&](glm::vec2 uv) {
-            const float x = uv.x * float(width) - 0.5f, y = uv.y * float(height) - 0.5f;
-            const float fx = std::floor(x), fy = std::floor(y);
-            const int w = int(width), h = int(height);
-            const int i0 = ((int(fx) % w) + w) % w, i1 = (i0 + 1) % w;
-            const int j0 = std::clamp(int(fy), 0, h - 1), j1 = std::clamp(int(fy) + 1, 0, h - 1);
-            const auto texel = [&](int i, int j) { return glm::make_vec3(&texels[4 * size_t(j * w + i)]); };
-            return glm::mix(glm::mix(texel(i0, j0), texel(i1, j0), x - fx),
-                            glm::mix(texel(i0, j1), texel(i1, j1), x - fx), y - fy);
-        };
-        for (size_t t = 0; t < mesh.triangles.size(); ++t)
-            for (int c = 0; c < 3; ++c) {
-                const uint32_t v = mesh.triangles[t][c];
-                object.mesh.push_back({glm::vec4(mesh.positions[v], 0.0f), glm::vec4(glm::normalize(normals[v]), 0.0f),
-                                       glm::vec4(sample(mesh.cornerUvs[3 * t + c]), TREE_MATERIAL_CAPTURED)});
-            }
-        points = mesh.positions;
+        return bonsaiObjectFromMesh(mesh, texels, width, height);
     } else {
         throw std::runtime_error("loadBonsaiObject: " + path + " is neither .spz nor .obj");
     }
     measureObject(object, points);
     return object;
+}
+
+glm::mat4 bonsaiObjectTransform(const BonsaiScene& scene, const BonsaiObjectPlacement& placement) {
+    const BonsaiObject& object = *placement.object;
+    const float objectScale = placement.height / (object.high.y - object.low.y);
+    const glm::vec3 anchor(0.5f * (object.low.x + object.high.x), object.low.y, 0.5f * (object.low.z + object.high.z));
+    const glm::vec2 at = placement.position;
+    return objectTransform(anchor, glm::vec3(at.x, scene.soilHeight(at.x, at.y) - 0.05f * placement.height, at.y),
+                           placement.yaw, objectScale);
 }
 
 BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
@@ -452,15 +468,8 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     // The objects on the soil, sunk a little so that their unseen undersides disappear in it.
     for (const BonsaiObjectPlacement& placement : config.objects) {
         const BonsaiObject& object = *placement.object;
-        const float objectScale = placement.height / (object.high.y - object.low.y);
-        const glm::vec3 anchor(0.5f * (object.low.x + object.high.x), object.low.y,
-                               0.5f * (object.low.z + object.high.z));
-        const glm::vec2 at = placement.position;
-        placeObject(scene, object,
-                    objectTransform(anchor,
-                                    glm::vec3(at.x, scene.soilHeight(at.x, at.y) - 0.05f * placement.height, at.y),
-                                    placement.yaw, objectScale),
-                    objectScale);
+        placeObject(scene, object, bonsaiObjectTransform(scene, placement),
+                    placement.height / (object.high.y - object.low.y));
     }
 
     // Trees: a tall main tree off-centre at the back, the others around it,

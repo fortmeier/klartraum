@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include "klartraum/raster/mesh.hpp"
 #include "klartraum/tree/tree_model.hpp"
 #include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 
@@ -105,6 +106,13 @@ struct BonsaiObject {
  */
 BonsaiObject loadBonsaiObject(const std::string& path);
 
+/**
+ * @brief An object from a mesh in memory with its texture (four floats per texel, rgb used; u wraps, v clamps),
+ * coloured from the texture at its corners, e.g. a mesh just trained by MeshTraining.
+ */
+BonsaiObject bonsaiObjectFromMesh(const raster::TriangleMesh& mesh, const std::vector<float>& texels, uint32_t width,
+                                  uint32_t height);
+
 /** @brief Where an object stands on the soil. */
 struct BonsaiObjectPlacement {
     std::shared_ptr<const BonsaiObject> object;
@@ -169,6 +177,12 @@ struct BonsaiScene {
 };
 
 BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config = BonsaiSceneConfig{});
+
+/**
+ * @brief Where makeBonsaiScene() puts an object (world from its frame): its bottom centre on the soil at the
+ * placement's position, sunk by 5 % of its height, turned by its yaw and scaled to its height.
+ */
+glm::mat4 bonsaiObjectTransform(const BonsaiScene& scene, const BonsaiObjectPlacement& placement);
 
 /**
  * @brief The forest threshold (TreeTerrainParams::cover.x) for which forest covers `share` of the soil.
