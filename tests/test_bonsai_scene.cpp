@@ -47,6 +47,8 @@
  * - nightIsDarkerAndTheLanternGlows: at midnight the scene is darker than at noon, and the moss next to the
  *   lantern is lit warmer than at noon, in both renderers
  * - bonsaiRendersBothWays: the scene renders classically and as Gaussians, written to build/TestingOutput/tree/
+ * - backgroundFollowsTheFrame: with a background, both renderers draw over the colour set for the frame: the
+ *   frame's corners are white, then black after setBackground() between submissions
  * - potOfGaussiansRendersBothWays: with a captured pot of Gaussians and no mesh object, which leaves no scene
  *   mesh besides the soil, the scene renders both ways and the pot covers the frame's lower part
  **/
@@ -812,5 +814,37 @@ TEST_F(BonsaiRenderingTest, potOfGaussiansRendersBothWays) {
         graph.submitAndWait(vc->getGraphicsQueue(), 0);
         const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
         EXPECT_GT(coveredCount(image, extent), extent.width * extent.height / 8);
+    }
+}
+
+TEST_F(BonsaiRenderingTest, backgroundFollowsTheFrame) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 2;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{320, 180};
+    for (BonsaiRenderMode mode : {BonsaiRenderMode::Classical, BonsaiRenderMode::Gaussian}) {
+        SCOPED_TRACE(mode == BonsaiRenderMode::Classical ? "classical" : "gaussian");
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig config;
+        config.extent = extent;
+        config.mode = mode;
+        config.meshGaussianSpacing = 0.03f;
+        config.background = true;
+        BonsaiRenderer bonsai(*vc, scene, target, config);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(bonsai.getOutput());
+        bonsai.initialize(1);
+        setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(1.4f, 1.3f, 3.8f), scene.focus, 40.0f,
+                  float(extent.width) / float(extent.height));
+        bonsai.getCamera()->update(0);
+        for (const float grey : {1.0f, 0.0f}) {
+            bonsai.setBackground(glm::vec3(grey));
+            graph.submitAndWait(vc->getGraphicsQueue(), 0);
+            const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+            for (const size_t pixel : {size_t(0), size_t(extent.width - 1), size_t(extent.width) * (extent.height - 1)})
+                for (int c = 0; c < 3; ++c)
+                    EXPECT_NEAR(float(image[4 * pixel + c]), 255.0f * grey, 2.0f)
+                        << "pixel " << pixel << " grey " << grey;
+        }
     }
 }

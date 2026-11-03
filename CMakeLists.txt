@@ -320,6 +320,7 @@ add_executable(
   tests/test_text_rendering.cpp
   tests/test_gaussian_morph.cpp
   tests/test_demo_timeline.cpp
+  tests/test_image_fill.cpp
   tests/test_gaussian_lighting.cpp
   tests/test_tree_model.cpp
   tests/test_tree_generation.cpp
@@ -415,6 +416,7 @@ set(KLARTRAUM_LIB_SRC
   src/tree_library.cpp
   src/storage_draw_component.cpp
   src/demo_timeline.cpp
+  src/image_fill.cpp
   ${SPZ_SRC}
   )
 

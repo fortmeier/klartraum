@@ -96,6 +96,8 @@ struct BonsaiRenderConfig {
     /// false: the classical renderer draws no trees beyond the near ones (neither impostors nor proxies), e.g. for
     /// TreeReferenceRenderer, which adds them in full.
     bool farTrees = true;
+    /// Fill the frame with a colour that can change per frame (setBackground()) before drawing, instead of black.
+    bool background = false;
     /// The classical renderer's pass keeps its depth buffer for later passes (getPass(), RenderPass::setDepthFrom()).
     bool storeDepth = false;
     /// The Gaussian renderer also splats per-pixel features (tree_gaussian_features.comp) into getFeatureTarget(0)
@@ -190,6 +192,11 @@ public:
     /// The classical renderer's render pass (its image and depth buffer), or nullptr.
     std::shared_ptr<RenderPass> getPass() const { return pass; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
+    /// The background of the next frames (with BonsaiRenderConfig::background).
+    void setBackground(glm::vec3 colour) {
+        if (backgroundColour)
+            backgroundColour->set(0, glm::vec4(colour, 1.0f));
+    }
     TreeGenerator& getGenerator() { return *generator; }
     TreeStemRenderer* getStems() { return stems.get(); }
     TreeLeafRenderer* getLeaves() { return leaves.get(); }
@@ -218,9 +225,14 @@ public:
 
 private:
     BonsaiRenderConfig config;
+    // Fills `frame` with the background colour before `first` draws into it (with BonsaiRenderConfig::background).
+    void addBackground(VulkanContext& vulkanContext, const std::shared_ptr<ImageViewSrc>& frame,
+                       const ComputeGraphElementPtr& first);
     glm::vec3 lanternFlame{0.0f};
     std::shared_ptr<CameraUboType> camera;
     std::shared_ptr<HostValues<TreeRenderSettings>> settings;
+    /// The background colour (BonsaiRenderConfig::background), filled into the frame before drawing.
+    std::shared_ptr<HostValues<glm::vec4>> backgroundColour;
     std::shared_ptr<TreeGenerator> generator;
     std::unique_ptr<TreeLightVolume> lightVolume;
 
