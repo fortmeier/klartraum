@@ -318,6 +318,16 @@ int main(int argc, char** argv) {
     };
     std::cout << "tech demo 001: " << timeline.frameCount() << " frames at " << fps << " fps" << std::endl;
 
+    // The trees at `age`: from nothing (0) through a seedling branching out step by step to fully grown (1).
+    const auto setTrees = [](BonsaiRenderer& bonsai, const BonsaiScene& scene, float age) {
+        std::vector<TreeInstance> trees = scene.trees;
+        for (TreeInstance& tree : trees)
+            setTreeAge(tree, age);
+        bonsai.getGenerator().getInstances().set(trees);
+    };
+    // The light volume reaches up to the pumpkin above the title, so that it is lit and shadowed all the way down.
+    const float lightCeiling = sphereCentre.y + titleScale + 0.3f;
+
     // Chapter 0: the title and the morph, on white.
     if (fromChapter <= 0 && toChapter >= 0) {
         TitleLayout layout;
@@ -343,9 +353,25 @@ int main(int argc, char** argv) {
         frame->setClearColor({{1.0f, 1.0f, 1.0f, 1.0f}});
         auto camera = std::make_shared<CameraUboType>();
         auto splatting = createGaussianSplatting(vc, GsplatBackend::Raster, frame, camera, textData->buffers());
+        // The bonsai's light, high up to the title, lights the morph from the first frame on as it will be lit
+        // later; the bonsai itself is not drawn (only its light volume is in the graph). The shadows come from the
+        // sphere the morph starts from, shrunk to lie within the pumpkin it becomes (which the unit sphere encloses),
+        // so that the pumpkin's surface is not inside its own occluder.
+        BonsaiRenderConfig lightConfig;
+        lightConfig.extent = VkExtent2D{64, 64};
+        lightConfig.numberPaths = 1;
+        lightConfig.lightCeiling = lightCeiling;
+        lightConfig.movingObjects.push_back(std::make_shared<BonsaiObject>(bonsaiObjectFromMesh(
+            pumpkinMesh, pumpkinTexture, morphOptions.training.textureWidth, morphOptions.training.textureHeight)));
+        BonsaiRenderer light(vc, sceneWithoutPumpkin, std::make_shared<OffscreenTarget>(vc, lightConfig.extent, 1),
+                             lightConfig);
+        raster::MeshMorphOptions litMorph = morphOptions;
+        litMorph.lightSettings = light.getSettingsRef();
+        litMorph.light = light.getLightVolume().getLight();
         raster::MeshMorph morph(vc, pumpkinMesh, pumpkin->buffers(), frame, splatting->getOutputLayout(), splatting,
-                                morphOptions);
+                                litMorph);
         ComputeGraph graph(vc, 1);
+        // Not light.initialize(): it fills the buffers of the bonsai's drawing, which is not in this graph.
         graph.compileFrom(morph.getOutput());
         morph.initialize();
         morph.getTraining().setTexture(pumpkinTexture);
@@ -353,7 +379,11 @@ int main(int argc, char** argv) {
         camera->update(0);
         morph.setCamera(camera->ubo.proj * camera->ubo.view);
         const float titleYaw = facing(sphereCentre, titlePose.eye);
-        morph.setModel(pumpkinModel(sphereCentre, titleYaw, titleScale, titleTilt));
+        const glm::mat4 model = pumpkinModel(sphereCentre, titleYaw, titleScale, titleTilt);
+        morph.setModel(model);
+        light.setMovingObject(0, model * glm::scale(glm::mat4(1.0f), glm::vec3(0.7f)));
+        light.setTime(0.0f, 0.5f, 2.0f, glm::vec4(0.0f));
+        setTrees(light, sceneWithoutPumpkin, 0.0f);
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
             textData->buffers().colAlpha.element);
         const auto [begin, end] = chapterRange(0);
@@ -398,19 +428,13 @@ int main(int argc, char** argv) {
     renderConfig.mode = BonsaiRenderMode::Classical;
     renderConfig.background = true;
     renderConfig.numberPaths = 1;
-    // The trees at `age`: from nothing (0) through a seedling branching out step by step to fully grown (1).
-    const auto setTrees = [](BonsaiRenderer& bonsai, const BonsaiScene& scene, float age) {
-        std::vector<TreeInstance> trees = scene.trees;
-        for (TreeInstance& tree : trees)
-            setTreeAge(tree, age);
-        bonsai.getGenerator().getInstances().set(trees);
-    };
 
     // Chapter 1: the drop, the pumpkin still drawn by the morph (which keeps refining it), lit by the scene and
     // casting its shadow as it falls.
     if (fromChapter <= 1 && toChapter >= 1) {
         auto frame = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderConfig dropConfig = renderConfig;
+        dropConfig.lightCeiling = lightCeiling;
         dropConfig.movingObjects.push_back(placement.object);
         BonsaiRenderer bonsai(vc, sceneWithoutPumpkin, frame, dropConfig);
         const VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
