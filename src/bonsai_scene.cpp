@@ -465,11 +465,12 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
 
     // Trees: a tall main tree off-centre at the back, the others around it,
     // smaller and leaning slightly outwards the farther away they stand.
-    const float style = scale.bonsaiStyle();
-    scene.types = {
-        mixTreeTypes(tree_presets::bonsaiBroadleaf(), tree_presets::bonsaiStyled(tree_presets::bonsaiBroadleaf()),
-                     style),
-        mixTreeTypes(tree_presets::bonsaiPine(), tree_presets::bonsaiStyled(tree_presets::bonsaiPine()), style)};
+    const float style = config.style >= 0.0f ? std::min(config.style, 1.0f) : scale.bonsaiStyle();
+    scene.types = {mixTreeTypes(tree_presets::bonsaiBroadleaf(),
+                                tree_presets::bonsaiStyled(tree_presets::bonsaiBroadleaf()), style),
+                   mixTreeTypes(tree_presets::bonsaiPine(),
+                                tree_presets::bonsaiPinePads(tree_presets::bonsaiStyled(tree_presets::bonsaiPine())),
+                                style)};
     if (scene.placed) {
         // The trees nearest to the middle of the soil, until a camera asks for its own.
         scene.placement = makeTreePlacement(scene, config.seed);
@@ -518,7 +519,10 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         const float tallest = 0.13f * scale.treeHeightUnits() / BonsaiScale{BonsaiScale::kForest}.treeHeightUnits();
         float treeScale =
             tallest * (1.0f - 0.55f * distance) * frontFactor * (0.85f + 0.3f * hashUnit(config.seed, 9000 + i));
-        const uint32_t type = (i % 4 == 3) ? 1u : 0u;
+        const uint32_t type = config.species == BonsaiSpecies::Pine        ? 1u
+                              : config.species == BonsaiSpecies::Broadleaf ? 0u
+                              : (i % 4 == 3)                               ? 1u
+                                                                           : 0u;
         if (type == 1u) {
             treeScale *= 0.9f;
         }
@@ -722,6 +726,22 @@ TreeTypeParams bonsaiStyled(const TreeTypeParams& natural) {
     p.nBranches.z *= 1.4f; // dense foliage pads
     p.leafCount.x *= 1.5f;
     p.leafCount.y *= 1.4f; // leaves large for the tree's size
+    return p;
+}
+
+TreeTypeParams bonsaiPinePads(const TreeTypeParams& styled) {
+    TreeTypeParams p = styled;
+    p.nBranches.y = 22.0f; // few main branches
+    p.nBranches.z = 42.0f; // many short twigs, spreading flat from them: dense pads at the branch ends
+    p.nLength.z = 0.16f;
+    p.nDownAngle.z = 75.0f;
+    p.nDownAngleV.z = 10.0f;
+    p.nCurve.z = 20.0f; // twig tips turning up
+    p.leafCount.x = 220.0f;
+    p.leafCount.y = 0.2f; // long needles, and wide tufts of them
+    p.leafCount.z = 0.18f;
+    p.leafColor = glm::vec4(0.035f, 0.07f, 0.03f, 0.0f); // the dark green of old pine needles
+    p.leafColorFall = p.leafColor;
     return p;
 }
 

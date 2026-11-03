@@ -11,6 +11,8 @@
  * - scaleKeepsTheForestDensity: at larger scales the tree count follows 650 trees per hectare of soil
  * - treesStandInThePot: 8, 13 and 20 trees stand on the soil inside the pot, apart from each other and from the
  *   lantern
+ * - speciesAndStyleChooseTheTrees: a planting of pines has only pines; style 1 at the forest scale gives the
+ *   bonsai-styled types (the pine with its needle pads), style 0 the natural ones, whatever the scale says
  * - treesAreFourToNineLanternsTall: the generated trees are 4 to 9 times as tall as the lantern
  * - largeScalesFollowThePlacement: beyond a planting of 60 trees the scene's trees are the near trees of the
  *   placement; a planting of more than 60 trees asked for explicitly is refused
@@ -215,6 +217,25 @@ TEST(BonsaiScene, treesStandInThePot) {
             }
         }
     }
+}
+
+TEST(BonsaiScene, speciesAndStyleChooseTheTrees) {
+    BonsaiSceneConfig config;
+    config.treeCount = 8;
+    config.species = BonsaiSpecies::Pine;
+    config.style = 1.0f;
+    const BonsaiScene pines = makeBonsaiScene(config);
+    for (const TreeInstance& tree : pines.trees)
+        EXPECT_EQ(tree.ids.x, 1u);
+    const TreeTypeParams padded = tree_presets::bonsaiPinePads(tree_presets::bonsaiStyled(tree_presets::bonsaiPine()));
+    EXPECT_NEAR(pines.types[1].ratios.y, padded.ratios.y, 1e-6f); // the thick trunk
+    EXPECT_NEAR(pines.types[1].leafCount.x, padded.leafCount.x, 1e-3f);
+    config.style = 0.0f;
+    config.species = BonsaiSpecies::Broadleaf;
+    const BonsaiScene natural = makeBonsaiScene(config);
+    for (const TreeInstance& tree : natural.trees)
+        EXPECT_EQ(tree.ids.x, 0u);
+    EXPECT_NEAR(natural.types[1].ratios.y, tree_presets::bonsaiPine().ratios.y, 1e-6f);
 }
 
 TEST(BonsaiScene, treesAreFourToNineLanternsTall) {

@@ -13,7 +13,8 @@
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--moss-patches 250]
 //                       [--enhancer MODEL.onnx] [--out-dir build/TestingOutput/tree_bonsai]
-//                       [--pot FILE] [--object FILE,X,Z,HEIGHT[,YAW]]...
+//                       [--pot FILE] [--object FILE,X,Z,HEIGHT[,YAW]]... [--style S]
+//                       [--species mixed|pine|broadleaf] [--soil-mound M]
 //
 // The trees are generated on the GPU every frame; per frame the CPU only sets
 // the camera, the time, the season and the wind. Without --video, view i is
@@ -187,6 +188,22 @@ int main(int argc, char** argv) {
             fromFrame = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--to" && hasValue) {
             toFrame = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--style" && hasValue) {
+            sceneConfig.style = std::stof(argv[++i]);
+        } else if (arg == "--species" && hasValue) {
+            const std::string species = argv[++i];
+            if (species == "pine") {
+                sceneConfig.species = BonsaiSpecies::Pine;
+            } else if (species == "broadleaf") {
+                sceneConfig.species = BonsaiSpecies::Broadleaf;
+            } else if (species == "mixed") {
+                sceneConfig.species = BonsaiSpecies::Mixed;
+            } else {
+                std::cerr << "--species must be pine, broadleaf or mixed" << std::endl;
+                return 1;
+            }
+        } else if (arg == "--soil-mound" && hasValue) {
+            sceneConfig.pot.soilMound = std::stof(argv[++i]);
         } else if (arg == "--pot" && hasValue) {
             sceneConfig.potObject = std::make_shared<BonsaiObject>(loadBonsaiObject(argv[++i]));
         } else if (arg == "--object" && hasValue) {

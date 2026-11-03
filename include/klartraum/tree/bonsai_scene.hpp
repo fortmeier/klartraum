@@ -113,6 +113,9 @@ struct BonsaiObjectPlacement {
     float yaw = 0.0f;         ///< radians about +y
 };
 
+/// Which tree types a planting holds.
+enum class BonsaiSpecies { Mixed, Broadleaf, Pine };
+
 struct BonsaiSceneConfig {
     BonsaiScale scale;
     uint32_t treeCount = 0;  ///< 0: from the scale; otherwise this many
@@ -125,6 +128,10 @@ struct BonsaiSceneConfig {
     /// takes the captured pot's outline (a rounded rectangle), rim height and width; the soil fills it.
     std::shared_ptr<const BonsaiObject> potObject;
     std::vector<BonsaiObjectPlacement> objects; ///< further objects on the soil, e.g. pumpkins
+    /// How bonsai-like the trees are, from 0 (natural) to 1 (thick, flared and curved trunk, surface roots, a wide
+    /// flat crown of foliage pads); negative: BonsaiScale::bonsaiStyle() of the scale.
+    float style = -1.0f;
+    BonsaiSpecies species = BonsaiSpecies::Mixed; ///< Mixed: every fourth tree a pine, the others broadleaf
 };
 
 /**
@@ -222,6 +229,9 @@ TreeTypeParams bonsaiPine();
 /// A tree type styled as a bonsai: a short, thick, curved trunk with spreading roots and a compact crown of
 /// more horizontal branches.
 TreeTypeParams bonsaiStyled(const TreeTypeParams& natural);
+/// A bonsai-styled pine with its needles in pads: few main branches, many short twigs spreading flat from them,
+/// densely needled in the dark green of old needles.
+TreeTypeParams bonsaiPinePads(const TreeTypeParams& styled);
 } // namespace tree_presets
 
 /// Every parameter of a and b mixed by t (0: a, 1: b).

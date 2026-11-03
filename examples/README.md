@@ -378,6 +378,9 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
 | `--pot FILE` | A captured pot in place of the procedural one: `object.spz` of `splat_training_example` or `object.obj` of `mesh_texture_fitting_example`. It is scaled to the procedural pot's length at its rim, and the soil fills it up to just below the rim |
+| `--style S` | How bonsai-like the trees are, 0 (natural) to 1 (thick, flared, S-curved trunk with surface roots, a wide crown; pines with dense pads of dark needles); default: from `--scale`, 1 at 0 fading to 0 at 0.21 |
+| `--species P` | `mixed` (default: every fourth tree a pine), `pine` or `broadleaf` |
+| `--soil-mound M` | How much the soil rises towards the middle of the pot (default 0.07) |
 | `--object FILE,X,Z,HEIGHT[,YAW]` | Place a captured object (`object.spz` or `object.obj`) on the soil at (X, Z), HEIGHT units tall, turned by YAW radians; repeatable |
 
 ```bash
@@ -397,7 +400,8 @@ to `--pot` for the mesh version:
 
 ```bash
 A=build/TestingOutput
-./build/examples/tree_bonsai_example --trees 2 --distance 5.5 --elevation 0.45 \
+./build/examples/tree_bonsai_example --trees 2 --species pine --style 1 --soil-mound 0.4 \
+    --distance 5.5 --elevation 0.45 \
     --pot $A/splat_training/bonsai/object.spz \
     --object $A/splat_training/pumpkin_closed_1/object.spz,-0.9,0.35,0.4,0.5 \
     --object $A/mesh_texture_fitting/pumpkin_closed_1/object.obj,-0.1,0.45,0.4,2.0
