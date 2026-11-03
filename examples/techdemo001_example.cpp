@@ -14,7 +14,8 @@
 //      the soil and turning to face the camera; the camera follows.
 //   2. Growth: the bonsai pine grows from a seedling, its trunk extending and branching out step by step.
 //   3. Days: the summer afternoon turns into night, then four days, one season each; the background is white by
-//      day and black by night.
+//      day and black by night, with a black sun by day and a white crescent moon by night where the light shines
+//      from.
 // Each chapter shows a caption with the work it builds on, lower left.
 //
 //   techdemo001_example [--pot FILE] [--pumpkin FILE] [--width 1280] [--height 720] [--fps 30]
@@ -41,6 +42,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/demo_sky_marks.hpp"
 #include "klartraum/demo_timeline.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/offscreen_target.hpp"
@@ -212,6 +214,23 @@ int main(int argc, char** argv) {
         std::ostringstream name;
         name << "frame_" << std::setw(4) << std::setfill('0') << frame << ".ppm";
         return outDir / "frames" / name.str();
+    };
+    // The sun as a black symbol by day and the moon as a white crescent by night, where they shine from, behind the
+    // scene; each fades with the background and as it nears the horizon.
+    const auto drawSky = [&](std::vector<uint8_t>& bgra, const glm::mat4& view, const TreeSky& sky, float background) {
+        const float radius = 0.028f * float(extent.height);
+        const SkyMark sun = skyMarkAt(view, sky.sunDirection, extent.width, extent.height);
+        if (sun.visible)
+            drawSunMark(bgra, extent.width, extent.height, sun.pixel, radius, glm::vec3(0.0f),
+                        background * smooth(sky.sunElevation / 0.08f), background);
+        const SkyMark moon = skyMarkAt(view, sky.moonDirection, extent.width, extent.height);
+        if (moon.visible) {
+            // Lit from below, on the side of the sun beneath the horizon.
+            const glm::vec3 right(view[0][0], view[1][0], view[2][0]);
+            const float side = glm::dot(right, sky.sunDirection) >= 0.0f ? 1.0f : -1.0f;
+            drawMoonMark(bgra, extent.width, extent.height, moon.pixel, radius, glm::vec2(side, 0.8f), glm::vec3(1.0f),
+                         (1.0f - background) * smooth(sky.moonElevation / 0.08f), background);
+        }
     };
     const auto finishFrame = [&](uint32_t frame, std::vector<uint8_t> bgra, float background) {
         const int chapter = timeline.chapterAt(frame);
@@ -462,28 +481,30 @@ int main(int argc, char** argv) {
             bonsai.getCamera()->ubo = cameraOf(pose, aspect);
             bonsai.getCamera()->update(0);
             bonsai.setView(pose.eye);
-            float background = 1.0f;
+            float background = 1.0f, timeOfDay = 0.5f, season = 2.0f;
             if (f < daysStart) {
                 // Quick at first, slowing down as the tree matures.
                 const float t = std::clamp(sinceGrowth / kChapters[2].seconds, 0.0f, 1.0f);
                 const float growth = 1.0f - (1.0f - t) * (1.0f - t);
                 setTrees(bonsai, scene, 0.02f + 0.98f * growth);
-                bonsai.setTime(sinceGrowth, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.3f * growth));
+                bonsai.setTime(sinceGrowth, timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.3f * growth));
             } else {
                 // The camera keeps orbiting.
                 const float seconds = float(f - daysStart) / fps;
                 setTrees(bonsai, scene, 1.0f);
-                const float timeOfDay =
+                timeOfDay =
                     seconds < afternoon ? 0.5f + 0.5f * seconds / afternoon : days.timeOfDayAt(seconds - afternoon);
-                const float season = seconds < afternoon ? days.seasons[0] : days.seasonAt(seconds - afternoon);
+                season = seconds < afternoon ? days.seasons[0] : days.seasonAt(seconds - afternoon);
                 bonsai.setTime(sinceGrowth, timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.4f));
                 background = backgroundAt(timeOfDay, season);
             }
             bonsai.setBackground(glm::vec3(background));
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
-                finishFrame(f, readImage(vc, frame->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent),
-                            background);
+                std::vector<uint8_t> image =
+                    readImage(vc, frame->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+                drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
+                finishFrame(f, std::move(image), background);
                 std::cout << "frame " << f << std::endl;
             }
         }
