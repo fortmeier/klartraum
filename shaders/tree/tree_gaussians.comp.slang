@@ -76,10 +76,11 @@ vec3 colorToSh0(vec3 c) {
 }
 
 // The colour as the classical renderer outputs it, for a surface at pos with
-// this normal; the pot (glaze) takes the light through the trees only, as there.
-vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal, bool glaze) {
+// this normal, the light read `lift` voxels out along it; the pot (glaze) takes
+// the light through the trees only, as there.
+vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal, bool glaze, float lift = 0.5f) {
     TreeRenderSettings s = settings[0];
-    vec3 at = pos + 0.5f * s.lightGridMin.w * normal;
+    vec3 at = pos + lift * s.lightGridMin.w * normal;
     vec2 light = glaze ? treeLightOfTreesAt(s, at) : treeLightAt(s, at);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
     return treeOutputColor(treeAtmosphere(color, pos, camera.cameraWorldPos.xyz, s), s).rgb;
@@ -153,7 +154,8 @@ void stemGaussian(uint i, uint segment, uint local) {
         }
     }
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normal, pos, settings[0].season.y));
-    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal, false), alpha);
+    // A voxel and a half out, clear of the solid wood a thick stem fills the light volume with.
+    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal, false, 1.5f), alpha);
 }
 
 // What a Gaussian of opacity `alpha` and in-plane sigmas `sx`, `sz` (leaf lengths) covers on screen, in square

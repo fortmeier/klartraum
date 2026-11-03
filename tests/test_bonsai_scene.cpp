@@ -66,6 +66,9 @@
  * - liveOccludersFollowTheirVertices: an occluder read from a vertex buffer every frame (a sphere's vertices, as a
  *   MeshMorph's training writes them) shadows the soil below it and its own underside, and its shadow follows when
  *   the vertices change, with nothing rebuilt
+ * - trunksCastShadowsOfTheirWidth: in the morning sun, the shadow the bonsai's trunk casts on the soil from a little
+ *   above its base is, across its band, about as wide as the trunk there, and the trunk's sunny side stays lit where
+ *   the stems read their light
  * - movingShadowsGlide: a moving ball's shadow on the soil changes little from one small step of the ball to the
  *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
@@ -1712,4 +1715,72 @@ TEST_F(BonsaiRenderingTest, liveOccludersFollowTheirVertices) {
     EXPECT_GT(top, 0.9f);
     EXPECT_GT(leftBehind, 0.9f);
     EXPECT_LT(followed, 0.3f);
+}
+
+TEST_F(BonsaiRenderingTest, trunksCastShadowsOfTheirWidth) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 1;
+    sceneConfig.species = BonsaiSpecies::Pine;
+    sceneConfig.style = 1.0f;
+    sceneConfig.treeSize = 1.25f;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{64, 64};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(0.0f, 1.0f, 4.0f), scene.focus, 40.0f, 1.0f);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, kMorning, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const TreeRenderSettings s = bonsai.getSettings().values().at(0);
+    const glm::vec3 sun = glm::normalize(glm::vec3(s.sun));
+    const auto light = bonsai.getLightVolume().readLight();
+
+    // The trunk's ring nearest to 0.12 units above its base.
+    const TreeRecords records = bonsai.getGenerator().readRecords();
+    const glm::vec3 base(scene.trees.front().posScale);
+    glm::vec3 ring(0.0f), axis(0.0f, 1.0f, 0.0f);
+    float radius = 0.0f, best = 1e9f;
+    for (const SegmentRecord& d : records.segments) {
+        if (tree::treeLevel(d.ids) != 0)
+            continue;
+        const float off = std::abs(d.toPosRadius.y - base.y - 0.12f);
+        if (off < best) {
+            best = off;
+            ring = glm::vec3(d.toPosRadius);
+            radius = d.toPosRadius.w;
+            axis = glm::normalize(glm::vec3(d.toPosRadius) - glm::vec3(d.fromPosRadius));
+        }
+    }
+    ASSERT_GT(radius, 2.0f * s.lightGridMin.w) << "a trunk thicker than a few voxels";
+    // Its shadow on the soil, across the band the trunk's shadow makes (the trunk leans, so the band need not run
+    // along the sun's direction).
+    const auto onSoil = [&](glm::vec3 p) { return p - sun * ((p.y - scene.soilHeight(p.x, p.z)) / sun.y); };
+    glm::vec3 shadow = onSoil(ring);
+    glm::vec3 band = onSoil(ring + 0.1f * axis) - shadow;
+    band.y = 0.0f;
+    const glm::vec3 across = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), glm::normalize(band)));
+    const float step = 0.25f * s.lightGridMin.w;
+    float shaded = 0.0f;
+    for (float t = -3.0f * radius; t <= 3.0f * radius; t += step) {
+        glm::vec3 p = shadow + t * across;
+        p.y = scene.soilHeight(p.x, p.z) + 0.03f;
+        if (lightAt(light, s, p).z < 0.5f)
+            shaded += step;
+    }
+    std::cout << "trunk radius " << radius << " at " << ring.y - base.y << " above its base: shadow " << shaded
+              << " wide" << std::endl;
+    EXPECT_GT(shaded, 1.4f * radius);
+    // The diameter, and soft edges of about two voxels where the light volume interpolates.
+    EXPECT_LT(shaded, 2.0f * radius + 4.0f * s.lightGridMin.w);
+    // The trunk's sunny side, where the stems read their light a voxel and a half out, is as lit as farther out.
+    const glm::vec3 sunward = glm::normalize(sun - glm::dot(sun, axis) * axis);
+    const float near = lightAt(light, s, ring + (radius + 1.5f * s.lightGridMin.w) * sunward).x;
+    const float far = lightAt(light, s, ring + (radius + 4.0f * s.lightGridMin.w) * sunward).x;
+    std::cout << "sun at the trunk's sunny side " << near << ", farther out " << far << std::endl;
+    EXPECT_GT(near, 0.85f * far);
 }

@@ -55,7 +55,8 @@ void main() {
     }
     // Snow on the upper side of the branches.
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normalize(inNormal), inWorldPos, s.season.y));
-    vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
+    // A voxel and a half out, clear of the solid wood a thick stem fills the light volume with.
+    vec2 light = treeLightAt(s, inWorldPos + 1.5f * s.lightGridMin.w * normal);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
     outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s);
 }
