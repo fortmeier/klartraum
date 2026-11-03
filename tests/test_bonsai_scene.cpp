@@ -61,6 +61,8 @@
  * - capturedObjectsShadowEachOther: a ball between the sun and another ball darkens the other's sunny side
  * - movingObjectsCastShadowsWhereTheyAre: a moving object's shadow on the soil appears where its transform puts it,
  *   follows it when it moves, and is gone when its transform has scale 0
+ * - movingShadowsGlide: a moving ball's shadow on the soil changes little from one small step of the ball to the
+ *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
  *   occluder at the same place: the side towards the morning sun keeps the mesh's colour under the light's tint,
  *   the side away from it is clearly darker
@@ -1518,4 +1520,59 @@ TEST_F(BonsaiRenderingTest, treeShadowsStayOffAPotsShadowSide) {
               << " (" << shadedByTree << " of " << farWall.size() << " points in the tree's shadow)" << std::endl;
     EXPECT_LT(total / count, 2.0);
     EXPECT_LT(largest, 12.0);
+}
+
+TEST_F(BonsaiRenderingTest, movingShadowsGlide) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 1;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{64, 64};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.movingObjects.push_back(greyBall(false));
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(0.0f, 1.0f, 4.0f), scene.focus, 40.0f, 1.0f);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, kMorning, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    const TreeRenderSettings s = bonsai.getSettings().values().at(0);
+    const glm::vec3 sun = glm::normalize(glm::vec3(s.sun));
+    // Soil points across the ball's shadow, a little above the soil.
+    const glm::vec2 at(0.2f, 0.0f);
+    const float lift = 0.4f;
+    std::vector<glm::vec3> soil;
+    for (int i = -20; i <= 20; ++i) {
+        const glm::vec3 below(at.x, scene.soilHeight(at.x, at.y), at.y);
+        glm::vec3 p = below + glm::vec3(0.0f, lift, 0.0f) - sun * (lift / sun.y) + glm::vec3(0.01f * i, 0.0f, 0.0f);
+        p.y = scene.soilHeight(p.x, p.z) + 0.03f;
+        soil.push_back(p);
+    }
+    std::vector<float> previous;
+    float largest = 0.0f, deepest = 1.0f;
+    for (int step = 0; step <= 40; ++step) {
+        // The ball moves 0.4 voxels a step along x.
+        const glm::vec3 centre(at.x + 0.014f * float(step - 20), scene.soilHeight(at.x, at.y) + lift, at.y);
+        bonsai.setMovingObject(0,
+                               glm::translate(glm::mat4(1.0f), centre) * glm::scale(glm::mat4(1.0f), glm::vec3(0.15f)));
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const auto light = bonsai.getLightVolume().readLight();
+        std::vector<float> sunAt;
+        for (const glm::vec3& p : soil) {
+            const glm::vec4 l = lightAt(light, s, p);
+            sunAt.push_back(l.x / std::max(l.z, 1e-4f));
+            deepest = std::min(deepest, sunAt.back());
+        }
+        if (!previous.empty())
+            for (size_t i = 0; i < soil.size(); ++i)
+                largest = std::max(largest, std::abs(sunAt[i] - previous[i]));
+        previous = sunAt;
+    }
+    std::cout << "moving shadow: largest change of the sun on the soil per step " << largest << ", deepest shadow "
+              << deepest << std::endl;
+    EXPECT_LT(deepest, 0.3f);
+    // A voxel switching on and off changes the sun by half its range at once; a soft edge 0.4 voxels on, by a third.
+    EXPECT_LT(largest, 0.3f);
 }
