@@ -9,6 +9,9 @@
  * - icosphereIsClosedAndOutward: the icosphere is a closed surface (Euler characteristic 2, every edge shared by two
  *   triangles), its triangles face outwards, and its corner texture coordinates lie in [0, 2) x [0, 1] with no
  *   triangle spanning more than a quarter turn in u
+ * - objAndTextureRoundTrip: a pumpkin with its texture written with writeObj() and writeTexturePpm() reads back
+ *   with readObj() and readTexturePpm(): positions, triangles and corner coordinates within the printed precision,
+ *   texels within 8 bits, and the texture path from the material file
  * - laplacianRegularizerMatchesFiniteDifferences: the vertex adjacency of the icosphere is symmetric with five or
  *   six neighbours per vertex, and the Laplacian smoothness loss of a perturbed icosphere and its gradients equal a
  *   CPU evaluation and its central differences
@@ -459,6 +462,33 @@ TEST_F(DifferentiableRasterTest, icosphereIsClosedAndOutward) {
         }
         EXPECT_LT(hi - lo, 0.25f) << "triangle " << t;
     }
+}
+
+TEST_F(DifferentiableRasterTest, objAndTextureRoundTrip) {
+    const raster::TriangleMesh mesh = raster::syntheticPumpkin(2);
+    const std::vector<float> texture = raster::syntheticPumpkinTexture(16, 8);
+    const std::filesystem::path directory = "build/TestingOutput/obj_round_trip";
+    std::filesystem::create_directories(directory);
+    raster::writeTexturePpm(texture, 16, 8, directory / "texture.ppm");
+    raster::writeObj(mesh, directory / "mesh.obj", "texture.ppm");
+    std::filesystem::path texturePath;
+    const raster::TriangleMesh loaded = raster::readObj(directory / "mesh.obj", &texturePath);
+    ASSERT_EQ(loaded.positions.size(), mesh.positions.size());
+    ASSERT_EQ(loaded.triangles.size(), mesh.triangles.size());
+    ASSERT_EQ(loaded.cornerUvs.size(), mesh.cornerUvs.size());
+    for (size_t i = 0; i < mesh.positions.size(); ++i)
+        EXPECT_LT(glm::length(loaded.positions[i] - mesh.positions[i]), 1e-4f) << i;
+    for (size_t t = 0; t < mesh.triangles.size(); ++t)
+        EXPECT_EQ(loaded.triangles[t], mesh.triangles[t]) << t;
+    for (size_t c = 0; c < mesh.cornerUvs.size(); ++c)
+        EXPECT_LT(glm::length(loaded.cornerUvs[c] - mesh.cornerUvs[c]), 1e-4f) << c;
+    EXPECT_EQ(texturePath, directory / "texture.ppm");
+    uint32_t width = 0, height = 0;
+    const std::vector<float> texels = raster::readTexturePpm(texturePath, width, height);
+    ASSERT_EQ(width, 16u);
+    ASSERT_EQ(height, 8u);
+    for (size_t i = 0; i < texels.size(); ++i)
+        EXPECT_NEAR(texels[i], i % 4 == 3 ? 1.0f : texture[i], 0.5f / 255.0f + 1e-6f) << i;
 }
 
 TEST_F(DifferentiableRasterTest, laplacianRegularizerMatchesFiniteDifferences) {

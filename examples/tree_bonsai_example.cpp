@@ -13,6 +13,7 @@
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--moss-patches 250]
 //                       [--enhancer MODEL.onnx] [--out-dir build/TestingOutput/tree_bonsai]
+//                       [--pot FILE] [--object FILE,X,Z,HEIGHT[,YAW]]...
 //
 // The trees are generated on the GPU every frame; per frame the CPU only sets
 // the camera, the time, the season and the wind. Without --video, view i is
@@ -28,6 +29,9 @@
 // neural enhancer of distant trees (TreeEnhancer, a model of
 // scripts/neural/train_tree_enhancer.py at the image's size) after it; its
 // images go to <out-dir>/frames/enhanced_<frame>.ppm beside the Gaussian ones.
+// With --pot, a captured pot (object.spz of splat_training_example or object.obj of
+// mesh_texture_fitting_example) replaces the procedural one, and --object places
+// captured objects on the soil (at x, z, HEIGHT units tall, turned by YAW radians).
 
 #include <algorithm>
 #include <chrono>
@@ -38,6 +42,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -182,6 +187,24 @@ int main(int argc, char** argv) {
             fromFrame = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--to" && hasValue) {
             toFrame = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--pot" && hasValue) {
+            sceneConfig.potObject = std::make_shared<BonsaiObject>(loadBonsaiObject(argv[++i]));
+        } else if (arg == "--object" && hasValue) {
+            // FILE,X,Z,HEIGHT[,YAW]
+            std::stringstream fields(argv[++i]);
+            std::vector<std::string> parts;
+            for (std::string part; std::getline(fields, part, ',');)
+                parts.push_back(part);
+            if (parts.size() < 4) {
+                std::cerr << "--object needs FILE,X,Z,HEIGHT[,YAW]" << std::endl;
+                return 1;
+            }
+            BonsaiObjectPlacement placement;
+            placement.object = std::make_shared<BonsaiObject>(loadBonsaiObject(parts[0]));
+            placement.position = glm::vec2(std::stof(parts[1]), std::stof(parts[2]));
+            placement.height = std::stof(parts[3]);
+            placement.yaw = parts.size() > 4 ? std::stof(parts[4]) : 0.0f;
+            sceneConfig.objects.push_back(placement);
         } else if (arg == "--enhancer" && hasValue) {
             enhancerPath = argv[++i];
         } else if (arg == "--out-dir" && hasValue) {

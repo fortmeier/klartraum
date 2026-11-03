@@ -9,8 +9,8 @@
 //
 // Usage: splat_training_example --scene DIR [--steps N] [--display-view N]
 // Writes progress frames (a photo turned upright beside the splats seen upright from its side), residuals of four
-// training views and the trained Gaussians as a PLY file in scene coordinates to
-// build/TestingOutput/splat_training/<scene>/.
+// training views, the trained Gaussians as a PLY file in scene coordinates and as an SPZ file in the object's frame
+// (object.spz: its enclosing sphere the unit sphere, up +y) to build/TestingOutput/splat_training/<scene>/.
 
 #include <algorithm>
 #include <chrono>
@@ -183,7 +183,10 @@ int main(int argc, char** argv) {
         }
     }
     splatting::writeSplatPly(splatting::transformSplats(splats, sceneFromUnit), output / "splats.ply");
-    std::cout << "wrote " << output.string() << "/{frames/, residuals.ppm, splats.ply} (" << splats.size()
+    // The object in the frame it was trained in (its enclosing sphere the unit sphere, up +y), e.g. for placing it
+    // in another scene.
+    splatting::writeSplatSpz(splats, output / "object.spz");
+    std::cout << "wrote " << output.string() << "/{frames/, residuals.ppm, splats.ply, object.spz} (" << splats.size()
               << " Gaussians)" << std::endl;
     return 0;
 }

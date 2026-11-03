@@ -55,16 +55,6 @@ void writePpm(const std::filesystem::path& path, const std::vector<const float*>
             }
 }
 
-// Writes a texture of four floats per texel as a PPM.
-void writeTexture(const std::filesystem::path& path, const std::vector<float>& texels, uint32_t width,
-                  uint32_t height) {
-    std::ofstream out(path, std::ios::binary);
-    out << "P6\n" << width << " " << height << "\n255\n";
-    for (size_t i = 0; i < size_t(width) * height; ++i)
-        for (int c = 0; c < 3; ++c)
-            out.put(char(std::lround(std::clamp(texels[4 * i + c], 0.0f, 1.0f) * 255.0f)));
-}
-
 // Silhouette IoU (coverage above one half) and PSNR inside the object (both covered) of images against targets.
 std::pair<double, double> compare(const std::vector<float>& images, const std::vector<float>& targets) {
     int both = 0, either = 0, count = 0;
@@ -281,11 +271,15 @@ int main(int argc, char** argv) {
     raster::TriangleMesh fitted = training.mesh();
     for (auto& p : fitted.positions)
         p = glm::vec3(sceneFromUnit * glm::vec4(p, 1.0f));
-    writeTexture(output / "fitted_texture.ppm", training.texture(), options.textureWidth, options.textureHeight);
+    raster::writeTexturePpm(training.texture(), options.textureWidth, options.textureHeight,
+                            output / "fitted_texture.ppm");
+    // The object in the frame it was trained in (its enclosing sphere the unit sphere, up +y), e.g. for placing it
+    // in another scene.
+    raster::writeObj(training.mesh(), output / "object.obj", "fitted_texture.ppm");
     raster::writeObj(fitted, output / "fitted.obj", "fitted_texture.ppm");
     if (!truth.positions.empty())
         raster::writeObj(truth, output / "truth.obj");
-    std::cout << "wrote " << output.string() << "/{targets.ppm, frames/, fitted.obj, fitted_texture.ppm"
+    std::cout << "wrote " << output.string() << "/{targets.ppm, frames/, fitted.obj, object.obj, fitted_texture.ppm"
               << (truth.positions.empty() ? "" : ", truth.obj") << "}" << std::endl;
     return 0;
 }

@@ -33,6 +33,11 @@
  * - capturedGaussiansTakeSnow: treeGaussianNormal is the thinnest axis turned up; treeCapturedColor covers what
  *   faces up with snow in winter only and scales by tint and shade
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
+ * - capturedPotIsMeasured: a fitted pot mesh (tapered body on a saucer, a lid over its opening, a guessed bulge
+ *   underneath, turned about +y) loads with its rim height, foot, rim rectangle and turn found
+ * - capturedPotReplacesTheProceduralOne: with that pot the scene has no procedural pot; the captured one stands
+ *   on y = 0 with its rim's long axis along x and the procedural length, nothing of it above its rim or below its
+ *   foot, and the soil inside it; an object placed on the soil stands on it at its height
  * - classicalGeometryIsHiddenBehindSplats: a quad behind an opaque block of splats is hidden by it, a quad in
  *   front covers it, with the splats' depth output
  * - supersamplingSmoothsEdges: the classical render at 2x supersampling differs less between neighbouring pixels
@@ -46,9 +51,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/raster/mesh.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
 #include "klartraum/tree/tree_placement.hpp"
 
@@ -75,6 +84,47 @@ void addQuad(std::vector<TreeSceneVertex>& mesh, float x0, float x1, float y0, f
     const TreeSceneVertex a = vertex({x0, y0, z}, n, color), b = vertex({x1, y0, z}, n, color),
                           c = vertex({x1, y1, z}, n, color), d = vertex({x0, y1, z}, n, color);
     mesh.insert(mesh.end(), {a, b, c, a, c, d});
+}
+
+// A fitted pot mesh as mesh_texture_fitting_example would write it, turned by `yaw` about +y: rings of 128 points
+// at heights y with rectangular outlines of half sizes (x, z), from a guessed bulge underneath over a saucer and a
+// body widening to the rim at y = 0.5 to a lid over the opening; the rim's half sizes are 1.0 x 0.6.
+std::filesystem::path writeFittedPot(float yaw) {
+    std::vector<glm::vec3> levels; // y, half length, half width
+    levels.push_back({-0.2f, 0.2f, 0.15f});
+    levels.push_back({-0.1f, 0.4f, 0.3f});
+    for (int k = 0; k <= 4; ++k)
+        levels.push_back({0.0125f * float(k), 0.95f, 0.65f});
+    for (int k = 0; k <= 36; ++k) {
+        const float t = float(k) / 36.0f;
+        levels.push_back({0.05f + 0.45f * t, 0.8f + 0.2f * t, 0.52f + 0.08f * t});
+    }
+    for (int k = 1; k <= 12; ++k) {
+        const float t = float(k) / 12.0f;
+        levels.push_back({0.5f + 0.3f * t, 0.9f * (1.0f - t) + 0.05f * t, 0.55f * (1.0f - t) + 0.03f * t});
+    }
+    raster::TriangleMesh mesh;
+    const int around = 128;
+    const glm::mat4 turn = glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    for (const glm::vec3& level : levels)
+        for (int i = 0; i < around; ++i) {
+            const float angle = 2.0f * 3.14159265f * float(i) / float(around);
+            const glm::vec2 d(std::cos(angle), std::sin(angle));
+            const float r = 1.0f / std::max(std::abs(d.x) / level.y, std::abs(d.y) / level.z);
+            mesh.positions.push_back(glm::vec3(turn * glm::vec4(r * d.x, level.x, r * d.y, 1.0f)));
+        }
+    for (uint32_t l = 0; l + 1 < levels.size(); ++l)
+        for (uint32_t i = 0; i < uint32_t(around); ++i) {
+            const uint32_t a = l * around + i, b = l * around + (i + 1) % around;
+            for (const glm::uvec3 t : {glm::uvec3(a, a + around, b), glm::uvec3(b, a + around, b + around)}) {
+                mesh.triangles.push_back(t);
+                mesh.cornerUvs.insert(mesh.cornerUvs.end(), 3, glm::vec2(0.0f));
+            }
+        }
+    const std::filesystem::path path = "build/TestingOutput/bonsai_scene/fitted_pot.obj";
+    std::filesystem::create_directories(path.parent_path());
+    raster::writeObj(mesh, path);
+    return path;
 }
 
 } // namespace
@@ -427,6 +477,70 @@ TEST(BonsaiScene, lanternStandsOnTheSoil) {
     // The moss around the lantern lies on the soil, within the capture's own unevenness.
     std::nth_element(heights.begin(), heights.begin() + heights.size() / 2, heights.end());
     EXPECT_NEAR(heights[heights.size() / 2], 0.0f, 0.02f);
+}
+
+TEST(BonsaiScene, capturedPotIsMeasured) {
+    const BonsaiObject pot = loadBonsaiObject(writeFittedPot(0.4f).string());
+    // Slices are a fortieth of the height (-0.2 to 0.8) apart.
+    EXPECT_NEAR(pot.rimHeight, 0.5f, 0.03f);
+    EXPECT_NEAR(pot.footHeight, 0.0f, 0.03f);
+    EXPECT_NEAR(pot.rim.x, 1.0f, 0.03f);
+    EXPECT_NEAR(pot.rim.y, 0.6f, 0.03f);
+    EXPECT_NEAR(std::sin(pot.rim.z - 0.4f), 0.0f, 0.03f); // the long axis, either way along it
+    EXPECT_NEAR(glm::length(pot.rimCenter), 0.0f, 0.02f);
+    EXPECT_FALSE(pot.mesh.empty());
+    EXPECT_TRUE(pot.gaussians.empty());
+}
+
+TEST(BonsaiScene, capturedPotReplacesTheProceduralOne) {
+    auto pot = std::make_shared<BonsaiObject>(loadBonsaiObject(writeFittedPot(0.4f).string()));
+    BonsaiSceneConfig config;
+    config.potObject = pot;
+    config.objects.push_back({pot, glm::vec2(-0.5f, 0.2f), 0.3f, 0.0f});
+    const BonsaiScene scene = makeBonsaiScene(config);
+    const float potScale = config.pot.halfLength / pot->rim.x;
+    EXPECT_NEAR(scene.config.pot.halfLength, config.pot.halfLength, 1e-6f);
+    EXPECT_NEAR(scene.config.pot.halfWidth, pot->rim.y * potScale, 1e-4f);
+    EXPECT_NEAR(scene.config.pot.height, (pot->rimHeight - pot->footHeight) * potScale, 1e-4f);
+    // The captured triangles: first the pot's, then the object's (it has more than the pot keeps).
+    std::vector<glm::vec3> captured;
+    int glaze = 0, soil = 0;
+    for (const TreeSceneVertex& v : scene.mesh) {
+        glaze += v.color.w == TREE_MATERIAL_GLAZE;
+        if (v.color.w == TREE_MATERIAL_MOSS) {
+            ++soil;
+            EXPECT_LT(scene.potMeasure(v.pos.x, v.pos.z), 1.0f);
+            EXPECT_LT(v.pos.y, scene.config.pot.height + scene.config.pot.soilMound); // mounded towards the middle
+        }
+        if (v.color.w == TREE_MATERIAL_CAPTURED)
+            captured.emplace_back(v.pos);
+    }
+    EXPECT_EQ(glaze, 0);
+    EXPECT_GT(soil, 0);
+    const size_t objectCorners = pot->mesh.size();
+    ASSERT_GT(captured.size(), objectCorners);
+    const std::vector<glm::vec3> potCorners(captured.begin(), captured.end() - objectCorners);
+    glm::vec3 low(1e9f), high(-1e9f);
+    for (const glm::vec3& p : potCorners) {
+        low = glm::min(low, p);
+        high = glm::max(high, p);
+    }
+    const float margin = 0.03f * scene.config.pot.height;
+    EXPECT_GT(low.y, -margin);                           // nothing below the foot
+    EXPECT_LT(high.y, scene.config.pot.height + margin); // nor above the rim: the lid is gone
+    // The rim's long axis along x, as long as the procedural pot; across, the saucer (0.65) is wider than the rim.
+    EXPECT_NEAR(std::max(high.x, -low.x), config.pot.halfLength, 0.03f * config.pot.halfLength);
+    EXPECT_NEAR(std::max(high.z, -low.z), 0.65f * potScale, 0.03f * config.pot.halfLength);
+    // The object stands on the soil, 0.3 tall, sunk by 5 % of its height.
+    glm::vec3 objectLow(1e9f), objectHigh(-1e9f);
+    for (auto p = captured.end() - objectCorners; p != captured.end(); ++p) {
+        objectLow = glm::min(objectLow, *p);
+        objectHigh = glm::max(objectHigh, *p);
+    }
+    EXPECT_NEAR(objectHigh.y - objectLow.y, 0.3f, 0.01f);
+    EXPECT_NEAR(objectLow.y, scene.soilHeight(-0.5f, 0.2f) - 0.015f, 0.01f);
+    EXPECT_NEAR(0.5f * (objectLow.x + objectHigh.x), -0.5f, 0.02f);
+    EXPECT_NEAR(0.5f * (objectLow.z + objectHigh.z), 0.2f, 0.02f);
 }
 
 class BonsaiRenderingTest : public ::testing::Test {

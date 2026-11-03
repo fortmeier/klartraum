@@ -281,11 +281,19 @@ void surfelGaussian(uint slot, uint index) {
     float spin = 2.0f * TREE_PI * treeRand(index, 0x79u);
     vec4 rot = normalize(qmul(qfromZ(normal), qaxis(vec3(0.0f, 0.0f, 1.0f), spin)));
     float spacing = v.pos.w;
+    vec3 scale = vec3(0.9f * spacing, 0.9f * spacing, 0.08f * spacing);
+    if (v.color.w == TREE_MATERIAL_CAPTURED) {
+        // Tinted like the captured Gaussians (see main()).
+        TreeRenderSettings s = settings[0];
+        float shade = treeCapturedShade(s, treeLightOfTreesAt(s, v.pos.xyz + 0.5f * s.lightGridMin.w * normal));
+        writeGaussian(slot, v.pos.xyz, rot, scale, treeCapturedColor(v.color.rgb, normal, v.pos.xyz, shade, s), 0.95f);
+        return;
+    }
     // Finer than the surfels' spacing, the structure is averaged.
     vec3 albedo = treeSceneAlbedoDetail(v.color, v.pos.xyz, 0.0f);
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normal, v.pos.xyz, settings[0].season.y));
-    writeGaussian(slot, v.pos.xyz, rot, vec3(0.9f * spacing, 0.9f * spacing, 0.08f * spacing),
-                  displayColor(albedo, v.pos.xyz, normal, v.color.w == TREE_MATERIAL_GLAZE), 0.95f);
+    writeGaussian(slot, v.pos.xyz, rot, scale, displayColor(albedo, v.pos.xyz, normal, v.color.w == TREE_MATERIAL_GLAZE),
+                  0.95f);
 }
 
 [shader("compute")]

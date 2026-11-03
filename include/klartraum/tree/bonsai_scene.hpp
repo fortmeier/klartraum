@@ -6,6 +6,8 @@
 #define KLARTRAUM_TREE_BONSAI_SCENE_HPP
 
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -77,6 +79,40 @@ struct BonsaiScale {
     float forestShare() const;
 };
 
+/**
+ * @brief An object to place in the bonsai scene, in its own frame: up +y, e.g. the unit sphere frame the fitting
+ * examples export (object.spz of splat_training_example, object.obj of mesh_texture_fitting_example).
+ */
+struct BonsaiObject {
+    std::vector<Gaussian3D> gaussians; ///< as captured Gaussians, if any
+    std::vector<TreeSceneVertex> mesh; ///< triangles of TREE_MATERIAL_CAPTURED, if any
+    glm::vec3 low{0.0f}, high{0.0f};   ///< bounds of what it shows (Gaussians: of the opaque ones, robustly)
+    /// Its rim: the highest level whose horizontal cross-section is at least 0.9 times the widest of its upper half
+    /// (a pot's rim, below a fitted mesh's lid over its opening).
+    float rimHeight = 0.0f;
+    /// Its foot: the lowest level whose cross-section is at least half the widest (below it, a fitted mesh's guess
+    /// at an unseen underside).
+    float footHeight = 0.0f;
+    /// The smallest rectangle around the rim: x its half length, y its half width, z the angle (radians about +y) of
+    /// its long axis from +x.
+    glm::vec3 rim{0.0f};
+    glm::vec2 rimCenter{0.0f}; ///< x, z of the middle of that rectangle
+};
+
+/**
+ * @brief Loads an object from an SPZ file (Gaussians, read without coordinate conversion) or a Wavefront OBJ file with
+ * its diffuse map (writeObj(), writeTexturePpm(): a mesh coloured from the texture at its corners).
+ */
+BonsaiObject loadBonsaiObject(const std::string& path);
+
+/** @brief Where an object stands on the soil. */
+struct BonsaiObjectPlacement {
+    std::shared_ptr<const BonsaiObject> object;
+    glm::vec2 position{0.0f}; ///< x, z on the soil
+    float height = 0.3f;      ///< of the object, in units (the lantern is about 0.28 tall at s = 0)
+    float yaw = 0.0f;         ///< radians about +y
+};
+
 struct BonsaiSceneConfig {
     BonsaiScale scale;
     uint32_t treeCount = 0;  ///< 0: from the scale; otherwise this many
@@ -85,6 +121,10 @@ struct BonsaiSceneConfig {
     BonsaiPot pot;
     glm::vec3 lanternPosition{0.72f, 0.0f, 0.36f}; ///< y is taken from the soil
     float lanternYaw = 0.6f;                       ///< radians about +y
+    /// A captured pot in place of the procedural one: scaled to the procedural pot's length at its rim, which then
+    /// takes the captured pot's outline (a rounded rectangle), rim height and width; the soil fills it.
+    std::shared_ptr<const BonsaiObject> potObject;
+    std::vector<BonsaiObjectPlacement> objects; ///< further objects on the soil, e.g. pumpkins
 };
 
 /**
@@ -98,7 +138,8 @@ struct BonsaiScene {
     BonsaiSceneConfig config;
     std::vector<TreeTypeParams> types;
     std::vector<TreeInstance> trees;
-    std::vector<TreeSceneVertex> mesh; ///< pot and soil, a triangle list
+    std::vector<TreeSceneVertex> mesh;       ///< pot, soil and the objects' meshes, a triangle list
+    std::vector<Gaussian3D> objectGaussians; ///< the captured pot's and the objects' Gaussians, placed
     /// Puts the lantern capture (Y up, its ground at y = 0) on the soil.
     glm::quat lanternRotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 lanternTranslation{0.0f};

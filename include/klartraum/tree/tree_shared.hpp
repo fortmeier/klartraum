@@ -965,6 +965,9 @@ TREE_FN TreeSite treeSiteAt(TreeTerrainParams t, TreePlacementParams p, int cx, 
 #define TREE_MATERIAL_MOSS 1.0f
 #define TREE_MATERIAL_WOOD 2.0f
 #define TREE_MATERIAL_GLAZE 3.0f
+// A captured object (e.g. fitted to photographs): its albedo is the photographs' colour, light included, so it is
+// tinted like captured Gaussians (treeCapturedColor()) instead of lit.
+#define TREE_MATERIAL_CAPTURED 4.0f
 
 // Where moss grows on the soil: patches a few centimetres wide at the
 // lantern's scale (it is 0.28 tall), 0 bare soil, 1 moss.

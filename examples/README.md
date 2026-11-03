@@ -263,7 +263,9 @@ PSNR of a held-out view. It writes the following to
 `build/TestingOutput/mesh_texture_fitting/`: three target views, a progress
 frame per epoch in `frames/` (the held-out target beside the current fit), and
 the fitted mesh with its texture (`fitted.obj`, `.mtl`, `fitted_texture.ppm`)
-next to the true mesh.
+next to the true mesh. `object.obj` holds the fitted mesh in the frame it was
+trained in: its enclosing sphere is the unit sphere and up is +y. This is the
+form `tree_bonsai_example` places objects in.
 
 | Option | Meaning |
 |---|---|
@@ -319,7 +321,9 @@ scene's training and validation views. It writes the following to
 `build/TestingOutput/splat_training/<scene>/`: progress frames (a photo turned
 upright beside the splats seen upright from its side), residuals of four
 training views, and the Gaussians as `splats.ply` in scene coordinates, readable
-by common splat viewers.
+by common splat viewers. `object.spz` holds the Gaussians in the frame they were
+trained in (enclosing sphere the unit sphere, up +y), the form
+`tree_bonsai_example` places objects in.
 
 | Option | Meaning |
 |---|---|
@@ -373,6 +377,8 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--from N`, `--to M` | Render only the video frames N to M - 1 |
 | `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
+| `--pot FILE` | A captured pot in place of the procedural one: `object.spz` of `splat_training_example` or `object.obj` of `mesh_texture_fitting_example`. It is scaled to the procedural pot's length at its rim, and the soil fills it up to just below the rim |
+| `--object FILE,X,Z,HEIGHT[,YAW]` | Place a captured object (`object.spz` or `object.obj`) on the soil at (X, Z), HEIGHT units tall, turned by YAW radians; repeatable |
 
 ```bash
 ./build/examples/tree_bonsai_example --views 8 --width 1920 --height 1080
@@ -381,6 +387,20 @@ scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_flyin --scale 
     --ground -1.04,0.15,1.7,120   # from outside the pot down onto a meadow
 scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_forest --scale 1 --fly-in 24 \
     --azimuth -2.09               # over a field into the forest, among the trunks
+```
+
+The fitting examples' objects can join the scene. For example, with the bonsai
+pot and the pumpkin trained on photographs (`splat_training_example`,
+`mesh_texture_fitting_example`), this command sets the splatted pot with two
+trees, a splatted pumpkin and a mesh pumpkin. Pass the mesh pot's `object.obj`
+to `--pot` for the mesh version:
+
+```bash
+A=build/TestingOutput
+./build/examples/tree_bonsai_example --trees 2 --distance 5.5 --elevation 0.45 \
+    --pot $A/splat_training/bonsai/object.spz \
+    --object $A/splat_training/pumpkin_closed_1/object.spz,-0.9,0.35,0.4,0.5 \
+    --object $A/mesh_texture_fitting/pumpkin_closed_1/object.obj,-0.1,0.45,0.4,2.0
 ```
 
 ### `tree_bonsai_explore_example`

@@ -4,11 +4,18 @@
 
 #include "klartraum/tree/bonsai_scene.hpp"
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include "klartraum/raster/mesh.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/tree/tree_placement.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <functional>
+#include <limits>
 #include <stdexcept>
 
 namespace klartraum {
@@ -63,6 +70,123 @@ void addSurface(std::vector<TreeSceneVertex>& mesh, const SurfaceFn& surface, in
 }
 
 float hashUnit(uint32_t seed, uint32_t key) { return tree::treeRand(seed, key); }
+
+// The value below which `fraction` of `values` lie.
+float quantile(std::vector<float> values, float fraction) {
+    const size_t k = std::min(values.size() - 1, size_t(fraction * float(values.size() - 1) + 0.5f));
+    std::nth_element(values.begin(), values.begin() + k, values.end());
+    return values[k];
+}
+
+// The smallest rectangle (robustly: 1 % to 99 % of the points along each side) around `points` in the plane:
+// x its half length, y its half width, z the angle about +y of its long axis from +x; and its middle.
+std::pair<glm::vec3, glm::vec2> smallestRectangle(const std::vector<glm::vec2>& points) {
+    float bestArea = std::numeric_limits<float>::max();
+    std::pair<glm::vec3, glm::vec2> best;
+    for (int step = 0; step < 90; ++step) {
+        const float angle = float(step) * kPi / 180.0f;
+        const glm::vec2 along(std::cos(angle), std::sin(angle)), across(-along.y, along.x);
+        std::vector<float> a, b;
+        for (const auto& p : points) {
+            a.push_back(glm::dot(p, along));
+            b.push_back(glm::dot(p, across));
+        }
+        const float a0 = quantile(a, 0.01f), a1 = quantile(a, 0.99f), b0 = quantile(b, 0.01f), b1 = quantile(b, 0.99f);
+        if ((a1 - a0) * (b1 - b0) >= bestArea)
+            continue;
+        bestArea = (a1 - a0) * (b1 - b0);
+        const glm::vec2 middle = 0.5f * (a0 + a1) * along + 0.5f * (b0 + b1) * across;
+        // The long axis (x, z) = along or across; turning +x by `yaw` about +y gives (cos yaw, -sin yaw).
+        const bool alongIsLong = a1 - a0 >= b1 - b0;
+        const glm::vec2 axis = alongIsLong ? along : across;
+        best = {glm::vec3(0.5f * std::max(a1 - a0, b1 - b0), 0.5f * std::min(a1 - a0, b1 - b0),
+                          std::atan2(-axis.y, axis.x)),
+                middle};
+    }
+    return best;
+}
+
+// Bounds (0.5 % to 99.5 % per axis, so stray Gaussians and spikes hardly count) and the rim.
+void measureObject(BonsaiObject& object, const std::vector<glm::vec3>& points) {
+    if (points.empty())
+        throw std::runtime_error("loadBonsaiObject: the object is empty");
+    for (int axis = 0; axis < 3; ++axis) {
+        std::vector<float> values;
+        for (const auto& p : points)
+            values.push_back(p[axis]);
+        object.low[axis] = quantile(values, 0.005f);
+        object.high[axis] = quantile(values, 0.995f);
+    }
+    // Horizontal cross-sections: the area of the smallest rectangle around each slice.
+    const int slices = 40;
+    const float sliceHeight = (object.high.y - object.low.y) / float(slices);
+    std::vector<std::vector<glm::vec2>> slicePoints(slices);
+    for (const auto& p : points) {
+        const int k = int((p.y - object.low.y) / sliceHeight);
+        if (k >= 0 && k < slices)
+            slicePoints[k].emplace_back(p.x, p.z);
+    }
+    std::vector<float> area(slices, 0.0f);
+    float widest = 0.0f;
+    for (int k = 0; k < slices; ++k) {
+        if (slicePoints[k].size() < 20)
+            continue;
+        const glm::vec3 r = smallestRectangle(slicePoints[k]).first;
+        area[k] = 4.0f * r.x * r.y;
+        if (k >= slices / 2)
+            widest = std::max(widest, area[k]);
+    }
+    const float widestOfAll = *std::max_element(area.begin(), area.end());
+    int footSlice = 0;
+    while (footSlice < slices - 1 && area[footSlice] < 0.5f * widestOfAll)
+        ++footSlice;
+    object.footHeight = object.low.y + float(footSlice) * sliceHeight;
+    int rimSlice = slices - 1;
+    while (rimSlice > slices / 2 && area[rimSlice] < 0.9f * widest)
+        --rimSlice;
+    object.rimHeight = object.low.y + float(rimSlice + 1) * sliceHeight;
+    // The rim: the slices of its top 8 % of the height.
+    std::vector<glm::vec2> rimPoints;
+    for (int k = std::max(0, rimSlice - 2); k <= rimSlice; ++k)
+        rimPoints.insert(rimPoints.end(), slicePoints[k].begin(), slicePoints[k].end());
+    const auto [rectangle, middle] = smallestRectangle(rimPoints);
+    object.rim = rectangle;
+    object.rimCenter = middle;
+}
+
+// Appends `object` to the scene, mapped by `transform` (rotation about +y, uniform `scale`, translation).
+void placeObject(BonsaiScene& scene, const BonsaiObject& object, const glm::mat4& transform, float scale,
+                 const std::function<bool(const TreeSceneVertex*)>& keepTriangle = nullptr,
+                 const std::function<bool(const Gaussian3D&)>& keepGaussian = nullptr) {
+    const glm::quat turn = glm::quat_cast(glm::mat3(transform) / scale);
+    for (Gaussian3D g : object.gaussians) {
+        if (keepGaussian && !keepGaussian(g))
+            continue;
+        const glm::vec3 p = glm::vec3(transform * glm::vec4(g.position[0], g.position[1], g.position[2], 1.0f));
+        const glm::quat q = turn * glm::quat(g.rotation[3], g.rotation[0], g.rotation[1], g.rotation[2]);
+        g.position = {p.x, p.y, p.z};
+        g.rotation = {q.x, q.y, q.z, q.w};
+        for (float& axis : g.scale)
+            axis *= scale;
+        scene.objectGaussians.push_back(g);
+    }
+    for (size_t t = 0; t + 2 < object.mesh.size(); t += 3) {
+        if (keepTriangle && !keepTriangle(&object.mesh[t]))
+            continue;
+        for (size_t c = 0; c < 3; ++c) {
+            TreeSceneVertex v = object.mesh[t + c];
+            v.pos = glm::vec4(glm::vec3(transform * glm::vec4(glm::vec3(v.pos), 1.0f)), 0.0f);
+            v.normal = glm::vec4(turn * glm::vec3(v.normal), 0.0f);
+            scene.mesh.push_back(v);
+        }
+    }
+}
+
+// Maps an object so that its bottom centre `anchor` stands at `at`, turned by `yaw` about +y and scaled by `scale`.
+glm::mat4 objectTransform(glm::vec3 anchor, glm::vec3 at, float yaw, float scale) {
+    return glm::translate(glm::mat4(1.0f), at) * glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0.0f, 1.0f, 0.0f)) *
+           glm::scale(glm::mat4(1.0f), glm::vec3(scale)) * glm::translate(glm::mat4(1.0f), -anchor);
+}
 
 } // namespace
 
@@ -151,10 +275,69 @@ float BonsaiScene::potMeasure(float x, float z, float scale) const {
 
 float BonsaiScene::soilHeight(float x, float z) const { return tree::treeTerrainHeight(terrain, x, z); }
 
+BonsaiObject loadBonsaiObject(const std::string& path) {
+    BonsaiObject object;
+    std::vector<glm::vec3> points;
+    const std::string extension = std::filesystem::path(path).extension().string();
+    if (extension == ".spz") {
+        object.gaussians = loadGaussiansSpz(path, false);
+        for (const Gaussian3D& g : object.gaussians)
+            if (g.alpha > 0.5f)
+                points.emplace_back(g.position[0], g.position[1], g.position[2]);
+    } else if (extension == ".obj") {
+        std::filesystem::path texturePath;
+        const raster::TriangleMesh mesh = raster::readObj(path, &texturePath);
+        uint32_t width = 1, height = 1;
+        const std::vector<float> texels = texturePath.empty() ? std::vector<float>{0.6f, 0.6f, 0.6f, 1.0f}
+                                                              : raster::readTexturePpm(texturePath, width, height);
+        // Smooth normals: the area-weighted face normals around each vertex.
+        std::vector<glm::vec3> normals(mesh.positions.size(), glm::vec3(0.0f));
+        for (const auto& t : mesh.triangles) {
+            const glm::vec3 n =
+                glm::cross(mesh.positions[t.y] - mesh.positions[t.x], mesh.positions[t.z] - mesh.positions[t.x]);
+            for (int c = 0; c < 3; ++c)
+                normals[t[c]] += n;
+        }
+        // The texture bilinearly at a corner's coordinate: u wraps, v is clamped, texel centres at (i + 0.5) / size.
+        const auto sample = [&](glm::vec2 uv) {
+            const float x = uv.x * float(width) - 0.5f, y = uv.y * float(height) - 0.5f;
+            const float fx = std::floor(x), fy = std::floor(y);
+            const int w = int(width), h = int(height);
+            const int i0 = ((int(fx) % w) + w) % w, i1 = (i0 + 1) % w;
+            const int j0 = std::clamp(int(fy), 0, h - 1), j1 = std::clamp(int(fy) + 1, 0, h - 1);
+            const auto texel = [&](int i, int j) { return glm::make_vec3(&texels[4 * size_t(j * w + i)]); };
+            return glm::mix(glm::mix(texel(i0, j0), texel(i1, j0), x - fx),
+                            glm::mix(texel(i0, j1), texel(i1, j1), x - fx), y - fy);
+        };
+        for (size_t t = 0; t < mesh.triangles.size(); ++t)
+            for (int c = 0; c < 3; ++c) {
+                const uint32_t v = mesh.triangles[t][c];
+                object.mesh.push_back({glm::vec4(mesh.positions[v], 0.0f), glm::vec4(glm::normalize(normals[v]), 0.0f),
+                                       glm::vec4(sample(mesh.cornerUvs[3 * t + c]), TREE_MATERIAL_CAPTURED)});
+            }
+        points = mesh.positions;
+    } else {
+        throw std::runtime_error("loadBonsaiObject: " + path + " is neither .spz nor .obj");
+    }
+    measureObject(object, points);
+    return object;
+}
+
 BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     BonsaiScene scene;
     scene.config = config;
-    const BonsaiPot& pot = config.pot;
+    if (config.potObject) {
+        // The captured pot's rim gives the outline: its length kept from the procedural pot, a rounded rectangle.
+        const BonsaiObject& object = *config.potObject;
+        const float potScale = config.pot.halfLength / object.rim.x;
+        BonsaiPot& captured = scene.config.pot;
+        captured.halfWidth = object.rim.y * potScale;
+        captured.height = (object.rimHeight - object.footHeight) * potScale;
+        captured.exponent = 10.0f;
+        captured.wall = 0.04f;
+        captured.soilHeight = captured.height - 0.04f;
+    }
+    const BonsaiPot& pot = scene.config.pot;
     const float inner = innerScale(pot);
     const BonsaiScale& scale = config.scale;
     // Area of the superellipse |x/a|^e + |z/b|^e <= 1: 4ab Gamma(1 + 1/e)^2 / Gamma(1 + 2/e).
@@ -183,33 +366,40 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     const glm::vec4 glaze(pot.glaze, TREE_MATERIAL_GLAZE);
     const int around = 160;
 
+    const bool procedural = !config.potObject;
     // Outer wall: narrower at the foot, rounded towards the rim.
-    addSurface(
-        scene.mesh,
-        [&](float u, float v) {
-            const float scale = 0.9f + 0.1f * std::sqrt(v);
-            const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, scale);
-            return glm::vec3(p.x, v * pot.height, p.y);
-        },
-        around, 8, glaze, [](glm::vec3 p) { return glm::vec3(p.x, 0.0f, p.z); });
+    if (procedural) {
+        addSurface(
+            scene.mesh,
+            [&](float u, float v) {
+                const float scale = 0.9f + 0.1f * std::sqrt(v);
+                const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, scale);
+                return glm::vec3(p.x, v * pot.height, p.y);
+            },
+            around, 8, glaze, [](glm::vec3 p) { return glm::vec3(p.x, 0.0f, p.z); });
+    }
     // Rim: a rounded top from the outer to the inner edge.
-    addSurface(
-        scene.mesh,
-        [&](float u, float v) {
-            const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, 1.0f + (inner - 1.0f) * v);
-            return glm::vec3(p.x, pot.height + 0.012f * std::sin(kPi * v), p.y);
-        },
-        around, 4, glaze, [](glm::vec3) { return glm::vec3(0.0f, 1.0f, 0.0f); });
+    if (procedural) {
+        addSurface(
+            scene.mesh,
+            [&](float u, float v) {
+                const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, 1.0f + (inner - 1.0f) * v);
+                return glm::vec3(p.x, pot.height + 0.012f * std::sin(kPi * v), p.y);
+            },
+            around, 4, glaze, [](glm::vec3) { return glm::vec3(0.0f, 1.0f, 0.0f); });
+    }
     // Inner wall down to the soil.
     BonsaiScene& s = scene;
-    addSurface(
-        scene.mesh,
-        [&](float u, float v) {
-            const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, inner);
-            const float bottom = s.soilHeight(p.x, p.y) - 0.01f;
-            return glm::vec3(p.x, pot.height + (bottom - pot.height) * v, p.y);
-        },
-        around, 2, glaze, [](glm::vec3 p) { return glm::vec3(-p.x, 0.0f, -p.z); });
+    if (procedural) {
+        addSurface(
+            scene.mesh,
+            [&](float u, float v) {
+                const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, inner);
+                const float bottom = s.soilHeight(p.x, p.y) - 0.01f;
+                return glm::vec3(p.x, pot.height + (bottom - pot.height) * v, p.y);
+            },
+            around, 2, glaze, [](glm::vec3 p) { return glm::vec3(-p.x, 0.0f, -p.z); });
+    }
     // Soil with moss; a finer grid where a landscape rises from it.
     const bool relief = scene.terrain.relief.x > 0.0f;
     addSurface(
@@ -221,13 +411,15 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         relief ? 2 * around : around, relief ? 96 : 24, glm::vec4(0.075f, 0.11f, 0.025f, TREE_MATERIAL_MOSS),
         [](glm::vec3) { return glm::vec3(0.0f, 1.0f, 0.0f); });
     // The bottom, closing the pot for views from below.
-    addSurface(
-        scene.mesh,
-        [&](float u, float v) {
-            const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, 0.9f * v);
-            return glm::vec3(p.x, 0.0f, p.y);
-        },
-        around, 4, glaze, [](glm::vec3) { return glm::vec3(0.0f, -1.0f, 0.0f); });
+    if (procedural) {
+        addSurface(
+            scene.mesh,
+            [&](float u, float v) {
+                const glm::vec2 p = potOutline(pot, 2.0f * kPi * u, 0.9f * v);
+                return glm::vec3(p.x, 0.0f, p.y);
+            },
+            around, 4, glaze, [](glm::vec3) { return glm::vec3(0.0f, -1.0f, 0.0f); });
+    }
 
     // The lantern on the moss.
     scene.lanternRotation = glm::angleAxis(config.lanternYaw, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -236,6 +428,40 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     scene.lanternTranslation = glm::vec3(lantern.x, scene.soilHeight(lantern.x, lantern.z) - 0.008f, lantern.z);
     // The fire box is about 0.15 above the lantern's ground.
     scene.lanternFlame = scene.lanternTranslation + glm::vec3(0.0f, 0.15f * scene.lanternScale, 0.0f);
+
+    // The captured pot, its rim's long axis along x, its foot on y = 0. What lies below its foot or rises above the rim
+    // (a fitted mesh's lid over the opening, stray Gaussians) is left out, and so is what faces up just below it, where
+    // the soil lies.
+    if (config.potObject) {
+        const BonsaiObject& object = *config.potObject;
+        const float potScale = pot.halfLength / object.rim.x;
+        const glm::vec3 anchor(object.rimCenter.x, object.footHeight, object.rimCenter.y);
+        const float margin = 0.02f * (object.rimHeight - object.footHeight);
+        placeObject(
+            scene, object, objectTransform(anchor, glm::vec3(0.0f), -object.rim.z, potScale), potScale,
+            [&](const TreeSceneVertex* t) {
+                const glm::vec3 n = glm::cross(glm::vec3(t[1].pos - t[0].pos), glm::vec3(t[2].pos - t[0].pos));
+                const float y = (t[0].pos.y + t[1].pos.y + t[2].pos.y) / 3.0f;
+                return y < object.rimHeight + margin && y > object.footHeight - margin &&
+                       !(y > object.rimHeight - 4.0f * margin && n.y > 0.5f * glm::length(n));
+            },
+            [&](const Gaussian3D& g) {
+                return g.position[1] < object.rimHeight + margin && g.position[1] > object.footHeight - margin;
+            });
+    }
+    // The objects on the soil, sunk a little so that their unseen undersides disappear in it.
+    for (const BonsaiObjectPlacement& placement : config.objects) {
+        const BonsaiObject& object = *placement.object;
+        const float objectScale = placement.height / (object.high.y - object.low.y);
+        const glm::vec3 anchor(0.5f * (object.low.x + object.high.x), object.low.y,
+                               0.5f * (object.low.z + object.high.z));
+        const glm::vec2 at = placement.position;
+        placeObject(scene, object,
+                    objectTransform(anchor,
+                                    glm::vec3(at.x, scene.soilHeight(at.x, at.y) - 0.05f * placement.height, at.y),
+                                    placement.yaw, objectScale),
+                    objectScale);
+    }
 
     // Trees: a tall main tree off-centre at the back, the others around it,
     // smaller and leaning slightly outwards the farther away they stand.
@@ -251,7 +477,7 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         for (const TreeSite& site : nearestTreeSites(scene.terrain, scene.placement, middle, config.nearTrees)) {
             scene.trees.push_back(treeInstanceFor(site, scene.types, config.seed));
         }
-        scene.focus = glm::vec3(0.0f, 0.8f, 0.0f);
+        scene.focus = glm::vec3(0.0f, pot.soilHeight + 0.54f, 0.0f); // above the soil, among the trees
         return scene;
     }
     // A single tree stands near the middle; in a planting the main tree is off-centre at the back.
@@ -310,7 +536,7 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         inst.ids = glm::uvec4(type, config.seed * 977u + i, 0u, 0u);
         scene.trees.push_back(inst);
     }
-    scene.focus = glm::vec3(0.0f, 0.8f, 0.0f);
+    scene.focus = glm::vec3(0.0f, pot.soilHeight + 0.54f, 0.0f); // above the soil, among the trees
     return scene;
 }
 

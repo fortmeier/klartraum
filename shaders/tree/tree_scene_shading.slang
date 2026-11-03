@@ -7,11 +7,17 @@ import glsl;
 // Shading of the static scene surfaces (pot, soil, terrain) by their material
 // (TREE_MATERIAL_* in the w of `color`): fine detail that fades out where it
 // would be finer than about two pixels, moss cushions, snow, the light volume,
-// the point light and the glaze's highlight. The includer includes
+// the point light and the glaze's highlight; captured objects are tinted instead. The includer includes
 // tree_render_common.glsl, tree_shading.glsl and tree_light.glsl before.
 
 vec4 treeSceneColor(vec3 worldPos, vec3 surfaceNormal, vec4 color, TreeRenderSettings s) {
     vec3 normal = normalize(surfaceNormal);
+    if (color.w == TREE_MATERIAL_CAPTURED) {
+        // Shaded like the captured Gaussians it stands among (tint_gaussians.comp): by the trees' shadows only, as
+        // the photographs hold the object's own.
+        float shade = treeCapturedShade(s, treeLightOfTreesAt(s, worldPos + 0.5f * s.lightGridMin.w * normal));
+        return vec4(treeCapturedColor(color.rgb, normal, worldPos, shade, s), 1.0f);
+    }
     float detail = clamp(1.5f - 140.0f * length(fwidth(worldPos)), 0.0f, 1.0f);
     vec3 albedo = treeSceneAlbedoDetail(color, worldPos, detail);
     if (color.w == TREE_MATERIAL_MOSS && detail > 0.0f) {

@@ -89,11 +89,13 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     }
     settings = std::make_shared<HostValues<TreeRenderSettings>>(vulkanContext, std::vector<TreeRenderSettings>{values});
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
-    // The pot and the lantern cast shadows; the soil's gentle mound is left out, which would shadow itself
-    // in voxels this coarse.
+    // The captured pot and objects join the lantern.
+    lanternGaussians.insert(lanternGaussians.end(), scene.objectGaussians.begin(), scene.objectGaussians.end());
+    // The pot, the objects and the lantern cast shadows; the soil's gentle mound is left out, which would shadow
+    // itself in voxels this coarse.
     std::vector<TreeSceneVertex> potMesh;
     for (const TreeSceneVertex& v : scene.mesh) {
-        if (v.color.w == TREE_MATERIAL_GLAZE) {
+        if (v.color.w == TREE_MATERIAL_GLAZE || v.color.w == TREE_MATERIAL_CAPTURED) {
             potMesh.push_back(v);
         }
     }
