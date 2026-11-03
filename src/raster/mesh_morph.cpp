@@ -107,13 +107,23 @@ MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, co
     smoothing->setInput(shading, 7, 7);
     smoothing->setInput(vulkanContext.create<Tensor>(std::vector<uint32_t>{pixels, 4}), 8);
 
-    auto composite =
-        vulkanContext.create<GeneralComputation<CompositePushConstants>>("shaders/raster/composite_layer.comp.spv");
+    drawModel = std::make_shared<HostValues<glm::mat4>>(vulkanContext, std::vector<glm::mat4>{glm::mat4(1.0f)});
+    const bool lit = options.lightSettings.element && options.light.element;
+    auto composite = vulkanContext.create<GeneralComputation<CompositePushConstants>>(
+        lit ? "shaders/tree/tree_captured_layer.comp.spv" : "shaders/raster/composite_layer.comp.spv");
     composite->setName("MeshMorphComposite");
     composite->setPushConstants({{width, height}});
     composite->setGroupCount((width + 15) / 16, (height + 15) / 16, 1);
     composite->setInput(frame, 0);
     composite->setInput(smoothing, 1, 8);
+    if (lit) {
+        composite->setInput(pass, 2, 4);
+        composite->setInput(training->getPositions(), 3);
+        composite->setInput(training->getTriangles(), 4);
+        composite->setInput(drawModel, 5);
+        options.lightSettings.connectTo(*composite, 6);
+        options.light.connectTo(*composite, 7);
+    }
     composite->setImageLayoutTransition(0, frameLayout, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
                                         VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
@@ -146,6 +156,9 @@ void MeshMorph::setModel(const glm::mat4& worldFromMorph) {
     updateDrawCamera();
 }
 
-void MeshMorph::updateDrawCamera() { drawCamera->set(0, camera * model); }
+void MeshMorph::updateDrawCamera() {
+    drawCamera->set(0, camera * model);
+    drawModel->set(0, model);
+}
 
 } // namespace klartraum::raster

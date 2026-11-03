@@ -197,6 +197,8 @@ public:
     /// The classical renderer's render pass (its image and depth buffer), or nullptr.
     std::shared_ptr<RenderPass> getPass() const { return pass; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
+    /// The render settings as a buffer for other elements, e.g. a MeshMorph lit like the scene.
+    BufferRef getSettingsRef() const { return {settings, -1}; }
     /// Places moving object `index` (BonsaiRenderConfig::movingObjects) for the next frames: world from the object's
     /// own frame; a transform of scale 0 removes its shadow.
     void setMovingObject(uint32_t index, const glm::mat4& worldFromObject) {

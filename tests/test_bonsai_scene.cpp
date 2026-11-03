@@ -61,6 +61,9 @@
  * - capturedObjectsShadowEachOther: a ball between the sun and another ball darkens the other's sunny side
  * - movingObjectsCastShadowsWhereTheyAre: a moving object's shadow on the soil appears where its transform puts it,
  *   follows it when it moves, and is gone when its transform has scale 0
+ * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
+ *   occluder at the same place: the side towards the morning sun keeps the mesh's colour under the light's tint,
+ *   the side away from it is clearly darker
  **/
 
 #include <gtest/gtest.h>
@@ -74,6 +77,7 @@
 
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/raster/mesh.hpp"
+#include "klartraum/raster/mesh_morph.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
 #include "klartraum/tree/tree_placement.hpp"
 #include "klartraum/tree/tree_sky.hpp"
@@ -1187,4 +1191,82 @@ TEST_F(BonsaiRenderingTest, movingObjectsCastShadowsWhereTheyAre) {
     EXPECT_NEAR(second.x - first.x, 0.6f, 0.05f);
     EXPECT_NEAR(second.y - first.y, 0.0f, 0.05f);
     EXPECT_EQ(goneCount, 0);
+}
+
+TEST_F(BonsaiRenderingTest, litMorphShadesLikeTheScene) {
+    const TreeSky sky = treeSkyAt(kMorning, 2.0f);
+    const glm::vec3 sunAcross = glm::normalize(glm::vec3(sky.sunDirection.x, 0.0f, sky.sunDirection.z));
+    const glm::vec3 across = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), sunAcross));
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 1;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const glm::vec2 at(0.6f, -0.2f);
+    const float radius = 0.3f;
+    const glm::vec3 centre(at.x, scene.soilHeight(at.x, at.y) + radius + 0.05f, at.y);
+    const glm::mat4 model = glm::translate(glm::mat4(1.0f), centre) * glm::scale(glm::mat4(1.0f), glm::vec3(radius));
+
+    const VkExtent2D extent{320, 240};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    const std::vector<float> grey(4 * 64 * 32, 0.5f);
+    config.movingObjects.push_back(
+        std::make_shared<BonsaiObject>(bonsaiObjectFromMesh(raster::icosphere(4), grey, 64, 32)));
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+
+    // A grey sphere morphing towards grey Gaussians on the unit sphere: it stays a grey sphere.
+    auto targets = std::make_shared<GaussianDataStandard>(*vc, greyBall(true)->gaussians);
+    raster::MeshMorphOptions options;
+    for (int k = 0; k < 4; ++k) {
+        const float angle = float(k) * 1.5708f;
+        const glm::vec3 eye = 3.5f * glm::vec3(std::cos(angle), 0.3f, std::sin(angle));
+        CameraMVP view{};
+        view.model = glm::mat4(1.0f);
+        view.view = glm::lookAt(eye, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        view.proj = raster::perspective(0.8f, 1.0f, 0.1f, 20.0f);
+        view.cameraWorldPos = glm::vec4(eye, 1.0f);
+        options.views.push_back(view);
+    }
+    options.training.width = options.training.height = 64;
+    options.frame = extent;
+    options.lightSettings = bonsai.getSettingsRef();
+    options.light = bonsai.getLightVolume().getLight();
+    const VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    raster::MeshMorph morph(*vc, raster::icosphere(4), targets->buffers(), target, layout, bonsai.getOutput(), options);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(morph.getOutput());
+    bonsai.initialize(1);
+    morph.initialize();
+    morph.getTraining().setTexture(grey);
+
+    setCamera(bonsai.getCamera()->ubo, centre + 2.0f * across, centre, 30.0f, float(extent.width) / extent.height);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, kMorning, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    bonsai.setMovingObject(0, model);
+    const glm::mat4 clipFromWorld = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view;
+    morph.setCamera(clipFromWorld);
+    morph.setModel(model);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const auto image = readImage(*vc, target->getImage(0), layout, extent);
+    writePpm("bonsai_lit_morph", image, extent);
+    const glm::vec3 tint = glm::vec3(bonsai.getSettings().values().at(0).capturedTint);
+
+    auto measure = [&](glm::vec3 n) {
+        const glm::vec4 clip = clipFromWorld * glm::vec4(centre + 0.8f * radius * glm::normalize(n), 1.0f);
+        const int px = int((clip.x / clip.w * 0.5f + 0.5f) * extent.width);
+        const int py = int((clip.y / clip.w * 0.5f + 0.5f) * extent.height);
+        double sum = 0.0;
+        for (int y = py - 2; y <= py + 2; ++y)
+            for (int x = px - 2; x <= px + 2; ++x) {
+                const size_t i = (size_t(y) * extent.width + size_t(x)) * 4;
+                sum += double(image[i]) + image[i + 1] + image[i + 2];
+            }
+        return sum / 25.0;
+    };
+    const double sunny = measure(across + sunAcross + glm::vec3(0.0f, 0.3f, 0.0f));
+    const double away = measure(across - sunAcross);
+    const double fullLight = 127.5 * double(tint.x + tint.y + tint.z);
+    std::cout << "lit morph: sunny " << sunny << ", away " << away << ", full light " << fullLight << std::endl;
+    EXPECT_NEAR(sunny, fullLight, 0.12 * fullLight);
+    EXPECT_LT(away, 0.7 * sunny);
 }
