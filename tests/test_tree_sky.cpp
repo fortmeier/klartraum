@@ -16,6 +16,8 @@
  * - applyWritesTheSettings: applyTreeSky sets light, colour, ambient, exposure, point light and tint
  * - daysShowOneSeasonEach: four days of 10 s each, every one showing its season while the sun is up; the season
  *   changes only while the sun is down, and the last night leads back to the first season
+ * - seasonsChangeSmoothlyForAnyDawn: with days starting anywhere from midnight to the default dawn, the season changes
+ *   forwards and smoothly across every midnight and shows the day's season while the sun is up
  **/
 
 #include <gtest/gtest.h>
@@ -123,4 +125,28 @@ TEST(TreeSky, daysShowOneSeasonEach) {
     }
     EXPECT_NEAR(days.seasonAt(days.duration() - frame), days.seasonAt(0.0f), 0.01f);
     EXPECT_NEAR(days.timeOfDayAt(0.0f), days.dawn, 1e-6f);
+}
+
+TEST(TreeSky, seasonsChangeSmoothlyForAnyDawn) {
+    for (const float dawn : {0.0f, 0.05f, 0.12f}) {
+        SCOPED_TRACE("dawn " + std::to_string(dawn));
+        BonsaiDays days;
+        days.secondsPerDay = 3.5f;
+        days.dawn = dawn;
+        const float frame = 1.0f / 30.0f;
+        float previous = days.seasonAt(0.0f);
+        float largest = 0.0f;
+        for (float t = frame; t < days.duration(); t += frame) {
+            const float season = days.seasonAt(t);
+            const TreeSky sky = treeSkyAt(days.timeOfDayAt(t), season);
+            if (sky.sunElevation > 0.0f)
+                EXPECT_NEAR(season, tree::treeSeasonWrap(days.seasons[days.dayAt(t)]), 1e-5f) << "t " << t;
+            const float change = tree::treeSeasonWrap(season - previous + 2.0f) - 2.0f;
+            EXPECT_GE(change, -1e-5f) << "t " << t;
+            largest = std::max(largest, change);
+            previous = season;
+        }
+        // About 0.2 days for a change of up to 1.25 seasons, at 105 frames per day.
+        EXPECT_LT(largest, 0.15f);
+    }
 }

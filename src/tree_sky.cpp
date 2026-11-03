@@ -97,16 +97,20 @@ float BonsaiDays::timeOfDayAt(float seconds) const {
 }
 
 float BonsaiDays::seasonAt(float seconds) const {
-    const uint32_t day = dayAt(seconds);
-    const float f = seconds / secondsPerDay - float(day);
-    const float today = seasons[day % 4] + 4.0f * float(day / 4);
-    // The next day's season, counted on, so that the change always runs forwards.
-    float tomorrow = seasons[(day + 1) % 4] + 4.0f * float((day + 1) / 4);
-    if (day + 1 == days) {
-        tomorrow = seasons[0] + 4.0f * float((day + 4) / 4);
+    // The season of day d, counted on so that every change runs forwards; after the last day, the first again.
+    const auto seasonOf = [this](uint32_t d) {
+        return d < days ? seasons[d % 4] + 4.0f * float(d / 4) : seasons[0] + 4.0f * float((days + 3) / 4);
+    };
+    // Days since the first midnight, which ends day 0: midnight m, between day m and m + 1, lies at x = m. The
+    // season changes over a fifth of a day around the nearest midnight, whichever day the midnight falls in.
+    const float x = std::max(seconds, 0.0f) / secondsPerDay - (1.0f - dawn);
+    const float nearest = std::round(x);
+    if (nearest < 0.0f) {
+        return tree::treeSeasonWrap(seasonOf(0));
     }
-    const float change = smoothstep(0.90f - dawn, 1.10f - dawn, f);
-    return tree::treeSeasonWrap(today + (tomorrow - today) * change);
+    const uint32_t m = std::min(uint32_t(nearest), days - 1);
+    const float change = smoothstep(-0.1f, 0.1f, x - float(m));
+    return tree::treeSeasonWrap(seasonOf(m) + (seasonOf(m + 1) - seasonOf(m)) * change);
 }
 
 } // namespace klartraum
