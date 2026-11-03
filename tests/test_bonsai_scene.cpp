@@ -64,6 +64,8 @@
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
  *   occluder at the same place: the side towards the morning sun keeps the mesh's colour under the light's tint,
  *   the side away from it is clearly darker
+ * - potShadowsItsOwnFarSide: the light a captured pot's walls read (treeCapturedLightAt()): the wall facing away from
+ *   the morning sun lies in the pot's own shadow, through its soil, whatever the trees do; the sunny wall is lit
  * - shadowsMoveSmoothlyWithTheSun: as the morning sun moves on in small steps, no pixel of a captured ball and the
  *   soil around it changes by much from one step to the next (no shadow edges hopping between voxels)
  **/
@@ -1322,4 +1324,103 @@ TEST_F(BonsaiRenderingTest, shadowsMoveSmoothlyWithTheSun) {
     std::cout << "largest change of a pixel between steps " << worst << ", mean " << sum / 60 << std::endl;
     // A shadow edge hopping from voxel to voxel changes pixels by more than 100 at once.
     EXPECT_LT(worst, 30.0);
+}
+
+namespace {
+
+// A captured pot of Gaussians: a box shell 2 x 0.5 x 1.2 of opaque grey splats, open at the top.
+std::shared_ptr<BonsaiObject> boxPot() {
+    auto pot = std::make_shared<BonsaiObject>();
+    for (int i = 0; i <= 40; ++i)
+        for (int j = 0; j <= 10; ++j)
+            for (const glm::vec3 p :
+                 {glm::vec3(-1.0f + 0.05f * i, 0.05f * j, -0.6f), glm::vec3(-1.0f + 0.05f * i, 0.05f * j, 0.6f),
+                  glm::vec3(-1.0f, 0.05f * j, -0.6f + 0.03f * i), glm::vec3(1.0f, 0.05f * j, -0.6f + 0.03f * i)}) {
+                Gaussian3D g{};
+                g.position = {p.x, p.y, p.z};
+                g.rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+                g.scale = {0.04f, 0.04f, 0.04f};
+                g.color = {0.0f, 0.0f, 0.0f};
+                g.alpha = 0.95f;
+                pot->gaussians.push_back(g);
+            }
+    pot->low = glm::vec3(-1.0f, 0.0f, -0.6f);
+    pot->high = glm::vec3(1.0f, 0.5f, 0.6f);
+    pot->rimHeight = 0.5f;
+    pot->rim = glm::vec3(1.0f, 0.6f, 0.0f);
+    return pot;
+}
+
+// The light volume at p as tree_light.slang reads it: trilinear between voxel centres.
+glm::vec4 lightAt(const std::vector<glm::vec4>& light, const TreeRenderSettings& s, glm::vec3 p) {
+    const glm::ivec3 size(s.lightGridSize);
+    const glm::vec3 g =
+        glm::clamp((p - glm::vec3(s.lightGridMin)) / s.lightGridMin.w - 0.5f, glm::vec3(0.0f), glm::vec3(size - 1));
+    const glm::ivec3 i0 = glm::ivec3(glm::floor(g));
+    const glm::vec3 f = g - glm::vec3(i0);
+    glm::vec4 sum(0.0f);
+    for (int corner = 0; corner < 8; ++corner) {
+        const glm::ivec3 o(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+        const glm::ivec3 q = glm::min(i0 + o, size - 1);
+        const float w = (o.x ? f.x : 1.0f - f.x) * (o.y ? f.y : 1.0f - f.y) * (o.z ? f.z : 1.0f - f.z);
+        sum += w * light[(size_t(q.z) * size.y + q.y) * size.x + q.x];
+    }
+    return sum;
+}
+
+} // namespace
+
+TEST_F(BonsaiRenderingTest, potShadowsItsOwnFarSide) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.potObject = boxPot();
+    sceneConfig.treeCount = 1;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{64, 64};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(0.0f, 1.0f, 4.0f), scene.focus, 40.0f, 1.0f);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, kMorning, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const auto light = bonsai.getLightVolume().readLight();
+    const TreeRenderSettings s = bonsai.getSettings().values().at(0);
+    const glm::vec3 sun = glm::normalize(glm::vec3(s.sun));
+    const glm::vec2 sunAcross = glm::normalize(glm::vec2(sun.x, sun.z));
+
+    // The walls' Gaussians at mid-height, on the side towards the sun and on the side away from it.
+    float reach = 0.0f, top = 0.0f;
+    for (const Gaussian3D& g : scene.objectGaussians) {
+        reach = std::max(reach, std::abs(glm::dot(glm::vec2(g.position[0], g.position[2]), sunAcross)));
+        top = std::max(top, g.position[1]);
+    }
+    double sunnySum = 0.0, farSum = 0.0, sunnyLeast = 1.0;
+    int sunnyCount = 0, farCount = 0;
+    for (const Gaussian3D& g : scene.objectGaussians) {
+        const glm::vec3 p(g.position[0], g.position[1], g.position[2]);
+        if (p.y < 0.25f * top || p.y > 0.75f * top)
+            continue;
+        const float side = glm::dot(glm::vec2(p.x, p.z), sunAcross) / reach;
+        // The sun through the static occluders only (all over the trees), as treeCapturedLightAt() reads it.
+        const glm::vec4 l = lightAt(light, s, p + sun * (1.5f * s.lightGridMin.w));
+        const double statics = l.x / std::max(l.z, 1e-4f);
+        if (side > 0.95f) {
+            sunnySum += statics;
+            sunnyLeast = std::min(sunnyLeast, statics);
+            ++sunnyCount;
+        } else if (side < -0.95f) {
+            farSum += statics;
+            ++farCount;
+        }
+    }
+    ASSERT_GT(sunnyCount, 20);
+    ASSERT_GT(farCount, 20);
+    std::cout << "sun through the pot: sunny wall " << sunnySum / sunnyCount << " (least " << sunnyLeast
+              << "), far wall " << farSum / farCount << std::endl;
+    EXPECT_GT(sunnySum / sunnyCount, 0.9);
+    EXPECT_LT(farSum / farCount, 0.15);
 }

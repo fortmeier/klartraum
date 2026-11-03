@@ -82,13 +82,14 @@ vec2 opticalDepthsAt(vec3 p, TreeRenderSettings s) {
 }
 
 // Transmittance from the centre of voxel c towards the sun d, like march() but in half-voxel steps through
-// trilinearly interpolated depths, so that the shadows move smoothly as the sun does. Occluders count from one voxel
-// away on, so that solid surfaces do not shadow themselves.
+// trilinearly interpolated depths, so that the shadows move smoothly as the sun does. Occluders count from a voxel and
+// a half away on, beyond the reach of the interpolation into voxel c, so that solid surfaces do not shadow
+// themselves.
 vec2 marchSun(ivec3 c, vec3 d, TreeRenderSettings s) {
     vec3 size = vec3(s.lightGridSize.xyz);
     float trees = 0.5f * treeOpticalDepth(c, s);
     float statics = 0.0f;
-    vec3 p = vec3(c) + 0.5f + d;
+    vec3 p = vec3(c) + 0.5f + 1.5f * d;
     for (int k = 0; k < 1024; ++k) {
         if (any(lessThan(p, vec3(0.0f))) || any(greaterThanEqual(p, size))) {
             break;

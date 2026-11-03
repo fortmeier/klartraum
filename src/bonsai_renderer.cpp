@@ -14,6 +14,36 @@
 
 namespace klartraum {
 
+namespace {
+
+// Makes the earth in the pot opaque in the static occluders' `depth`: the voxels inside the pot's outline from its
+// bottom up to a voxel and a half below the soil, so that light reaching a wall through the pot is blocked while
+// the soil's surface (its moss, its gentle mound) does not shadow itself.
+void addEarthOcclusion(std::vector<float>& depth, const TreeRenderSettings& settings, const BonsaiScene& scene,
+                       float opaqueDepth = 3.0f) {
+    const glm::uvec3 size(settings.lightGridSize);
+    const float voxel = settings.lightGridMin.w;
+    for (uint32_t z = 0; z < size.z; ++z)
+        for (uint32_t x = 0; x < size.x; ++x) {
+            const float wx = settings.lightGridMin.x + (float(x) + 0.5f) * voxel;
+            const float wz = settings.lightGridMin.z + (float(z) + 0.5f) * voxel;
+            if (scene.potMeasure(wx, wz) >= 1.0f) {
+                continue;
+            }
+            const float top = scene.soilHeight(wx, wz) - 1.5f * voxel;
+            for (uint32_t y = 0; y < size.y; ++y) {
+                const float wy = settings.lightGridMin.y + (float(y) + 0.5f) * voxel;
+                if (wy < 0.0f || wy > top) {
+                    continue;
+                }
+                float& d = depth[tree::treeLightIndex(x, y, z, settings.lightGridSize)];
+                d = std::max(d, opaqueDepth);
+            }
+        }
+}
+
+} // namespace
+
 std::vector<Gaussian3D> BonsaiRenderer::loadLantern(const BonsaiScene& scene, const std::string& path) {
     // The capture is stored with y pointing down; its ground lies at y = 0 and
     // the lantern stands about 0.28 high on a moss patch about 0.22 around.
@@ -100,8 +130,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
     // The captured pot and objects join the lantern.
     lanternGaussians.insert(lanternGaussians.end(), scene.objectGaussians.begin(), scene.objectGaussians.end());
-    // The pot, the objects and the lantern cast shadows; the soil's gentle mound is left out, which would shadow
-    // itself in voxels this coarse.
+    // The pot, the objects and the lantern cast shadows, and so does the earth that fills the pot below its soil.
     std::vector<TreeSceneVertex> potMesh;
     for (const TreeSceneVertex& v : scene.mesh) {
         if (v.color.w == TREE_MATERIAL_GLAZE || v.color.w == TREE_MATERIAL_CAPTURED) {
@@ -121,12 +150,14 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         moving.objects.insert(moving.objects.end(), samples.size(), i);
     }
     // The pot and the lantern cast shadows in the grid over the pot; a grid following the trees has none.
-    lightVolume = std::make_unique<TreeLightVolume>(
-        vulkanContext, *generator, settings,
-        scene.placed
-            ? std::vector<float>{}
-            : treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians),
-        std::move(moving));
+    std::vector<float> staticDepth;
+    if (!scene.placed) {
+        staticDepth =
+            treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians);
+        addEarthOcclusion(staticDepth, values, scene);
+    }
+    lightVolume = std::make_unique<TreeLightVolume>(vulkanContext, *generator, settings, std::move(staticDepth),
+                                                    std::move(moving));
     for (uint32_t i = 0; i < config.movingObjects.size(); ++i) {
         lightVolume->setMovingTransform(i, glm::mat4(0.0f));
     }
