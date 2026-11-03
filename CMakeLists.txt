@@ -379,6 +379,7 @@ set(KLARTRAUM_LIB_SRC
   src/raster/differentiable_shading.cpp
   src/raster/mesh.cpp
   src/raster/fitting_scene.cpp
+  src/raster/image_target.cpp
   src/raster/mesh_training.cpp
   src/raster/visibility_pass.cpp
   src/splatting/splat_training.cpp

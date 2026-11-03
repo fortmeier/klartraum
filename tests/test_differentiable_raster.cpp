@@ -42,6 +42,9 @@
  *   icosphere to 24 rendered views of the synthetic pumpkin; three held-out views reach a silhouette IoU above 0.97
  *   and a PSNR inside the object above 29 dB, and the mean distance of the vertices to the true surface drops from
  *   0.098 below 0.025
+ * - splattedPicturesBecomeTargets: Gaussians splatted by the raster backend into a transparent offscreen target
+ *   become one view of training targets (imageTarget) that agree with the training renderer's picture of the same
+ *   Gaussians from the same camera (silhouette IoU above 0.9, colours within 0.08), the other views untouched
  * - severalStepsPerSubmission: the same training recorded 24 steps to a submission reaches the same quality on the
  *   held-out views (silhouette IoU above 0.97, PSNR above 29 dB) in 60 submissions
  **/
@@ -66,6 +69,11 @@
 #include "klartraum/layers/training.hpp"
 #include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/raster/fitting_scene.hpp"
+#include "klartraum/raster/image_target.hpp"
+#include "klartraum/offscreen_target.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
+#include "klartraum/rendering/gaussian_splatting_factory.hpp"
+#include "klartraum/splatting/splat_training.hpp"
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/raster/mesh_training.hpp"
 #include "klartraum/raster/visibility_pass.hpp"
@@ -1331,4 +1339,59 @@ TEST_F(DifferentiableRasterTest, severalStepsPerSubmission) {
     const double iou = double(both) / either, psnr = 10.0 * std::log10(count / squaredError);
     EXPECT_GT(iou, 0.97);
     EXPECT_GT(psnr, 29.0) << "IoU " << iou;
+}
+
+TEST_F(DifferentiableRasterTest, splattedPicturesBecomeTargets) {
+    std::vector<glm::vec3> points;
+    for (const auto& p : raster::icosphere(2).positions)
+        points.push_back(0.8f * p);
+    const splatting::SplatSet splats = splatting::splatsAt(points, 0.18f, glm::vec3(0.9f, 0.45f, 0.1f), 0.9f);
+    auto data = std::make_shared<GaussianDataStandard>(*vc, splatting::gaussiansFromSplats(splats));
+    const VkExtent2D extent{96, 96};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    target->setClearColor({{0.0f, 0.0f, 0.0f, 0.0f}});
+    auto camera = std::make_shared<CameraUboType>();
+    const glm::vec3 eye(1.5f, 1.2f, 2.6f);
+    camera->ubo.model = glm::mat4(1.0f);
+    camera->ubo.view = glm::lookAt(eye, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    camera->ubo.proj = glm::perspective(0.8f, 1.0f, 0.1f, 20.0f);
+    camera->ubo.proj[1][1] *= -1.0f;
+    camera->ubo.cameraWorldPos = glm::vec4(eye, 1.0f);
+    auto splatting = createGaussianSplatting(*vc, GsplatBackend::Raster, target, camera, data->buffers());
+    auto targets = vc->create<TensorElement<float>>(std::vector<uint32_t>{2 * extent.width * extent.height, 4});
+    auto convert = raster::imageTarget(*vc, target, splatting->getOutputLayout(), splatting, targets, 1);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(convert);
+    camera->update(0);
+    targets->getDataBuffer(0).memcopyFrom(std::vector<float>(targets->getDataElementCount(), -1.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<float> values(targets->getDataElementCount());
+    targets->getDataBuffer(0).memcopyTo(values);
+    const size_t pixels = size_t(extent.width) * extent.height;
+    for (size_t i = 0; i < 4 * pixels; ++i)
+        ASSERT_EQ(values[i], -1.0f) << "view 0 changed at " << i;
+
+    splatting::SplatRasterOptions options;
+    options.width = extent.width;
+    options.height = extent.height;
+    options.capacity = 1u << 18;
+    const std::vector<float> expected =
+        splatting::renderSplats(*vc, splats, {camera->ubo.proj * camera->ubo.view}, options);
+    int both = 0, either = 0, compared = 0;
+    double difference = 0.0;
+    for (size_t p = 0; p < pixels; ++p) {
+        const float* a = &values[4 * (pixels + p)];
+        const float* b = &expected[4 * p];
+        both += a[3] > 0.5f && b[3] > 0.5f;
+        either += a[3] > 0.5f || b[3] > 0.5f;
+        if (a[3] > 0.95f && b[3] > 0.95f) {
+            for (int c = 0; c < 3; ++c)
+                difference += std::abs(a[c] - b[c]);
+            compared += 3;
+        }
+    }
+    ASSERT_GT(either, int(pixels) / 10);
+    EXPECT_GT(double(both) / either, 0.9);
+    ASSERT_GT(compared, 0);
+    EXPECT_LT(difference / compared, 0.08);
 }
