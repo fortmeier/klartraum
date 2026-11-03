@@ -99,6 +99,10 @@ TreeTypeParams treeReducedType(const TreeTypeParams& type, float leafShare) {
     return reduced;
 }
 
+void setTreeAge(TreeInstance& inst, float age) { inst.ids.w = glm::floatBitsToUint(1.0f - age); }
+
+float treeAge(const TreeInstance& inst) { return 1.0f - glm::uintBitsToFloat(inst.ids.w); }
+
 glm::vec4 treeUpRotation(const glm::vec3& up) {
     const glm::vec3 from(0.0f, 0.0f, 1.0f);
     const glm::vec3 to = glm::normalize(up);

@@ -118,6 +118,11 @@ TreeTypeParams treeReducedType(const TreeTypeParams& type, float leafShare = 0.2
 /// Rotation (x, y, z, w) that turns the tree's +z growth direction to `up`.
 glm::vec4 treeUpRotation(const glm::vec3& up);
 
+/// Sets how far `inst` has grown, from 0 (a seed) to 1 (fully grown, as an instance without an age).
+void setTreeAge(TreeInstance& inst, float age);
+/// How far `inst` has grown (setTreeAge()); 1 for an instance without an age.
+float treeAge(const TreeInstance& inst);
+
 /// Tree types with the parameters of Weber and Penn (1995), and leaf outlines after Kuth et al.
 namespace tree_presets {
 TreeTypeParams quakingAspen();

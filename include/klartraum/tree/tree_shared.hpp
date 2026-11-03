@@ -63,7 +63,7 @@ struct TreeTypeParams {
 struct TreeInstance {
     vec4 posScale; // xyz base of the trunk, w scale applied to all lengths
     vec4 rot;      // orientation quaternion (x, y, z, w); the trunk grows along its +z
-    uvec4 ids;     // x tree type, y seed, zw unused
+    uvec4 ids;     // x tree type, y seed, z unused, w float bits of 1 - age (treeInstanceAge(); 0: fully grown)
 };
 
 // The start of a stem level: the S record of Kuth et al.
@@ -71,7 +71,8 @@ struct StemRecord {
     vec4 posLength; // xyz base, w length
     vec4 rot;       // quaternion; the stem grows along its +z
     vec4 dims;      // x base radius, y parent length, z offset on the parent, w lengthChildMax
-    uvec4 ids;      // x type | level << 16, y seed, z instance, w unused
+    uvec4 ids;      // x type | level << 16, y seed, z instance, w float bits of the tree's age at the stem's birth
+                    // (set only while the tree grows, see treeGrowth())
 };
 
 // One segment of a stem between two rings: the D record.
@@ -425,6 +426,49 @@ TREE_FN float treeStemRadiusSlope(TreeTypeParams p, StemRecord s, float z) {
     float z0 = max(z - e, 0.0f);
     float z1 = min(z + e, 1.0f);
     return (treeStemRadius(p, s, z1) - treeStemRadius(p, s, z0)) / ((z1 - z0) * s.posLength.w);
+}
+
+// --- growth ------------------------------------------------------------------
+//
+// A tree grows with its age in [0, 1] (TreeInstance::ids.w holds the float bits
+// of 1 - age, so 0 means fully grown). A stem born at age b grows linearly over
+// TREE_GROWTH_SPAN of the tree's remaining age, 1 - b: the trunk (b = 0) is done
+// at 0.45, and every stem before the tree's age reaches 1. A child or leaf at
+// `along` (in [0, 1]) of its stem is born when the stem's tip passes it. A
+// growing stem is the first part of its full-grown curve, so its children never
+// slide along it, and thickens with its growth to the power TREE_THICKENING.
+
+static const float TREE_GROWTH_SPAN = 0.45f;
+static const float TREE_THICKENING = 1.0f;
+
+TREE_FN float treeInstanceAge(TreeInstance inst) { return 1.0f - uintBitsToFloat(inst.ids.w); }
+
+// How far a stem or leaf born at `birth` has grown at the tree's `age`, in [0, 1].
+TREE_FN float treeGrowth(float age, float birth) {
+    if (age >= 1.0f) {
+        return 1.0f;
+    }
+    return clamp((age - birth) / max(TREE_GROWTH_SPAN * (1.0f - birth), 1e-6f), 0.0f, 1.0f);
+}
+
+// The age at which the tip of a stem born at `birth` passes `along` of its length.
+TREE_FN float treeBirthAlong(float birth, float along) { return birth + along * TREE_GROWTH_SPAN * (1.0f - birth); }
+
+// The radius at z along a stem that has grown to `growth` of its length (z <= growth): the full stem's taper over
+// the grown part, thinner by growth^TREE_THICKENING.
+TREE_FN float treeGrownRadius(TreeTypeParams p, StemRecord s, float z, float growth) {
+    if (growth >= 1.0f) {
+        return treeStemRadius(p, s, z);
+    }
+    return pow(growth, TREE_THICKENING) * treeStemRadius(p, s, min(z / growth, 1.0f));
+}
+
+// The change of treeGrownRadius() per unit length along the stem.
+TREE_FN float treeGrownRadiusSlope(TreeTypeParams p, StemRecord s, float z, float growth) {
+    if (growth >= 1.0f) {
+        return treeStemRadiusSlope(p, s, z);
+    }
+    return pow(growth, TREE_THICKENING - 1.0f) * treeStemRadiusSlope(p, s, min(z / growth, 1.0f));
 }
 
 // --- shading -----------------------------------------------------------------

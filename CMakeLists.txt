@@ -324,6 +324,7 @@ add_executable(
   tests/test_gaussian_lighting.cpp
   tests/test_tree_model.cpp
   tests/test_tree_generation.cpp
+  tests/test_tree_growth.cpp
   tests/test_tree_rendering.cpp
   tests/test_tree_leaves.cpp
   tests/test_tree_gaussians.cpp

@@ -208,32 +208,59 @@ TREE_FN void treeGenerateStem(StemRecord s, uint t TREE_CTX_PARAM) {
     float splitError = 0.0f;
 
     TreeFrame frame = TREE_FRAME;
-    float scale = TREE_INSTANCE(s.ids.z).posScale.w;
+    TreeInstance inst = TREE_INSTANCE(s.ids.z);
+    float scale = inst.posScale.w;
     float typeLength = stemLength / scale;
+
+    // A growing tree's stem: only its first `growth` of the full-grown curve.
+    float age = treeInstanceAge(inst);
+    float birth = age < 1.0f ? uintBitsToFloat(s.ids.w) : 0.0f;
+    float growth = treeGrowth(age, birth);
+    if (growth <= 0.0f) {
+        return;
+    }
+    float grownLength = growth * stemLength;
 
     vec3 pos = vec3(s.posLength);
     vec4 rot = treeCurveRing(p, level, s.rot, 0, segments, cloneSeed, up);
-    rot = treeWind(frame, rot, pos, treeStemRadius(p, s, 0.0f) / scale, typeLength, s.ids.y, segments);
+    rot = treeWind(frame, rot, pos, treeGrownRadius(p, s, 0.0f, growth) / scale, typeLength, s.ids.y, segments);
     for (int i = 0; i < segments; ++i) {
+        float start = float(i) * segmentLength;
+        if (growth < 1.0f && start >= grownLength) {
+            break;
+        }
         vec3 nextPos = pos + qforward(rot) * segmentLength;
         float z0 = float(i) / float(segments);
         float z1 = float(i + 1) / float(segments);
         vec4 nextRot = rot;
         if (i + 1 < segments) {
             nextRot = treeCurveRing(p, level, rot, i + 1, segments, cloneSeed, up);
-            nextRot =
-                treeWind(frame, nextRot, nextPos, treeStemRadius(p, s, z1) / scale, typeLength, s.ids.y, segments);
+            nextRot = treeWind(frame, nextRot, nextPos, treeGrownRadius(p, s, min(z1, growth), growth) / scale,
+                               typeLength, s.ids.y, segments);
         }
-        float r0 = treeStemRadius(p, s, z0);
-        float r1 = treeStemRadius(p, s, z1);
+        vec3 m0 = qforward(rot) * segmentLength;
+        vec3 m1 = qforward(nextRot) * segmentLength;
+        // The segment ends at the growing tip if that lies within it.
+        vec3 endPos = nextPos;
+        vec4 endRot = nextRot;
+        float zEnd = z1;
+        if (growth < 1.0f && start + segmentLength > grownLength) {
+            float f = (grownLength - start) / segmentLength;
+            endPos = treeHermite(pos, nextPos, m0, m1, f);
+            endRot = qnlerp(rot, nextRot, f);
+            zEnd = growth;
+        }
+        float r0 = treeGrownRadius(p, s, z0, growth);
+        float r1 = treeGrownRadius(p, s, zEnd, growth);
 
         if (t == blockStart) {
             SegmentRecord d;
             d.fromPosRadius = vec4(pos.x, pos.y, pos.z, r0);
             d.fromRot = rot;
-            d.toPosRadius = vec4(nextPos.x, nextPos.y, nextPos.z, r1);
-            d.toRot = nextRot;
-            d.shape = vec4(treeStemRadiusSlope(p, s, z0), treeStemRadiusSlope(p, s, z1), z0, stemLength);
+            d.toPosRadius = vec4(endPos.x, endPos.y, endPos.z, r1);
+            d.toRot = endRot;
+            d.shape =
+                vec4(treeGrownRadiusSlope(p, s, z0, growth), treeGrownRadiusSlope(p, s, zEnd, growth), z0, stemLength);
             d.ids = uvec4(s.ids.x, cloneSeed, s.ids.z, uint(i));
             treeEmitSegment(d TREE_CTX_ARG);
         }
@@ -243,25 +270,35 @@ TREE_FN void treeGenerateStem(StemRecord s, uint t TREE_CTX_PARAM) {
         float x1 = (float(i + 1) * segmentLength - base) / childSpan * float(children) - 0.5f;
         int kStart = clamp(int(ceil(x0)), 0, children);
         int kEnd = i + 1 == segments ? children : clamp(int(ceil(x1)), 0, children);
-        vec3 m0 = qforward(rot) * segmentLength;
-        vec3 m1 = qforward(nextRot) * segmentLength;
         for (int k = kStart + int(t - blockStart); k < kEnd; k += int(blockSize)) {
             if (cloneShare < 1.0f && treeRand(cloneSeed, TREE_KEY_SHARE + uint(k)) >= cloneShare) {
                 continue;
             }
             float offset = base + (float(k) + 0.5f) / float(children) * childSpan;
+            // Children the growing tip has not passed yet are not there.
+            if (growth < 1.0f && offset >= grownLength) {
+                continue;
+            }
             float f = clamp((offset - float(i) * segmentLength) / segmentLength, 0.0f, 1.0f);
             vec3 cp = treeHermite(pos, nextPos, m0, m1, f);
             vec4 cq = qnlerp(rot, nextRot, f);
             if (lastLevel) {
                 LeafRecord leaf = treeLeaf(p, s, k, cloneSeed, cp, cq TREE_CTX_ARG);
+                if (age < 1.0f) {
+                    // Leaves unfold from nothing once the tip has passed them.
+                    leaf.posScale.w *= treeGrowth(age, treeBirthAlong(birth, offset / stemLength));
+                }
                 // Leaves of the season that are not there (yet or any more), or too small to see, are left out.
                 if (leaf.posScale.w > 1e-3f * p.leafCount.y * TREE_INSTANCE(s.ids.z).posScale.w) {
                     treeEmitLeaf(leaf TREE_CTX_ARG);
                 }
             } else {
-                float parentRadius = treeStemRadius(p, s, offset / stemLength);
-                treeEmitStem(treeChildStem(p, s, k, cloneSeed, offset, base, cp, cq, parentRadius) TREE_CTX_ARG);
+                float parentRadius = treeGrownRadius(p, s, offset / stemLength, growth);
+                StemRecord child = treeChildStem(p, s, k, cloneSeed, offset, base, cp, cq, parentRadius);
+                if (age < 1.0f) {
+                    child.ids.w = floatBitsToUint(treeBirthAlong(birth, offset / stemLength));
+                }
+                treeEmitStem(child TREE_CTX_ARG);
             }
         }
 
