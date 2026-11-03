@@ -108,12 +108,28 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             potMesh.push_back(v);
         }
     }
+    // The moving objects' surfaces in their own frames, sampled finely for their size.
+    TreeMovingOccluders moving;
+    moving.objectCount = uint32_t(config.movingObjects.size());
+    for (uint32_t i = 0; i < moving.objectCount; ++i) {
+        const BonsaiObject& object = *config.movingObjects[i];
+        const glm::vec3 extent = object.high - object.low;
+        const float spacing = 0.02f * std::max({extent.x, extent.y, extent.z, 1e-3f});
+        const std::vector<glm::vec4> samples =
+            treeOccluderSamples(sampleMeshSurfels(object.mesh, spacing, 3), object.gaussians);
+        moving.surfels.insert(moving.surfels.end(), samples.begin(), samples.end());
+        moving.objects.insert(moving.objects.end(), samples.size(), i);
+    }
     // The pot and the lantern cast shadows in the grid over the pot; a grid following the trees has none.
     lightVolume = std::make_unique<TreeLightVolume>(
         vulkanContext, *generator, settings,
         scene.placed
             ? std::vector<float>{}
-            : treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians));
+            : treeStaticOcclusion(values, sampleMeshSurfels(potMesh, 0.5f * config.lightVoxel, 3), lanternGaussians),
+        std::move(moving));
+    for (uint32_t i = 0; i < config.movingObjects.size(); ++i) {
+        lightVolume->setMovingTransform(i, glm::mat4(0.0f));
+    }
     // Patches of the captured moss, placed over the soil with a level of detail each; too flat to cast shadows.
     const std::vector<MossPatch> mossPatches = extractMossPatches(loadGaussiansSpz(config.lanternPath, true));
     // As many copies as cover the soil at the lantern's scale, the moss scaled with the lantern; none where the

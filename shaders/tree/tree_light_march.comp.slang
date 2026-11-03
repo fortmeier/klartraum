@@ -10,7 +10,8 @@ import glsl;
 // and stem area the first pass collected. A voxel's optical depth is
 // lightGridParams.x times its area over the voxel's face area, plus the
 // optical depth of static occluders (pot, lantern), computed once on the CPU
-// (treeStaticOcclusion()). A ray starts in the middle of its voxel, so leaves
+// (treeStaticOcclusion()), and of moving occluders, collected every frame by
+// tree_light_movers.comp. A ray starts in the middle of its voxel, so leaves
 // are half shadowed by their own voxel; static occluders in it are skipped,
 // so solid surfaces do not shadow themselves.
 
@@ -21,8 +22,19 @@ import glsl;
 [[vk::binding(1, 0)]] StructuredBuffer<uint> density;
 [[vk::binding(2, 0)]] RWStructuredBuffer<vec4> light; // xy through all occluders, zw through the trees only
 [[vk::binding(3, 0)]] StructuredBuffer<float> staticDepth;
+[[vk::binding(4, 0)]] StructuredBuffer<uint> moving;
 
 static const float AREA_SCALE = 1e7f;
+// The optical depth of a voxel whose face a moving occluder covers, and the most it adds, as treeStaticOcclusion()
+// gives the static ones.
+static const float OPAQUE_DEPTH = 3.0f;
+
+// The optical depth of the static and the moving occluders in voxel c.
+float staticOpticalDepth(ivec3 c, TreeRenderSettings s) {
+    uint i = treeLightIndex(c.x, c.y, c.z, s.lightGridSize);
+    float area = float(moving[i]) / AREA_SCALE;
+    return staticDepth[i] + min(OPAQUE_DEPTH * area / (s.lightGridMin.w * s.lightGridMin.w), 2.0f * OPAQUE_DEPTH);
+}
 
 float treeOpticalDepth(ivec3 c, TreeRenderSettings s) {
     float area = float(density[treeLightIndex(c.x, c.y, c.z, s.lightGridSize)]) / AREA_SCALE;
@@ -30,7 +42,7 @@ float treeOpticalDepth(ivec3 c, TreeRenderSettings s) {
 }
 
 float opticalDepth(ivec3 c, TreeRenderSettings s) {
-    return treeOpticalDepth(c, s) + staticDepth[treeLightIndex(c.x, c.y, c.z, s.lightGridSize)];
+    return treeOpticalDepth(c, s) + staticOpticalDepth(c, s);
 }
 
 // Transmittance from the centre of voxel c along direction d to the grid's
@@ -47,7 +59,7 @@ vec2 march(ivec3 c, vec3 d, TreeRenderSettings s) {
             break;
         }
         trees += treeOpticalDepth(q, s);
-        statics += staticDepth[treeLightIndex(q.x, q.y, q.z, s.lightGridSize)];
+        statics += staticOpticalDepth(q, s);
     }
     return vec2(exp(-trees - statics), exp(-trees));
 }

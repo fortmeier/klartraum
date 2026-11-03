@@ -6,6 +6,7 @@
 #define KLARTRAUM_TREE_TREE_LIGHT_VOLUME_HPP
 
 #include <memory>
+#include <vector>
 
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
@@ -18,6 +19,14 @@ namespace klartraum {
 void configureTreeLightGrid(TreeRenderSettings& settings, glm::vec3 lower, glm::vec3 upper, float voxel,
                             float opticalDepthPerArea = 0.5f);
 
+/// Occluders that move, such as a falling object: samples of their surfaces in each object's own frame, placed
+/// every frame by the object's transform (TreeLightVolume::setMovingTransform()).
+struct TreeMovingOccluders {
+    std::vector<glm::vec4> surfels; ///< xyz position in the object's frame, w the area it stands for
+    std::vector<uint32_t> objects;  ///< the object of each surfel, below objectCount
+    uint32_t objectCount = 0;
+};
+
 /**
  * @brief Soft shadows and sky occlusion of the generated trees, for both the classical and the Gaussian renderer.
  *
@@ -28,15 +37,19 @@ void configureTreeLightGrid(TreeRenderSettings& settings, glm::vec3 lower, glm::
  * transmittance and the sky visibility) is what `tree_light.glsl` reads.
  * Static occluders (a pot, a captured object) add their optical depth from a
  * grid computed once; they cast shadows on the trees and each other, but not
- * on themselves. Captured objects, whose colours already contain their own
- * occlusion, read the light through the trees only. The grid's size is fixed
- * when the graph is compiled.
+ * on themselves. Moving occluders (TreeMovingOccluders) are added every frame
+ * by `tree_light_movers.comp` at their current transforms and count like the
+ * static ones. The grid's size is fixed when the graph is compiled.
  */
 class TreeLightVolume {
 public:
-    /// `staticDepth`: the optical depth per voxel of static occluders (treeStaticOcclusion()), or empty for none.
+    /// `staticDepth`: the optical depth per voxel of static occluders (treeStaticOcclusion()), or empty for none;
+    /// `moving`: the occluders that move, each at the identity until setMovingTransform() places it.
     TreeLightVolume(VulkanContext& vulkanContext, TreeGenerator& generator,
-                    std::shared_ptr<HostValues<TreeRenderSettings>> settings, std::vector<float> staticDepth = {});
+                    std::shared_ptr<HostValues<TreeRenderSettings>> settings, std::vector<float> staticDepth = {},
+                    TreeMovingOccluders moving = {});
+    /// Places moving occluder `object` for the next submissions; a transform of scale 0 removes it.
+    void setMovingTransform(uint32_t object, const glm::mat4& worldFromObject);
 
     BufferRef getLight() const { return {march, 2}; }
     ComputeGraphElementPtr getElement() const { return march; }
@@ -47,6 +60,8 @@ public:
 
 private:
     std::shared_ptr<GeneralComputation<glm::uvec2>> density;
+    // The transforms of the moving occluders (one at least, unused without them).
+    std::shared_ptr<HostValues<glm::mat4>> movingTransforms;
     std::shared_ptr<GeneralComputation<>> march;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> light;
 };
@@ -61,6 +76,11 @@ private:
  */
 std::vector<float> treeStaticOcclusion(const TreeRenderSettings& settings, const std::vector<TreeSceneVertex>& surfels,
                                        const std::vector<Gaussian3D>& gaussians, float opaqueDepth = 3.0f);
+
+/// The surfels and Gaussians of an occluder as moving occluder samples (TreeMovingOccluders::surfels), with the
+/// areas treeStaticOcclusion() gives them.
+std::vector<glm::vec4> treeOccluderSamples(const std::vector<TreeSceneVertex>& surfels,
+                                           const std::vector<Gaussian3D>& gaussians);
 
 } // namespace klartraum
 

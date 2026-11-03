@@ -21,7 +21,7 @@ void configureTreeLightGrid(TreeRenderSettings& settings, glm::vec3 lower, glm::
 
 TreeLightVolume::TreeLightVolume(VulkanContext& vulkanContext, TreeGenerator& generator,
                                  std::shared_ptr<HostValues<TreeRenderSettings>> settings,
-                                 std::vector<float> staticDepth) {
+                                 std::vector<float> staticDepth, TreeMovingOccluders moving) {
     const TreeRenderSettings& values = settings->values().at(0);
     const glm::uvec4 size = values.lightGridSize;
     const uint32_t voxels = size.x * size.y * size.z;
@@ -67,7 +67,55 @@ TreeLightVolume::TreeLightVolume(VulkanContext& vulkanContext, TreeGenerator& ge
     staticBuffer->setName("TreeStaticDepth");
     staticBuffer->getBuffer().memcopyFrom(staticDepth);
     march->setInput(staticBuffer, 3);
+
+    // The moving occluders' grid, zeroed every frame; without moving occluders it stays zero.
+    auto movingBuffer = std::make_shared<BufferElement<VulkanBuffer<uint32_t>>>(
+        vulkanContext, voxels, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    movingBuffer->setName("TreeMovingDepth");
+    movingBuffer->setRecordToZero(true);
+    movingTransforms = std::make_shared<HostValues<glm::mat4>>(
+        vulkanContext, std::vector<glm::mat4>(std::max(moving.objectCount, 1u), glm::mat4(1.0f)));
+    movingTransforms->setName("TreeMovingTransforms");
+    if (moving.surfels.empty()) {
+        march->setInput(movingBuffer, 4);
+    } else {
+        if (moving.objects.size() != moving.surfels.size()) {
+            throw std::invalid_argument("TreeLightVolume: one object index per moving occluder sample");
+        }
+        for (const uint32_t object : moving.objects) {
+            if (object >= moving.objectCount) {
+                throw std::invalid_argument("TreeLightVolume: moving occluder object index out of range");
+            }
+        }
+        const auto count = uint32_t(moving.surfels.size());
+        auto samples = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
+            vulkanContext, count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        samples->setName("TreeMovingSamples");
+        samples->getBuffer().memcopyFrom(moving.surfels);
+        auto objects = std::make_shared<BufferElementSinglePath<VulkanBuffer<uint32_t>>>(
+            vulkanContext, count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        objects->setName("TreeMovingObjects");
+        objects->getBuffer().memcopyFrom(moving.objects);
+        auto movers =
+            std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_light_movers.comp.spv");
+        movers->setName("TreeLightMovers");
+        movers->setInput(samples, 0);
+        movers->setInput(objects, 1);
+        movers->setInput(movingTransforms, 2);
+        movers->setInput(settings, 3);
+        movers->setInput(movingBuffer, 4);
+        movers->setGroupCountX((count + 255) / 256);
+        movers->setPushConstants({count});
+        march->setInput(movers, 4, 4);
+    }
     march->setGroupCountX((voxels + 63) / 64);
+}
+
+void TreeLightVolume::setMovingTransform(uint32_t object, const glm::mat4& worldFromObject) {
+    movingTransforms->set(object, worldFromObject);
 }
 
 std::vector<float> treeStaticOcclusion(const TreeRenderSettings& settings, const std::vector<TreeSceneVertex>& surfels,
@@ -93,6 +141,21 @@ std::vector<float> treeStaticOcclusion(const TreeRenderSettings& settings, const
         add(glm::vec3(g.position[0], g.position[1], g.position[2]), g.alpha * 3.14159265f * scale[1] * scale[2]);
     }
     return depth;
+}
+
+std::vector<glm::vec4> treeOccluderSamples(const std::vector<TreeSceneVertex>& surfels,
+                                           const std::vector<Gaussian3D>& gaussians) {
+    std::vector<glm::vec4> samples;
+    samples.reserve(surfels.size() + gaussians.size());
+    for (const TreeSceneVertex& s : surfels) {
+        samples.emplace_back(glm::vec3(s.pos), s.pos.w * s.pos.w);
+    }
+    for (const Gaussian3D& g : gaussians) {
+        std::array<float, 3> scale = g.scale;
+        std::sort(scale.begin(), scale.end());
+        samples.emplace_back(g.position[0], g.position[1], g.position[2], g.alpha * 3.14159265f * scale[1] * scale[2]);
+    }
+    return samples;
 }
 
 std::vector<glm::vec4> TreeLightVolume::readLight(uint32_t pathId) {

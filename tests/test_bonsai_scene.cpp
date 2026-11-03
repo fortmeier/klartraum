@@ -59,6 +59,8 @@
  *   morning sun: the side towards the sun keeps its captured colour under the light's tint, evenly (no speckles),
  *   the side away from it is clearly darker
  * - capturedObjectsShadowEachOther: a ball between the sun and another ball darkens the other's sunny side
+ * - movingObjectsCastShadowsWhereTheyAre: a moving object's shadow on the soil appears where its transform puts it,
+ *   follows it when it moves, and is gone when its transform has scale 0
  **/
 
 #include <gtest/gtest.h>
@@ -1117,4 +1119,72 @@ TEST_F(BonsaiRenderingTest, capturedObjectsShadowEachOther) {
     const double inShadow = render(withOccluder);
     std::cout << "sunny side " << inSun << " -> " << inShadow << " behind the other ball" << std::endl;
     EXPECT_LT(inShadow, 0.7 * inSun);
+}
+
+TEST_F(BonsaiRenderingTest, movingObjectsCastShadowsWhereTheyAre) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 1;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{64, 64};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.movingObjects.push_back(greyBall(false));
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(0.0f, 1.0f, 4.0f), scene.focus, 40.0f, 1.0f);
+    bonsai.getCamera()->update(0);
+    // Noon: the shadow lies about under the ball.
+    bonsai.setTime(1.0f, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+
+    // Per soil column just above the soil, the sun through all occluders relative to that through the trees.
+    auto soilLight = [&](const glm::mat4& worldFromBall) {
+        bonsai.setMovingObject(0, worldFromBall);
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const auto light = bonsai.getLightVolume().readLight();
+        const TreeRenderSettings v = bonsai.getSettings().values().at(0);
+        std::vector<std::pair<glm::vec2, float>> columns;
+        for (uint32_t z = 0; z < v.lightGridSize.z; ++z)
+            for (uint32_t x = 0; x < v.lightGridSize.x; ++x) {
+                const glm::vec2 at(v.lightGridMin.x + (float(x) + 0.5f) * v.lightGridMin.w,
+                                   v.lightGridMin.z + (float(z) + 0.5f) * v.lightGridMin.w);
+                const float y = scene.soilHeight(at.x, at.y) + 0.03f;
+                const auto cell = uint32_t((y - v.lightGridMin.y) / v.lightGridMin.w);
+                const glm::vec4 l = light[(size_t(z) * v.lightGridSize.y + cell) * v.lightGridSize.x + x];
+                columns.emplace_back(at, l.x / std::max(l.z, 1e-6f));
+            }
+        return columns;
+    };
+    // The middle of the columns that are clearly darker than without the ball, and their number.
+    const auto without = soilLight(glm::scale(glm::mat4(1.0f), glm::vec3(0.0f)));
+    auto shadowOf = [&](const glm::mat4& worldFromBall) {
+        const auto with = soilLight(worldFromBall);
+        glm::vec2 sum(0.0f);
+        int count = 0;
+        for (size_t i = 0; i < with.size(); ++i)
+            if (with[i].second < without[i].second - 0.3f) {
+                sum += with[i].first;
+                ++count;
+            }
+        return std::make_pair(count > 0 ? sum / float(count) : glm::vec2(1e9f), count);
+    };
+    auto ballAt = [&](glm::vec2 at) {
+        const float radius = 0.2f;
+        return glm::translate(glm::mat4(1.0f), glm::vec3(at.x, scene.soilHeight(at.x, at.y) + 0.5f, at.y)) *
+               glm::scale(glm::mat4(1.0f), glm::vec3(radius));
+    };
+    const auto [first, firstCount] = shadowOf(ballAt(glm::vec2(-0.4f, 0.1f)));
+    const auto [second, secondCount] = shadowOf(ballAt(glm::vec2(0.2f, 0.1f)));
+    const auto [gone, goneCount] = shadowOf(glm::scale(glm::mat4(1.0f), glm::vec3(0.0f)));
+    std::cout << "shadow " << firstCount << " columns at " << first.x << " " << first.y << ", then " << secondCount
+              << " at " << second.x << " " << second.y << ", removed " << goneCount << std::endl;
+    // About the area of the ball's cross-section, 0.13 units^2, in voxel columns.
+    const float voxel = bonsai.getSettings().values().at(0).lightGridMin.w;
+    EXPECT_GT(float(firstCount), 0.5f * 0.126f / (voxel * voxel));
+    EXPECT_NEAR(float(secondCount), float(firstCount), 0.25f * float(firstCount));
+    EXPECT_NEAR(second.x - first.x, 0.6f, 0.05f);
+    EXPECT_NEAR(second.y - first.y, 0.0f, 0.05f);
+    EXPECT_EQ(goneCount, 0);
 }

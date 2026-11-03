@@ -9,6 +9,7 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "klartraum/image_fill.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
@@ -99,6 +100,9 @@ struct BonsaiRenderConfig {
     bool farTrees = true;
     /// Fill the frame with a colour that can change per frame (setBackground()) before drawing, instead of black.
     bool background = false;
+    /// Objects that move, e.g. one falling onto the soil: they cast shadows wherever setMovingObject() puts them
+    /// (none until then) but are not drawn here; whoever draws them reads the light with getLightVolume().
+    std::vector<std::shared_ptr<const BonsaiObject>> movingObjects;
     /// The classical renderer's pass keeps its depth buffer for later passes (getPass(), RenderPass::setDepthFrom()).
     bool storeDepth = false;
     /// The Gaussian renderer also splats per-pixel features (tree_gaussian_features.comp) into getFeatureTarget(0)
@@ -193,6 +197,11 @@ public:
     /// The classical renderer's render pass (its image and depth buffer), or nullptr.
     std::shared_ptr<RenderPass> getPass() const { return pass; }
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
+    /// Places moving object `index` (BonsaiRenderConfig::movingObjects) for the next frames: world from the object's
+    /// own frame; a transform of scale 0 removes its shadow.
+    void setMovingObject(uint32_t index, const glm::mat4& worldFromObject) {
+        lightVolume->setMovingTransform(index, worldFromObject);
+    }
     /// The background of the next frames (with BonsaiRenderConfig::background).
     void setBackground(glm::vec3 colour) {
         if (backgroundFill)
