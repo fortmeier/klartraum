@@ -1,0 +1,232 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#version 450
+
+// Blends Gaussian i of set A into Gaussian i of set B (GaussianMorph). The
+// position follows the path of the variant, sizes blend in log space,
+// orientations by slerp, colour, opacity and SH coefficients linearly. The
+// progress is eased in and out; at eased progress 0 the output is A and at 1
+// it is B, copied unchanged. The explosion variants move in two phases: a
+// burst that starts fast and comes to rest at a point around A, then an
+// eased flight from there to B, so the motion has no kink at the rest point.
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint count;
+} pc;
+
+layout(scalar, set = 0, binding = 0) readonly buffer PosA { vec3 posA[]; };
+layout(scalar, set = 0, binding = 1) readonly buffer RotA { vec4 rotA[]; };
+layout(scalar, set = 0, binding = 2) readonly buffer ScaleA { vec3 scaleA[]; };
+layout(scalar, set = 0, binding = 3) readonly buffer ColAlphaA { vec4 colAlphaA[]; };
+layout(scalar, set = 0, binding = 4) readonly buffer ShRA { float shRA[]; };
+layout(scalar, set = 0, binding = 5) readonly buffer ShGA { float shGA[]; };
+layout(scalar, set = 0, binding = 6) readonly buffer ShBA { float shBA[]; };
+layout(scalar, set = 0, binding = 7) readonly buffer PosB { vec3 posB[]; };
+layout(scalar, set = 0, binding = 8) readonly buffer RotB { vec4 rotB[]; };
+layout(scalar, set = 0, binding = 9) readonly buffer ScaleB { vec3 scaleB[]; };
+layout(scalar, set = 0, binding = 10) readonly buffer ColAlphaB { vec4 colAlphaB[]; };
+layout(scalar, set = 0, binding = 11) readonly buffer ShRB { float shRB[]; };
+layout(scalar, set = 0, binding = 12) readonly buffer ShGB { float shGB[]; };
+layout(scalar, set = 0, binding = 13) readonly buffer ShBB { float shBB[]; };
+layout(scalar, set = 0, binding = 14) readonly buffer Params { float params[]; };
+layout(scalar, set = 0, binding = 15) readonly buffer Delays { float delays[]; };
+layout(scalar, set = 0, binding = 16) writeonly buffer OutPos { vec3 outPos[]; };
+layout(scalar, set = 0, binding = 17) writeonly buffer OutRot { vec4 outRot[]; };
+layout(scalar, set = 0, binding = 18) writeonly buffer OutScale { vec3 outScale[]; };
+layout(scalar, set = 0, binding = 19) writeonly buffer OutColAlpha { vec4 outColAlpha[]; };
+layout(scalar, set = 0, binding = 20) writeonly buffer OutShR { float outShR[]; };
+layout(scalar, set = 0, binding = 21) writeonly buffer OutShG { float outShG[]; };
+layout(scalar, set = 0, binding = 22) writeonly buffer OutShB { float outShB[]; };
+
+// Layout of MorphParams::values().
+const int kProgress = 0;
+const int kVariant = 1;
+const int kSwirlTurns = 2;
+const int kScatterRadius = 3;
+const int kWaveSpread = 4;
+const int kCentre = 5; // 3 floats
+const int kAxis = 8;   // 3 floats
+const int kSeed = 11;
+const int kExplodeRadius = 12;
+const int kExplodeShare = 13;
+const int kDirection = 14; // 3 floats
+
+const int kStraight = 0;
+const int kSwirl = 1;
+const int kScatter = 2;
+const int kWave = 3;
+const int kExplode = 4;
+const int kExplodeSwirl = 5;
+const int kShatter = 6;
+const int kSwirlScatter = 7;
+const int kSwirlWave = 8;
+
+const float kPi = 3.14159265358979;
+
+float easeInOutCubic(float s) {
+    return s < 0.5 ? 4.0 * s * s * s : 1.0 - pow(-2.0 * s + 2.0, 3.0) / 2.0;
+}
+
+float easeOutCubic(float s) {
+    float u = 1.0 - s;
+    return 1.0 - u * u * u;
+}
+
+// PCG hash, mapped to [0, 1).
+float random01(uint x) {
+    uint state = x * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return float((word >> 22u) ^ word) * (1.0 / 4294967296.0);
+}
+
+vec4 slerp(vec4 a, vec4 b, float s) {
+    float d = dot(a, b);
+    if (d < 0.0) {
+        b = -b;
+        d = -d;
+    }
+    if (d > 0.9995) {
+        return normalize(mix(a, b, s));
+    }
+    float theta = acos(clamp(d, -1.0, 1.0));
+    return normalize((sin((1.0 - s) * theta) * a + sin(s * theta) * b) / sin(theta));
+}
+
+// Position on a spiral around the axis: distance from the axis, height along
+// it and angle around it go from a to b, the angle with `turns` extra turns.
+// `turns` must be whole, or the spiral would not end at b.
+vec3 swirlPosition(vec3 a, vec3 b, float s, vec3 centre, vec3 axis, float turns) {
+    vec3 other = abs(axis.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    vec3 e1 = normalize(cross(axis, other));
+    vec3 e2 = cross(axis, e1);
+    vec3 va = a - centre;
+    vec3 vb = b - centre;
+    float ha = dot(va, axis);
+    float hb = dot(vb, axis);
+    vec3 ra = va - ha * axis;
+    vec3 rb = vb - hb * axis;
+    float angleA = atan(dot(ra, e2), dot(ra, e1));
+    float angleB = atan(dot(rb, e2), dot(rb, e1));
+    float delta = angleB - angleA;
+    delta -= 2.0 * kPi * floor((delta + kPi) / (2.0 * kPi)); // shortest way, in [-pi, pi)
+    float angle = angleA + s * (delta + 2.0 * kPi * turns);
+    float radius = mix(length(ra), length(rb), s);
+    return centre + mix(ha, hb, s) * axis + radius * (cos(angle) * e1 + sin(angle) * e2);
+}
+
+// A random unit vector, uniform on the sphere.
+vec3 randomDirection(uint key) {
+    float z = 2.0 * random01(key) - 1.0;
+    float phi = 2.0 * kPi * random01(key + 1u);
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    return vec3(r * cos(phi), r * sin(phi), z);
+}
+
+// Where Gaussian i comes to rest after the burst: between half and the full
+// radius from its start, away from the centre (Explode, ExplodeSwirl) or
+// towards `direction` (Shatter), spread by a random direction.
+vec3 burstPoint(vec3 a, int variant, uint i, uint seed) {
+    uint key = i * 5u + 0x68E31DA4u + seed * 0x9E3779B9u;
+    vec3 spread = randomDirection(key);
+    vec3 heading;
+    if (variant == kShatter) {
+        heading = normalize(vec3(params[kDirection], params[kDirection + 1], params[kDirection + 2]));
+        heading = normalize(heading + 0.8 * spread);
+    } else {
+        vec3 away = a - vec3(params[kCentre], params[kCentre + 1], params[kCentre + 2]);
+        heading = length(away) > 1e-6 ? normalize(normalize(away) + 0.5 * spread) : spread;
+    }
+    return a + heading * params[kExplodeRadius] * (0.5 + 0.5 * random01(key + 2u));
+}
+
+// `p` turned by `angle` around the axis through `centre` (Rodrigues).
+vec3 turnAround(vec3 p, vec3 centre, vec3 axis, float angle) {
+    vec3 v = p - centre;
+    float c = cos(angle);
+    return centre + v * c + cross(axis, v) * sin(angle) + axis * dot(axis, v) * (1.0 - c);
+}
+
+// Quadratic Bezier through a random point around the middle of the straight
+// path, between half and the full radius away from it.
+vec3 scatterPosition(vec3 a, vec3 b, float s, float radius, uint i, uint seed) {
+    uint key = i * 3u + seed * 0x9E3779B9u;
+    vec3 direction = randomDirection(key);
+    vec3 control = 0.5 * (a + b) + direction * radius * (0.5 + 0.5 * random01(key + 2u));
+    float u = 1.0 - s;
+    return u * u * a + 2.0 * u * s * control + s * s * b;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) {
+        return;
+    }
+    int variant = int(params[kVariant] + 0.5);
+    float progress = params[kProgress];
+    if (variant == kWave || variant == kSwirlWave) {
+        float spread = clamp(params[kWaveSpread], 0.0, 0.99);
+        progress = (progress - delays[i] * spread) / (1.0 - spread);
+    }
+    float s = easeInOutCubic(clamp(progress, 0.0, 1.0));
+
+    if (s <= 0.0 || s >= 1.0) {
+        bool atEnd = s >= 1.0;
+        outPos[i] = atEnd ? posB[i] : posA[i];
+        outRot[i] = atEnd ? rotB[i] : rotA[i];
+        outScale[i] = atEnd ? scaleB[i] : scaleA[i];
+        outColAlpha[i] = atEnd ? colAlphaB[i] : colAlphaA[i];
+        for (uint k = 0u; k < 15u; ++k) {
+            uint j = k * pc.count + i;
+            outShR[j] = atEnd ? shRB[j] : shRA[j];
+            outShG[j] = atEnd ? shGB[j] : shGA[j];
+            outShB[j] = atEnd ? shBB[j] : shBA[j];
+        }
+        return;
+    }
+
+    vec3 a = posA[i];
+    vec3 b = posB[i];
+    vec3 position;
+    vec3 centre = vec3(params[kCentre], params[kCentre + 1], params[kCentre + 2]);
+    vec3 axis = normalize(vec3(params[kAxis], params[kAxis + 1], params[kAxis + 2]));
+    float turns = round(params[kSwirlTurns]);
+    if (variant == kSwirl || variant == kSwirlWave) {
+        position = swirlPosition(a, b, s, centre, axis, turns);
+    } else if (variant == kSwirlScatter) {
+        vec3 scattered = scatterPosition(a, b, s, params[kScatterRadius], i, uint(params[kSeed]));
+        position = turnAround(scattered, centre, axis, 2.0 * kPi * turns * s);
+    } else if (variant == kExplode || variant == kExplodeSwirl || variant == kShatter) {
+        float share = clamp(params[kExplodeShare], 0.05, 0.95);
+        float p = clamp(progress, 0.0, 1.0);
+        vec3 rest = burstPoint(a, variant, i, uint(params[kSeed]));
+        if (p < share) {
+            position = mix(a, rest, easeOutCubic(p / share));
+        } else {
+            float q = easeInOutCubic((p - share) / (1.0 - share));
+            position = variant == kExplodeSwirl ? swirlPosition(rest, b, q, centre, axis, turns)
+                                                : mix(rest, b, q);
+        }
+    } else if (variant == kScatter) {
+        position = scatterPosition(a, b, s, params[kScatterRadius], i, uint(params[kSeed]));
+    } else {
+        position = mix(a, b, s);
+    }
+
+    outPos[i] = position;
+    outRot[i] = slerp(rotA[i], rotB[i], s);
+    outScale[i] = exp(mix(log(max(scaleA[i], vec3(1e-12))), log(max(scaleB[i], vec3(1e-12))), s));
+    outColAlpha[i] = mix(colAlphaA[i], colAlphaB[i], s);
+    for (uint k = 0u; k < 15u; ++k) {
+        uint j = k * pc.count + i;
+        outShR[j] = mix(shRA[j], shRB[j], s);
+        outShG[j] = mix(shGA[j], shGB[j], s);
+        outShB[j] = mix(shBA[j], shBB[j], s);
+    }
+}
