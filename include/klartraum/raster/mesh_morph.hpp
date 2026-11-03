@@ -85,7 +85,8 @@ private:
     // The camera the mesh is drawn with (clip from morph frame) and the drawn view's index (always 0).
     std::shared_ptr<HostValues<glm::mat4>> drawCamera;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> drawView;
-    // Where the mesh stands (world from the morph's frame), for the lit drawing.
+    // Where the mesh stands (world from the morph's frame) and the drawing camera's inverse (the morph's frame from
+    // clip space), for the lit drawing.
     std::shared_ptr<HostValues<glm::mat4>> drawModel;
     glm::mat4 camera{1.0f}, model{1.0f};
     ComputeGraphElementPtr output;

@@ -107,7 +107,8 @@ MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, co
     smoothing->setInput(shading, 7, 7);
     smoothing->setInput(vulkanContext.create<Tensor>(std::vector<uint32_t>{pixels, 4}), 8);
 
-    drawModel = std::make_shared<HostValues<glm::mat4>>(vulkanContext, std::vector<glm::mat4>{glm::mat4(1.0f)});
+    drawModel = std::make_shared<HostValues<glm::mat4>>(vulkanContext,
+                                                        std::vector<glm::mat4>{glm::mat4(1.0f), glm::mat4(1.0f)});
     const bool lit = options.lightSettings.element && options.light.element;
     auto composite = vulkanContext.create<GeneralComputation<CompositePushConstants>>(
         lit ? "shaders/tree/tree_captured_layer.comp.spv" : "shaders/raster/composite_layer.comp.spv");
@@ -159,6 +160,7 @@ void MeshMorph::setModel(const glm::mat4& worldFromMorph) {
 void MeshMorph::updateDrawCamera() {
     drawCamera->set(0, camera * model);
     drawModel->set(0, model);
+    drawModel->set(1, glm::inverse(camera * model));
 }
 
 } // namespace klartraum::raster

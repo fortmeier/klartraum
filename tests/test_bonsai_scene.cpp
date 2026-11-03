@@ -65,7 +65,8 @@
  *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
  *   occluder at the same place: the side towards the morning sun keeps the mesh's colour under the light's tint,
- *   the side away from it is clearly darker
+ *   the side away from it is clearly darker, and the shading changes smoothly across the sphere (lit per pixel, no
+ *   facets)
  * - potShadowsItsOwnFarSide: the light a captured pot's walls read (treeCapturedLightAt()): the wall facing away from
  *   the morning sun lies in the pot's own shadow, through its soil, whatever the trees do; the sunny wall is lit
  * - treeShadowsStayOffAPotsShadowSide: the wall of a captured pot facing away from the morning sun looks the same with
@@ -1276,7 +1277,27 @@ TEST_F(BonsaiRenderingTest, litMorphShadesLikeTheScene) {
     const double sunny = measure(across + sunAcross + glm::vec3(0.0f, 0.3f, 0.0f));
     const double away = measure(across - sunAcross);
     const double fullLight = 127.5 * double(tint.x + tint.y + tint.z);
-    std::cout << "lit morph: sunny " << sunny << ", away " << away << ", full light " << fullLight << std::endl;
+    // Steps between neighbouring pixels well inside the sphere's outline.
+    const glm::vec4 middle = clipFromWorld * glm::vec4(centre, 1.0f);
+    const glm::vec4 rim = clipFromWorld * glm::vec4(centre + radius * glm::vec3(0.0f, 1.0f, 0.0f), 1.0f);
+    const glm::vec2 onScreen((middle.x / middle.w * 0.5f + 0.5f) * extent.width,
+                             (middle.y / middle.w * 0.5f + 0.5f) * extent.height);
+    const float pixels = 0.5f * extent.height * std::abs(rim.y / rim.w - middle.y / middle.w);
+    int steps = 0, inside = 0;
+    for (int y = int(onScreen.y - pixels); y <= int(onScreen.y + pixels); ++y)
+        for (int x = int(onScreen.x - pixels); x < int(onScreen.x + pixels); ++x) {
+            if (glm::length(glm::vec2(x, y) - onScreen) > 0.75f * pixels)
+                continue;
+            const size_t i = (size_t(y) * extent.width + size_t(x)) * 4;
+            const int here = int(image[i]) + image[i + 1] + image[i + 2];
+            const int right = int(image[i + 4]) + image[i + 5] + image[i + 6];
+            ++inside;
+            if (std::abs(here - right) > 24)
+                ++steps;
+        }
+    std::cout << "lit morph: sunny " << sunny << ", away " << away << ", full light " << fullLight << ", " << steps
+              << " steps of " << inside << " pixels" << std::endl;
+    EXPECT_EQ(steps, 0);
     EXPECT_NEAR(sunny, fullLight, 0.12 * fullLight);
     EXPECT_LT(away, 0.7 * sunny);
 }

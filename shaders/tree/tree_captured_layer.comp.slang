@@ -5,9 +5,9 @@
 import glsl;
 
 // Draws a layer of premultiplied colours with coverage (a MeshMorph's antialiased mesh) over an image, lit like a
-// captured object of the tree renderers: each pixel is shaded by the light volume at the middle of the triangle it
-// shows (treeCapturedShadeAt()) and tinted by treeCapturedColor(). Pixels at the outline that show no triangle take
-// the light of a neighbour that does.
+// captured object of the tree renderers: each pixel is shaded by the light volume where its ray meets the triangle it
+// shows (treeCapturedShadeAt()), so that the light changes smoothly across the mesh, and tinted by
+// treeCapturedColor(). Pixels at the outline that show no triangle take a neighbour's triangle.
 // image = lit(layer.rgb) + (1 - layer.a) * image.
 
 #define TREE_FN
@@ -27,7 +27,7 @@ struct Push {
 [[vk::binding(2, 0)]] StructuredBuffer<uint> visibility; // per pixel: triangle + 1, 0 for none
 [[vk::binding(3, 0)]] StructuredBuffer<vec4> positions;  // per vertex, in the morph's frame
 [[vk::binding(4, 0)]] StructuredBuffer<uint> triangles;  // three vertices each
-[[vk::binding(5, 0)]] StructuredBuffer<mat4> worldFromMorph;
+[[vk::binding(5, 0)]] StructuredBuffer<mat4> drawing; // world from the morph's frame, the morph's frame from clip
 [[vk::binding(6, 0)]] StructuredBuffer<TreeRenderSettings> settings;
 
 [shader("compute")]
@@ -50,20 +50,33 @@ void main() {
     }
     vec3 colour = top.rgb / top.a;
     if (id != 0u) {
-        mat4 m = worldFromMorph[0];
+        mat4 m = drawing[0];
         uint t = id - 1u;
-        vec3 a = (m * vec4(positions[triangles[3u * t]].xyz, 1.0f)).xyz;
-        vec3 b = (m * vec4(positions[triangles[3u * t + 1u]].xyz, 1.0f)).xyz;
-        vec3 c = (m * vec4(positions[triangles[3u * t + 2u]].xyz, 1.0f)).xyz;
-        vec3 middle = (a + b + c) / 3.0f;
-        // The face normal, turned away from the mesh's origin.
-        vec3 normal = normalize(cross(b - a, c - a));
-        if (dot(normal, middle - vec3(m[3].x, m[3].y, m[3].z)) < 0.0f) {
-            normal = -normal;
+        vec3 a = positions[triangles[3u * t]].xyz;
+        vec3 b = positions[triangles[3u * t + 1u]].xyz;
+        vec3 c = positions[triangles[3u * t + 2u]].xyz;
+        // The pixel's ray in the morph's frame, met with the triangle's plane.
+        vec2 ndc = (vec2(p) + 0.5f) / vec2(float(pc.width), float(pc.height)) * 2.0f - 1.0f;
+        vec4 near = drawing[1] * vec4(ndc.x, ndc.y, 0.0f, 1.0f);
+        vec4 far = drawing[1] * vec4(ndc.x, ndc.y, 1.0f, 1.0f);
+        vec3 from = near.xyz / near.w;
+        vec3 along = far.xyz / far.w - from;
+        vec3 normal = cross(b - a, c - a);
+        float across = dot(normal, along);
+        vec3 hit = (a + b + c) / 3.0f;
+        if (abs(across) > 1e-12f) {
+            hit = from + along * (dot(normal, a - from) / across);
+        }
+        vec3 world = (m * vec4(hit, 1.0f)).xyz;
+        // The face normal, turned away from the mesh's origin, for snow only: a face normal would light the mesh
+        // in facets.
+        vec3 face = normalize((m * vec4(normal, 0.0f)).xyz);
+        if (dot(face, world - vec3(m[3].x, m[3].y, m[3].z)) < 0.0f) {
+            face = -face;
         }
         TreeRenderSettings s = settings[0];
-        float shade = treeCapturedShadeAt(s, middle, normal);
-        colour = treeCapturedColor(colour, normal, middle, shade, s);
+        float shade = treeCapturedShadeAt(s, world, vec3(0.0f));
+        colour = treeCapturedColor(colour, face, world, shade, s);
     }
     vec4 below = image[p];
     image[p] = vec4(clamp(colour * top.a + (1.0f - top.a) * below.rgb, 0.0f, 1.0f), 1.0f);
