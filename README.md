@@ -30,7 +30,7 @@ Early development. What works today:
 - Gaussian splatting with a compute and a raster backend (`.spz` scenes),
   optionally writing a depth buffer for compositing other geometry;
 - operations on Gaussians on the GPU every frame: transforming, merging
-  and relighting with point lights;
+  morphing one set into another and relighting with point lights;
 - buffers in device-local or host-visible memory, with staged uploads, and
   per-frame updates of Gaussians from the CPU before a frame is submitted;
 - ONNX models with the operators `Conv`, `ConvTranspose`, `Relu`, `Reshape`,

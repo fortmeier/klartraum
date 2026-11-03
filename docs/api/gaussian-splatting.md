@@ -77,6 +77,27 @@ same inputs.
 ```{doxygenstruct} klartraum::TransformBufferResult
 ```
 
+```{doxygenclass} klartraum::GaussianMorph
+```
+
+```{doxygenfunction} klartraum::createGaussianMorph
+```
+
+```{doxygenstruct} klartraum::GaussianMorphResult
+```
+
+```{doxygenstruct} klartraum::MorphParams
+```
+
+```{doxygenenum} klartraum::MorphVariant
+```
+
+```{doxygenfunction} klartraum::prepareTextMorph
+```
+
+```{doxygenstruct} klartraum::TextMorphStart
+```
+
 ```{doxygenclass} klartraum::GaussianLighting
 ```
 
