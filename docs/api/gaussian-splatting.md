@@ -124,3 +124,29 @@ same inputs.
 
 ```{doxygenfunction} klartraum::evaluateVisibility
 ```
+
+## Text as Gaussians
+
+```{doxygenclass} klartraum::Font
+```
+
+```{doxygenstruct} klartraum::TitleLayout
+```
+
+```{doxygenstruct} klartraum::TextLine
+```
+
+```{doxygenfunction} klartraum::rasterizeTitle
+```
+
+```{doxygenstruct} klartraum::CoverageMask
+```
+
+```{doxygenstruct} klartraum::TextSplatParams
+```
+
+```{doxygenfunction} klartraum::sampleTextGaussians(const CoverageMask&, const TextSplatParams&)
+```
+
+```{doxygenfunction} klartraum::sampleTextGaussians(const CoverageMask&, TextSplatParams, uint32_t)
+```
