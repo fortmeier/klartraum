@@ -47,30 +47,32 @@ void drawMark(std::vector<uint8_t>& bgra, uint32_t width, uint32_t height, glm::
 
 } // namespace
 
-SkyMark skyMarkAt(const glm::mat4& view, glm::vec3 direction, uint32_t width, uint32_t height, float halfWidthAngle,
+SkyMark skyMarkAt(const glm::mat4& view, glm::vec3 direction, uint32_t width, uint32_t height, float sideReach,
                   float horizon, float zenith) {
     SkyMark mark;
     const glm::vec3 d = glm::normalize(direction);
-    const float elevation = std::asin(std::clamp(d.y, -1.0f, 1.0f));
-    // The camera's forward and right directions in the horizontal plane.
+    // The camera's right and forward directions in the horizontal plane.
     const glm::vec3 forward = -glm::vec3(view[0][2], view[1][2], view[2][2]);
-    const glm::vec2 ahead = glm::normalize(glm::vec2(forward.x, forward.z));
-    const glm::vec2 right(-ahead.y, ahead.x);
-    const glm::vec2 flat(d.x, d.z);
-    if (elevation <= 0.0f || glm::length(flat) < 1e-6f) {
-        // Below the horizon, or straight up, where it has no side.
-        mark.visible = elevation > 0.0f;
-        mark.pixel = glm::vec2(0.5f * float(width), zenith * float(height));
-        return mark;
-    }
-    const float angle = std::atan2(glm::dot(flat, right), glm::dot(flat, ahead));
-    if (std::abs(angle) >= halfWidthAngle) {
+    const glm::vec3 ahead = glm::normalize(glm::vec3(forward.x, 0.0f, forward.z));
+    const glm::vec3 right(-ahead.z, 0.0f, ahead.x);
+    const float side = glm::dot(d, right);
+    if (d.y <= 0.0f || glm::dot(d, ahead) < -0.1f || std::abs(side) >= sideReach) {
         return mark;
     }
     mark.visible = true;
-    mark.pixel = glm::vec2(0.5f * float(width) * (1.0f + angle / halfWidthAngle),
-                           float(height) * (horizon + (zenith - horizon) * elevation / (0.5f * kPi)));
+    const float behind = std::clamp((glm::dot(d, ahead) + 0.1f) / 0.25f, 0.0f, 1.0f);
+    mark.opacity = behind * behind * (3.0f - 2.0f * behind);
+    mark.pixel = glm::vec2(0.5f * float(width) * (1.0f + side / sideReach),
+                           float(height) * (horizon + (zenith - horizon) * d.y));
     return mark;
+}
+
+glm::vec2 litSideTowards(const glm::mat4& view, glm::vec3 moon, glm::vec3 sun) {
+    // From the moon towards the sun, in the camera's image plane (x right, y down).
+    const glm::vec3 towards = glm::mat3(view) * (glm::normalize(sun) - glm::normalize(moon));
+    const glm::vec2 inFrame(towards.x, -towards.y);
+    const float length = glm::length(inFrame);
+    return length > 1e-6f ? inFrame / length : glm::vec2(0.0f, 1.0f);
 }
 
 void drawSunMark(std::vector<uint8_t>& bgra, uint32_t width, uint32_t height, glm::vec2 centre, float radius,

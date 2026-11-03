@@ -4,11 +4,14 @@
 
 /**
  * TESTS:
- * - markStraightAheadIsCentred: a light ahead of the camera stands in the middle of the frame's width, between the
- *   horizon and the zenith rows
+ * - markStraightAheadIsCentred: a light ahead of the camera stands, fully opaque, in the middle of the frame's width,
+ *   between the horizon and the zenith rows
  * - markFollowsAzimuthAndElevation: a light more to the right stands more to the right, a higher one higher, even for a
  *   camera looking down
  * - markBehindOrBelowIsHidden: a light behind the camera or below the horizon is not shown
+ * - markMovesSmoothlyOverhead: a light passing almost through the zenith moves across the frame in small steps
+ * - litSideFacesTheSun: the moon's lit side faces the sun beneath the horizon, and turns smoothly as the sun moves
+ *   from one side of the camera to the other
  * - sunIsADiscWithRays: on white, the sun's middle and a ray are black, the gap between two rays stays white
  * - marksStayBehindTheScene: pixels that are not the background colour are left as they are
  * - moonIsACrescent: on black, the moon's lit side is white, its middle on the other side stays black
@@ -56,6 +59,7 @@ int brightness(const std::vector<uint8_t>& bgra, int x, int y) {
 TEST(DemoSkyMarks, markStraightAheadIsCentred) {
     const SkyMark mark = skyMarkAt(viewLookingDown(0.0f), towards(0.0f, 0.5f), kWidth, kHeight);
     ASSERT_TRUE(mark.visible);
+    EXPECT_FLOAT_EQ(mark.opacity, 1.0f);
     EXPECT_NEAR(mark.pixel.x, 0.5f * kWidth, 1.0f);
     EXPECT_GT(mark.pixel.y, 0.08f * kHeight);
     EXPECT_LT(mark.pixel.y, 0.5f * kHeight);
@@ -76,6 +80,44 @@ TEST(DemoSkyMarks, markBehindOrBelowIsHidden) {
     const glm::mat4 view = viewLookingDown(0.3f);
     EXPECT_FALSE(skyMarkAt(view, towards(3.0f, 0.5f), kWidth, kHeight).visible);
     EXPECT_FALSE(skyMarkAt(view, towards(0.0f, -0.2f), kWidth, kHeight).visible);
+}
+
+TEST(DemoSkyMarks, markMovesSmoothlyOverhead) {
+    const glm::mat4 view = viewLookingDown(0.4f);
+    SkyMark previous;
+    float largest = 0.0f;
+    for (int i = 0; i <= 200; ++i) {
+        // From the left to the right, 1 degree beside the zenith.
+        const float t = float(i) / 200.0f;
+        const glm::vec3 d =
+            glm::normalize(glm::vec3(std::cos(3.14159f * (1.0f - t)), std::sin(3.14159f * t) + 0.0f, -0.02f) +
+                           glm::vec3(0.0f, 0.0f, 0.0f));
+        const SkyMark mark = skyMarkAt(view, d, kWidth, kHeight);
+        if (mark.visible && previous.visible)
+            largest = std::max(largest, glm::length(mark.pixel - previous.pixel));
+        previous = mark;
+    }
+    EXPECT_LT(largest, 0.02f * kWidth);
+}
+
+TEST(DemoSkyMarks, litSideFacesTheSun) {
+    const glm::mat4 view = viewLookingDown(0.3f);
+    const glm::vec3 moon = towards(0.0f, 0.6f);
+    // The sun below the horizon on the right: lit side to the right and down.
+    const glm::vec2 right = litSideTowards(view, moon, towards(1.2f, -0.4f));
+    EXPECT_GT(right.x, 0.3f);
+    EXPECT_GT(right.y, 0.0f);
+    EXPECT_LT(litSideTowards(view, moon, towards(-1.2f, -0.4f)).x, -0.3f);
+    // From the right round beneath to the left, the lit side turns in small steps.
+    glm::vec2 previous = litSideTowards(view, moon, towards(1.5f, -0.5f));
+    float largest = 0.0f;
+    for (int i = 1; i <= 100; ++i) {
+        const glm::vec2 lit = litSideTowards(view, moon, towards(1.5f - 0.03f * float(i), -0.5f));
+        EXPECT_NEAR(glm::length(lit), 1.0f, 1e-4f);
+        largest = std::max(largest, glm::length(lit - previous));
+        previous = lit;
+    }
+    EXPECT_LT(largest, 0.1f);
 }
 
 TEST(DemoSkyMarks, sunIsADiscWithRays) {

@@ -222,15 +222,12 @@ int main(int argc, char** argv) {
         const SkyMark sun = skyMarkAt(view, sky.sunDirection, extent.width, extent.height);
         if (sun.visible)
             drawSunMark(bgra, extent.width, extent.height, sun.pixel, radius, glm::vec3(0.0f),
-                        background * smooth(sky.sunElevation / 0.08f), background);
+                        sun.opacity * background * smooth(sky.sunElevation / 0.08f), background);
         const SkyMark moon = skyMarkAt(view, sky.moonDirection, extent.width, extent.height);
-        if (moon.visible) {
-            // Lit from below, on the side of the sun beneath the horizon.
-            const glm::vec3 right(view[0][0], view[1][0], view[2][0]);
-            const float side = glm::dot(right, sky.sunDirection) >= 0.0f ? 1.0f : -1.0f;
-            drawMoonMark(bgra, extent.width, extent.height, moon.pixel, radius, glm::vec2(side, 0.8f), glm::vec3(1.0f),
-                         (1.0f - background) * smooth(sky.moonElevation / 0.08f), background);
-        }
+        if (moon.visible)
+            drawMoonMark(bgra, extent.width, extent.height, moon.pixel, radius,
+                         litSideTowards(view, sky.moonDirection, sky.sunDirection), glm::vec3(1.0f),
+                         moon.opacity * (1.0f - background) * smooth(sky.moonElevation / 0.08f), background);
     };
     const auto finishFrame = [&](uint32_t frame, std::vector<uint8_t> bgra, float background) {
         const int chapter = timeline.chapterAt(frame);
