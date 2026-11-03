@@ -285,7 +285,7 @@ void surfelGaussian(uint slot, uint index) {
     if (v.color.w == TREE_MATERIAL_CAPTURED) {
         // Tinted like the captured Gaussians (see main()).
         TreeRenderSettings s = settings[0];
-        float shade = treeCapturedShade(s, treeCapturedLightAt(s, v.pos.xyz));
+        float shade = treeCapturedShadeAt(s, v.pos.xyz, normal);
         writeGaussian(slot, v.pos.xyz, rot, scale, treeCapturedColor(v.color.rgb, normal, v.pos.xyz, shade, s), 0.95f);
         return;
     }
@@ -303,8 +303,15 @@ void main() {
     if (g < pc.staticCount) {
         vec4 c = staticColors[g];
         TreeRenderSettings s = settings[0];
-        float shade = treeCapturedShade(s, treeCapturedLightAt(s, staticPositions[g]));
-        vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * c.rgb, staticNormals[g], staticPositions[g], shade, s);
+        // The side that is seen: the Gaussian's thinnest axis turned towards the camera, counting as far as the
+        // Gaussian is flat (the length of staticNormals); a round Gaussian's side is unknown.
+        vec3 axis = staticNormals[g];
+        float flatness = length(axis);
+        vec3 toCamera = camera.cameraWorldPos.xyz - staticPositions[g];
+        vec3 seen = flatness > 0.0f ? axis / flatness : vec3(0.0f, 1.0f, 0.0f);
+        seen = dot(seen, toCamera) < 0.0f ? -seen : seen;
+        float shade = treeCapturedShadeAt(s, staticPositions[g], flatness * seen);
+        vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * c.rgb, seen, staticPositions[g], shade, s);
         outColAlpha[g] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);
         return;
     }

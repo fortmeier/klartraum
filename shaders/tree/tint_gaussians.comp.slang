@@ -7,7 +7,7 @@ import scalar_buffer;
 
 // Tints the colours of captured Gaussians for the current light
 // (TreeRenderSettings::capturedTint), the shadows of the light volume
-// (treeCapturedShade()) and snow (treeCapturedColor()): the displayed colour
+// (treeCapturedShadeAt()) and snow (treeCapturedColor()): the displayed colour
 // 0.5 + C0 * sh0 is changed and turned back into the degree 0 coefficient.
 
 #define TREE_FN
@@ -39,7 +39,8 @@ void main() {
     }
     vec4 c = original[i];
     TreeRenderSettings s = settings[0];
-    float shade = treeCapturedShade(s, treeCapturedLightAt(s, positions[i]));
+    // Without the camera here, which side of a Gaussian is seen is unknown.
+    float shade = treeCapturedShadeAt(s, positions[i], vec3(0.0f));
     vec3 normal = treeGaussianNormal(rotations[i], scales[i]);
     vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * c.rgb, normal, positions[i], shade, s);
     tinted[i] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);

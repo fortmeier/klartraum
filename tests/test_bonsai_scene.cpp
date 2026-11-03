@@ -66,6 +66,9 @@
  *   the side away from it is clearly darker
  * - potShadowsItsOwnFarSide: the light a captured pot's walls read (treeCapturedLightAt()): the wall facing away from
  *   the morning sun lies in the pot's own shadow, through its soil, whatever the trees do; the sunny wall is lit
+ * - treeShadowsStayOffAPotsShadowSide: the wall of a captured pot facing away from the morning sun looks the same with
+ *   the tree and without it, although the tree's shadow reaches it: in the pot's own shadow there is no sun left for
+ *   the tree to block
  * - shadowsMoveSmoothlyWithTheSun: as the morning sun moves on in small steps, no pixel of a captured ball and the
  *   soil around it changes by much from one step to the next (no shadow edges hopping between voxels)
  **/
@@ -73,6 +76,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -1328,18 +1332,22 @@ TEST_F(BonsaiRenderingTest, shadowsMoveSmoothlyWithTheSun) {
 
 namespace {
 
-// A captured pot of Gaussians: a box shell 2 x 0.5 x 1.2 of opaque grey splats, open at the top.
+// A captured pot of Gaussians: a box shell 2 x 0.5 x 1.2 of opaque grey splats, open at the top, flat along their
+// walls as a trained capture's are.
 std::shared_ptr<BonsaiObject> boxPot() {
     auto pot = std::make_shared<BonsaiObject>();
     for (int i = 0; i <= 40; ++i)
         for (int j = 0; j <= 10; ++j)
-            for (const glm::vec3 p :
-                 {glm::vec3(-1.0f + 0.05f * i, 0.05f * j, -0.6f), glm::vec3(-1.0f + 0.05f * i, 0.05f * j, 0.6f),
-                  glm::vec3(-1.0f, 0.05f * j, -0.6f + 0.03f * i), glm::vec3(1.0f, 0.05f * j, -0.6f + 0.03f * i)}) {
+            for (int wall = 0; wall < 4; ++wall) {
+                const glm::vec3 p = wall == 0   ? glm::vec3(-1.0f + 0.05f * i, 0.05f * j, -0.6f)
+                                    : wall == 1 ? glm::vec3(-1.0f + 0.05f * i, 0.05f * j, 0.6f)
+                                    : wall == 2 ? glm::vec3(-1.0f, 0.05f * j, -0.6f + 0.03f * i)
+                                                : glm::vec3(1.0f, 0.05f * j, -0.6f + 0.03f * i);
                 Gaussian3D g{};
                 g.position = {p.x, p.y, p.z};
                 g.rotation = {0.0f, 0.0f, 0.0f, 1.0f};
-                g.scale = {0.04f, 0.04f, 0.04f};
+                g.scale =
+                    wall < 2 ? std::array<float, 3>{0.04f, 0.04f, 0.008f} : std::array<float, 3>{0.008f, 0.04f, 0.04f};
                 g.color = {0.0f, 0.0f, 0.0f};
                 g.alpha = 0.95f;
                 pot->gaussians.push_back(g);
@@ -1423,4 +1431,91 @@ TEST_F(BonsaiRenderingTest, potShadowsItsOwnFarSide) {
               << "), far wall " << farSum / farCount << std::endl;
     EXPECT_GT(sunnySum / sunnyCount, 0.9);
     EXPECT_LT(farSum / farCount, 0.15);
+}
+
+TEST_F(BonsaiRenderingTest, treeShadowsStayOffAPotsShadowSide) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.potObject = boxPot();
+    sceneConfig.treeCount = 1;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const TreeSky sky = treeSkyAt(kMorning, 2.0f);
+    const glm::vec2 sunAcross = glm::normalize(glm::vec2(sky.sunDirection.x, sky.sunDirection.z));
+    // The far wall's Gaussians at mid-height: of the box's four walls, the one facing most directly away from the sun.
+    const bool alongX = std::abs(sunAcross.x) > std::abs(sunAcross.y);
+    const float away = alongX ? -sunAcross.x : -sunAcross.y;
+    float reach = 0.0f, top = 0.0f;
+    for (const Gaussian3D& g : scene.objectGaussians) {
+        reach = std::max(reach, (away > 0.0f ? 1.0f : -1.0f) * (alongX ? g.position[0] : g.position[2]));
+        top = std::max(top, g.position[1]);
+    }
+    std::vector<glm::vec3> farWall;
+    for (const Gaussian3D& g : scene.objectGaussians) {
+        const float out = (away > 0.0f ? 1.0f : -1.0f) * (alongX ? g.position[0] : g.position[2]);
+        if (out > reach - 0.01f && g.position[1] > 0.3f * top && g.position[1] < 0.7f * top)
+            farWall.emplace_back(g.position[0], g.position[1], g.position[2]);
+    }
+    ASSERT_GT(farWall.size(), 20u);
+    glm::vec3 middle(0.0f);
+    for (const glm::vec3& p : farWall)
+        middle += p / float(farWall.size());
+
+    const VkExtent2D extent{320, 240};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    // Level with the far wall, facing it from outside the pot.
+    const glm::vec3 outwards =
+        alongX ? glm::vec3(away > 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 0.0f, away > 0.0f ? 1.0f : -1.0f);
+    setCamera(bonsai.getCamera()->ubo, middle + 2.5f * outwards, middle, 40.0f, float(extent.width) / extent.height);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, kMorning, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    const glm::mat4 clipFromWorld = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view;
+
+    auto render = [&](float age) {
+        std::vector<TreeInstance> trees = scene.trees;
+        for (TreeInstance& tree : trees)
+            setTreeAge(tree, age);
+        bonsai.getGenerator().getInstances().set(trees);
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        return readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    };
+    const auto withTree = render(1.0f);
+    // The tree's shadow reaches the far wall: the sun through the trees there is clearly less than full.
+    const auto light = bonsai.getLightVolume().readLight();
+    const TreeRenderSettings s = bonsai.getSettings().values().at(0);
+    int shadedByTree = 0;
+    for (const glm::vec3& p : farWall)
+        if (lightAt(light, s, p + glm::normalize(glm::vec3(s.sun)) * (1.5f * s.lightGridMin.w)).z < 0.7f)
+            ++shadedByTree;
+    ASSERT_GT(shadedByTree, int(farWall.size() / 10)) << "the tree's shadow misses the far wall";
+    const auto withoutTree = render(0.0f);
+    writePpm("bonsai_far_wall_tree", withTree, extent);
+    writePpm("bonsai_far_wall_no_tree", withoutTree, extent);
+
+    // The far wall's pixels, the same with and without the tree.
+    double largest = 0.0, total = 0.0;
+    int count = 0;
+    for (const glm::vec3& p : farWall) {
+        const glm::vec4 clip = clipFromWorld * glm::vec4(p, 1.0f);
+        const int x = int((clip.x / clip.w * 0.5f + 0.5f) * extent.width);
+        const int y = int((clip.y / clip.w * 0.5f + 0.5f) * extent.height);
+        if (x < 0 || y < 0 || x >= int(extent.width) || y >= int(extent.height))
+            continue;
+        const size_t i = (size_t(y) * extent.width + size_t(x)) * 4;
+        double difference = 0.0;
+        for (int c = 0; c < 3; ++c)
+            difference += std::abs(int(withTree[i + c]) - int(withoutTree[i + c]));
+        largest = std::max(largest, difference);
+        total += difference;
+        ++count;
+    }
+    ASSERT_GT(count, 20);
+    std::cout << "far wall with and without the tree: mean difference " << total / count << ", largest " << largest
+              << " (" << shadedByTree << " of " << farWall.size() << " points in the tree's shadow)" << std::endl;
+    EXPECT_LT(total / count, 2.0);
+    EXPECT_LT(largest, 12.0);
 }

@@ -5,9 +5,9 @@
 import glsl;
 
 // Draws a layer of premultiplied colours with coverage (a MeshMorph's antialiased mesh) over an image, lit like a
-// captured object of the tree renderers: each pixel takes the light of the light volume at the middle of the
-// triangle it shows (treeCapturedLightAt()), shaded and tinted by treeCapturedShade() and treeCapturedColor(). Pixels
-// at the outline that show no triangle take the light of a neighbour that does.
+// captured object of the tree renderers: each pixel is shaded by the light volume at the middle of the triangle it
+// shows (treeCapturedShadeAt()) and tinted by treeCapturedColor(). Pixels at the outline that show no triangle take
+// the light of a neighbour that does.
 // image = lit(layer.rgb) + (1 - layer.a) * image.
 
 #define TREE_FN
@@ -62,7 +62,7 @@ void main() {
             normal = -normal;
         }
         TreeRenderSettings s = settings[0];
-        float shade = treeCapturedShade(s, treeCapturedLightAt(s, middle));
+        float shade = treeCapturedShadeAt(s, middle, normal);
         colour = treeCapturedColor(colour, normal, middle, shade, s);
     }
     vec4 below = image[p];

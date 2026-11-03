@@ -20,7 +20,8 @@ import glsl;
 
 [[vk::binding(0, 0)]] StructuredBuffer<TreeRenderSettings> settings;
 [[vk::binding(1, 0)]] StructuredBuffer<uint> density;
-[[vk::binding(2, 0)]] RWStructuredBuffer<vec4> light; // xy through all occluders, zw through the trees only
+[[vk::binding(2, 0)]] RWStructuredBuffer<vec4> light; // xy through all occluders, zw through the trees only (w: over
+                                                       // the sky the static occluders leave open)
 [[vk::binding(3, 0)]] StructuredBuffer<float> staticDepth;
 [[vk::binding(4, 0)]] StructuredBuffer<uint> moving;
 
@@ -114,10 +115,18 @@ void main() {
     ivec3 c = ivec3(i % n.x, (i / n.x) % n.y, i / (n.x * n.y));
     vec2 sun = marchSun(c, normalize(s.sun.xyz), s);
     float e = radians(50.0f);
-    vec2 sky = march(c, vec3(0.0f, 1.0f, 0.0f), s);
-    sky += march(c, vec3(cos(e), sin(e), 0.0f), s);
-    sky += march(c, vec3(-cos(e), sin(e), 0.0f), s);
-    sky += march(c, vec3(0.0f, sin(e), cos(e)), s);
-    sky += march(c, vec3(0.0f, sin(e), -cos(e)), s);
-    light[i] = vec4(sun.x, sky.x / 5.0f, sun.y, sky.y / 5.0f);
+    vec3 directions[5] = {vec3(0.0f, 1.0f, 0.0f), vec3(cos(e), sin(e), 0.0f), vec3(-cos(e), sin(e), 0.0f),
+                          vec3(0.0f, sin(e), cos(e)), vec3(0.0f, sin(e), -cos(e))};
+    // The sky through everything, through the trees only, and the share the static occluders leave open, as which
+    // the trees' sky is taken over the directions the static occluders leave open: a tree does not darken what
+    // a captured object already hides from that part of the sky.
+    float all = 0.0f, trees = 0.0f, open = 0.0f;
+    for (int k = 0; k < 5; ++k) {
+        vec2 ray = march(c, directions[k], s);
+        all += ray.x;
+        trees += ray.y;
+        open += ray.x / max(ray.y, 1e-6f);
+    }
+    float treesWhereOpen = open > 1e-3f ? all / open : trees / 5.0f;
+    light[i] = vec4(sun.x, all / 5.0f, sun.y, treesWhereOpen);
 }

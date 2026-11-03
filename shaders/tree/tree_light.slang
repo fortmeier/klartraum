@@ -47,14 +47,25 @@ vec2 treeLightOfTreesAt(TreeRenderSettings s, vec3 p) {
     return treeLightAll(s, p).zw;
 }
 
-// (sun transmittance, sky visibility) of a captured object's point p, whose colours hold the light of the capture
-// but not that of the scene. The sun is read a voxel and a half towards the light, where a point facing the light is
-// outside its own surface and a point facing away is inside the object (no normal needed, captured Gaussians have
-// none that points outwards). The trees' shadows count fully; the shadows of the static occluders, the object itself
-// included, at three quarters, as the captured colours already hold some of the object's own shading. The sky is
-// seen through the trees only.
-vec2 treeCapturedLightAt(TreeRenderSettings s, vec3 p) {
-    vec4 towardsLight = treeLightAll(s, p + normalize(s.sun.xyz) * (1.5f * s.lightGridMin.w));
-    float statics = towardsLight.x / max(towardsLight.z, 1e-4f);
-    return vec2(towardsLight.z * mix(1.0f, statics, 0.75f), treeLightAll(s, p).w);
+// How much of the light reaches the point p of a captured object, whose colours hold the light of the capture but
+// not that of the scene (1 in full sun under an open sky, see treeCapturedShade()). The sun is read a voxel and a
+// half towards the light, where a point facing the light is outside its own surface and a point facing away is
+// inside the object, through the trees and the static occluders (the object itself included) alike. A surface whose
+// `facing` (the side that is seen, its length how far that is known: 1 for a surface, 0 for unknown) turns away from
+// the sun gets no sun either, which also holds for thin walls, where the point a voxel and a half on lies beyond the
+// wall. Where the object or the
+// other static occluders shut out the sun, the shade is lifted by a quarter of the sun's share, the same everywhere,
+// as the captured colours already hold some of the object's own shading; in the object's own shadow, the trees thus
+// have no sun left to block. The sky is seen through the trees over the part the static occluders leave open.
+float treeCapturedShadeAt(TreeRenderSettings s, vec3 p, vec3 facing) {
+    vec3 sun = normalize(s.sun.xyz);
+    vec4 towardsLight = treeLightAll(s, p + sun * (1.5f * s.lightGridMin.w));
+    float statics = clamp(towardsLight.x / max(towardsLight.z, 1e-4f), 0.0f, 1.0f);
+    float known = length(facing);
+    if (known > 0.0f) {
+        statics *= mix(1.0f, smoothstep(-0.05f, 0.2f, dot(facing / known, sun)), min(known, 1.0f));
+    }
+    float shade = treeCapturedShade(s, vec2(towardsLight.z * statics, treeLightAll(s, p).w));
+    float lit = treeCapturedShade(s, vec2(1.0f, 0.0f));
+    return shade + 0.25f * lit * (1.0f - statics);
 }

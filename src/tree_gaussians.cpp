@@ -4,6 +4,9 @@
 
 #include "klartraum/tree/tree_gaussians.hpp"
 
+#include <algorithm>
+#include <array>
+
 namespace klartraum {
 
 TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& generator,
@@ -34,9 +37,13 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
     for (const Gaussian3D& g : staticGaussians) {
         staticColors.emplace_back(g.color[0], g.color[1], g.color[2], g.alpha);
         staticPositions.emplace_back(g.position[0], g.position[1], g.position[2]);
+        // The thinnest axis, as long as the Gaussian is flat: 1 for a disc, 0 for a ball (its axis means nothing).
+        std::array<float, 3> sorted = g.scale;
+        std::sort(sorted.begin(), sorted.end());
+        const float flatness = std::clamp((0.7f - sorted[0] / std::max(sorted[1], 1e-9f)) / 0.4f, 0.0f, 1.0f);
         staticNormals.push_back(
-            tree::treeGaussianNormal(glm::vec4(g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3]),
-                                     glm::vec3(g.scale[0], g.scale[1], g.scale[2])));
+            flatness * tree::treeGaussianNormal(glm::vec4(g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3]),
+                                                glm::vec3(g.scale[0], g.scale[1], g.scale[2])));
     }
     if (staticColors.empty()) {
         // The bindings need buffers.
