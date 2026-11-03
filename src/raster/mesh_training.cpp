@@ -4,6 +4,7 @@
 
 #include "klartraum/raster/mesh_training.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include <glm/gtc/type_ptr.hpp>
@@ -49,7 +50,8 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
                            const std::vector<glm::mat4>& cameras, const MeshTrainingOptions& options)
     : vulkanContext(vulkanContext),
       options(options),
-      startMesh(start) {
+      startMesh(start),
+      cameras(cameras) {
     if (cameras.empty())
         throw std::invalid_argument("MeshTraining: at least one camera is needed");
     const uint32_t w = options.width, h = options.height, tw = options.textureWidth, th = options.textureHeight;
@@ -81,108 +83,133 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
     textureGradients = tensor(texelCount, 4);
     lossValue = tensor(1, 1);
 
-    auto nextView = cycleView(vulkanContext, views);
-    nextView->setInput(viewIndex, 0);
-    auto visibility = std::make_shared<UintBuffer>(vulkanContext, pixels);
-    auto pass = std::make_shared<VisibilityPass>(vulkanContext, w, h, triangleCount);
-    pass->setInput(positions, 0);
-    pass->setInput(triangles, 1);
-    pass->setInput(cameraBuffer, 2);
-    pass->setInput(nextView, 3, 0);
-    pass->setInput(visibility, 4);
-    const auto connect = [&](const ComputeGraphElementPtr& element) {
-        element->setInput(positions, 0);
-        element->setInput(triangles, 1);
-        element->setInput(cornerUvs, 2);
-        element->setInput(texels, 3);
-        element->setInput(cameraBuffer, 4);
-        element->setInput(nextView, 5, 0);
-        element->setInput(pass, 6, 4);
-    };
-    auto clear = clearBuffers(vulkanContext);
-    clear->setInput(colorGradients, 0);
-    clear->setInput(vertexGradients, 1);
-    clear->setInput(textureGradients, 2);
-    clear->setInput(lossValue, 3);
-    auto shading = shade(vulkanContext, w, h, tw, th);
-    connect(shading);
-    shading->setInput(colors, 7);
-    auto smoothing = antialias(vulkanContext, w, h, tw, th);
-    connect(smoothing);
-    smoothing->setInput(shading, 7, 7);
-    smoothing->setInput(antialiased, 8);
-    auto loss = options.viewColors
-                    ? imageLossWithViewColors(vulkanContext, w, h, options.maskWeight, options.viewColorWeight)
-                    : imageLoss(vulkanContext, w, h, options.maskWeight);
-    if (options.viewColors) {
-        viewColorValues = tensor(2 * views, 4);
-        viewColorGradients = tensor(2 * views, 4);
-        for (auto& moments : viewColorMoments)
-            moments = tensor(8 * views, 1);
-        clear->setInput(viewColorGradients, 4);
-        loss->setInput(viewColorValues, 5);
-        loss->setInput(clear, 6, 4);
-    }
-    loss->setInput(smoothing, 0, 8);
-    loss->setInput(targets, 1);
-    loss->setInput(nextView, 2, 0);
-    loss->setInput(imageGradients, 3);
-    loss->setInput(clear, 4, 3);
-    auto smoothingBackward = antialiasBackward(vulkanContext, w, h, tw, th);
-    connect(smoothingBackward);
-    smoothingBackward->setInput(shading, 7, 7);
-    smoothingBackward->setInput(loss, 8, 3);
-    smoothingBackward->setInput(clear, 9, 0);
-    smoothingBackward->setInput(clear, 10, 1);
-    auto shadingBackward = shadeColorBackward(vulkanContext, w, h, tw, th);
-    connect(shadingBackward);
-    shadingBackward->setInput(smoothingBackward, 7, 9);
-    shadingBackward->setInput(smoothingBackward, 8, 10);
-    shadingBackward->setInput(clear, 9, 2);
-    ComputeGraphElementPtr geometryGradient = shadingBackward;
-    int geometrySlot = 8;
-    if (options.laplacianWeight > 0.0f) {
-        auto regularizer = laplacianRegularizer(vulkanContext, vertexCount, options.laplacianWeight);
-        regularizer->setInput(positions, 0);
-        regularizer->setInput(adjacencyOffsets, 1);
-        regularizer->setInput(neighbours, 2);
-        regularizer->setInput(shadingBackward, 3, 8);
-        regularizer->setInput(loss, 4, 4);
-        geometryGradient = regularizer;
-        geometrySlot = 3;
-    }
+    // The steps of one submission, one after another; they share the parameters and the intermediate buffers.
+    ComputeGraphElementPtr previous;
+    for (uint32_t stepIndex = 0; stepIndex < std::max(options.stepsPerSubmit, 1u); ++stepIndex) {
+        auto nextView = cycleView(vulkanContext, views);
+        nextView->setInput(viewIndex, 0);
+        auto visibility = std::make_shared<UintBuffer>(vulkanContext, pixels);
+        auto pass = std::make_shared<VisibilityPass>(vulkanContext, w, h, triangleCount);
+        pass->setInput(positions, 0);
+        pass->setInput(triangles, 1);
+        pass->setInput(cameraBuffer, 2);
+        pass->setInput(nextView, 3, 0);
+        pass->setInput(visibility, 4);
+        const auto connect = [&](const ComputeGraphElementPtr& element) {
+            element->setInput(positions, 0);
+            element->setInput(triangles, 1);
+            element->setInput(cornerUvs, 2);
+            element->setInput(texels, 3);
+            element->setInput(cameraBuffer, 4);
+            element->setInput(nextView, 5, 0);
+            element->setInput(pass, 6, 4);
+        };
+        auto clear = clearBuffers(vulkanContext);
+        clear->setInput(colorGradients, 0);
+        clear->setInput(vertexGradients, 1);
+        clear->setInput(textureGradients, 2);
+        clear->setInput(lossValue, 3);
+        auto shading = shade(vulkanContext, w, h, tw, th);
+        connect(shading);
+        shading->setInput(colors, 7);
+        auto smoothing = antialias(vulkanContext, w, h, tw, th);
+        connect(smoothing);
+        smoothing->setInput(shading, 7, 7);
+        smoothing->setInput(antialiased, 8);
+        auto loss = options.viewColors
+                        ? imageLossWithViewColors(vulkanContext, w, h, options.maskWeight, options.viewColorWeight)
+                        : imageLoss(vulkanContext, w, h, options.maskWeight);
+        if (options.viewColors) {
+            viewColorValues = tensor(2 * views, 4);
+            viewColorGradients = tensor(2 * views, 4);
+            for (auto& moments : viewColorMoments)
+                moments = tensor(8 * views, 1);
+            clear->setInput(viewColorGradients, 4);
+            loss->setInput(viewColorValues, 5);
+            loss->setInput(clear, 6, 4);
+        }
+        loss->setInput(smoothing, 0, 8);
+        loss->setInput(targets, 1);
+        loss->setInput(nextView, 2, 0);
+        loss->setInput(imageGradients, 3);
+        loss->setInput(clear, 4, 3);
+        auto smoothingBackward = antialiasBackward(vulkanContext, w, h, tw, th);
+        connect(smoothingBackward);
+        smoothingBackward->setInput(shading, 7, 7);
+        smoothingBackward->setInput(loss, 8, 3);
+        smoothingBackward->setInput(clear, 9, 0);
+        smoothingBackward->setInput(clear, 10, 1);
+        auto shadingBackward = shadeColorBackward(vulkanContext, w, h, tw, th);
+        connect(shadingBackward);
+        shadingBackward->setInput(smoothingBackward, 7, 9);
+        shadingBackward->setInput(smoothingBackward, 8, 10);
+        shadingBackward->setInput(clear, 9, 2);
+        ComputeGraphElementPtr geometryGradient = shadingBackward;
+        int geometrySlot = 8;
+        if (options.laplacianWeight > 0.0f) {
+            auto regularizer = laplacianRegularizer(vulkanContext, vertexCount, options.laplacianWeight);
+            regularizer->setInput(positions, 0);
+            regularizer->setInput(adjacencyOffsets, 1);
+            regularizer->setInput(neighbours, 2);
+            regularizer->setInput(shadingBackward, 3, 8);
+            regularizer->setInput(loss, 4, 4);
+            geometryGradient = regularizer;
+            geometrySlot = 3;
+        }
 
-    // Adam after the step counter and every read of the parameters (all upstream of the gradients).
-    auto counter = training::stepCounter(vulkanContext);
-    counter->setInput(stepCount, 0);
-    auto geometryStep = training::adamStep(vulkanContext, 4 * vertexCount, options.geometry);
-    geometryStep->setInput(positions, 0);
-    geometryStep->setInput(geometryGradient, 1, geometrySlot);
-    geometryStep->setInput(positionMoments[0], 2);
-    geometryStep->setInput(positionMoments[1], 3);
-    geometryStep->setInput(stepCount, 4);
-    geometryStep->addDependency(counter);
-    auto textureStep = training::adamStep(vulkanContext, 4 * texelCount, options.texture);
-    textureStep->setInput(texels, 0);
-    textureStep->setInput(shadingBackward, 1, 9);
-    textureStep->setInput(texelMoments[0], 2);
-    textureStep->setInput(texelMoments[1], 3);
-    textureStep->setInput(stepCount, 4);
-    textureStep->addDependency(geometryStep);
-    ComputeGraphElementPtr last = textureStep;
-    if (options.viewColors) {
-        auto viewColorStep = training::adamStep(vulkanContext, 8 * views, options.viewColor);
-        viewColorStep->setInput(viewColorValues, 0);
-        viewColorStep->setInput(loss, 1, 6);
-        viewColorStep->setInput(viewColorMoments[0], 2);
-        viewColorStep->setInput(viewColorMoments[1], 3);
-        viewColorStep->setInput(stepCount, 4);
-        viewColorStep->addDependency(textureStep);
-        last = viewColorStep;
+        // Adam after the step counter and every read of the parameters (all upstream of the gradients).
+        auto counter = training::stepCounter(vulkanContext);
+        counter->setInput(stepCount, 0);
+        auto geometryStep = training::adamStep(vulkanContext, 4 * vertexCount, options.geometry);
+        geometryStep->setInput(positions, 0);
+        geometryStep->setInput(geometryGradient, 1, geometrySlot);
+        geometryStep->setInput(positionMoments[0], 2);
+        geometryStep->setInput(positionMoments[1], 3);
+        geometryStep->setInput(stepCount, 4);
+        geometryStep->addDependency(counter);
+        auto textureStep = training::adamStep(vulkanContext, 4 * texelCount, options.texture);
+        textureStep->setInput(texels, 0);
+        textureStep->setInput(shadingBackward, 1, 9);
+        textureStep->setInput(texelMoments[0], 2);
+        textureStep->setInput(texelMoments[1], 3);
+        textureStep->setInput(stepCount, 4);
+        textureStep->addDependency(geometryStep);
+        ComputeGraphElementPtr last = textureStep;
+        if (options.viewColors) {
+            auto viewColorStep = training::adamStep(vulkanContext, 8 * views, options.viewColor);
+            viewColorStep->setInput(viewColorValues, 0);
+            viewColorStep->setInput(loss, 1, 6);
+            viewColorStep->setInput(viewColorMoments[0], 2);
+            viewColorStep->setInput(viewColorMoments[1], 3);
+            viewColorStep->setInput(stepCount, 4);
+            viewColorStep->addDependency(textureStep);
+            last = viewColorStep;
+        }
+        if (previous) {
+            nextView->addDependency(previous);
+            clear->addDependency(previous);
+        } else {
+            firstElements = {nextView, clear};
+        }
+        previous = last;
     }
-    trainingGraph = std::make_unique<ComputeGraph>(vulkanContext, 1);
-    trainingGraph->compileFrom(last);
+    lastElement = previous;
+    if (options.ownGraph) {
+        trainingGraph = std::make_unique<ComputeGraph>(vulkanContext, 1);
+        trainingGraph->compileFrom(lastElement);
+        initialize();
+    }
+}
 
+void MeshTraining::addDependency(const ComputeGraphElementPtr& element) {
+    for (const auto& first : firstElements)
+        first->addDependency(element);
+}
+
+void MeshTraining::initialize() {
+    const TriangleMesh& start = startMesh;
+    const VertexAdjacency adjacency = vertexAdjacency(start);
+    const uint32_t views = uint32_t(cameras.size()), texelCount = options.textureWidth * options.textureHeight;
     positions->getDataBuffer(0).memcopyFrom(packPositions(start));
     triangles->getBuffer(0).memcopyFrom(packTriangles(start));
     cornerUvs->getDataBuffer(0).memcopyFrom(packCornerUvs(start));

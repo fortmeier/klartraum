@@ -42,6 +42,8 @@
  *   icosphere to 24 rendered views of the synthetic pumpkin; three held-out views reach a silhouette IoU above 0.97
  *   and a PSNR inside the object above 29 dB, and the mean distance of the vertices to the true surface drops from
  *   0.098 below 0.025
+ * - severalStepsPerSubmission: the same training recorded 24 steps to a submission reaches the same quality on the
+ *   held-out views (silhouette IoU above 0.97, PSNR above 29 dB) in 60 submissions
  **/
 
 #include <gtest/gtest.h>
@@ -1292,4 +1294,41 @@ TEST_F(DifferentiableRasterTest, pumpkinReconstruction) {
     EXPECT_GT(iou, 0.97);
     EXPECT_GT(psnr, 29.0);
     EXPECT_LT(distance, 0.025);
+}
+
+TEST_F(DifferentiableRasterTest, severalStepsPerSubmission) {
+    raster::MeshTrainingOptions options;
+    options.stepsPerSubmit = 24;
+    std::vector<glm::mat4> cameras, heldOut;
+    for (const auto& [elevation, start] : {std::pair{-0.25f, 0.0f}, {0.3f, 0.39f}, {0.85f, 0.0f}}) {
+        const auto ring = raster::cameraRing(8, 3.5f, elevation, 0.8f, 1.0f, start);
+        cameras.insert(cameras.end(), ring.begin(), ring.end());
+    }
+    for (const float angle : {0.2f, 2.3f, 4.4f})
+        heldOut.push_back(raster::cameraRing(1, 3.5f, 0.05f + 0.1f * angle, 0.8f, 1.0f, angle)[0]);
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(4);
+    const std::vector<float> texture = raster::syntheticPumpkinTexture(64, 32);
+    const auto render = [&](const raster::TriangleMesh& mesh, const std::vector<float>& t,
+                            const std::vector<glm::mat4>& views) {
+        return raster::renderImages(*vc, mesh, t, 64, 32, views, 128, 128);
+    };
+    raster::MeshTraining training(*vc, raster::icosphere(4), cameras, options);
+    training.setTargets(render(pumpkin, texture, cameras));
+    for (int submission = 0; submission < 60; ++submission)
+        training.step();
+    const std::vector<float> images = render(training.mesh(), training.texture(), heldOut);
+    const std::vector<float> targets = render(pumpkin, texture, heldOut);
+    int both = 0, either = 0, count = 0;
+    double squaredError = 0.0;
+    for (size_t p = 0; p < images.size() / 4; ++p) {
+        const float *a = &images[4 * p], *b = &targets[4 * p];
+        both += a[3] > 0.5f && b[3] > 0.5f;
+        either += a[3] > 0.5f || b[3] > 0.5f;
+        if (a[3] > 0.99f && b[3] > 0.99f)
+            for (int c = 0; c < 3; ++c, ++count)
+                squaredError += (a[c] - b[c]) * (a[c] - b[c]);
+    }
+    const double iou = double(both) / either, psnr = 10.0 * std::log10(count / squaredError);
+    EXPECT_GT(iou, 0.97);
+    EXPECT_GT(psnr, 29.0) << "IoU " << iou;
 }
