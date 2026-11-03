@@ -4,10 +4,10 @@
 
 /**
  * TESTS:
- * - ExecuteWithValidEncoderModel: the simple encoder model loads and runs, and every
- *   layer output matches the ONNX Runtime reference stored in the model
- * - ExecuteWithValidDecoderModel: the simple decoder model loads and runs, and every
- *   layer output matches the ONNX Runtime reference stored in the model
+ * - ExecuteWithValidEncoderModel: the simple encoder executes and matches every frozen
+ *   intermediate
+ * - ExecuteWithValidDecoderModel: the simple decoder executes and matches every frozen
+ *   intermediate
  **/
 #include <filesystem>
 #include <fstream>
@@ -53,6 +53,11 @@ TEST(OnnxNetworkTest, ExecuteWithValidEncoderModel) {
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
 
+    for (const auto& layer : {"/conv1/Conv_output_0", "/relu/Relu_output_0", "/conv2/Conv_output_0",
+                              "/relu_1/Relu_output_0", "/conv3/Conv_output_0", "output"}) {
+        onnxNetwork->retainTensor(layer);
+    }
+
     /*
     STEP 2: use the render engine to execute the computegraph so it can be debugged with renderdoc
     */
@@ -81,6 +86,12 @@ TEST(OnnxNetworkTest, ExecuteWithValidDecoderModel) {
     std::string modelPath = "./data/onnx/simple_decoder_with_onnx_frozen_intermediates.onnx";
 
     auto onnxNetwork = vulkanContext.create<OnnxNetwork>(modelPath);
+
+    for (const auto& layer :
+         {"/deconv1/ConvTranspose_output_0", "/relu/Relu_output_0", "/deconv2/ConvTranspose_output_0",
+          "/relu_1/Relu_output_0", "/deconv3/ConvTranspose_output_0", "output"}) {
+        onnxNetwork->retainTensor(layer);
+    }
 
     /*
     STEP 2: use the render engine to execute the computegraph so it can be debugged with renderdoc

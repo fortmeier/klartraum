@@ -10,9 +10,9 @@ headsets.
 | Model type | Status |
 |---|---|
 | Gaussian splatting | implemented (compute and raster backends) |
-| Convolutional neural networks | first ONNX operators implemented (Conv, ConvTranspose, ReLU, Reshape, Transpose) |
-| Diffusion networks | not implemented yet |
-| Transformers and LLMs | not implemented yet |
+| Convolutional neural networks | ONNX operators implemented: Add, Cast, Concat, Constant, Conv, ConvTranspose, Cos, Div, Elu, Erf, Expand, Gather, Gemm, InstanceNormalization, LayerNormalization, MatMul, Mul, ReduceMean, Relu, Reshape, Resize, Sigmoid, Sin, Slice, Softmax, Split, Sqrt, Sub, Transpose and Unsqueeze |
+| Diffusion networks | building blocks implemented (fused attention, normalizations, Conv3d); no complete pipeline yet |
+| Transformers and LLMs | building blocks implemented (fused attention, RMS and layer normalization, MatMul epilogues); no complete model yet |
 
 ## Neural rendering pipelines
 
