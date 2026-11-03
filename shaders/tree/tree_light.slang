@@ -46,3 +46,15 @@ vec2 treeLightAt(TreeRenderSettings s, vec3 p) {
 vec2 treeLightOfTreesAt(TreeRenderSettings s, vec3 p) {
     return treeLightAll(s, p).zw;
 }
+
+// (sun transmittance, sky visibility) of a captured object's point p, whose colours hold the light of the capture
+// but not that of the scene. The sun is read a voxel and a half towards the light, where a point facing the light is
+// outside its own surface and a point facing away is inside the object (no normal needed, captured Gaussians have
+// none that points outwards). The trees' shadows count fully; the shadows of the static occluders, the object itself
+// included, at three quarters, as the captured colours already hold some of the object's own shading. The sky is
+// seen through the trees only.
+vec2 treeCapturedLightAt(TreeRenderSettings s, vec3 p) {
+    vec4 towardsLight = treeLightAll(s, p + normalize(s.sun.xyz) * (1.5f * s.lightGridMin.w));
+    float statics = towardsLight.x / max(towardsLight.z, 1e-4f);
+    return vec2(towardsLight.z * mix(1.0f, statics, 0.75f), treeLightAll(s, p).w);
+}

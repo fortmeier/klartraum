@@ -55,6 +55,10 @@
  * - mossReceivesObjectShadows: in the morning sun, the soil and the moss where a captured object's shadow falls
  *   (clear of the trees and the lantern) are darker than without the object, the brightest pixel there too (no
  *   unshadowed moss)
+ * - capturedObjectsShadowThemselves: a grey ball, as a captured mesh and as captured Gaussians, seen across the
+ *   morning sun: the side towards the sun keeps its captured colour under the light's tint, evenly (no speckles),
+ *   the side away from it is clearly darker
+ * - capturedObjectsShadowEachOther: a ball between the sun and another ball darkens the other's sunny side
  **/
 
 #include <gtest/gtest.h>
@@ -936,4 +940,181 @@ TEST_F(BonsaiRenderingTest, mossReceivesObjectShadows) {
               << shadedBrightest << std::endl;
     EXPECT_LT(shadedMean, 0.65 * litMean);
     EXPECT_LT(shadedBrightest, 0.75 * litBrightest);
+}
+
+namespace {
+
+// A captured grey ball of unit radius around (0, 0, 0): a mesh, or opaque Gaussians on its surface.
+std::shared_ptr<BonsaiObject> greyBall(bool gaussians) {
+    if (!gaussians) {
+        const std::vector<float> grey(4 * 8 * 4, 0.5f);
+        return std::make_shared<BonsaiObject>(bonsaiObjectFromMesh(raster::icosphere(3), grey, 8, 4));
+    }
+    auto ball = std::make_shared<BonsaiObject>();
+    const int count = 4000;
+    for (int i = 0; i < count; ++i) {
+        // A Fibonacci sphere.
+        const float y = 1.0f - 2.0f * (float(i) + 0.5f) / float(count);
+        const float r = std::sqrt(1.0f - y * y);
+        const float phi = 2.39996323f * float(i);
+        Gaussian3D g{};
+        g.position = {r * std::cos(phi), y, r * std::sin(phi)};
+        g.rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+        g.scale = {0.04f, 0.04f, 0.04f};
+        g.color = {0.0f, 0.0f, 0.0f}; // 0.5 grey
+        g.alpha = 0.98f;
+        ball->gaussians.push_back(g);
+    }
+    ball->low = glm::vec3(-1.0f);
+    ball->high = glm::vec3(1.0f);
+    return ball;
+}
+
+// The morning sun of the shadow tests, with an elevation that casts long shadows.
+constexpr float kMorning = 0.36f;
+
+} // namespace
+
+TEST_F(BonsaiRenderingTest, capturedObjectsShadowThemselves) {
+    const TreeSky sky = treeSkyAt(kMorning, 2.0f);
+    ASSERT_GT(sky.sunElevation, 0.25f);
+    const glm::vec3 sunAcross = glm::normalize(glm::vec3(sky.sunDirection.x, 0.0f, sky.sunDirection.z));
+    const glm::vec3 across = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), sunAcross));
+    const VkExtent2D extent{320, 240};
+    for (const bool gaussians : {false, true}) {
+        SCOPED_TRACE(gaussians ? "Gaussians" : "mesh");
+        BonsaiObjectPlacement placement;
+        placement.object = greyBall(gaussians);
+        placement.position = glm::vec2(0.6f, -0.2f);
+        placement.height = 0.6f;
+        BonsaiSceneConfig config;
+        config.treeCount = 1;
+        config.objects.push_back(placement);
+        const BonsaiScene scene = makeBonsaiScene(config);
+        const float radius = 0.5f * placement.height;
+        const glm::vec3 centre(placement.position.x,
+                               scene.soilHeight(placement.position.x, placement.position.y) + 0.45f * placement.height,
+                               placement.position.y);
+
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig renderConfig;
+        renderConfig.extent = extent;
+        renderConfig.mode = BonsaiRenderMode::Classical;
+        BonsaiRenderer bonsai(*vc, scene, target, renderConfig);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(bonsai.getOutput());
+        bonsai.initialize(1);
+        // Level with the ball, across the sun: its sunny half on one side, its dark half on the other.
+        setCamera(bonsai.getCamera()->ubo, centre + 2.0f * across, centre, 30.0f,
+                  float(extent.width) / float(extent.height));
+        bonsai.getCamera()->update(0);
+        bonsai.setTime(1.0f, kMorning, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+        writePpm(gaussians ? "bonsai_ball_gaussians_relit" : "bonsai_ball_mesh_relit", image, extent);
+        const glm::vec3 tint = glm::vec3(bonsai.getSettings().values().at(0).capturedTint);
+        const glm::mat4 clipFromWorld = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view;
+
+        // Mean and smallest brightness (summed over rgb) in a window around the surface point in direction n.
+        auto measure = [&](glm::vec3 n) {
+            const glm::vec4 clip = clipFromWorld * glm::vec4(centre + 0.85f * radius * glm::normalize(n), 1.0f);
+            const int px = int((clip.x / clip.w * 0.5f + 0.5f) * extent.width);
+            const int py = int((clip.y / clip.w * 0.5f + 0.5f) * extent.height);
+            double sum = 0.0, darkest = 1e9;
+            int count = 0;
+            for (int y = py - 3; y <= py + 3; ++y)
+                for (int x = px - 3; x <= px + 3; ++x) {
+                    const size_t i = (size_t(y) * extent.width + size_t(x)) * 4;
+                    const double value = double(image[i]) + image[i + 1] + image[i + 2];
+                    sum += value;
+                    darkest = std::min(darkest, value);
+                    ++count;
+                }
+            return std::make_pair(sum / count, darkest);
+        };
+        const auto [sunny, sunnyDarkest] = measure(across + sunAcross + glm::vec3(0.0f, 0.3f, 0.0f));
+        const auto [dark, darkDarkest] = measure(across - sunAcross);
+        const double fullLight = 127.5 * double(tint.x + tint.y + tint.z);
+        std::cout << "sunny " << sunny << " (darkest " << sunnyDarkest << "), away " << dark << ", full light "
+                  << fullLight << std::endl;
+        EXPECT_NEAR(sunny, fullLight, 0.12 * fullLight);
+        EXPECT_GT(sunnyDarkest, 0.8 * sunny);
+        EXPECT_LT(dark, 0.7 * sunny);
+    }
+}
+
+TEST_F(BonsaiRenderingTest, capturedObjectsShadowEachOther) {
+    // Earlier, a lower sun: the occluder's shadow reaches the lit ball from beside it.
+    const float early = 0.31f;
+    const TreeSky sky = treeSkyAt(early, 2.0f);
+    ASSERT_GT(sky.sunElevation, 0.15f);
+    const glm::vec3 sunAcross = glm::normalize(glm::vec3(sky.sunDirection.x, 0.0f, sky.sunDirection.z));
+    const glm::vec3 across = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), sunAcross));
+    const VkExtent2D extent{320, 240};
+    // The lit ball, and a larger one towards the sun from it, on the line from the lit ball's sunny side to the sun.
+    BonsaiObjectPlacement lit;
+    lit.object = greyBall(false);
+    lit.position = glm::vec2(0.2f, -0.35f);
+    lit.height = 0.3f;
+    BonsaiSceneConfig config;
+    config.treeCount = 1;
+    config.objects.push_back(lit);
+    const BonsaiScene withoutOccluder = makeBonsaiScene(config);
+    const glm::vec3 centre(lit.position.x,
+                           withoutOccluder.soilHeight(lit.position.x, lit.position.y) + 0.45f * lit.height,
+                           lit.position.y);
+    const glm::vec3 sunny = centre + 0.85f * 0.5f * lit.height * glm::normalize(across + sunAcross);
+    const float distance = 0.7f;
+    const glm::vec3 occluderCentre =
+        sunny + sky.sunDirection * (distance / glm::length(glm::vec3(sky.sunDirection.x, 0.0f, sky.sunDirection.z)));
+    BonsaiObjectPlacement occluder;
+    occluder.object = greyBall(true);
+    occluder.position = glm::vec2(occluderCentre.x, occluderCentre.z);
+    occluder.height = 2.0f * (occluderCentre.y - withoutOccluder.soilHeight(occluderCentre.x, occluderCentre.z)) / 0.9f;
+    ASSERT_LT(occluder.height, 1.6f);
+    ASSERT_LT(std::abs(occluderCentre.x), withoutOccluder.config.pot.halfLength);
+    ASSERT_LT(std::abs(occluderCentre.z), withoutOccluder.config.pot.halfWidth);
+    config.objects.push_back(occluder);
+    const BonsaiScene withOccluder = makeBonsaiScene(config);
+
+    auto render = [&](const BonsaiScene& scene) {
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig renderConfig;
+        renderConfig.extent = extent;
+        renderConfig.mode = BonsaiRenderMode::Classical;
+        BonsaiRenderer bonsai(*vc, scene, target, renderConfig);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(bonsai.getOutput());
+        bonsai.initialize(1);
+        setCamera(bonsai.getCamera()->ubo, centre + 2.0f * across, centre, 30.0f,
+                  float(extent.width) / float(extent.height));
+        bonsai.getCamera()->update(0);
+        bonsai.setTime(1.0f, early, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const glm::mat4 clipFromWorld = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view;
+        const glm::vec4 clip = clipFromWorld * glm::vec4(sunny, 1.0f);
+        const int px = int((clip.x / clip.w * 0.5f + 0.5f) * extent.width);
+        const int py = int((clip.y / clip.w * 0.5f + 0.5f) * extent.height);
+        // The occluder, seen beside the lit ball, stays clear of the measured pixels.
+        const glm::vec4 occluderClip = clipFromWorld * glm::vec4(occluderCentre, 1.0f);
+        const glm::vec4 topClip =
+            clipFromWorld * glm::vec4(occluderCentre + glm::vec3(0.0f, 0.5f * occluder.height, 0.0f), 1.0f);
+        const float occluderPixels =
+            0.5f * float(extent.height) * std::abs(topClip.y / topClip.w - occluderClip.y / occluderClip.w);
+        const glm::vec2 occluderAt((occluderClip.x / occluderClip.w * 0.5f + 0.5f) * float(extent.width),
+                                   (occluderClip.y / occluderClip.w * 0.5f + 0.5f) * float(extent.height));
+        EXPECT_GT(glm::length(occluderAt - glm::vec2(px, py)), occluderPixels + 6.0f);
+        const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+        double sum = 0.0;
+        for (int y = py - 2; y <= py + 2; ++y)
+            for (int x = px - 2; x <= px + 2; ++x) {
+                const size_t i = (size_t(y) * extent.width + size_t(x)) * 4;
+                sum += double(image[i]) + image[i + 1] + image[i + 2];
+            }
+        return sum / 25.0;
+    };
+    const double inSun = render(withoutOccluder);
+    const double inShadow = render(withOccluder);
+    std::cout << "sunny side " << inSun << " -> " << inShadow << " behind the other ball" << std::endl;
+    EXPECT_LT(inShadow, 0.7 * inSun);
 }

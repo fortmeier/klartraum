@@ -39,7 +39,7 @@ void main() {
     }
     vec4 c = original[i];
     TreeRenderSettings s = settings[0];
-    float shade = treeCapturedShade(s, treeLightOfTreesAt(s, positions[i]));
+    float shade = treeCapturedShade(s, treeCapturedLightAt(s, positions[i]));
     vec3 normal = treeGaussianNormal(rotations[i], scales[i]);
     vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * c.rgb, normal, positions[i], shade, s);
     tinted[i] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);

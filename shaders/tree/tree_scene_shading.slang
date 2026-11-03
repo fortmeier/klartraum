@@ -13,9 +13,8 @@ import glsl;
 vec4 treeSceneColor(vec3 worldPos, vec3 surfaceNormal, vec4 color, TreeRenderSettings s) {
     vec3 normal = normalize(surfaceNormal);
     if (color.w == TREE_MATERIAL_CAPTURED) {
-        // Shaded like the captured Gaussians it stands among (tint_gaussians.comp): by the trees' shadows only, as
-        // the photographs hold the object's own.
-        float shade = treeCapturedShade(s, treeLightOfTreesAt(s, worldPos + 0.5f * s.lightGridMin.w * normal));
+        // Shaded like the captured Gaussians it stands among (tint_gaussians.comp).
+        float shade = treeCapturedShade(s, treeCapturedLightAt(s, worldPos));
         return vec4(treeCapturedColor(color.rgb, normal, worldPos, shade, s), 1.0f);
     }
     float detail = clamp(1.5f - 140.0f * length(fwidth(worldPos)), 0.0f, 1.0f);

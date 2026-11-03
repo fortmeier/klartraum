@@ -285,7 +285,7 @@ void surfelGaussian(uint slot, uint index) {
     if (v.color.w == TREE_MATERIAL_CAPTURED) {
         // Tinted like the captured Gaussians (see main()).
         TreeRenderSettings s = settings[0];
-        float shade = treeCapturedShade(s, treeLightOfTreesAt(s, v.pos.xyz + 0.5f * s.lightGridMin.w * normal));
+        float shade = treeCapturedShade(s, treeCapturedLightAt(s, v.pos.xyz));
         writeGaussian(slot, v.pos.xyz, rot, scale, treeCapturedColor(v.color.rgb, normal, v.pos.xyz, shade, s), 0.95f);
         return;
     }
@@ -303,7 +303,7 @@ void main() {
     if (g < pc.staticCount) {
         vec4 c = staticColors[g];
         TreeRenderSettings s = settings[0];
-        float shade = treeCapturedShade(s, treeLightOfTreesAt(s, staticPositions[g]));
+        float shade = treeCapturedShade(s, treeCapturedLightAt(s, staticPositions[g]));
         vec3 displayed = treeCapturedColor(vec3(0.5f) + SH_C0 * c.rgb, staticNormals[g], staticPositions[g], shade, s);
         outColAlpha[g] = vec4((displayed - vec3(0.5f)) / SH_C0, c.a);
         return;
