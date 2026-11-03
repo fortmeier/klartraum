@@ -14,7 +14,7 @@
 //                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--moss-patches 250]
 //                       [--enhancer MODEL.onnx] [--out-dir build/TestingOutput/tree_bonsai]
 //                       [--pot FILE] [--object FILE,X,Z,HEIGHT[,YAW]]... [--style S]
-//                       [--species mixed|pine|broadleaf] [--soil-mound M]
+//                       [--species mixed|pine|broadleaf] [--soil-mound M] [--tree-size F] [--tree-spread F]
 //
 // The trees are generated on the GPU every frame; per frame the CPU only sets
 // the camera, the time, the season and the wind. Without --video, view i is
@@ -202,6 +202,10 @@ int main(int argc, char** argv) {
                 std::cerr << "--species must be pine, broadleaf or mixed" << std::endl;
                 return 1;
             }
+        } else if (arg == "--tree-size" && hasValue) {
+            sceneConfig.treeSize = std::stof(argv[++i]);
+        } else if (arg == "--tree-spread" && hasValue) {
+            sceneConfig.treeSpread = std::stof(argv[++i]);
         } else if (arg == "--soil-mound" && hasValue) {
             sceneConfig.pot.soilMound = std::stof(argv[++i]);
         } else if (arg == "--pot" && hasValue) {

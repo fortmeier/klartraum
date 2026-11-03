@@ -483,7 +483,7 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
     }
     // A single tree stands near the middle; in a planting the main tree is off-centre at the back.
     const float planting = std::clamp(float(treeCount - 1) / 12.0f, 0.0f, 1.0f);
-    const glm::vec2 main = glm::mix(glm::vec2(-0.2f, -0.05f), glm::vec2(-0.4f, -0.15f), planting);
+    const glm::vec2 main = config.treeSpread * glm::mix(glm::vec2(-0.2f, -0.05f), glm::vec2(-0.4f, -0.15f), planting);
     // Trees about 1.9 m apart at least.
     const float minDistance = 1.9f / scale.metersPerUnit();
     // Trees grow in the forest only (all of the soil at small scales).
@@ -493,8 +493,8 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         positions.push_back(main);
     }
     for (uint32_t key = 0; positions.size() < treeCount && key < 20000; ++key) {
-        const glm::vec2 p((2.0f * hashUnit(config.seed, 2 * key) - 1.0f) * pot.halfLength,
-                          (2.0f * hashUnit(config.seed, 2 * key + 1) - 1.0f) * pot.halfWidth);
+        const glm::vec2 p((2.0f * hashUnit(config.seed, 2 * key) - 1.0f) * pot.halfLength * config.treeSpread,
+                          (2.0f * hashUnit(config.seed, 2 * key + 1) - 1.0f) * pot.halfWidth * config.treeSpread);
         if (scene.potMeasure(p.x, p.y, inner * 0.82f) > 1.0f || !forested(p)) {
             continue;
         }
@@ -517,8 +517,8 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
         const float frontFactor = 1.0f - 0.25f * std::max(p.y / pot.halfWidth, 0.0f);
         // The tallest tree at the scale's height; 0.13 is that at kForest, where the bonsai presets are 13 m.
         const float tallest = 0.13f * scale.treeHeightUnits() / BonsaiScale{BonsaiScale::kForest}.treeHeightUnits();
-        float treeScale =
-            tallest * (1.0f - 0.55f * distance) * frontFactor * (0.85f + 0.3f * hashUnit(config.seed, 9000 + i));
+        float treeScale = config.treeSize * tallest * (1.0f - 0.55f * distance) * frontFactor *
+                          (0.85f + 0.3f * hashUnit(config.seed, 9000 + i));
         const uint32_t type = config.species == BonsaiSpecies::Pine        ? 1u
                               : config.species == BonsaiSpecies::Broadleaf ? 0u
                               : (i % 4 == 3)                               ? 1u

@@ -132,6 +132,8 @@ struct BonsaiSceneConfig {
     /// flat crown of foliage pads); negative: BonsaiScale::bonsaiStyle() of the scale.
     float style = -1.0f;
     BonsaiSpecies species = BonsaiSpecies::Mixed; ///< Mixed: every fourth tree a pine, the others broadleaf
+    float treeSize = 1.0f;                        ///< factor on the trees' sizes in a planting
+    float treeSpread = 1.0f;                      ///< share of the pot around its middle a planting's trees stand in
 };
 
 /**
