@@ -67,8 +67,9 @@ void main() {
         vec3 size = scale * g.scale.xyz;
 
         vec3 normal = treeGaussianNormal(rot, size);
-        // The terrain's shadow on the copy (ids.z, float bits of the share of the sun it takes away).
-        vec2 light = treeLightOfTreesAt(s, pos);
+        // The shadows of the trees and of the static occluders (pot, captured objects), and the terrain's shadow on
+        // the copy (ids.z, float bits of the share of the sun it takes away).
+        vec2 light = treeLightAt(s, pos);
         light.x *= 1.0f - uintBitsToFloat(inst.ids.z);
         vec3 displayed;
         if (inst.ids.w == 1u) {

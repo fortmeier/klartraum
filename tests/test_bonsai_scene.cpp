@@ -52,6 +52,9 @@
  *   the black frame is lit) is the same on both
  * - potOfGaussiansRendersBothWays: with a captured pot of Gaussians and no mesh object, which leaves no scene
  *   mesh besides the soil, the scene renders both ways and the pot covers the frame's lower part
+ * - mossReceivesObjectShadows: in the morning sun, the soil and the moss where a captured object's shadow falls
+ *   (clear of the trees and the lantern) are darker than without the object, the brightest pixel there too (no
+ *   unshadowed moss)
  **/
 
 #include <gtest/gtest.h>
@@ -67,6 +70,7 @@
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
 #include "klartraum/tree/tree_placement.hpp"
+#include "klartraum/tree/tree_sky.hpp"
 
 #include "tree_test_helpers.hpp"
 
@@ -850,4 +854,86 @@ TEST_F(BonsaiRenderingTest, backgroundFollowsTheFrame) {
                         << "pixel " << pixel << " grey " << grey;
         }
     }
+}
+
+TEST_F(BonsaiRenderingTest, mossReceivesObjectShadows) {
+    // An opaque grey ball, 0.5 tall, on the soil in front of the trees.
+    const raster::TriangleMesh ball = raster::icosphere(3);
+    const std::vector<float> grey(4 * 8 * 4, 0.5f);
+    BonsaiObjectPlacement placement;
+    placement.object = std::make_shared<BonsaiObject>(bonsaiObjectFromMesh(ball, grey, 8, 4));
+    placement.position = glm::vec2(0.75f, -0.3f);
+    placement.height = 0.5f;
+    const float timeOfDay = 0.38f, season = 2.0f;
+    const TreeSky sky = treeSkyAt(timeOfDay, season);
+    ASSERT_GT(sky.sunElevation, 0.3f);
+    ASSERT_LT(sky.sunElevation, 0.9f);
+
+    // Where the ball's shadow falls clear of the ball: from high on it away from the sun down to the soil.
+    BonsaiSceneConfig withBall;
+    withBall.treeCount = 1;
+    withBall.objects.push_back(placement);
+    const BonsaiScene sceneWith = makeBonsaiScene(withBall);
+    BonsaiSceneConfig withoutBall = withBall;
+    withoutBall.objects.clear();
+    const BonsaiScene sceneWithout = makeBonsaiScene(withoutBall);
+    const float soil = sceneWith.soilHeight(placement.position.x, placement.position.y);
+    const glm::vec3 high(placement.position.x, soil + 0.75f * placement.height, placement.position.y);
+    glm::vec3 shadow = high - sky.sunDirection * (0.75f * placement.height / sky.sunDirection.y);
+    shadow.y = sceneWith.soilHeight(shadow.x, shadow.z);
+    ASSERT_LT(std::abs(shadow.x), 0.8f * sceneWith.config.pot.halfLength);
+    ASSERT_LT(std::abs(shadow.z), 0.8f * sceneWith.config.pot.halfWidth);
+    // Clear of the trees' trunks and the lantern, whose own shadows would hide the ball's.
+    for (const TreeInstance& tree : sceneWith.trees)
+        ASSERT_GT(glm::length(glm::vec2(tree.posScale.x - shadow.x, tree.posScale.z - shadow.z)), 0.4f);
+    ASSERT_GT(
+        glm::length(glm::vec2(sceneWith.lanternTranslation.x - shadow.x, sceneWith.lanternTranslation.z - shadow.z)),
+        0.4f);
+
+    const VkExtent2D extent{480, 270};
+    // Seen from above, across the sun's direction, so that the ball hides none of its shadow.
+    const glm::vec3 across = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), sky.sunDirection));
+    const glm::vec3 eye = shadow + 2.5f * across + glm::vec3(0.0f, 2.5f, 0.0f);
+    auto render = [&](const BonsaiScene& scene, int& px, int& py) {
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig config;
+        config.extent = extent;
+        config.mode = BonsaiRenderMode::Classical;
+        BonsaiRenderer bonsai(*vc, scene, target, config);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(bonsai.getOutput());
+        bonsai.initialize(1);
+        setCamera(bonsai.getCamera()->ubo, eye, shadow, 40.0f, float(extent.width) / float(extent.height));
+        bonsai.getCamera()->update(0);
+        bonsai.setTime(1.0f, timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const glm::vec4 clip = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view * glm::vec4(shadow, 1.0f);
+        px = int((clip.x / clip.w * 0.5f + 0.5f) * extent.width);
+        py = int((clip.y / clip.w * 0.5f + 0.5f) * extent.height);
+        return readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    };
+    int px = 0, py = 0;
+    const auto lit = render(sceneWithout, px, py);
+    const auto shaded = render(sceneWith, px, py);
+    writePpm("bonsai_ball_shadow", shaded, extent);
+    // Mean and brightest brightness in a window around the middle of the shadow.
+    auto measure = [&](const std::vector<uint8_t>& image) {
+        double sum = 0.0, brightest = 0.0;
+        int count = 0;
+        for (int y = py - 4; y <= py + 4; ++y)
+            for (int x = px - 4; x <= px + 4; ++x) {
+                const size_t i = (size_t(y) * extent.width + size_t(x)) * 4;
+                const double value = double(image[i]) + image[i + 1] + image[i + 2];
+                sum += value;
+                brightest = std::max(brightest, value);
+                ++count;
+            }
+        return std::make_pair(sum / count, brightest);
+    };
+    const auto [litMean, litBrightest] = measure(lit);
+    const auto [shadedMean, shadedBrightest] = measure(shaded);
+    std::cout << "shadow window mean " << litMean << " -> " << shadedMean << ", brightest " << litBrightest << " -> "
+              << shadedBrightest << std::endl;
+    EXPECT_LT(shadedMean, 0.65 * litMean);
+    EXPECT_LT(shadedBrightest, 0.75 * litBrightest);
 }
