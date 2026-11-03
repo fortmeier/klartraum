@@ -207,6 +207,15 @@ Gaussians can be changed on the GPU every frame before they are rendered:
 {cpp:class}`klartraum::GaussianTransform` applies a transform from a
 {cpp:class}`klartraum::TransformBuffer`, and
 {cpp:class}`klartraum::GaussianMerge` combines two sets into one.
+{cpp:class}`klartraum::GaussianLighting` relights a scene with point
+lights, using materials baked once on the CPU with `bakeSplatMaterials()`
+(normal, roughness and a coarse visibility per Gaussian).
+Pass its `output` to `createGaussianSplatting()` and update a
+`HostValues<LightingFrame>` buffer before submitting each frame. Lighting
+preserves alpha and higher color SH bands. Its baked visibility describes
+static geometry; moving occluders requires appropriate updated materials.
+See [Dynamic lighting of Gaussian scenes](../articles/dynamic-gaussian-lighting.md)
+for graph wiring, shading controls and limitations.
 
 ## Current limitations
 
