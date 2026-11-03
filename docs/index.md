@@ -62,6 +62,7 @@ guides/onnx
 :caption: Articles
 
 articles/deterministic-raster-order
+articles/dynamic-gaussian-lighting
 ```
 
 ```{toctree}

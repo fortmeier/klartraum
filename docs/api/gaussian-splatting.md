@@ -76,3 +76,30 @@ same inputs.
 
 ```{doxygenstruct} klartraum::TransformBufferResult
 ```
+
+```{doxygenclass} klartraum::GaussianLighting
+```
+
+```{doxygenfunction} klartraum::createGaussianLighting
+```
+
+```{doxygenfunction} klartraum::bakeSplatMaterials
+```
+
+```{doxygenstruct} klartraum::SplatMaterial
+```
+
+```{doxygenstruct} klartraum::SplatLight
+```
+
+```{doxygenstruct} klartraum::LightingFrame
+```
+
+```{doxygenstruct} klartraum::GaussianLightingResult
+```
+
+```{doxygenfunction} klartraum::visibilityBasis
+```
+
+```{doxygenfunction} klartraum::evaluateVisibility
+```
