@@ -385,12 +385,18 @@ int main(int argc, char** argv) {
         bonsai.getGenerator().getInstances().set(trees);
     };
 
-    // Chapter 1: the drop, the pumpkin still drawn by the morph (which keeps refining it).
+    // Chapter 1: the drop, the pumpkin still drawn by the morph (which keeps refining it), lit by the scene and
+    // casting its shadow as it falls.
     if (fromChapter <= 1 && toChapter >= 1) {
         auto frame = std::make_shared<OffscreenTarget>(vc, extent, 1);
-        BonsaiRenderer bonsai(vc, sceneWithoutPumpkin, frame, renderConfig);
+        BonsaiRenderConfig dropConfig = renderConfig;
+        dropConfig.movingObjects.push_back(placement.object);
+        BonsaiRenderer bonsai(vc, sceneWithoutPumpkin, frame, dropConfig);
         const VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        raster::MeshMorph morph(vc, pumpkinMesh, pumpkin->buffers(), frame, layout, bonsai.getOutput(), morphOptions);
+        raster::MeshMorphOptions litMorph = morphOptions;
+        litMorph.lightSettings = bonsai.getSettingsRef();
+        litMorph.light = bonsai.getLightVolume().getLight();
+        raster::MeshMorph morph(vc, pumpkinMesh, pumpkin->buffers(), frame, layout, bonsai.getOutput(), litMorph);
         ComputeGraph graph(vc, 1);
         graph.compileFrom(morph.getOutput());
         bonsai.initialize(1);
@@ -419,7 +425,10 @@ int main(int argc, char** argv) {
             // The short way round from the title's yaw to the resting one.
             const float titleYaw = facing(sphereCentre, titlePose.eye);
             const float turn = std::remainder(placement.yaw - titleYaw, 2.0f * 3.14159265f);
-            morph.setModel(pumpkinModel(origin, titleYaw + settle * turn, glm::mix(titleScale, morphScale, settle)));
+            const glm::mat4 model =
+                pumpkinModel(origin, titleYaw + settle * turn, glm::mix(titleScale, morphScale, settle));
+            morph.setModel(model);
+            bonsai.setMovingObject(0, model);
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
                 finishFrame(f, readImage(vc, frame->getImage(0), layout, extent), 1.0f);
