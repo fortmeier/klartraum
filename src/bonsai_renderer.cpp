@@ -107,13 +107,14 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     values.viewport.w *= float(supersample);
     values.leafLod *= glm::vec4(float(supersample), float(supersample), float(supersample), 1.0f);
     values.occlusion.x = classical ? 1.0f : 0.0f;
-    // The light volume spans the pot and the tallest trees.
+    // The light volume spans the pot and the tallest trees, or up to the ceiling asked for.
     const BonsaiPot& pot = scene.config.pot;
-    configureTreeLightGrid(values, glm::vec3(-pot.halfLength - 0.15f, -0.05f, -pot.halfWidth - 0.15f),
-                           glm::vec3(pot.halfLength + 0.15f,
-                                     std::max(1.0f, 1.6f * scene.config.scale.treeHeightUnits() + 0.4f),
-                                     pot.halfWidth + 0.15f),
-                           config.lightVoxel);
+    configureTreeLightGrid(
+        values, glm::vec3(-pot.halfLength - 0.15f, -0.05f, -pot.halfWidth - 0.15f),
+        glm::vec3(pot.halfLength + 0.15f,
+                  std::max({1.0f, 1.6f * scene.config.scale.treeHeightUnits() + 0.4f, config.lightCeiling}),
+                  pot.halfWidth + 0.15f),
+        config.lightVoxel);
     if (scene.placed) {
         // A grid of fixed size that follows the near trees (setView()), with voxels a fraction of a tree.
         values.lightGridSize = glm::uvec4(kFollowGrid, 1u);

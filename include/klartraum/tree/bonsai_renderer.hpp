@@ -72,10 +72,13 @@ struct BonsaiRenderConfig {
     std::string lanternPath = "data/lantern.spz";
     float meshGaussianSpacing = 0.008f; ///< of the pot and soil Gaussians
     float lightVoxel = 0.035f;          ///< voxel size of the light volume (shadows and sky occlusion)
-    uint32_t supersample = 2;           ///< the classical renderer draws at this times the resolution
-    uint32_t numberPaths = 1;           ///< of the graph the renderer is compiled into
-    uint32_t mossPatches = 1500;        ///< patches of the captured moss laid on the soil
-    uint32_t mossPool = 1500000;        ///< Gaussians of the moss patches' levels of detail per frame, at most
+    /// The height the light volume reaches at least, e.g. for a moving object high above the trees; 0: as high as
+    /// the trees grow.
+    float lightCeiling = 0.0f;
+    uint32_t supersample = 2;    ///< the classical renderer draws at this times the resolution
+    uint32_t numberPaths = 1;    ///< of the graph the renderer is compiled into
+    uint32_t mossPatches = 1500; ///< patches of the captured moss laid on the soil
+    uint32_t mossPool = 1500000; ///< Gaussians of the moss patches' levels of detail per frame, at most
     /// Pixel diameters below which a moss patch uses its levels 1, 2 and 3, and the crossfade band (TreeMossLod);
     /// twice those of klartraum-spacegame, as ground cover is seen close up and shows its texture.
     glm::vec4 mossLod{320.0f, 96.0f, 24.0f, 0.15f};

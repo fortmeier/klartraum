@@ -61,6 +61,8 @@
  * - capturedObjectsShadowEachOther: a ball between the sun and another ball darkens the other's sunny side
  * - movingObjectsCastShadowsWhereTheyAre: a moving object's shadow on the soil appears where its transform puts it,
  *   follows it when it moves, and is gone when its transform has scale 0
+ * - lightReachesTheCeiling: with BonsaiRenderConfig::lightCeiling above the trees, the light volume reaches it, and a
+ *   ball 3 units above the soil shadows its own underside and casts its shadow onto the soil
  * - movingShadowsGlide: a moving ball's shadow on the soil changes little from one small step of the ball to the
  *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
@@ -1596,4 +1598,51 @@ TEST_F(BonsaiRenderingTest, movingShadowsGlide) {
     EXPECT_LT(deepest, 0.3f);
     // A voxel switching on and off changes the sun by half its range at once; a soft edge 0.4 voxels on, by a third.
     EXPECT_LT(largest, 0.3f);
+}
+
+TEST_F(BonsaiRenderingTest, lightReachesTheCeiling) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 1;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{64, 64};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.lightCeiling = 5.0f;
+    config.movingObjects.push_back(greyBall(false));
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(0.0f, 1.0f, 4.0f), scene.focus, 40.0f, 1.0f);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    const TreeRenderSettings s = bonsai.getSettings().values().at(0);
+    EXPECT_GE(s.lightGridMin.y + float(s.lightGridSize.y) * s.lightGridMin.w, 5.0f);
+    const glm::vec3 sun = glm::normalize(glm::vec3(s.sun));
+
+    // A ball 3 units up, it and its shadow on the soil both over the pot (the volume covers the pot's footprint).
+    const float radius = 0.3f, height = 3.0f;
+    const glm::vec3 across = sun * (height / sun.y) * glm::vec3(1.0f, 0.0f, 1.0f);
+    glm::vec3 shadow = -0.5f * across;
+    shadow.y = scene.soilHeight(shadow.x, shadow.z) + 0.03f;
+    const glm::vec3 centre = shadow + sun * (height / sun.y);
+    const glm::vec3 lower = glm::vec3(s.lightGridMin);
+    const glm::vec3 upper = lower + glm::vec3(s.lightGridSize) * s.lightGridMin.w;
+    ASSERT_TRUE(glm::all(glm::greaterThan(centre - radius, lower)) && glm::all(glm::lessThan(centre + radius, upper)));
+    bonsai.setMovingObject(0, glm::translate(glm::mat4(1.0f), centre) * glm::scale(glm::mat4(1.0f), glm::vec3(radius)));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const auto light = bonsai.getLightVolume().readLight();
+    const auto sunThrough = [&](glm::vec3 p) {
+        const glm::vec4 l = lightAt(light, s, p);
+        return l.x / std::max(l.z, 1e-4f);
+    };
+    const float onSoil = sunThrough(shadow);
+    const float underside = sunThrough(centre - sun * (radius - 1.5f * s.lightGridMin.w));
+    const float top = sunThrough(centre + sun * (radius + 1.5f * s.lightGridMin.w));
+    std::cout << "ball 3 up: sun on the soil below it " << onSoil << ", at its underside " << underside
+              << ", at its top " << top << std::endl;
+    EXPECT_LT(onSoil, 0.3f);
+    EXPECT_LT(underside, 0.3f);
+    EXPECT_GT(top, 0.9f);
 }
