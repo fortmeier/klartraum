@@ -89,6 +89,17 @@ if(KLARTRAUM_WITH_FREETYPE)
   )
 
   add_dependencies(title_morph_example Shaders)
+
+  # tech demo 001: a sphere morphed into a pumpkin by differentiable rendering, dropped onto the bonsai
+  add_executable(techdemo001_example
+      techdemo001_example.cpp
+  )
+
+  target_link_libraries(techdemo001_example
+      klartraum_lib
+  )
+
+  add_dependencies(techdemo001_example Shaders)
 endif()
 
 # Training a network with gradients from Slang's automatic differentiation

@@ -226,6 +226,44 @@ ffmpeg -i straight/straight.mp4 -i swirl/swirl.mp4 -i scatter/scatter.mp4 -i wav
     -c:v libx264 -crf 18 -pix_fmt yuv420p variants_2x2.mp4
 ```
 
+
+### `techdemo001_example`
+
+Renders *klartraum tech demo 001*, a promo video of the differentiable rendering
+and the procedural trees, without a window. Needs `KLARTRAUM_WITH_FREETYPE`. The
+chapters run in one continuous camera move:
+
+1. **Title and morph:** on white, the black "klartraum" logo (Gaussians in
+   Unbounded) with a black sphere above it. The sphere morphs into the pumpkin
+   by differentiable mesh optimization (`raster::MeshMorph`), starting with the
+   first frame. Each frame splats the captured pumpkin into offscreen pictures,
+   turns them into targets and runs optimization steps, so the gradients flow
+   from the pictures into the mesh's shape and texture, all in the frame's
+   compute graph.
+2. **Drop:** the pumpkin falls onto the splatted bonsai pot with its soil and
+   the lantern, and the camera follows.
+3. **Growth:** the bonsai pines grow.
+4. **Days:** four days, one season each. The background is white by day and
+   black by night.
+
+Each chapter shows a caption naming the work it builds on. Frames go to
+`<out-dir>/frames/frame_XXXX.ppm`. The trained pumpkin goes to
+`<out-dir>/pumpkin.obj`, so later chapters can be re-rendered alone.
+
+| Option | Meaning |
+|---|---|
+| `--pot FILE` | The bonsai pot's `object.spz` (default `build/TestingOutput/splat_training/bonsai/object.spz`) |
+| `--pumpkin FILE` | The pumpkin's `object.spz`, the morph's target (default `build/TestingOutput/splat_training/pumpkin_closed_1/object.spz`) |
+| `--width W`, `--height H` | Frame size (default 1280 x 720) |
+| `--fps F` | Frames per second (default 30) |
+| `--from N`, `--to M` | Render chapters N to M (0 to 3) |
+| `--step S` | Write every S-th frame, for previews |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo001`) |
+
+```bash
+./build/examples/techdemo001_example
+ffmpeg -framerate 30 -i build/TestingOutput/techdemo001/frames/frame_%04d.ppm -pix_fmt yuv420p techdemo001.mp4
+```
 ### `autodiff_training_example`
 
 Trains a fully connected network (Fourier features of the pixel coordinates,
