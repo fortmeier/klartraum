@@ -48,7 +48,8 @@
  *   lantern is lit warmer than at noon, in both renderers
  * - bonsaiRendersBothWays: the scene renders classically and as Gaussians, written to build/TestingOutput/tree/
  * - backgroundFollowsTheFrame: with a background, both renderers draw over the colour set for the frame: the
- *   frame's corners are white, then black after setBackground() between submissions
+ *   frame's corners are white, then black after setBackground() between submissions, and the scene itself (where
+ *   the black frame is lit) is the same on both
  * - potOfGaussiansRendersBothWays: with a captured pot of Gaussians and no mesh object, which leaves no scene
  *   mesh besides the soil, the scene renders both ways and the pot covers the frame's lower part
  **/
@@ -837,10 +838,12 @@ TEST_F(BonsaiRenderingTest, backgroundFollowsTheFrame) {
         setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(1.4f, 1.3f, 3.8f), scene.focus, 40.0f,
                   float(extent.width) / float(extent.height));
         bonsai.getCamera()->update(0);
+        std::vector<std::vector<uint8_t>> images;
         for (const float grey : {1.0f, 0.0f}) {
             bonsai.setBackground(glm::vec3(grey));
             graph.submitAndWait(vc->getGraphicsQueue(), 0);
             const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+            images.push_back(image);
             for (const size_t pixel : {size_t(0), size_t(extent.width - 1), size_t(extent.width) * (extent.height - 1)})
                 for (int c = 0; c < 3; ++c)
                     EXPECT_NEAR(float(image[4 * pixel + c]), 255.0f * grey, 2.0f)

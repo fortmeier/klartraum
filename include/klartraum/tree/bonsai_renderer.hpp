@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 
+#include "klartraum/image_fill.hpp"
 #include "klartraum/computegraph/hostvalues.hpp"
 #include "klartraum/computegraph/imageresample.hpp"
 #include "klartraum/computegraph/imageviewsrc.hpp"
@@ -194,8 +195,8 @@ public:
     HostValues<TreeRenderSettings>& getSettings() { return *settings; }
     /// The background of the next frames (with BonsaiRenderConfig::background).
     void setBackground(glm::vec3 colour) {
-        if (backgroundColour)
-            backgroundColour->set(0, glm::vec4(colour, 1.0f));
+        if (backgroundFill)
+            backgroundFill->setColour(colour);
     }
     TreeGenerator& getGenerator() { return *generator; }
     TreeStemRenderer* getStems() { return stems.get(); }
@@ -225,14 +226,14 @@ public:
 
 private:
     BonsaiRenderConfig config;
-    // Fills `frame` with the background colour before `first` draws into it (with BonsaiRenderConfig::background).
-    void addBackground(VulkanContext& vulkanContext, const std::shared_ptr<ImageViewSrc>& frame,
-                       const ComputeGraphElementPtr& first);
+    // What the first renderer draws into: `frame`, or with BonsaiRenderConfig::background its fill with the
+    // background colour.
+    std::shared_ptr<ImageViewSrc> withBackground(const std::shared_ptr<ImageViewSrc>& frame);
     glm::vec3 lanternFlame{0.0f};
     std::shared_ptr<CameraUboType> camera;
     std::shared_ptr<HostValues<TreeRenderSettings>> settings;
-    /// The background colour (BonsaiRenderConfig::background), filled into the frame before drawing.
-    std::shared_ptr<HostValues<glm::vec4>> backgroundColour;
+    /// Fills the frame with the background colour (BonsaiRenderConfig::background) before drawing.
+    std::shared_ptr<ImageFill> backgroundFill;
     std::shared_ptr<TreeGenerator> generator;
     std::unique_ptr<TreeLightVolume> lightVolume;
 

@@ -4,7 +4,6 @@
 
 #include "klartraum/tree/bonsai_renderer.hpp"
 
-#include "klartraum/image_fill.hpp"
 #include "klartraum/tree/tree_gaussian_features.hpp"
 
 #include <algorithm>
@@ -30,15 +29,12 @@ std::vector<Gaussian3D> BonsaiRenderer::loadLantern(const BonsaiScene& scene, co
     return kept;
 }
 
-void BonsaiRenderer::addBackground(VulkanContext& vulkanContext, const std::shared_ptr<ImageViewSrc>& frame,
-                                   const ComputeGraphElementPtr& first) {
+std::shared_ptr<ImageViewSrc> BonsaiRenderer::withBackground(const std::shared_ptr<ImageViewSrc>& frame) {
     if (!config.background)
-        return;
-    if (!backgroundColour)
-        backgroundColour =
-            std::make_shared<HostValues<glm::vec4>>(vulkanContext, std::vector<glm::vec4>{glm::vec4(1.0f)});
-    // The splatting draws over the frame's contents: the filled colour.
-    first->addDependency(imageFill(vulkanContext, frame, backgroundColour));
+        return frame;
+    backgroundFill = std::make_shared<ImageFill>(glm::vec3(1.0f));
+    backgroundFill->setInput(frame, 0);
+    return backgroundFill;
 }
 
 BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& scene,
@@ -222,9 +218,8 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         }
         GsplatConfig splatConfig;
         splatConfig.outputDepth = true;
-        auto splatting =
-            createGaussianSplatting(vulkanContext, config.backend, renderTarget, camera, splats, splatConfig);
-        addBackground(vulkanContext, renderTarget, splatting);
+        auto splatting = createGaussianSplatting(vulkanContext, config.backend, withBackground(renderTarget), camera,
+                                                 splats, splatConfig);
         const TreeRenderInputs inputs{BufferRef{splatting->getDepth(), -1}, lightVolume->getLight()};
 
         auto toGeneral = std::make_shared<ImageToGeneral>();
@@ -333,8 +328,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             output = toFinal;
         }
     } else {
-        auto splatting = createGaussianSplatting(vulkanContext, config.backend, target, camera, splats);
-        addBackground(vulkanContext, target, splatting);
+        auto splatting = createGaussianSplatting(vulkanContext, config.backend, withBackground(target), camera, splats);
         output = splatting;
         if (config.features) {
             // The same Gaussians with feature colours (tree_gaussian_features.comp), splatted into targets of their
