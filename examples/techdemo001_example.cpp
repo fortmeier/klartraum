@@ -325,6 +325,17 @@ int main(int argc, char** argv) {
             setTreeAge(tree, age);
         bonsai.getGenerator().getInstances().set(trees);
     };
+    // The morph's mesh as it is after each frame's steps casts the shadows of live occluder 0, each vertex standing for
+    // its share of the start mesh's area.
+    const auto castsShadows = [&](BonsaiRenderer& bonsai, raster::MeshMorph& morph) {
+        float area = 0.0f;
+        for (const glm::uvec3& t : pumpkinMesh.triangles)
+            area += 0.5f * glm::length(glm::cross(pumpkinMesh.positions[t.y] - pumpkinMesh.positions[t.x],
+                                                  pumpkinMesh.positions[t.z] - pumpkinMesh.positions[t.x]));
+        const auto vertices = uint32_t(pumpkinMesh.positions.size());
+        bonsai.connectLiveOccluder(0, BufferRef{morph.getTraining().getPositions(), -1}, vertices,
+                                   area / float(vertices), morph.getTraining().getOutput());
+    };
     // The light volume reaches up to the pumpkin above the title, so that it is lit and shadowed all the way down.
     const float lightCeiling = sphereCentre.y + titleScale + 0.3f;
 
@@ -354,15 +365,13 @@ int main(int argc, char** argv) {
         auto camera = std::make_shared<CameraUboType>();
         auto splatting = createGaussianSplatting(vc, GsplatBackend::Raster, frame, camera, textData->buffers());
         // The bonsai's light, high up to the title, lights the morph from the first frame on as it will be lit
-        // later; the bonsai itself is not drawn (only its light volume is in the graph). The shadows come from the
-        // sphere the morph starts from, shrunk to lie within the pumpkin it becomes (which the unit sphere encloses),
-        // so that the pumpkin's surface is not inside its own occluder.
+        // later; the bonsai itself is not drawn (only its light volume is in the graph). The morph's mesh, as it
+        // morphs, casts the shadows.
         BonsaiRenderConfig lightConfig;
         lightConfig.extent = VkExtent2D{64, 64};
         lightConfig.numberPaths = 1;
         lightConfig.lightCeiling = lightCeiling;
-        lightConfig.movingObjects.push_back(std::make_shared<BonsaiObject>(bonsaiObjectFromMesh(
-            pumpkinMesh, pumpkinTexture, morphOptions.training.textureWidth, morphOptions.training.textureHeight)));
+        lightConfig.liveOccluders = 1;
         BonsaiRenderer light(vc, sceneWithoutPumpkin, std::make_shared<OffscreenTarget>(vc, lightConfig.extent, 1),
                              lightConfig);
         raster::MeshMorphOptions litMorph = morphOptions;
@@ -370,6 +379,7 @@ int main(int argc, char** argv) {
         litMorph.light = light.getLightVolume().getLight();
         raster::MeshMorph morph(vc, pumpkinMesh, pumpkin->buffers(), frame, splatting->getOutputLayout(), splatting,
                                 litMorph);
+        castsShadows(light, morph);
         ComputeGraph graph(vc, 1);
         // Not light.initialize(): it fills the buffers of the bonsai's drawing, which is not in this graph.
         graph.compileFrom(morph.getOutput());
@@ -381,7 +391,7 @@ int main(int argc, char** argv) {
         const float titleYaw = facing(sphereCentre, titlePose.eye);
         const glm::mat4 model = pumpkinModel(sphereCentre, titleYaw, titleScale, titleTilt);
         morph.setModel(model);
-        light.setMovingObject(0, model * glm::scale(glm::mat4(1.0f), glm::vec3(0.7f)));
+        light.setLiveOccluder(0, model);
         light.setTime(0.0f, 0.5f, 2.0f, glm::vec4(0.0f));
         setTrees(light, sceneWithoutPumpkin, 0.0f);
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
@@ -435,13 +445,14 @@ int main(int argc, char** argv) {
         auto frame = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderConfig dropConfig = renderConfig;
         dropConfig.lightCeiling = lightCeiling;
-        dropConfig.movingObjects.push_back(placement.object);
+        dropConfig.liveOccluders = 1;
         BonsaiRenderer bonsai(vc, sceneWithoutPumpkin, frame, dropConfig);
         const VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         raster::MeshMorphOptions litMorph = morphOptions;
         litMorph.lightSettings = bonsai.getSettingsRef();
         litMorph.light = bonsai.getLightVolume().getLight();
         raster::MeshMorph morph(vc, pumpkinMesh, pumpkin->buffers(), frame, layout, bonsai.getOutput(), litMorph);
+        castsShadows(bonsai, morph);
         ComputeGraph graph(vc, 1);
         graph.compileFrom(morph.getOutput());
         bonsai.initialize(1);
@@ -473,7 +484,7 @@ int main(int argc, char** argv) {
             const glm::mat4 model = pumpkinModel(origin, titleYaw + settle * turn,
                                                  glm::mix(titleScale, morphScale, settle), (1.0f - settle) * titleTilt);
             morph.setModel(model);
-            bonsai.setMovingObject(0, model);
+            bonsai.setLiveOccluder(0, model);
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
                 finishFrame(f, readImage(vc, frame->getImage(0), layout, extent), 1.0f);
