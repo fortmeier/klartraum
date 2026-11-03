@@ -265,10 +265,14 @@ int main(int argc, char** argv) {
     const glm::vec3 sphereCentre = title + glm::vec3(0.0f, 1.45f, 0.0f);
     // The rotation about +y that turns the jack-o'-lantern's face (-z in its own frame) towards @p eye.
     const auto facing = [](glm::vec3 at, glm::vec3 eye) { return std::atan2(at.x - eye.x, at.z - eye.z); };
-    const auto pumpkinModel = [](glm::vec3 at, float yaw, float scale) {
+    // The pumpkin turned by `yaw` about +y and tipped by `tilt` towards its face (its top towards -z), e.g. towards a
+    // camera below it, so that its unseen underside stays out of view.
+    const auto pumpkinModel = [](glm::vec3 at, float yaw, float scale, float tilt = 0.0f) {
         return glm::translate(glm::mat4(1.0f), at) * glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0.0f, 1.0f, 0.0f)) *
+               glm::rotate(glm::mat4(1.0f), -tilt, glm::vec3(1.0f, 0.0f, 0.0f)) *
                glm::scale(glm::mat4(1.0f), glm::vec3(scale));
     };
+    const float titleTilt = 0.45f; // radians, above the title; upright on the soil, which the camera sees from above
     const glm::vec2 landing(-0.75f, 0.35f);
     const float secondsPerTurn = 40.0f;
     const auto growthOrbit = [&](float seconds) { return orbitStart + 2.0f * 3.14159265f * seconds / secondsPerTurn; };
@@ -349,7 +353,7 @@ int main(int argc, char** argv) {
         camera->update(0);
         morph.setCamera(camera->ubo.proj * camera->ubo.view);
         const float titleYaw = facing(sphereCentre, titlePose.eye);
-        morph.setModel(pumpkinModel(sphereCentre, titleYaw, titleScale));
+        morph.setModel(pumpkinModel(sphereCentre, titleYaw, titleScale, titleTilt));
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
             textData->buffers().colAlpha.element);
         const auto [begin, end] = chapterRange(0);
@@ -442,8 +446,8 @@ int main(int argc, char** argv) {
             // The short way round from the title's yaw to the resting one.
             const float titleYaw = facing(sphereCentre, titlePose.eye);
             const float turn = std::remainder(placement.yaw - titleYaw, 2.0f * 3.14159265f);
-            const glm::mat4 model =
-                pumpkinModel(origin, titleYaw + settle * turn, glm::mix(titleScale, morphScale, settle));
+            const glm::mat4 model = pumpkinModel(origin, titleYaw + settle * turn,
+                                                 glm::mix(titleScale, morphScale, settle), (1.0f - settle) * titleTilt);
             morph.setModel(model);
             bonsai.setMovingObject(0, model);
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
