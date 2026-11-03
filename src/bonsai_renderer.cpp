@@ -249,8 +249,11 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
         }
         leaves = std::make_unique<TreeLeafRenderer>(vulkanContext, *generator, scene.types, camera, settings,
                                                     renderExtent, inputs);
-        meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, config.terrainLod ? potMesh : scene.mesh, settings,
-                                                     renderExtent, inputs);
+        // A captured pot of Gaussians leaves no mesh where the terrain draws the soil.
+        const std::vector<TreeSceneVertex>& sceneMesh = config.terrainLod ? potMesh : scene.mesh;
+        if (!sceneMesh.empty()) {
+            meshes = std::make_unique<SceneMeshRenderer>(vulkanContext, sceneMesh, settings, renderExtent, inputs);
+        }
         if (tiles && config.farTrees) {
             proxies = std::make_unique<TreeProxies>(vulkanContext, *tiles, camera, settings, renderExtent, inputs,
                                                     proxyConfig);
@@ -276,7 +279,9 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
             pass->addDrawComponent(reducedLeaves->getDrawComponent());
         }
         pass->addComputeDependency(lightVolume->getElement());
-        pass->addDrawComponent(meshes->getDrawComponent());
+        if (meshes) {
+            pass->addDrawComponent(meshes->getDrawComponent());
+        }
         if (terrain) {
             pass->addComputeDependency(terrain->getElement());
             pass->addDrawComponent(terrainRenderer->getDrawComponent());

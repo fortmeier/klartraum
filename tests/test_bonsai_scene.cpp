@@ -47,6 +47,8 @@
  * - nightIsDarkerAndTheLanternGlows: at midnight the scene is darker than at noon, and the moss next to the
  *   lantern is lit warmer than at noon, in both renderers
  * - bonsaiRendersBothWays: the scene renders classically and as Gaussians, written to build/TestingOutput/tree/
+ * - potOfGaussiansRendersBothWays: with a captured pot of Gaussians and no mesh object, which leaves no scene
+ *   mesh besides the soil, the scene renders both ways and the pot covers the frame's lower part
  **/
 
 #include <gtest/gtest.h>
@@ -765,5 +767,50 @@ TEST_F(BonsaiRenderingTest, bonsaiRendersBothWays) {
         EXPECT_GT(coverage, extent.width * extent.height / 5);
         EXPECT_LT(coverage, extent.width * extent.height * 4 / 5);
         EXPECT_EQ(bonsai.getGenerator().readCounters()[kTreeCounterOverflow], 0u);
+    }
+}
+
+TEST_F(BonsaiRenderingTest, potOfGaussiansRendersBothWays) {
+    // A pot of Gaussians: a box shell 2 x 0.5 x 1.2 of opaque grey splats, open at the top.
+    auto pot = std::make_shared<BonsaiObject>();
+    for (int i = 0; i <= 40; ++i)
+        for (int j = 0; j <= 10; ++j)
+            for (const glm::vec3 p :
+                 {glm::vec3(-1.0f + 0.05f * i, 0.05f * j, -0.6f), glm::vec3(-1.0f + 0.05f * i, 0.05f * j, 0.6f),
+                  glm::vec3(-1.0f, 0.05f * j, -0.6f + 0.03f * i), glm::vec3(1.0f, 0.05f * j, -0.6f + 0.03f * i)}) {
+                Gaussian3D g{};
+                g.position = {p.x, p.y, p.z};
+                g.rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+                g.scale = {0.04f, 0.04f, 0.04f};
+                g.color = {0.0f, 0.0f, 0.0f};
+                g.alpha = 0.95f;
+                pot->gaussians.push_back(g);
+            }
+    pot->low = glm::vec3(-1.0f, 0.0f, -0.6f);
+    pot->high = glm::vec3(1.0f, 0.5f, 0.6f);
+    pot->rimHeight = 0.5f;
+    pot->rim = glm::vec3(1.0f, 0.6f, 0.0f);
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.potObject = pot;
+    sceneConfig.treeCount = 2;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{320, 180};
+    for (BonsaiRenderMode mode : {BonsaiRenderMode::Classical, BonsaiRenderMode::Gaussian}) {
+        SCOPED_TRACE(mode == BonsaiRenderMode::Classical ? "classical" : "gaussian");
+        auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+        BonsaiRenderConfig config;
+        config.extent = extent;
+        config.mode = mode;
+        config.meshGaussianSpacing = 0.03f;
+        BonsaiRenderer bonsai(*vc, scene, target, config);
+        ComputeGraph graph(*vc, 1);
+        graph.compileFrom(bonsai.getOutput());
+        bonsai.initialize(1);
+        setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(0.0f, 1.0f, 5.0f), scene.focus, 40.0f,
+                  float(extent.width) / float(extent.height));
+        bonsai.getCamera()->update(0);
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        const auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+        EXPECT_GT(coveredCount(image, extent), extent.width * extent.height / 8);
     }
 }
