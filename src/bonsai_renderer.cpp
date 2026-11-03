@@ -140,8 +140,9 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     }
     // The moving objects' surfaces in their own frames, sampled finely for their size.
     TreeMovingOccluders moving;
-    moving.objectCount = uint32_t(config.movingObjects.size());
-    for (uint32_t i = 0; i < moving.objectCount; ++i) {
+    liveOccluderBase = uint32_t(config.movingObjects.size());
+    moving.objectCount = liveOccluderBase + config.liveOccluders;
+    for (uint32_t i = 0; i < liveOccluderBase; ++i) {
         const BonsaiObject& object = *config.movingObjects[i];
         const glm::vec3 extent = object.high - object.low;
         const float spacing = 0.02f * std::max({extent.x, extent.y, extent.z, 1e-3f});
@@ -159,7 +160,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     }
     lightVolume = std::make_unique<TreeLightVolume>(vulkanContext, *generator, settings, std::move(staticDepth),
                                                     std::move(moving));
-    for (uint32_t i = 0; i < config.movingObjects.size(); ++i) {
+    for (uint32_t i = 0; i < liveOccluderBase + config.liveOccluders; ++i) {
         lightVolume->setMovingTransform(i, glm::mat4(0.0f));
     }
     // Patches of the captured moss, placed over the soil with a level of detail each; too flat to cast shadows.

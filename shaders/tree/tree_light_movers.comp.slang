@@ -4,16 +4,16 @@
 
 import glsl;
 
-// Adds the moving occluders of the light volume (TreeMovingOccluders) at their current transforms: the area of every
-// surface sample, shared with a tent of SPREAD voxels to each side among the voxels around it, so that the occluder's
-// shadow has a soft edge and glides as it moves, as fixed point (1e-7 units^2 per step), in a grid of its own that the march counts like the static
-// occluders. One thread per sample.
+// Adds the moving occluders of the light volume (TreeMovingOccluders, and live occluders read from vertex buffers) at
+// their current transforms: the area of every surface sample, shared with a tent of SPREAD voxels to each side among
+// the voxels around it, so that the occluder's shadow has a soft edge and glides as it moves, as fixed point (1e-7
+// units^2 per step), in a grid of its own that the march counts like the static occluders. One thread per sample.
 
 #define TREE_FN
 #include "klartraum/tree/tree_shared.hpp"
 
-[[vk::binding(0, 0)]] StructuredBuffer<vec4> samples; // xyz in the object's frame, w area
-[[vk::binding(1, 0)]] StructuredBuffer<uint> objectOf;
+[[vk::binding(0, 0)]] StructuredBuffer<vec4> samples; // xyz in the object's frame, w area (unless pc.area says)
+[[vk::binding(1, 0)]] StructuredBuffer<uint> objectOf; // unless pc.object says
 [[vk::binding(2, 0)]] StructuredBuffer<mat4> worldFromObject;
 [[vk::binding(3, 0)]] StructuredBuffer<TreeRenderSettings> settings;
 // Zeroed before the pass.
@@ -21,6 +21,9 @@ import glsl;
 
 struct Push {
     uint count;
+    uint object; // all samples', or 0xffffffff for objectOf
+    float area;  // every sample's, or 0 for samples' w
+    uint unused;
 };
 [[vk::push_constant]] ConstantBuffer<Push> pc;
 
@@ -37,10 +40,10 @@ void main() {
     if (i >= pc.count) {
         return;
     }
-    mat4 m = worldFromObject[objectOf[i]];
+    mat4 m = worldFromObject[pc.object == 0xffffffffu ? objectOf[i] : pc.object];
     // The area grows with the square of the transform's scale; a scale of 0 removes the object.
     float scale = length(vec3(m[0].x, m[0].y, m[0].z));
-    float area = samples[i].w * scale * scale;
+    float area = (pc.area > 0.0f ? pc.area : samples[i].w) * scale * scale;
     if (area <= 0.0f) {
         return;
     }

@@ -106,6 +106,9 @@ struct BonsaiRenderConfig {
     /// Objects that move, e.g. one falling onto the soil: they cast shadows wherever setMovingObject() puts them
     /// (none until then) but are not drawn here; whoever draws them reads the light with getLightVolume().
     std::vector<std::shared_ptr<const BonsaiObject>> movingObjects;
+    /// Slots for occluders whose shape changes every frame, read from vertex buffers (connectLiveOccluder()), e.g. a
+    /// MeshMorph's mesh as it morphs; placed by setLiveOccluder(), none until then.
+    uint32_t liveOccluders = 0;
     /// The classical renderer's pass keeps its depth buffer for later passes (getPass(), RenderPass::setDepthFrom()).
     bool storeDepth = false;
     /// The Gaussian renderer also splats per-pixel features (tree_gaussian_features.comp) into getFeatureTarget(0)
@@ -207,6 +210,16 @@ public:
     void setMovingObject(uint32_t index, const glm::mat4& worldFromObject) {
         lightVolume->setMovingTransform(index, worldFromObject);
     }
+    /// Lets live occluder `index` (BonsaiRenderConfig::liveOccluders) read `count` vertices of four floats from
+    /// `vertices` every frame, after `after`, each standing for `area` in its own frame. Before compiling the graph.
+    void connectLiveOccluder(uint32_t index, const BufferRef& vertices, uint32_t count, float area,
+                             const ComputeGraphElementPtr& after = nullptr) {
+        lightVolume->addLiveOccluder(vertices, count, area, liveOccluderBase + index, after);
+    }
+    /// Places live occluder `index` for the next frames: world from its vertices' frame; scale 0 removes it.
+    void setLiveOccluder(uint32_t index, const glm::mat4& worldFromVertices) {
+        lightVolume->setMovingTransform(liveOccluderBase + index, worldFromVertices);
+    }
     /// The background of the next frames (with BonsaiRenderConfig::background).
     void setBackground(glm::vec3 colour) {
         if (backgroundFill)
@@ -250,6 +263,8 @@ private:
     std::shared_ptr<ImageFill> backgroundFill;
     std::shared_ptr<TreeGenerator> generator;
     std::unique_ptr<TreeLightVolume> lightVolume;
+    // The first of the light volume's moving occluder slots that live occluders take, after the moving objects'.
+    uint32_t liveOccluderBase = 0;
 
     // Captured lantern and moss (classical) or everything (Gaussian) as Gaussians
     std::unique_ptr<TreeGaussians> gaussians;

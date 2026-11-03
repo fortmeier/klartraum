@@ -99,8 +99,8 @@ TreeLightVolume::TreeLightVolume(VulkanContext& vulkanContext, TreeGenerator& ge
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         objects->setName("TreeMovingObjects");
         objects->getBuffer().memcopyFrom(moving.objects);
-        auto movers =
-            std::make_shared<GeneralComputation<uint32_t>>(vulkanContext, "shaders/tree/tree_light_movers.comp.spv");
+        auto movers = std::make_shared<GeneralComputation<TreeMoversPush>>(vulkanContext,
+                                                                           "shaders/tree/tree_light_movers.comp.spv");
         movers->setName("TreeLightMovers");
         movers->setInput(samples, 0);
         movers->setInput(objects, 1);
@@ -108,14 +108,46 @@ TreeLightVolume::TreeLightVolume(VulkanContext& vulkanContext, TreeGenerator& ge
         movers->setInput(settings, 3);
         movers->setInput(movingBuffer, 4);
         movers->setGroupCountX((count + 255) / 256);
-        movers->setPushConstants({count});
+        movers->setPushConstants({TreeMoversPush{count, kPerSample, 0.0f, 0u}});
         march->setInput(movers, 4, 4);
+        movingGrid = {movers, 4};
     }
+    if (!movingGrid.element) {
+        movingGrid = {movingBuffer, -1};
+    }
+    this->settings = settings;
+    this->vulkanContext = &vulkanContext;
+    movingObjectCount = moving.objectCount;
     march->setGroupCountX((voxels + 63) / 64);
 }
 
 void TreeLightVolume::setMovingTransform(uint32_t object, const glm::mat4& worldFromObject) {
     movingTransforms->set(object, worldFromObject);
+}
+
+void TreeLightVolume::addLiveOccluder(const BufferRef& vertices, uint32_t count, float area, uint32_t object,
+                                      const ComputeGraphElementPtr& after) {
+    if (object >= movingObjectCount) {
+        throw std::invalid_argument("TreeLightVolume: live occluder object index out of range");
+    }
+    // The pass's per-sample objects binding needs a buffer; the push constants give the object instead.
+    auto unused = std::make_shared<BufferElementSinglePath<VulkanBuffer<uint32_t>>>(*vulkanContext, 1);
+    unused->setName("TreeLiveOccluderObjects");
+    auto movers =
+        std::make_shared<GeneralComputation<TreeMoversPush>>(*vulkanContext, "shaders/tree/tree_light_movers.comp.spv");
+    movers->setName("TreeLightLiveOccluder");
+    vertices.connectTo(*movers, 0);
+    movers->setInput(unused, 1);
+    movers->setInput(movingTransforms, 2);
+    movers->setInput(settings, 3);
+    movingGrid.connectTo(*movers, 4);
+    if (after) {
+        movers->addDependency(after);
+    }
+    movers->setGroupCountX((count + 255) / 256);
+    movers->setPushConstants({TreeMoversPush{count, object, area, 0u}});
+    march->setInput(movers, 4, 4);
+    movingGrid = {movers, 4};
 }
 
 std::vector<float> treeStaticOcclusion(const TreeRenderSettings& settings, const std::vector<TreeSceneVertex>& surfels,

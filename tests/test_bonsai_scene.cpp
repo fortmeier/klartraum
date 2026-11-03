@@ -63,6 +63,9 @@
  *   follows it when it moves, and is gone when its transform has scale 0
  * - lightReachesTheCeiling: with BonsaiRenderConfig::lightCeiling above the trees, the light volume reaches it, and a
  *   ball 3 units above the soil shadows its own underside and casts its shadow onto the soil
+ * - liveOccludersFollowTheirVertices: an occluder read from a vertex buffer every frame (a sphere's vertices, as a
+ *   MeshMorph's training writes them) shadows the soil below it and its own underside, and its shadow follows when
+ *   the vertices change, with nothing rebuilt
  * - movingShadowsGlide: a moving ball's shadow on the soil changes little from one small step of the ball to the
  *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
@@ -1645,4 +1648,68 @@ TEST_F(BonsaiRenderingTest, lightReachesTheCeiling) {
     EXPECT_LT(onSoil, 0.3f);
     EXPECT_LT(underside, 0.3f);
     EXPECT_GT(top, 0.9f);
+}
+
+TEST_F(BonsaiRenderingTest, liveOccludersFollowTheirVertices) {
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 1;
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{64, 64};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.liveOccluders = 1;
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    // The vertices of a unit sphere, four floats each, as a MeshTraining keeps them.
+    const raster::TriangleMesh sphere = raster::icosphere(4);
+    const auto count = uint32_t(sphere.positions.size());
+    auto vertices = vc->create<TensorElement<float>>(std::vector<uint32_t>{count, 4});
+    const auto upload = [&](float radius, glm::vec3 offset) {
+        std::vector<float> values;
+        for (const glm::vec3& p : sphere.positions)
+            for (const float v : {radius * p.x + offset.x, radius * p.y + offset.y, radius * p.z + offset.z, 1.0f})
+                values.push_back(v);
+        vertices->getDataBuffer(0).memcopyFrom(values);
+    };
+    bonsai.connectLiveOccluder(0, BufferRef{vertices, -1}, count, 4.0f * 3.14159265f / float(count));
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    setCamera(bonsai.getCamera()->ubo, scene.focus + glm::vec3(0.0f, 1.0f, 4.0f), scene.focus, 40.0f, 1.0f);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    const TreeRenderSettings s = bonsai.getSettings().values().at(0);
+    const glm::vec3 sun = glm::normalize(glm::vec3(s.sun));
+
+    // A sphere of radius 0.2 a little above the soil, in the frame its transform places at `centre`.
+    const float radius = 0.2f;
+    const glm::vec3 centre(-0.3f, scene.soilHeight(-0.3f, 0.0f) + 0.5f, 0.0f);
+    bonsai.setLiveOccluder(0, glm::translate(glm::mat4(1.0f), centre) * glm::scale(glm::mat4(1.0f), glm::vec3(radius)));
+    const auto sunThrough = [&](glm::vec3 p) {
+        const auto light = bonsai.getLightVolume().readLight();
+        const glm::vec4 l = lightAt(light, s, p);
+        return l.x / std::max(l.z, 1e-4f);
+    };
+    const auto soilBelow = [&](glm::vec3 c) {
+        glm::vec3 p = c - sun * ((c.y - scene.soilHeight(c.x, c.z)) / sun.y);
+        p.y = scene.soilHeight(p.x, p.z) + 0.03f;
+        return p;
+    };
+    upload(1.0f, glm::vec3(0.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const float onSoil = sunThrough(soilBelow(centre));
+    const float underside = sunThrough(centre - sun * (radius - 1.5f * s.lightGridMin.w));
+    const float top = sunThrough(centre + sun * (radius + 1.5f * s.lightGridMin.w));
+    // The vertices move 3 radii (0.6 units) along +x within the occluder's frame: the shadow follows.
+    upload(1.0f, glm::vec3(3.0f, 0.0f, 0.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const float leftBehind = sunThrough(soilBelow(centre));
+    const float followed = sunThrough(soilBelow(centre + glm::vec3(3.0f * radius, 0.0f, 0.0f)));
+    std::cout << "live occluder: soil " << onSoil << ", underside " << underside << ", top " << top
+              << "; moved: left behind " << leftBehind << ", followed " << followed << std::endl;
+    EXPECT_LT(onSoil, 0.3f);
+    EXPECT_LT(underside, 0.3f);
+    EXPECT_GT(top, 0.9f);
+    EXPECT_GT(leftBehind, 0.9f);
+    EXPECT_LT(followed, 0.3f);
 }

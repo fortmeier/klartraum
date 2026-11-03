@@ -50,6 +50,13 @@ public:
                     TreeMovingOccluders moving = {});
     /// Places moving occluder `object` for the next submissions; a transform of scale 0 removes it.
     void setMovingTransform(uint32_t object, const glm::mat4& worldFromObject);
+    /**
+     * @brief Adds an occluder read from `vertices` every frame (four floats each, xyz in the object's frame, e.g. a
+     * MeshTraining's positions), each sample standing for `area` (in the object's frame), placed by moving occluder
+     * `object`'s transform; read after `after`, e.g. the element writing the vertices. Before compiling the graph.
+     */
+    void addLiveOccluder(const BufferRef& vertices, uint32_t count, float area, uint32_t object,
+                         const ComputeGraphElementPtr& after = nullptr);
 
     BufferRef getLight() const { return {march, 2}; }
     ComputeGraphElementPtr getElement() const { return march; }
@@ -59,9 +66,24 @@ public:
     std::vector<glm::vec4> readLight(uint32_t pathId = 0);
 
 private:
+    /// Push constants of `tree_light_movers.comp`.
+    struct TreeMoversPush {
+        uint32_t count;  ///< samples
+        uint32_t object; ///< the samples' object, or kPerSample to read it per sample
+        float area;      ///< the area of every sample, or 0 to read it per sample
+        uint32_t unused;
+    };
+    static constexpr uint32_t kPerSample = 0xffffffffu;
+
     std::shared_ptr<GeneralComputation<glm::uvec2>> density;
     // The transforms of the moving occluders (one at least, unused without them).
     std::shared_ptr<HostValues<glm::mat4>> movingTransforms;
+    // The moving occluders' grid as the last pass adding to it leaves it, which the march reads.
+    BufferRef movingGrid;
+    uint32_t movingObjectCount = 0;
+    // For adding live occluders after construction.
+    VulkanContext* vulkanContext = nullptr;
+    std::shared_ptr<HostValues<TreeRenderSettings>> settings;
     std::shared_ptr<GeneralComputation<>> march;
     std::shared_ptr<BufferElement<VulkanBuffer<glm::vec4>>> light;
 };
