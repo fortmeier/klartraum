@@ -12,7 +12,7 @@
 //      The jack-o'-lantern faces the camera.
 //   1. Drop: the pumpkin falls onto the splatted bonsai pot with its soil and the lantern, shrinking to its size on
 //      the soil and turning to face the camera; the camera follows.
-//   2. Growth: the bonsai pine grows.
+//   2. Growth: the bonsai pine grows from a seedling, its trunk extending and branching out step by step.
 //   3. Days: the summer afternoon turns into night, then four days, one season each; the background is white by
 //      day and black by night.
 // Each chapter shows a caption with the work it builds on, lower left.
@@ -378,10 +378,11 @@ int main(int argc, char** argv) {
     renderConfig.mode = BonsaiRenderMode::Classical;
     renderConfig.background = true;
     renderConfig.numberPaths = 1;
-    const auto setTrees = [](BonsaiRenderer& bonsai, const BonsaiScene& scene, float growth) {
+    // The trees at `age`: from nothing (0) through a seedling branching out step by step to fully grown (1).
+    const auto setTrees = [](BonsaiRenderer& bonsai, const BonsaiScene& scene, float age) {
         std::vector<TreeInstance> trees = scene.trees;
         for (TreeInstance& tree : trees)
-            tree.posScale.w *= std::max(growth, 0.01f);
+            setTreeAge(tree, age);
         bonsai.getGenerator().getInstances().set(trees);
     };
 
@@ -463,8 +464,10 @@ int main(int argc, char** argv) {
             bonsai.setView(pose.eye);
             float background = 1.0f;
             if (f < daysStart) {
-                const float growth = smooth(sinceGrowth / kChapters[2].seconds);
-                setTrees(bonsai, scene, 0.03f + 0.97f * growth);
+                // Quick at first, slowing down as the tree matures.
+                const float t = std::clamp(sinceGrowth / kChapters[2].seconds, 0.0f, 1.0f);
+                const float growth = 1.0f - (1.0f - t) * (1.0f - t);
+                setTrees(bonsai, scene, 0.02f + 0.98f * growth);
                 bonsai.setTime(sinceGrowth, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.3f * growth));
             } else {
                 // The camera keeps orbiting.
