@@ -50,7 +50,10 @@ public:
               const std::shared_ptr<ImageViewSrc>& frame, VkImageLayout frameLayout,
               const ComputeGraphElementPtr& frameReady, const MeshMorphOptions& options);
 
-    /** @brief The last element of a frame: compile the graph from it, then call initialize(). */
+    /**
+     * @brief The last element of a frame: compile the graph from it, then call initialize(). It leaves the frame in
+     * the layout the frame's renderer left it in.
+     */
     ComputeGraphElementPtr getOutput() const { return output; }
 
     /** @brief Uploads the start mesh and the cameras; after compiling the graph. */
