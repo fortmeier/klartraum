@@ -4,13 +4,17 @@
 
 // Renders "klartraum tech demo 001", a promo video of the differentiable rendering and the procedural trees,
 // headlessly. Chapters, one continuous camera:
-//   0. Title and morph: on white, the black "klartraum" logo (Gaussians in Unbounded) and a black sphere above it,
+//   0. Title and morph: on white, the black "klartraum" logo (Gaussians in Unbounded) and a large black sphere above
+//   it,
 //      which at once morphs into the pumpkin by differentiable mesh optimization (raster::MeshMorph): every frame
 //      splats the captured pumpkin into offscreen pictures, turns them into targets and runs optimization steps
 //      whose gradients flow from the pictures into the mesh's shape and texture, all in the frame's compute graph.
-//   1. Drop: the pumpkin falls onto the splatted bonsai pot with its soil and the lantern; the camera follows.
-//   2. Growth: the bonsai pines grow.
-//   3. Days: four days, one season each; the background is white by day and black by night.
+//      The jack-o'-lantern faces the camera.
+//   1. Drop: the pumpkin falls onto the splatted bonsai pot with its soil and the lantern, shrinking to its size on
+//      the soil and turning to face the camera; the camera follows.
+//   2. Growth: the bonsai pine grows.
+//   3. Days: the summer afternoon turns into night, then four days, one season each; the background is white by
+//      day and black by night.
 // Each chapter shows a caption with the work it builds on, lower left.
 //
 //   techdemo001_example [--pot FILE] [--pumpkin FILE] [--width 1280] [--height 720] [--fps 30]
@@ -64,7 +68,7 @@ const std::vector<Chapter> kChapters = {
     {5.0f, {"Differentiable rasterization", "Laine et al. 2020, automatic differentiation in Slang"}},
     {2.5f, {"Gaussian splatting", "Kerbl et al. 2023, trained on 38 photographs"}},
     {5.0f, {"GPU tree generation", "Kuth et al. 2025, after Weber and Penn 1995"}},
-    {16.0f, {"Days and seasons", "one compute graph submission per frame"}},
+    {18.0f, {"Days and seasons", "one compute graph submission per frame"}},
 };
 
 // The frame's pixels as BGRA bytes, from an image in `layout`.
@@ -123,7 +127,7 @@ float smooth(float t) {
 // The background by day and night: white while the sun is up, black in the night, smooth in the twilight.
 float backgroundAt(float timeOfDay, float season) {
     const float elevation = treeSkyAt(timeOfDay, season).sunElevation;
-    return smooth((elevation + 0.08f) / 0.2f);
+    return smooth((elevation + 0.2f) / 0.6f);
 }
 
 // A caption: its lines rasterized, drawn lower left in the colour opposite the background.
@@ -216,9 +220,9 @@ int main(int argc, char** argv) {
         writePpm(frameName(frame), bgra, extent);
     };
 
-    // The bonsai: the splatted pot with soil, lantern and two bonsai pines.
+    // The bonsai: the splatted pot with soil, lantern and a bonsai pine.
     BonsaiSceneConfig sceneConfig;
-    sceneConfig.treeCount = 2;
+    sceneConfig.treeCount = 1;
     sceneConfig.species = BonsaiSpecies::Pine;
     sceneConfig.style = 1.0f;
     sceneConfig.pot.soilMound = 0.4f;
@@ -229,7 +233,8 @@ int main(int argc, char** argv) {
 
     // The stage: the title hangs high above the pot, out of the pot's view; the camera comes down with the pumpkin.
     const glm::vec3 title = sceneWithoutPumpkin.focus + glm::vec3(0.0f, 5.0f, 0.0f);
-    const Pose titlePose{title + glm::vec3(0.0f, 0.0f, 7.0f), title};
+    // Framed between the logo and the pumpkin above it, nearly level with the pumpkin.
+    const Pose titlePose{title + glm::vec3(0.0f, 0.7f, 7.0f), title + glm::vec3(0.0f, 0.7f, 0.0f)};
     const float orbitElevation = 0.36f, orbitDistance = 7.6f, orbitStart = 0.35f;
     const auto orbitPose = [&](float angle) {
         // A little below the trees' focus, so that the pot stands in the frame.
@@ -239,8 +244,15 @@ int main(int argc, char** argv) {
                                                       std::cos(orbitElevation) * std::cos(angle)),
                     focus};
     };
-    const float morphScale = 0.35f; // the pumpkin's unit sphere in world units
-    const glm::vec3 sphereCentre = title + glm::vec3(0.0f, 0.95f, 0.0f);
+    const float morphScale = 0.35f; // the pumpkin's unit sphere in world units, at rest on the soil
+    const float titleScale = 0.7f;  // the pumpkin's unit sphere in world units, above the title
+    const glm::vec3 sphereCentre = title + glm::vec3(0.0f, 1.45f, 0.0f);
+    // The rotation about +y that turns the jack-o'-lantern's face (-z in its own frame) towards @p eye.
+    const auto facing = [](glm::vec3 at, glm::vec3 eye) { return std::atan2(at.x - eye.x, at.z - eye.z); };
+    const auto pumpkinModel = [](glm::vec3 at, float yaw, float scale) {
+        return glm::translate(glm::mat4(1.0f), at) * glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0.0f, 1.0f, 0.0f)) *
+               glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+    };
     const glm::vec2 landing(-0.75f, 0.35f);
     const float secondsPerTurn = 40.0f;
     const auto growthOrbit = [&](float seconds) { return orbitStart + 2.0f * 3.14159265f * seconds / secondsPerTurn; };
@@ -248,16 +260,28 @@ int main(int argc, char** argv) {
     // The pumpkin's Gaussians: the targets of the morph.
     auto pumpkin = std::make_shared<GaussianDataStandard>(vc, loadGaussiansSpz(pumpkinPath.string(), false));
     raster::MeshMorphOptions morphOptions;
-    for (const auto& [elevation, start] : {std::pair{-0.2f, 0.0f}, {0.3f, 0.39f}, {0.85f, 0.0f}})
+    for (const auto& [elevation, start] : {std::pair{-0.7f, 0.39f}, {-0.2f, 0.0f}, {0.3f, 0.39f}, {0.85f, 0.0f}})
         for (int k = 0; k < 4; ++k) {
             const float angle = start + float(k) * 1.5708f;
             const glm::vec3 eye = 3.5f * glm::vec3(std::cos(elevation) * std::cos(angle), std::sin(elevation),
                                                    std::cos(elevation) * std::sin(angle));
             CameraMVP view = cameraOf({eye, glm::vec3(0.0f)}, 1.0f);
-            view.proj = raster::perspective(0.8f, 1.0f, 0.1f, 20.0f);
+            view.proj = raster::perspective(0.65f, 1.0f, 0.1f, 20.0f);
             morphOptions.views.push_back(view);
         }
+    // More views of the carved face (towards -z), so that it comes out sharp.
+    for (const auto& [elevation, angle] : {std::pair{0.05f, 0.0f}, {0.4f, 0.0f}, {0.2f, -0.45f}, {0.2f, 0.45f}}) {
+        const glm::vec3 eye = 3.5f * glm::vec3(std::cos(elevation) * std::sin(angle), std::sin(elevation),
+                                               -std::cos(elevation) * std::cos(angle));
+        CameraMVP view = cameraOf({eye, glm::vec3(0.0f)}, 1.0f);
+        view.proj = raster::perspective(0.65f, 1.0f, 0.1f, 20.0f);
+        morphOptions.views.push_back(view);
+    }
     morphOptions.training.stepsPerSubmit = 12;
+    // Fine enough for the carved face.
+    morphOptions.training.width = morphOptions.training.height = 256;
+    morphOptions.training.textureWidth = 256;
+    morphOptions.training.textureHeight = 128;
     morphOptions.frame = extent;
 
     // The trained pumpkin, carried from chapter to chapter.
@@ -308,8 +332,8 @@ int main(int argc, char** argv) {
         camera->ubo = cameraOf(titlePose, aspect);
         camera->update(0);
         morph.setCamera(camera->ubo.proj * camera->ubo.view);
-        morph.setModel(glm::translate(glm::mat4(1.0f), sphereCentre) *
-                       glm::scale(glm::mat4(1.0f), glm::vec3(morphScale)));
+        const float titleYaw = facing(sphereCentre, titlePose.eye);
+        morph.setModel(pumpkinModel(sphereCentre, titleYaw, titleScale));
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
             textData->buffers().colAlpha.element);
         const auto [begin, end] = chapterRange(0);
@@ -344,6 +368,7 @@ int main(int argc, char** argv) {
     placement.object = std::make_shared<BonsaiObject>(bonsaiObjectFromMesh(
         pumpkinMesh, pumpkinTexture, morphOptions.training.textureWidth, morphOptions.training.textureHeight));
     placement.position = landing;
+    placement.yaw = facing(glm::vec3(landing.x, 0.0f, landing.y), orbitPose(orbitStart).eye);
     placement.height = morphScale * (placement.object->high.y - placement.object->low.y);
     const glm::mat4 rest = bonsaiObjectTransform(sceneWithoutPumpkin, placement);
     const glm::vec3 restOrigin(rest[3]);
@@ -390,8 +415,11 @@ int main(int argc, char** argv) {
             bonsai.setTime(t, 0.5f, 2.0f, glm::vec4(0.0f));
             setTrees(bonsai, sceneWithoutPumpkin, 0.0f);
             morph.setCamera(bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view);
-            morph.setModel(glm::translate(glm::mat4(1.0f), origin) *
-                           glm::scale(glm::mat4(1.0f), glm::vec3(morphScale)));
+            const float settle = smooth(fall);
+            // The short way round from the title's yaw to the resting one.
+            const float titleYaw = facing(sphereCentre, titlePose.eye);
+            const float turn = std::remainder(placement.yaw - titleYaw, 2.0f * 3.14159265f);
+            morph.setModel(pumpkinModel(origin, titleYaw + settle * turn, glm::mix(titleScale, morphScale, settle)));
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
                 finishFrame(f, readImage(vc, frame->getImage(0), layout, extent), 1.0f);
@@ -411,7 +439,11 @@ int main(int argc, char** argv) {
         graph.compileFrom(bonsai.getOutput());
         bonsai.initialize(1);
         BonsaiDays days;
-        days.secondsPerDay = kChapters[3].seconds / 4.0f;
+        // The growth's summer noon turns into the night over the first seconds; then four days from midnight.
+        const float afternoon = 4.0f;
+        days.secondsPerDay = (kChapters[3].seconds - afternoon) / 4.0f;
+        days.dawn = 0.0f;
+        days.seasons[0] = 2.0f, days.seasons[1] = 3.25f, days.seasons[2] = 4.0f, days.seasons[3] = 5.25f;
         const uint32_t begin = timeline.chapterStart(std::max(fromChapter, 2)), end = timeline.frameCount();
         const uint32_t growthStart = timeline.chapterStart(2), daysStart = timeline.chapterStart(3);
         for (uint32_t f = begin; f < end; ++f) {
@@ -426,10 +458,12 @@ int main(int argc, char** argv) {
                 setTrees(bonsai, scene, 0.03f + 0.97f * growth);
                 bonsai.setTime(sinceGrowth, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.3f * growth));
             } else {
-                // The days start before sunrise; the camera keeps orbiting.
+                // The camera keeps orbiting.
                 const float seconds = float(f - daysStart) / fps;
                 setTrees(bonsai, scene, 1.0f);
-                const float timeOfDay = days.timeOfDayAt(seconds), season = days.seasonAt(seconds);
+                const float timeOfDay =
+                    seconds < afternoon ? 0.5f + 0.5f * seconds / afternoon : days.timeOfDayAt(seconds - afternoon);
+                const float season = seconds < afternoon ? days.seasons[0] : days.seasonAt(seconds - afternoon);
                 bonsai.setTime(sinceGrowth, timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.4f));
                 background = backgroundAt(timeOfDay, season);
             }
