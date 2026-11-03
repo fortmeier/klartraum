@@ -64,6 +64,43 @@ vec2 march(ivec3 c, vec3 d, TreeRenderSettings s) {
     return vec2(exp(-trees - statics), exp(-trees));
 }
 
+// The optical depths (trees, static and moving occluders) at p in voxel units, interpolated trilinearly between
+// voxel centres.
+vec2 opticalDepthsAt(vec3 p, TreeRenderSettings s) {
+    ivec3 size = ivec3(s.lightGridSize.xyz);
+    vec3 g = p - 0.5f;
+    ivec3 i0 = ivec3(floor(g));
+    vec3 f = g - vec3(i0);
+    vec2 sum = vec2(0.0f);
+    for (int corner = 0; corner < 8; ++corner) {
+        ivec3 o = ivec3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+        ivec3 q = clamp(i0 + o, ivec3(0), size - 1);
+        float w = (o.x == 1 ? f.x : 1.0f - f.x) * (o.y == 1 ? f.y : 1.0f - f.y) * (o.z == 1 ? f.z : 1.0f - f.z);
+        sum += w * vec2(treeOpticalDepth(q, s), staticOpticalDepth(q, s));
+    }
+    return sum;
+}
+
+// Transmittance from the centre of voxel c towards the sun d, like march() but in half-voxel steps through
+// trilinearly interpolated depths, so that the shadows move smoothly as the sun does. Occluders count from one voxel
+// away on, so that solid surfaces do not shadow themselves.
+vec2 marchSun(ivec3 c, vec3 d, TreeRenderSettings s) {
+    vec3 size = vec3(s.lightGridSize.xyz);
+    float trees = 0.5f * treeOpticalDepth(c, s);
+    float statics = 0.0f;
+    vec3 p = vec3(c) + 0.5f + d;
+    for (int k = 0; k < 1024; ++k) {
+        if (any(lessThan(p, vec3(0.0f))) || any(greaterThanEqual(p, size))) {
+            break;
+        }
+        vec2 depths = opticalDepthsAt(p, s);
+        trees += 0.5f * depths.x;
+        statics += 0.5f * depths.y;
+        p += 0.5f * d;
+    }
+    return vec2(exp(-trees - statics), exp(-trees));
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void main() {
@@ -74,7 +111,7 @@ void main() {
         return;
     }
     ivec3 c = ivec3(i % n.x, (i / n.x) % n.y, i / (n.x * n.y));
-    vec2 sun = march(c, normalize(s.sun.xyz), s);
+    vec2 sun = marchSun(c, normalize(s.sun.xyz), s);
     float e = radians(50.0f);
     vec2 sky = march(c, vec3(0.0f, 1.0f, 0.0f), s);
     sky += march(c, vec3(cos(e), sin(e), 0.0f), s);

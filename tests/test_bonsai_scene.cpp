@@ -64,6 +64,8 @@
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
  *   occluder at the same place: the side towards the morning sun keeps the mesh's colour under the light's tint,
  *   the side away from it is clearly darker
+ * - shadowsMoveSmoothlyWithTheSun: as the morning sun moves on in small steps, no pixel of a captured ball and the
+ *   soil around it changes by much from one step to the next (no shadow edges hopping between voxels)
  **/
 
 #include <gtest/gtest.h>
@@ -1269,4 +1271,55 @@ TEST_F(BonsaiRenderingTest, litMorphShadesLikeTheScene) {
     std::cout << "lit morph: sunny " << sunny << ", away " << away << ", full light " << fullLight << std::endl;
     EXPECT_NEAR(sunny, fullLight, 0.12 * fullLight);
     EXPECT_LT(away, 0.7 * sunny);
+}
+
+TEST_F(BonsaiRenderingTest, shadowsMoveSmoothlyWithTheSun) {
+    BonsaiObjectPlacement placement;
+    placement.object = greyBall(false);
+    placement.position = glm::vec2(0.6f, -0.2f);
+    placement.height = 0.6f;
+    BonsaiSceneConfig config;
+    config.treeCount = 1;
+    config.objects.push_back(placement);
+    const BonsaiScene scene = makeBonsaiScene(config);
+    const glm::vec3 centre(0.6f, scene.soilHeight(0.6f, -0.2f) + 0.27f, -0.2f);
+    const VkExtent2D extent{320, 240};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig rc;
+    rc.extent = extent;
+    BonsaiRenderer bonsai(*vc, scene, target, rc);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    setCamera(bonsai.getCamera()->ubo, centre + glm::vec3(0.0f, 0.3f, 1.6f), centre, 30.0f, 4.0f / 3.0f);
+    bonsai.getCamera()->update(0);
+    std::vector<uint8_t> previous;
+    double worst = 0, sum = 0;
+    for (int i = 0; i <= 60; ++i) {
+        bonsai.setTime(1.0f, 0.36f + 0.002f * i, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        auto image = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+        if (!previous.empty()) {
+            // The ball and the soil around it: the middle of the frame.
+            double maxDiff = 0, meanDiff = 0;
+            int n = 0;
+            for (uint32_t y = 70; y < 170; ++y)
+                for (uint32_t x = 110; x < 210; ++x) {
+                    const size_t k = (y * extent.width + x) * 4;
+                    double d = 0;
+                    for (int c = 0; c < 3; ++c)
+                        d += std::abs(int(image[k + c]) - int(previous[k + c]));
+                    maxDiff = std::max(maxDiff, d);
+                    meanDiff += d;
+                    ++n;
+                }
+            meanDiff /= n;
+            worst = std::max(worst, maxDiff);
+            sum += meanDiff;
+        }
+        previous = image;
+    }
+    std::cout << "largest change of a pixel between steps " << worst << ", mean " << sum / 60 << std::endl;
+    // A shadow edge hopping from voxel to voxel changes pixels by more than 100 at once.
+    EXPECT_LT(worst, 30.0);
 }
