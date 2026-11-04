@@ -34,6 +34,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -307,7 +308,7 @@ int main(int argc, char** argv) {
         morphOptions.photoCameras.push_back(camera * sceneFromUnit);
     std::cout << used.size() << " of " << photos.train.size() << " photographs of " << photos.width << " x "
               << photos.height << " (the others with too much glare)" << std::endl;
-    morphOptions.training.stepsPerSubmit = 12;
+    morphOptions.training.stepsPerSubmit = 13;
     morphOptions.training.width = photos.width;
     morphOptions.training.height = photos.height;
     // Fine enough for the carved face at the photographs' resolution.
@@ -438,11 +439,21 @@ int main(int argc, char** argv) {
         };
         const CoverageMask photographLabel = label("photograph"), renderingLabel = label("rendering");
         std::vector<float> photographPanel, renderingPanel;
+        // The training goes through the photographs in turn, stepsPerSubmit a frame: the panels change every
+        // panelFrames frames (about a fifth of a second), chosen so that the photographs shown come round to all.
+        const auto photographCount = uint32_t(morphOptions.photoCameras.size());
+        uint32_t panelFrames = 6;
+        for (uint32_t frames : {6u, 5u, 7u, 4u, 8u}) {
+            if (std::gcd(frames * morphOptions.training.stepsPerSubmit, photographCount) == 1) {
+                panelFrames = frames;
+                break;
+            }
+        }
         const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, uint32_t frameNumber,
                                       float opacity) {
             if (opacity <= 0.0f)
                 return;
-            if (photographPanel.empty() || frameNumber % 6 == 0) {
+            if (photographPanel.empty() || frameNumber % panelFrames == 0) {
                 const uint32_t view = morph.getTraining().lastView();
                 const size_t pixels = size_t(morphOptions.training.width) * morphOptions.training.height;
                 photographPanel = halve(&morphOptions.photographs[4 * pixels * view]);
