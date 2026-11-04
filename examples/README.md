@@ -234,17 +234,20 @@ and the procedural trees, without a window. Needs `KLARTRAUM_WITH_FREETYPE`. The
 chapters run in one continuous camera move:
 
 1. **Title and morph:** on white, the black "klartraum" logo (Gaussians in
-   Unbounded) with a black sphere above it. The sphere morphs into the pumpkin
-   by differentiable mesh optimization (`raster::MeshMorph`), starting with the
-   first frame. Each frame splats the captured pumpkin into offscreen pictures,
-   turns them into targets and runs optimization steps, so the gradients flow
-   from the pictures into the mesh's shape and texture, all in the frame's
-   compute graph.
+   Unbounded) with a black sphere above it. The sphere morphs into the
+   jack-o'-lantern by differentiable mesh optimization on the masked photographs
+   of the pumpkin (`raster::MeshMorph`), starting with the first frame. Each frame
+   runs optimization steps in the frame's compute graph, so the gradients flow
+   from the photographs into the mesh's shape and texture. Beside it, the
+   photograph in use and the training's rendering of the mesh from its camera.
+   The pumpkin is lit by the scene's light from the start.
 2. **Drop:** the pumpkin falls onto the splatted bonsai pot with its soil and
-   the lantern, and the camera follows.
-3. **Growth:** the bonsai pines grow.
-4. **Days:** four days, one season each. The background is white by day and
-   black by night.
+   the lantern, casting its shadow, and the camera follows.
+3. **Growth:** the bonsai pine grows from a seedling, branching out step by
+   step.
+4. **Days:** a summer afternoon turning into night, then four days, one season
+   each. The background is white by day and black by night, with a black sun
+   and a white crescent moon where the light comes from.
 
 Each chapter shows a caption naming the work it builds on. Frames go to
 `<out-dir>/frames/frame_XXXX.ppm`. The trained pumpkin goes to
@@ -253,7 +256,7 @@ Each chapter shows a caption naming the work it builds on. Frames go to
 | Option | Meaning |
 |---|---|
 | `--pot FILE` | The bonsai pot's `object.spz` (default `build/TestingOutput/splat_training/bonsai/object.spz`) |
-| `--pumpkin FILE` | The pumpkin's `object.spz`, the morph's target (default `build/TestingOutput/splat_training/pumpkin_closed_1/object.spz`) |
+| `--photos DIR` | The pumpkin's photographs as prepared by `scripts/mesh_fitting/prepare_data.py`, the morph's targets (default `build/TestingOutput/real_data/pumpkin_closed_1_512`) |
 | `--width W`, `--height H` | Frame size (default 1280 x 720) |
 | `--fps F` | Frames per second (default 30) |
 | `--from N`, `--to M` | Render chapters N to M (0 to 3) |
