@@ -297,8 +297,13 @@ int main(int argc, char** argv) {
     morphOptions.training.textureHeight = 256;
     morphOptions.frame = extent;
 
-    // The trained pumpkin, carried from chapter to chapter.
+    // The trained pumpkin, carried from chapter to chapter. The sphere it starts from is turned so that its texture
+    // seam (at -x, where the longitude wraps) lies at the back, opposite the face.
     raster::TriangleMesh pumpkinMesh = raster::icosphere(4);
+    const glm::mat3 seamToBack(
+        glm::rotate(glm::mat4(1.0f), 0.5f * 3.14159265f + faceAngle, glm::vec3(0.0f, 1.0f, 0.0f)));
+    for (glm::vec3& p : pumpkinMesh.positions)
+        p = seamToBack * p;
     std::vector<float> pumpkinTexture(
         4 * size_t(morphOptions.training.textureWidth) * morphOptions.training.textureHeight, 0.0f);
     for (size_t i = 3; i < pumpkinTexture.size(); i += 4)
