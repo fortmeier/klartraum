@@ -34,7 +34,6 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -413,9 +412,9 @@ int main(int argc, char** argv) {
         setTrees(light, sceneWithoutPumpkin, 0.0f);
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
             textData->buffers().colAlpha.element);
-        // On the right, with the caption: the photograph the training used last and the training's rendering of the
-        // mesh from that photograph's camera, at half their size, labelled; held for a few frames at a time, as the
-        // training goes through a dozen photographs every frame.
+        // On the right, from the first frame on: the photograph the frame's last training step used and the
+        // training's rendering of the mesh from that photograph's camera, at half their size, labelled; a new pair
+        // every frame, so that the prediction is seen getting better from the sphere on.
         const uint32_t panelWidth = morphOptions.training.width / 2, panelHeight = morphOptions.training.height / 2;
         const auto halve = [&](const float* picture) {
             std::vector<float> half(4 * size_t(panelWidth) * panelHeight);
@@ -439,21 +438,10 @@ int main(int argc, char** argv) {
         };
         const CoverageMask photographLabel = label("photograph"), renderingLabel = label("rendering");
         std::vector<float> photographPanel, renderingPanel;
-        // The training goes through the photographs in turn, stepsPerSubmit a frame: the panels change every
-        // panelFrames frames (about a fifth of a second), chosen so that the photographs shown come round to all.
-        const auto photographCount = uint32_t(morphOptions.photoCameras.size());
-        uint32_t panelFrames = 6;
-        for (uint32_t frames : {6u, 5u, 7u, 4u, 8u}) {
-            if (std::gcd(frames * morphOptions.training.stepsPerSubmit, photographCount) == 1) {
-                panelFrames = frames;
-                break;
-            }
-        }
-        const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, uint32_t frameNumber,
-                                      float opacity) {
+        const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, float opacity) {
             if (opacity <= 0.0f)
                 return;
-            if (photographPanel.empty() || frameNumber % panelFrames == 0) {
+            {
                 const uint32_t view = morph.getTraining().lastView();
                 const size_t pixels = size_t(morphOptions.training.width) * morphOptions.training.height;
                 photographPanel = halve(&morphOptions.photographs[4 * pixels * view]);
@@ -484,7 +472,8 @@ int main(int argc, char** argv) {
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
                 std::vector<uint8_t> image = readImage(vc, frame->getImage(0), splatting->getOutputLayout(), extent);
-                drawTraining(image, morph, f, timeline.captionOpacity({0, 0.6f, 0.4f, 0.5f}, f));
+                // With the title, fading out with it.
+                drawTraining(image, morph, fade);
                 finishFrame(f, std::move(image), 1.0f);
                 std::cout << "frame " << f << ": morph loss " << morph.getTraining().loss() << std::endl;
             }
