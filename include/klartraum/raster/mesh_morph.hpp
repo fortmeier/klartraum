@@ -27,6 +27,11 @@ namespace klartraum::raster {
 /** @brief The target views, sizes and optimization of a MeshMorph. */
 struct MeshMorphOptions {
     std::vector<CameraMVP> views; ///< cameras of the target pictures (Vulkan projection, y down)
+    /// Photographs as the targets instead of pictures of Gaussians: four floats per pixel and photograph (rgb
+    /// premultiplied by the mask, the mask), photographs one after another at training.width x training.height,
+    /// with their cameras (clip from the morph's frame). With them, `views` and the target Gaussians are not used.
+    std::vector<float> photographs;
+    std::vector<glm::mat4> photoCameras;
     MeshTrainingOptions training; ///< width/height: of the target pictures; stepsPerSubmit: steps per frame
     VkExtent2D frame{1280, 720};  ///< size of the frame the mesh is drawn into
     /// The scene's light, optional: with both set, the mesh is shaded and tinted like a captured object of the tree
@@ -35,10 +40,11 @@ struct MeshMorphOptions {
 };
 
 /**
- * @brief Morphs a mesh into the shape and colours of Gaussians, live, within a frame's compute graph.
+ * @brief Morphs a mesh into the shape and colours of Gaussians or of photographs, live, within a frame's compute graph.
  *
  * Every run of the graph splats the target Gaussians into an offscreen target per view (cleared to transparent
- * black), turns the pictures into training targets (imageTarget()), runs MeshTrainingOptions::stepsPerSubmit steps
+ * black) and turns the pictures into training targets (imageTarget()), or takes photographs as fixed targets
+ * (MeshMorphOptions::photographs), runs MeshTrainingOptions::stepsPerSubmit steps
  * of differentiable mesh optimization towards them (MeshTraining) and draws the current mesh, placed by
  * setModel() and seen by setCamera(), over the frame (visibility pass, shading and antialiasing, composited, lit
  * with the scene's light if MeshMorphOptions has it). The

@@ -51,6 +51,10 @@
  *   and the frame is white where no mesh covers it
  * - severalStepsPerSubmission: the same training recorded 24 steps to a submission reaches the same quality on the
  *   held-out views (silhouette IoU above 0.97, PSNR above 29 dB) in 60 submissions
+ * - liveMorphFromPhotographs: a MeshMorph given photographs with their cameras (synthetic ones here, 96 x 72, of the
+ *   textured synthetic pumpkin) fits the sphere to them instead of splatted pictures: the loss falls and after 60
+ *   frames the mesh matches the photographs (mean silhouette IoU above 0.9); the training tells the view of its last
+ *   step, and its picture of that step is the mesh seen from that photograph's camera
  **/
 
 #include <gtest/gtest.h>
@@ -1463,4 +1467,70 @@ TEST_F(DifferentiableRasterTest, liveMorphFromSplattedPictures) {
     for (const size_t p : {size_t(0), size_t(159), size_t(160 * 119)})
         for (int c = 0; c < 3; ++c)
             EXPECT_GE(image[4 * p + c], 250) << "pixel " << p;
+}
+
+TEST_F(DifferentiableRasterTest, liveMorphFromPhotographs) {
+    // The "photographs": the textured synthetic pumpkin from eight cameras, 96 x 72 pixels each.
+    const uint32_t width = 96, height = 72;
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(3);
+    const std::vector<float> texture = raster::syntheticPumpkinTexture(64, 32);
+    std::vector<glm::mat4> cameras;
+    for (const auto& [elevation, start] : {std::pair{-0.2f, 0.0f}, {0.4f, 0.39f}})
+        for (int k = 0; k < 4; ++k) {
+            const float angle = start + float(k) * 1.5708f;
+            const glm::vec3 eye = 3.5f * glm::vec3(std::cos(elevation) * std::cos(angle), std::sin(elevation),
+                                                   std::cos(elevation) * std::sin(angle));
+            cameras.push_back(raster::perspective(0.8f, float(width) / float(height), 0.1f, 20.0f) *
+                              glm::lookAt(eye, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)));
+        }
+    const std::vector<float> photographs = raster::renderImages(*vc, pumpkin, texture, 64, 32, cameras, width, height);
+
+    raster::MeshMorphOptions options;
+    options.photographs = photographs;
+    options.photoCameras = cameras;
+    options.training.width = width;
+    options.training.height = height;
+    options.training.stepsPerSubmit = 12;
+    options.frame = VkExtent2D{160, 120};
+    auto frame = std::make_shared<OffscreenTarget>(*vc, options.frame, 1);
+    frame->setClearColor({{1.0f, 1.0f, 1.0f, 1.0f}});
+    raster::MeshMorph morph(*vc, raster::icosphere(4), GaussianSoABuffers{}, frame, VK_IMAGE_LAYOUT_GENERAL, nullptr,
+                            options);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(morph.getOutput());
+    morph.initialize();
+    morph.setCamera(raster::perspective(0.8f, 160.0f / 120.0f, 0.1f, 20.0f) *
+                    glm::lookAt(glm::vec3(0.0f, 1.0f, 3.4f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)));
+    float first = 0.0f;
+    for (int f = 0; f < 60; ++f) {
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        if (f == 0)
+            first = morph.getTraining().loss();
+    }
+    EXPECT_LT(morph.getTraining().loss(), 0.2f * first);
+
+    const raster::TriangleMesh mesh = morph.getTraining().mesh();
+    const std::vector<float> trained = morph.getTraining().texture();
+    const std::vector<float> images = raster::renderImages(*vc, mesh, trained, options.training.textureWidth,
+                                                           options.training.textureHeight, cameras, width, height);
+    int both = 0, either = 0;
+    for (size_t p = 0; p < images.size() / 4; ++p) {
+        both += images[4 * p + 3] > 0.5f && photographs[4 * p + 3] > 0.5f;
+        either += images[4 * p + 3] > 0.5f || photographs[4 * p + 3] > 0.5f;
+    }
+    EXPECT_GT(double(both) / either, 0.9);
+
+    // The last step's view and picture: the mesh (as that step saw it) from that photograph's camera.
+    const uint32_t view = morph.getTraining().lastView();
+    ASSERT_LT(view, cameras.size());
+    std::vector<float> rendering(morph.getTraining().getRendering()->getDataElementCount());
+    morph.getTraining().getRendering()->getDataBuffer(0).memcopyTo(rendering);
+    ASSERT_EQ(rendering.size(), size_t(4) * width * height);
+    const std::vector<float> seen =
+        raster::renderImages(*vc, mesh, trained, options.training.textureWidth, options.training.textureHeight,
+                             {cameras[view]}, width, height);
+    double difference = 0.0;
+    for (size_t i = 0; i < rendering.size(); ++i)
+        difference += std::abs(rendering[i] - seen[i]);
+    EXPECT_LT(difference / rendering.size(), 0.02);
 }

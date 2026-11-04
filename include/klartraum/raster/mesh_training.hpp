@@ -83,6 +83,13 @@ public:
     /** @brief The loss of the last step: image loss plus regularizer. */
     float loss() const;
 
+    /** @brief The view (camera index) of the last step. */
+    uint32_t lastView() const;
+
+    /** @brief The last step's picture of the mesh from its view (four floats per pixel, premultiplied rgb, coverage).
+     */
+    std::shared_ptr<TensorElement<float>> getRendering() const { return antialiased; }
+
     /** @brief The start mesh with the current vertex positions. */
     TriangleMesh mesh() const;
 

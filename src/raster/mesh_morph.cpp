@@ -54,18 +54,23 @@ MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, co
                      const std::shared_ptr<ImageViewSrc>& frame, VkImageLayout frameLayout,
                      const ComputeGraphElementPtr& frameReady, const MeshMorphOptions& options)
     : options(options) {
-    if (options.views.empty())
+    const bool photographs = !options.photoCameras.empty();
+    if (!photographs && options.views.empty())
         throw std::invalid_argument("MeshMorph: at least one target view is needed");
+    if (photographs && options.photographs.size() !=
+                           size_t(4) * options.training.width * options.training.height * options.photoCameras.size())
+        throw std::invalid_argument("MeshMorph: four floats per pixel of every photograph are needed");
     MeshTrainingOptions trainingOptions = options.training;
     trainingOptions.ownGraph = false;
-    std::vector<glm::mat4> clipFromWorld;
-    for (const CameraMVP& view : options.views)
-        clipFromWorld.push_back(view.proj * view.view * view.model);
+    std::vector<glm::mat4> clipFromWorld = options.photoCameras;
+    if (!photographs)
+        for (const CameraMVP& view : options.views)
+            clipFromWorld.push_back(view.proj * view.view * view.model);
     training = std::make_unique<MeshTraining>(vulkanContext, start, clipFromWorld, trainingOptions);
 
     // The target pictures: the Gaussians splatted over transparent black, turned into the training's targets.
     const VkExtent2D pictureExtent{trainingOptions.width, trainingOptions.height};
-    for (uint32_t v = 0; v < uint32_t(options.views.size()); ++v) {
+    for (uint32_t v = 0; !photographs && v < uint32_t(options.views.size()); ++v) {
         auto picture = std::make_shared<OffscreenTarget>(vulkanContext, pictureExtent, 1);
         picture->setClearColor({{0.0f, 0.0f, 0.0f, 0.0f}});
         auto camera = std::make_shared<CameraUboType>();
@@ -141,6 +146,8 @@ MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, co
 
 void MeshMorph::initialize() {
     training->initialize();
+    if (!options.photoCameras.empty())
+        training->setTargets(options.photographs);
     for (uint32_t v = 0; v < uint32_t(pictureCameras.size()); ++v)
         pictureCameras[v]->update(0);
     drawView->getBuffer(0).memcopyFrom(std::vector<uint32_t>{0});
