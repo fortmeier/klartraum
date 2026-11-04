@@ -396,6 +396,40 @@ int main(int argc, char** argv) {
         setTrees(light, sceneWithoutPumpkin, 0.0f);
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
             textData->buffers().colAlpha.element);
+        // On the right, with the caption: the target picture of the front view and the mesh as trained so far, seen
+        // the same way, labelled.
+        const uint32_t frontView = 16, side = morphOptions.training.width;
+        const CameraMVP& front = morphOptions.views[frontView];
+        const auto label = [&](const char* text) {
+            TitleLayout layout;
+            layout.align = TextAlign::Left;
+            layout.pixelsPerUnit = float(extent.height);
+            layout.lines.push_back({text, mono, 400.0f, 0.021f, 0.0f});
+            return rasterizeTitle(layout);
+        };
+        const CoverageMask targetLabel = label("target"), predictionLabel = label("prediction");
+        const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, float opacity) {
+            if (opacity <= 0.0f)
+                return;
+            std::vector<float> targets(morph.getTraining().getTargets()->getDataElementCount());
+            morph.getTraining().getTargets()->getDataBuffer(0).memcopyTo(targets);
+            const size_t pixels = size_t(side) * side;
+            const std::vector<float> target(targets.begin() + 4 * pixels * frontView,
+                                            targets.begin() + 4 * pixels * (frontView + 1));
+            const std::vector<float> prediction = raster::renderImages(
+                vc, morph.getTraining().mesh(), morph.getTraining().texture(), morphOptions.training.textureWidth,
+                morphOptions.training.textureHeight, {front.proj * front.view * front.model}, side, side);
+            const int x = int(extent.width) - int(side) - int(0.05f * float(extent.width));
+            const int gap = int(0.03f * float(extent.height));
+            const int total = 2 * int(side) + 2 * int(targetLabel.height) + 3 * gap;
+            int y = (int(extent.height) - total) / 2;
+            for (const auto& [picture, text] : {std::pair{&target, &targetLabel}, {&prediction, &predictionLabel}}) {
+                blendCaption(bgra, extent.width, extent.height, *text, x, y, glm::vec3(0.0f), opacity);
+                y += int(text->height) + gap / 2;
+                blendPicture(bgra, extent.width, extent.height, *picture, side, side, x, y, opacity);
+                y += int(side) + gap;
+            }
+        };
         const auto [begin, end] = chapterRange(0);
         for (uint32_t f = begin; f < end; ++f) {
             // The title fades out over the chapter's last second.
@@ -406,7 +440,9 @@ int main(int argc, char** argv) {
             colours->getBuffer().memcopyFrom(faded);
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
-                finishFrame(f, readImage(vc, frame->getImage(0), splatting->getOutputLayout(), extent), 1.0f);
+                std::vector<uint8_t> image = readImage(vc, frame->getImage(0), splatting->getOutputLayout(), extent);
+                drawTraining(image, morph, timeline.captionOpacity({0, 0.6f, 0.4f, 0.5f}, f));
+                finishFrame(f, std::move(image), 1.0f);
                 std::cout << "frame " << f << ": morph loss " << morph.getTraining().loss() << std::endl;
             }
         }
