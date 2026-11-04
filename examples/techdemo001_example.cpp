@@ -284,11 +284,29 @@ int main(int argc, char** argv) {
     // The pumpkin's photographs, masked, with their cameras in the unit sphere around it (up +y): the morph's targets.
     const raster::FittingScene photos = raster::loadFittingScene(photosPath);
     const glm::mat4 sceneFromUnit = photos.sceneFromUnitSphere();
+    // Photographs with much glare (a washed-out, glossy sheen on the skin: bright pixels of little colour) are left
+    // out; their sheen would bleach the texture where they see the pumpkin.
+    std::vector<uint32_t> used;
+    for (const uint32_t view : photos.train) {
+        const float* photo = &photos.targets[4 * size_t(photos.width) * photos.height * view];
+        size_t covered = 0, glare = 0;
+        for (size_t p = 0; p < size_t(photos.width) * photos.height; ++p) {
+            if (photo[4 * p + 3] < 0.99f)
+                continue;
+            const float hi = std::max({photo[4 * p], photo[4 * p + 1], photo[4 * p + 2]});
+            const float lo = std::min({photo[4 * p], photo[4 * p + 1], photo[4 * p + 2]});
+            ++covered;
+            glare += hi > 0.6f && (hi - lo) < 0.4f * hi;
+        }
+        if (glare < 0.15 * double(covered))
+            used.push_back(view);
+    }
     raster::MeshMorphOptions morphOptions;
-    morphOptions.photographs = photos.targetsOf(photos.train);
-    for (const glm::mat4& camera : photos.camerasOf(photos.train))
+    morphOptions.photographs = photos.targetsOf(used);
+    for (const glm::mat4& camera : photos.camerasOf(used))
         morphOptions.photoCameras.push_back(camera * sceneFromUnit);
-    std::cout << photos.train.size() << " photographs of " << photos.width << " x " << photos.height << std::endl;
+    std::cout << used.size() << " of " << photos.train.size() << " photographs of " << photos.width << " x "
+              << photos.height << " (the others with too much glare)" << std::endl;
     morphOptions.training.stepsPerSubmit = 12;
     morphOptions.training.width = photos.width;
     morphOptions.training.height = photos.height;
