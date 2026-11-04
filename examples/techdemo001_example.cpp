@@ -412,7 +412,7 @@ int main(int argc, char** argv) {
         setTrees(light, sceneWithoutPumpkin, 0.0f);
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
             textData->buffers().colAlpha.element);
-        // On the right, from the first frame on: the photograph the frame's last training step used and the
+        // On the right, from the start of the training on: the photograph the frame's last training step used and the
         // training's rendering of the mesh from that photograph's camera, at half their size, labelled; a new pair
         // every frame, so that the prediction is seen getting better from the sphere on.
         const uint32_t panelWidth = morphOptions.training.width / 2, panelHeight = morphOptions.training.height / 2;
@@ -438,6 +438,7 @@ int main(int argc, char** argv) {
         };
         const CoverageMask photographLabel = label("photograph"), renderingLabel = label("rendering");
         std::vector<float> photographPanel, renderingPanel;
+        const float trainingStart = 0.5f; // seconds into the title
         const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, float opacity) {
             if (opacity <= 0.0f)
                 return;
@@ -469,11 +470,18 @@ int main(int argc, char** argv) {
             for (glm::vec4& c : faded)
                 c.a *= fade;
             colours->getBuffer().memcopyFrom(faded);
+            // The title holds with the black sphere for its first half second: the training starts over before each
+            // of those frames, so that it begins when the panels appear.
+            const float sinceStart = timeline.timeInChapter(f);
+            if (sinceStart < trainingStart) {
+                morph.initialize();
+                morph.getTraining().setTexture(pumpkinTexture);
+            }
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
                 std::vector<uint8_t> image = readImage(vc, frame->getImage(0), splatting->getOutputLayout(), extent);
-                // With the title, fading out with it.
-                drawTraining(image, morph, fade);
+                // From the start of the training on, fading in, and out with the title.
+                drawTraining(image, morph, fade * smooth((sinceStart - trainingStart) / 0.3f));
                 finishFrame(f, std::move(image), 1.0f);
                 std::cout << "frame " << f << ": morph loss " << morph.getTraining().loss() << std::endl;
             }
