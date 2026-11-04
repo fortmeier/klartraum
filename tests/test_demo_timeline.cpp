@@ -22,6 +22,9 @@
  * - blendCaptionSetsCoveredPixels: white text at full opacity on black turns exactly the covered pixels
  *   white (the frame equals the coverage), zero opacity leaves the frame unchanged, and half opacity
  *   gives half the brightness
+ * - blendPictureComposites: a picture of premultiplied colours with coverage goes over the frame at its place:
+ *   covered pixels take its colour, uncovered ones keep the frame's, half coverage mixes, opacity scales it all,
+ *   and the parts outside the frame are cut off
  **/
 
 #include <gtest/gtest.h>
@@ -251,4 +254,32 @@ TEST(DemoTimeline, blendCaptionSetsCoveredPixels) {
         far += std::abs(2 * int(half[i]) - int(frame[i])) > 2;
     }
     EXPECT_EQ(far, 0u);
+}
+
+TEST(DemoTimeline, blendPictureComposites) {
+    const uint32_t width = 8, height = 6;
+    std::vector<uint8_t> frame(4 * width * height, 255); // white
+    // A 3 x 2 picture: red fully covered, nothing, green half covered; a row of blue below.
+    const std::vector<float> picture = {1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 0.0f, 0.5f,
+                                        0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f};
+    std::vector<uint8_t> none = frame;
+    blendPicture(none, width, height, picture, 3, 2, 2, 1, 0.0f);
+    EXPECT_EQ(none, frame);
+
+    blendPicture(frame, width, height, picture, 3, 2, 2, 1, 1.0f);
+    const auto bgr = [&](int x, int y) {
+        const size_t i = 4 * (size_t(y) * width + size_t(x));
+        return glm::ivec3(frame[i], frame[i + 1], frame[i + 2]);
+    };
+    EXPECT_EQ(bgr(2, 1), glm::ivec3(0, 0, 255));     // red
+    EXPECT_EQ(bgr(3, 1), glm::ivec3(255, 255, 255)); // uncovered
+    EXPECT_EQ(bgr(4, 1), glm::ivec3(128, 255, 128)); // half green over white
+    EXPECT_EQ(bgr(2, 2), glm::ivec3(255, 0, 0));     // blue
+    EXPECT_EQ(bgr(1, 1), glm::ivec3(255, 255, 255)); // beside the picture
+
+    // Half opacity, and a place that cuts the picture off at the frame's corner.
+    std::vector<uint8_t> half(4 * width * height, 0); // black
+    blendPicture(half, width, height, picture, 3, 2, 6, 5, 0.5f);
+    EXPECT_EQ(int(half[4 * (5 * width + 6) + 2]), 128); // half the red
+    EXPECT_EQ(int(half[4 * (5 * width + 7) + 0]), 0);   // uncovered
 }

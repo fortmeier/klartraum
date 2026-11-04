@@ -140,4 +140,38 @@ void blendCaption(std::vector<uint8_t>& bgra, uint32_t width, uint32_t height, c
     }
 }
 
+void blendPicture(std::vector<uint8_t>& bgra, uint32_t width, uint32_t height, const std::vector<float>& picture,
+                  uint32_t pictureWidth, uint32_t pictureHeight, int x, int y, float opacity) {
+    if (bgra.size() < size_t(width) * height * 4 || picture.size() < size_t(pictureWidth) * pictureHeight * 4) {
+        throw std::invalid_argument("blendPicture: an image is smaller than its size");
+    }
+    const float o = std::clamp(opacity, 0.0f, 1.0f);
+    if (o <= 0.0f) {
+        return;
+    }
+    for (uint32_t py = 0; py < pictureHeight; ++py) {
+        const int fy = y + int(py);
+        if (fy < 0 || fy >= int(height)) {
+            continue;
+        }
+        for (uint32_t px = 0; px < pictureWidth; ++px) {
+            const int fx = x + int(px);
+            if (fx < 0 || fx >= int(width)) {
+                continue;
+            }
+            const float* p = &picture[4 * (size_t(py) * pictureWidth + px)];
+            const float coverage = std::clamp(p[3], 0.0f, 1.0f) * o;
+            if (coverage <= 0.0f) {
+                continue;
+            }
+            uint8_t* pixel = &bgra[(size_t(fy) * width + size_t(fx)) * 4];
+            // BGRA in the frame, rgb in the picture.
+            for (int c = 0; c < 3; ++c) {
+                const float over = 255.0f * o * p[2 - c] + (1.0f - coverage) * float(pixel[c]);
+                pixel[c] = uint8_t(std::clamp(std::lround(over), 0l, 255l));
+            }
+        }
+    }
+}
+
 } // namespace klartraum

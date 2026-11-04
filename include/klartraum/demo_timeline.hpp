@@ -66,6 +66,14 @@ struct DemoTimeline {
 void blendCaption(std::vector<uint8_t>& bgra, uint32_t width, uint32_t height, const CoverageMask& mask, int x, int y,
                   const glm::vec3& colour, float opacity);
 
+// Composites `picture` (pictureWidth x pictureHeight pixels of four floats, rgb
+// premultiplied by the coverage in the fourth, rows from the top) over the
+// tightly packed BGRA image `bgra` (width x height) with its top-left pixel at
+// (x, y), scaled by opacity. Parts outside the image are skipped; the alpha
+// channel is left as it is.
+void blendPicture(std::vector<uint8_t>& bgra, uint32_t width, uint32_t height, const std::vector<float>& picture,
+                  uint32_t pictureWidth, uint32_t pictureHeight, int x, int y, float opacity);
+
 } // namespace klartraum
 
 #endif // KLARTRAUM_DEMO_TIMELINE_HPP
