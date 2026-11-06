@@ -262,6 +262,8 @@ Each chapter shows a caption naming the work it builds on. Frames go to
 | `--from N`, `--to M` | Render chapters N to M (0 to 3) |
 | `--step S` | Write every S-th frame, for previews |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo001`) |
+| `--dataset N` | Instead of the video: N renderings of the final scene from random cameras, seasons and times of day as `<out-dir>/dataset/image_XXXX.png`, with `dataset.yaml` giving each one's camera, light, season and time of day (needs the pumpkin of an earlier run) |
+| `--seed S` | Seed of the dataset's random choices (default 1) |
 
 ```bash
 ./build/examples/techdemo001_example
