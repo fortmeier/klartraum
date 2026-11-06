@@ -57,6 +57,7 @@
 #include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/rendering/text_gaussians.hpp"
+#include "klartraum/style_transfer.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
 #include "klartraum/tree/bonsai_scene.hpp"
 #include "klartraum/tree/tree_sky.hpp"
@@ -167,6 +168,34 @@ void drawCaption(std::vector<uint8_t>& frame, VkExtent2D extent, const Caption& 
                      opacity);
         y -= int(0.01f * float(extent.height));
     }
+}
+
+// Copies `source` (in TRANSFER_SRC_OPTIMAL) into `target`, which is left in TRANSFER_SRC_OPTIMAL as a renderer leaves
+// its frame.
+void copyImage(VulkanContext& vc, VkImage source, VkImage target, VkExtent2D extent) {
+    vc.submitImmediate([&](VkCommandBuffer commandBuffer) {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = target;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1, &barrier);
+        VkImageCopy region{};
+        region.srcSubresource = region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.extent = {extent.width, extent.height, 1};
+        vkCmdCopyImage(commandBuffer, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1, &barrier);
+    });
 }
 
 // Writes `count` renderings of the bonsai scene (the trees fully grown, no wind) from random cameras at random seasons
@@ -378,6 +407,7 @@ int main(int argc, char** argv) {
     int fromChapter = 0, toChapter = int(kChapters.size()) - 1;
     uint32_t step = 1;
     uint32_t datasetCount = 0, sequenceCount = 0, datasetSeed = 1;
+    std::filesystem::path stylePath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -405,6 +435,8 @@ int main(int argc, char** argv) {
             datasetSeed = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--sequences" && hasValue)
             sequenceCount = uint32_t(std::stoul(argv[++i]));
+        else if (arg == "--style" && hasValue)
+            stylePath = argv[++i];
     }
     if (datasetCount > 0) {
         // Only the dataset, of the scene with the pumpkin of an earlier run: no chapters.
@@ -793,8 +825,20 @@ int main(int argc, char** argv) {
         const BonsaiScene scene = makeBonsaiScene(withPumpkin);
         auto frame = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderer bonsai(vc, scene, frame, renderConfig);
+        // With --style, the days in the watercolor style: the network restyles every frame into `styled`.
+        // A network that reads the G-buffers gets them from two more renders of each frame, copied aside.
+        std::unique_ptr<StyleTransfer> style;
+        auto styled = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        auto classes = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        auto depth = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        // Filled by copies between submissions: the graph must not clear them.
+        classes->setClear(false);
+        depth->setClear(false);
+        if (!stylePath.empty())
+            style = std::make_unique<StyleTransfer>(vc, stylePath.string(), frame, styled, bonsai.getOutput(), classes,
+                                                    depth);
         ComputeGraph graph(vc, 1);
-        graph.compileFrom(bonsai.getOutput());
+        graph.compileFrom(style ? style->getOutput() : bonsai.getOutput());
         bonsai.initialize(1);
         BonsaiDays days;
         // The growth's summer noon turns into the night over the first seconds; then four days from midnight.
@@ -828,10 +872,27 @@ int main(int argc, char** argv) {
                 background = backgroundAt(timeOfDay, season);
             }
             bonsai.setBackground(glm::vec3(background));
+            // The watercolor style fades in over the first one and a half seconds of the days.
+            const float blend = f < daysStart ? 0.0f : smooth(float(f - daysStart) / fps / 1.5f);
+            if (style) {
+                style->setBlend(blend);
+                if (style->usesGBuffers() && blend > 0.0f) {
+                    bonsai.setOutput(BonsaiOutput::Classes);
+                    bonsai.setBackground(glm::vec3(0.0f));
+                    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                    copyImage(vc, frame->getImage(0), classes->getImage(0), extent);
+                    bonsai.setOutput(BonsaiOutput::Depth, kDepthNear, kDepthFar);
+                    bonsai.setBackground(glm::vec3(1.0f));
+                    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                    copyImage(vc, frame->getImage(0), depth->getImage(0), extent);
+                    bonsai.setOutput(BonsaiOutput::Colour);
+                    bonsai.setBackground(glm::vec3(background));
+                }
+            }
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
                 std::vector<uint8_t> image =
-                    readImage(vc, frame->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+                    readImage(vc, (style ? styled : frame)->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
                 drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
                 finishFrame(f, std::move(image), background);
                 std::cout << "frame " << f << std::endl;
