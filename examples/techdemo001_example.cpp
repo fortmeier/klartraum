@@ -37,6 +37,7 @@
 #include <sstream>
 #include <string>
 #include <random>
+#include <tuple>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -169,10 +170,17 @@ void drawCaption(std::vector<uint8_t>& frame, VkExtent2D extent, const Caption& 
 }
 
 // Writes `count` renderings of the bonsai scene (the trees fully grown, no wind) from random cameras at random seasons
-// and times of day to `directory` as PNG files, with dataset.yaml giving each one's camera, light, season and time.
-// The background is white by day and black by night as in the video; there are no captions and no sun or moon.
+// and times of day to `directory` as PNG files, each with its G-buffers (class_XXXX.png: the surfaces' classes as
+// tree::treeClassColor(); depth_XXXX.png: their distance from the camera as grey from kDepthNear to kDepthFar), and
+// dataset.yaml giving each one's camera, light, season and time. The background is white by day and black by night
+// as in the video; there are no captions and no sun or moon. With `sequences`, also that many short sequences of
+// kSequenceFrames frames each (a slow orbit step and a few minutes of the day from frame to frame) to
+// sequences/seq_XXX/, with sequences.yaml, e.g. for training and measuring temporal stability.
+constexpr float kDepthNear = 2.0f, kDepthFar = 16.0f;
+constexpr uint32_t kSequenceFrames = 8;
+
 void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfig config, VkExtent2D extent,
-                  uint32_t count, uint32_t seed, const std::filesystem::path& directory) {
+                  uint32_t count, uint32_t sequences, uint32_t seed, const std::filesystem::path& directory) {
     std::filesystem::create_directories(directory);
     auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
     config.extent = extent;
@@ -209,46 +217,40 @@ void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfi
             }
         return nearest;
     };
-
-    std::ofstream yaml(directory / "dataset.yaml");
-    yaml << std::setprecision(6);
-    yaml << "# Renderings of the klartraum tech demo 001 bonsai scene, written by techdemo001_example --dataset.\n"
-         << "# World: units of the scene, +y up, +x east, -z north. Directions are unit vectors. Matrices are\n"
-         << "# row-major lists of 16 (view: camera from world, right-handed, looking along -z; projection:\n"
-         << "# Vulkan clip from camera, depth 0..1, y down in the image). Colours are linear rgb.\n"
-         << "# season: 0..4, spring 1.25, summer 2, fall 3.25, winter 4 = 0; time_of_day: 0..1, noon 0.5.\n"
-         << "# light: the directional light that casts the shadows, the sun by day and the full moon by night\n"
-         << "# (direction: towards it); ambient_sky/ambient_ground: ambient light from above/below; point_light:\n"
-         << "# the lantern's flame without shadows, colour = radiance at distance 1; exposure: of the tone curve.\n"
-         << "width: " << extent.width << "\nheight: " << extent.height << "\nseed: " << seed << "\nimages:\n";
-    for (uint32_t i = 0; i < count; ++i) {
-        // A camera around the scene's focus, from low to steep, near to far, looking at a point near the focus.
-        const float azimuth = uniform(0.0f, 2.0f * 3.14159265f), elevation = uniform(0.1f, 0.95f);
-        const float distance = uniform(5.0f, 9.0f);
-        const glm::vec3 lookAt = scene.focus - glm::vec3(0.0f, 0.45f, 0.0f) +
-                                 glm::vec3(uniform(-0.3f, 0.3f), uniform(-0.2f, 0.3f), uniform(-0.3f, 0.3f));
-        const glm::vec3 eye =
-            lookAt + distance * glm::vec3(std::cos(elevation) * std::sin(azimuth), std::sin(elevation),
-                                          std::cos(elevation) * std::cos(azimuth));
-        const float timeOfDay = uniform(0.0f, 1.0f), season = uniform(0.0f, 4.0f);
-        const Pose pose{eye, lookAt};
-        bonsai.getCamera()->ubo = cameraOf(pose, aspect);
-        bonsai.getCamera()->update(0);
-        bonsai.setView(eye);
-        bonsai.setTime(0.37f * float(i), timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
-        const float background = backgroundAt(timeOfDay, season);
-        bonsai.setBackground(glm::vec3(background));
-        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto writePng = [&](const std::filesystem::path& path) {
         const std::vector<uint8_t> bgra =
             readImage(vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
         std::vector<uint8_t> rgb(3 * size_t(extent.width) * extent.height);
         for (size_t p = 0; p < size_t(extent.width) * extent.height; ++p)
             for (int c = 0; c < 3; ++c)
                 rgb[3 * p + c] = bgra[4 * p + 2 - c];
-        std::ostringstream name;
-        name << "image_" << std::setw(4) << std::setfill('0') << i << ".png";
-        stbi_write_png((directory / name.str()).string().c_str(), int(extent.width), int(extent.height), 3, rgb.data(),
+        stbi_write_png(path.string().c_str(), int(extent.width), int(extent.height), 3, rgb.data(),
                        int(3 * extent.width));
+    };
+    // Renders a view as colour, classes and depth into `folder` (image/class/depth + `suffix`.png) and writes its
+    // YAML entry with `indent` spaces.
+    const auto shoot = [&](std::ostream& yaml, const std::string& indent, const std::filesystem::path& folder,
+                           const std::string& suffix, glm::vec3 eye, glm::vec3 lookAt, float timeOfDay, float season,
+                           float seconds) {
+        const Pose pose{eye, lookAt};
+        bonsai.getCamera()->ubo = cameraOf(pose, aspect);
+        bonsai.getCamera()->update(0);
+        bonsai.setView(eye);
+        bonsai.setTime(seconds, timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+        const float background = backgroundAt(timeOfDay, season);
+        bonsai.setOutput(BonsaiOutput::Colour);
+        bonsai.setBackground(glm::vec3(background));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        writePng(folder / ("image_" + suffix + ".png"));
+        bonsai.setOutput(BonsaiOutput::Classes);
+        bonsai.setBackground(glm::vec3(0.0f));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        writePng(folder / ("class_" + suffix + ".png"));
+        bonsai.setOutput(BonsaiOutput::Depth, kDepthNear, kDepthFar);
+        bonsai.setBackground(glm::vec3(1.0f));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        writePng(folder / ("depth_" + suffix + ".png"));
+        bonsai.setOutput(BonsaiOutput::Colour);
 
         const TreeRenderSettings s = bonsai.getSettings().values().at(0);
         const TreeSky sky = treeSkyAt(timeOfDay, season);
@@ -258,41 +260,109 @@ void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfi
         std::ostringstream clock;
         clock << std::setw(2) << std::setfill('0') << minutes / 60 << ":" << std::setw(2) << std::setfill('0')
               << minutes % 60;
-        yaml << "  - file: " << name.str() << "\n"
-             << "    season: " << season << "\n"
-             << "    season_name: " << seasonName(season) << "\n"
-             << "    time_of_day: " << timeOfDay << "\n"
-             << "    clock: \"" << clock.str() << "\"\n"
-             << "    background: " << background << "\n"
-             << "    camera:\n"
-             << "      position: " << vec(eye) << "\n"
-             << "      target: " << vec(lookAt) << "\n"
-             << "      direction: " << vec(glm::normalize(lookAt - eye)) << "\n"
-             << "      up: [0, 1, 0]\n"
-             << "      fov_y_degrees: " << kFov << "\n"
-             << "      near: 0.05\n      far: 60\n"
-             << "      view: " << matrix(camera.view) << "\n"
-             << "      projection: " << matrix(camera.proj) << "\n"
-             << "    light:\n"
-             << "      source: " << (sun ? "sun" : "moon") << "\n"
-             << "      direction: " << vec(glm::vec3(s.sun)) << "\n"
-             << "      elevation_degrees: " << glm::degrees(sun ? sky.sunElevation : sky.moonElevation) << "\n"
-             << "      intensity: " << s.sun.w << "\n"
-             << "      color: " << vec(glm::vec3(s.lightColor)) << "\n"
-             << "    sun:\n"
-             << "      direction: " << vec(sky.sunDirection) << "\n"
-             << "      elevation_degrees: " << glm::degrees(sky.sunElevation) << "\n"
-             << "    moon:\n"
-             << "      direction: " << vec(sky.moonDirection) << "\n"
-             << "      elevation_degrees: " << glm::degrees(sky.moonElevation) << "\n"
-             << "    ambient_sky: " << vec(glm::vec3(s.sky)) << "\n"
-             << "    ambient_ground: " << vec(glm::vec3(s.ground)) << "\n"
-             << "    exposure: " << s.sky.w << "\n"
-             << "    point_light:\n"
-             << "      position: " << vec(glm::vec3(s.pointLight)) << "\n"
-             << "      color: " << vec(glm::vec3(s.pointColor)) << "\n";
+        const std::string& i = indent;
+        yaml << i << "- file: image_" << suffix << ".png\n"
+             << i << "  classes: class_" << suffix << ".png\n"
+             << i << "  depth: depth_" << suffix << ".png\n"
+             << i << "  season: " << season << "\n"
+             << i << "  season_name: " << seasonName(season) << "\n"
+             << i << "  time_of_day: " << timeOfDay << "\n"
+             << i << "  clock: \"" << clock.str() << "\"\n"
+             << i << "  background: " << background << "\n"
+             << i << "  camera:\n"
+             << i << "    position: " << vec(eye) << "\n"
+             << i << "    target: " << vec(lookAt) << "\n"
+             << i << "    direction: " << vec(glm::normalize(lookAt - eye)) << "\n"
+             << i << "    up: [0, 1, 0]\n"
+             << i << "    fov_y_degrees: " << kFov << "\n"
+             << i << "    near: 0.05\n"
+             << i << "    far: 60\n"
+             << i << "    view: " << matrix(camera.view) << "\n"
+             << i << "    projection: " << matrix(camera.proj) << "\n"
+             << i << "  light:\n"
+             << i << "    source: " << (sun ? "sun" : "moon") << "\n"
+             << i << "    direction: " << vec(glm::vec3(s.sun)) << "\n"
+             << i << "    elevation_degrees: " << glm::degrees(sun ? sky.sunElevation : sky.moonElevation) << "\n"
+             << i << "    intensity: " << s.sun.w << "\n"
+             << i << "    color: " << vec(glm::vec3(s.lightColor)) << "\n"
+             << i << "  sun:\n"
+             << i << "    direction: " << vec(sky.sunDirection) << "\n"
+             << i << "    elevation_degrees: " << glm::degrees(sky.sunElevation) << "\n"
+             << i << "  moon:\n"
+             << i << "    direction: " << vec(sky.moonDirection) << "\n"
+             << i << "    elevation_degrees: " << glm::degrees(sky.moonElevation) << "\n"
+             << i << "  ambient_sky: " << vec(glm::vec3(s.sky)) << "\n"
+             << i << "  ambient_ground: " << vec(glm::vec3(s.ground)) << "\n"
+             << i << "  exposure: " << s.sky.w << "\n"
+             << i << "  point_light:\n"
+             << i << "    position: " << vec(glm::vec3(s.pointLight)) << "\n"
+             << i << "    color: " << vec(glm::vec3(s.pointColor)) << "\n";
+    };
+    const std::string header =
+        "# Renderings of the klartraum tech demo 001 bonsai scene, written by techdemo001_example --dataset.\n"
+        "# World: units of the scene, +y up, +x east, -z north. Directions are unit vectors. Matrices are\n"
+        "# row-major lists of 16 (view: camera from world, right-handed, looking along -z; projection:\n"
+        "# Vulkan clip from camera, depth 0..1, y down in the image). Colours are linear rgb.\n"
+        "# season: 0..4, spring 1.25, summer 2, fall 3.25, winter 4 = 0; time_of_day: 0..1, noon 0.5.\n"
+        "# light: the directional light that casts the shadows, the sun by day and the full moon by night\n"
+        "# (direction: towards it); ambient_sky/ambient_ground: ambient light from above/below; point_light:\n"
+        "# the lantern's flame without shadows, colour = radiance at distance 1; exposure: of the tone curve.\n"
+        "# classes: each surface's class as a colour (background black, pot [0.2, 0.4, 1], soil [0.6, 0.4, 0],\n"
+        "# trunk and branches [1, 0, 0], needles [0, 1, 0], pumpkin [1, 0.6, 0], lantern [1, 1, 1]); depth: the\n"
+        "# distance from the camera as grey from depth_near (black) to depth_far (white, also the background).\n";
+    // A random camera around the scene's focus, from low to steep, near to far, looking at a point near the focus.
+    const auto randomView = [&]() {
+        const float azimuth = uniform(0.0f, 2.0f * 3.14159265f), elevation = uniform(0.1f, 0.95f);
+        const float distance = uniform(5.0f, 9.0f);
+        const glm::vec3 lookAt = scene.focus - glm::vec3(0.0f, 0.45f, 0.0f) +
+                                 glm::vec3(uniform(-0.3f, 0.3f), uniform(-0.2f, 0.3f), uniform(-0.3f, 0.3f));
+        return std::tuple{azimuth, elevation, distance, lookAt};
+    };
+    const auto eyeOf = [](float azimuth, float elevation, float distance, glm::vec3 lookAt) {
+        return lookAt + distance * glm::vec3(std::cos(elevation) * std::sin(azimuth), std::sin(elevation),
+                                             std::cos(elevation) * std::cos(azimuth));
+    };
+
+    std::ofstream yaml(directory / "dataset.yaml");
+    yaml << std::setprecision(6) << header << "width: " << extent.width << "\nheight: " << extent.height
+         << "\nseed: " << seed << "\ndepth_near: " << kDepthNear << "\ndepth_far: " << kDepthFar << "\nimages:\n";
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto [azimuth, elevation, distance, lookAt] = randomView();
+        const float timeOfDay = uniform(0.0f, 1.0f), season = uniform(0.0f, 4.0f);
+        std::ostringstream suffix;
+        suffix << std::setw(4) << std::setfill('0') << i;
+        shoot(yaml, "  ", directory, suffix.str(), eyeOf(azimuth, elevation, distance, lookAt), lookAt, timeOfDay,
+              season, 0.37f * float(i));
         if ((i + 1) % 20 == 0)
             std::cout << "dataset: " << i + 1 << " of " << count << std::endl;
+    }
+    if (sequences > 0) {
+        std::filesystem::create_directories(directory / "sequences");
+        std::ofstream sequenceYaml(directory / "sequences" / "sequences.yaml");
+        sequenceYaml << std::setprecision(6) << header << "width: " << extent.width << "\nheight: " << extent.height
+                     << "\nseed: " << seed << "\ndepth_near: " << kDepthNear << "\ndepth_far: " << kDepthFar
+                     << "\nframes_per_sequence: " << kSequenceFrames << "\nsequences:\n";
+        for (uint32_t q = 0; q < sequences; ++q) {
+            const auto [azimuth, elevation, distance, lookAt] = randomView();
+            const float timeOfDay = uniform(0.0f, 1.0f), season = uniform(0.0f, 4.0f);
+            // A slow orbit (0.6 degrees a frame) and three minutes of the day a frame, in either direction.
+            const float turn = (uniform(0.0f, 1.0f) < 0.5f ? -1.0f : 1.0f) * 0.0105f;
+            std::ostringstream name;
+            name << "seq_" << std::setw(3) << std::setfill('0') << q;
+            const std::filesystem::path folder = directory / "sequences" / name.str();
+            std::filesystem::create_directories(folder);
+            sequenceYaml << "  - name: " << name.str() << "\n    frames:\n";
+            for (uint32_t f = 0; f < kSequenceFrames; ++f) {
+                std::ostringstream suffix;
+                suffix << std::setw(2) << std::setfill('0') << f;
+                const float t = timeOfDay + 0.002f * float(f);
+                shoot(sequenceYaml, "      ", folder, suffix.str(),
+                      eyeOf(azimuth + turn * float(f), elevation, distance, lookAt), lookAt, t - std::floor(t), season,
+                      0.37f * float(q) + float(f) / 30.0f);
+            }
+            if ((q + 1) % 10 == 0)
+                std::cout << "sequences: " << q + 1 << " of " << sequences << std::endl;
+        }
     }
     std::cout << "dataset in " << directory.string() << std::endl;
 }
@@ -307,7 +377,7 @@ int main(int argc, char** argv) {
     float fps = 30.0f;
     int fromChapter = 0, toChapter = int(kChapters.size()) - 1;
     uint32_t step = 1;
-    uint32_t datasetCount = 0, datasetSeed = 1;
+    uint32_t datasetCount = 0, sequenceCount = 0, datasetSeed = 1;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -333,6 +403,8 @@ int main(int argc, char** argv) {
             datasetCount = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--seed" && hasValue)
             datasetSeed = uint32_t(std::stoul(argv[++i]));
+        else if (arg == "--sequences" && hasValue)
+            sequenceCount = uint32_t(std::stoul(argv[++i]));
     }
     if (datasetCount > 0) {
         // Only the dataset, of the scene with the pumpkin of an earlier run: no chapters.
@@ -770,7 +842,7 @@ int main(int argc, char** argv) {
         BonsaiSceneConfig withPumpkin = sceneConfig;
         withPumpkin.objects.push_back(placement);
         const BonsaiScene scene = makeBonsaiScene(withPumpkin);
-        writeDataset(vc, scene, renderConfig, extent, datasetCount, datasetSeed, outDir / "dataset");
+        writeDataset(vc, scene, renderConfig, extent, datasetCount, sequenceCount, datasetSeed, outDir / "dataset");
         return 0;
     }
     std::cout << "frames in " << (outDir / "frames").string() << std::endl;
