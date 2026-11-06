@@ -58,5 +58,5 @@ void main() {
     // A voxel and a half out, clear of the solid wood a thick stem fills the light volume with.
     vec2 light = treeLightAt(s, inWorldPos + 1.5f * s.lightGridMin.w * normal);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
-    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s);
+    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s, TREE_CLASS_STEM);
 }

@@ -129,6 +129,11 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
     }
     settings = std::make_shared<HostValues<TreeRenderSettings>>(vulkanContext, std::vector<TreeRenderSettings>{values});
     std::vector<Gaussian3D> lanternGaussians = loadLantern(scene, config.lanternPath);
+    // Their classes for the G-buffers: the lantern's, then the captured pot's and the objects' Gaussians.
+    std::vector<uint32_t> capturedClasses(lanternGaussians.size(), tree::TREE_CLASS_LANTERN);
+    capturedClasses.insert(capturedClasses.end(), scene.potGaussians, tree::TREE_CLASS_POT);
+    capturedClasses.insert(capturedClasses.end(), scene.objectGaussians.size() - scene.potGaussians,
+                           tree::TREE_CLASS_OBJECT);
     // The captured pot and objects join the lantern.
     lanternGaussians.insert(lanternGaussians.end(), scene.objectGaussians.begin(), scene.objectGaussians.end());
     // The pot, the objects and the lantern cast shadows, and so does the earth that fills the pot below its soil.
@@ -176,6 +181,7 @@ BonsaiRenderer::BonsaiRenderer(VulkanContext& vulkanContext, const BonsaiScene& 
                   scene.config.seed, 1.3f * scene.lanternScale);
     TreeGaussianSources sources;
     sources.captured = std::move(lanternGaussians);
+    sources.capturedClasses = std::move(capturedClasses);
     sources.light = lightVolume->getLight();
     const uint32_t mossSlots = mossCopies.empty() ? 0u : config.mossPool;
     const bool terrainGaussianPool = !classical && config.terrainLod;

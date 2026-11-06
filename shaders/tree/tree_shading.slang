@@ -13,8 +13,12 @@ vec4 treeOutputColor(vec3 linearColor, TreeRenderSettings s) {
 
 // What a surface of the trees at pos writes: its displayed colour through the haze (treeAtmosphere()), or while
 // baking impostors (TreeImpostorAtlas, s.occlusion.y) 1 its albedo (square-rooted for precision, at least 1/255 so
-// that it stands out from the black background) or 2 its normal (mapped to [0, 1]).
-vec4 treeSurfaceOutput(vec3 linearColor, vec3 albedo, vec3 normal, vec3 pos, TreeRenderSettings s) {
+// that it stands out from the black background) or 2 its normal (mapped to [0, 1]), or as a G-buffer its class
+// `semantic` or its distance (treeGBufferColor()).
+vec4 treeSurfaceOutput(vec3 linearColor, vec3 albedo, vec3 normal, vec3 pos, TreeRenderSettings s, uint semantic) {
+    if (treeWritesGBuffer(s)) {
+        return vec4(treeGBufferColor(s, semantic, pos, camera.cameraWorldPos.xyz), 1.0f);
+    }
     if (s.occlusion.y == 1.0f) {
         return vec4(max(sqrt(clamp(albedo, vec3(0.0f), vec3(1.0f))), vec3(1.0f / 255.0f)), 1.0f);
     }

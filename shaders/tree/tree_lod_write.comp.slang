@@ -83,6 +83,10 @@ void main() {
             vec4 haze = treeHaze(pos, camera.cameraWorldPos.xyz, s);
             displayed = mix(displayed, treeDisplayColor(haze.rgb, s.sky.w), haze.a);
         }
+        if (treeWritesGBuffer(s)) {
+            displayed = treeGBufferColor(s, inst.ids.w == 1u ? TREE_CLASS_LEAF : TREE_CLASS_SOIL, pos,
+                                         camera.cameraWorldPos.xyz);
+        }
 
         uint slot = pc.offset + record.x + k;
         outPos[slot] = pos;

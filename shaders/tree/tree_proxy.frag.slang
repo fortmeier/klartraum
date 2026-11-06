@@ -40,5 +40,9 @@ void main() {
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
     light.x *= inSunlight;
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
+    if (treeWritesGBuffer(s)) {
+        outColor = vec4(treeGBufferColor(s, TREE_CLASS_LEAF, inWorldPos, camera.cameraWorldPos.xyz), 1.0f);
+        return;
+    }
     outColor = treeOutputColor(treeAtmosphere(color, inWorldPos, camera.cameraWorldPos.xyz, s), s);
 }

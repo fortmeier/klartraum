@@ -59,6 +59,12 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
         vulkanContext, uint32_t(staticPositions.size()));
     staticPositionBuffer->setName("TreeStaticPositions");
     staticPositionBuffer->getBuffer().memcopyFrom(staticPositions);
+    std::vector<uint32_t> staticClasses = sources.capturedClasses;
+    staticClasses.resize(staticColors.size(), tree::TREE_CLASS_OBJECT);
+    auto staticClassBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<uint32_t>>>(
+        vulkanContext, uint32_t(staticClasses.size()));
+    staticClassBuffer->setName("TreeStaticClasses");
+    staticClassBuffer->getBuffer().memcopyFrom(staticClasses);
     auto staticColorBuffer = std::make_shared<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
         vulkanContext, uint32_t(staticColors.size()));
     staticColorBuffer->setName("TreeStaticColors");
@@ -79,6 +85,7 @@ TreeGaussians::TreeGaussians(VulkanContext& vulkanContext, TreeGenerator& genera
     element->setInput(staticColorBuffer, 15);
     element->setInput(staticPositionBuffer, 16);
     element->setInput(staticNormalBuffer, 17);
+    element->setInput(staticClassBuffer, 18);
     element->setGroupCountX((offset + surfelCount + treeSlots + 255) / 256);
     element->setPushConstants({glm::uvec4(segmentSlots, leafSlots, offset, surfelCount)});
 }

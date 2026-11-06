@@ -75,8 +75,13 @@ void main() {
             face = -face;
         }
         TreeRenderSettings s = settings[0];
-        float shade = treeCapturedShadeAt(s, world, vec3(0.0f));
-        colour = treeCapturedColor(colour, face, world, shade, s);
+        if (treeWritesGBuffer(s)) {
+            // The ray's start on the near plane stands in for the eye.
+            colour = treeGBufferColor(s, TREE_CLASS_OBJECT, world, (m * vec4(from, 1.0f)).xyz);
+        } else {
+            float shade = treeCapturedShadeAt(s, world, vec3(0.0f));
+            colour = treeCapturedColor(colour, face, world, shade, s);
+        }
     }
     vec4 below = image[p];
     image[p] = vec4(clamp(colour * top.a + (1.0f - top.a) * below.rgb, 0.0f, 1.0f), 1.0f);

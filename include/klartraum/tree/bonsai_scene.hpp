@@ -157,6 +157,7 @@ struct BonsaiScene {
     std::vector<TreeInstance> trees;
     std::vector<TreeSceneVertex> mesh;       ///< pot, soil and the objects' meshes, a triangle list
     std::vector<Gaussian3D> objectGaussians; ///< the captured pot's and the objects' Gaussians, placed
+    uint32_t potGaussians = 0;               ///< how many of objectGaussians, the first, are the captured pot's
     /// Puts the lantern capture (Y up, its ground at y = 0) on the soil.
     glm::quat lanternRotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 lanternTranslation{0.0f};

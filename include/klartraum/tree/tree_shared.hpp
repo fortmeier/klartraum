@@ -143,7 +143,9 @@ struct TreeRenderSettings {
     vec4 leafLod;
     // x: 1 to hide fragments behind the scene depth buffer (Gaussians drawn before, e.g. the lantern),
     // 0 to ignore it; y: what the trees' surfaces write (0 their colour; while baking impostors 1 their albedo,
-    // 2 their normal, see treeSurfaceOutput()); zw unused.
+    // 2 their normal, see treeSurfaceOutput()); what every surface writes as a G-buffer: 3 its class colour
+    // (treeClassColor()), 4 its distance from the camera as grey from z (black) to w (white), see
+    // treeGBufferColor().
     vec4 occlusion;
     // The light volume (TreeLightVolume): a grid of sun transmittance and sky visibility over the scene.
     vec4 lightGridMin;    // xyz the grid's lower corner, w the voxel size
@@ -469,6 +471,55 @@ TREE_FN float treeGrownRadiusSlope(TreeTypeParams p, StemRecord s, float z, floa
         return treeStemRadiusSlope(p, s, z);
     }
     return pow(growth, TREE_THICKENING - 1.0f) * treeStemRadiusSlope(p, s, min(z / growth, 1.0f));
+}
+
+// --- G-buffers -----------------------------------------------------------------
+//
+// With occlusion.y 3 or 4 every surface writes, instead of its colour, its class (what it is: TREE_CLASS_*, as the
+// colours of treeClassColor()) or its distance from the camera (grey between occlusion.z and occlusion.w), unlit
+// and without haze, e.g. as inputs of a post-processing network.
+
+static const uint TREE_CLASS_BACKGROUND = 0u;
+static const uint TREE_CLASS_POT = 1u;
+static const uint TREE_CLASS_SOIL = 2u;   // soil, moss, terrain, grass
+static const uint TREE_CLASS_STEM = 3u;   // trunks and branches
+static const uint TREE_CLASS_LEAF = 4u;   // leaves and needles, far trees
+static const uint TREE_CLASS_OBJECT = 5u; // captured objects on the soil (the pumpkin)
+static const uint TREE_CLASS_LANTERN = 6u;
+static const uint TREE_CLASS_COUNT = 7u;
+
+TREE_FN vec3 treeClassColor(uint c) {
+    if (c == TREE_CLASS_POT) {
+        return vec3(0.2f, 0.4f, 1.0f);
+    }
+    if (c == TREE_CLASS_SOIL) {
+        return vec3(0.6f, 0.4f, 0.0f);
+    }
+    if (c == TREE_CLASS_STEM) {
+        return vec3(1.0f, 0.0f, 0.0f);
+    }
+    if (c == TREE_CLASS_LEAF) {
+        return vec3(0.0f, 1.0f, 0.0f);
+    }
+    if (c == TREE_CLASS_OBJECT) {
+        return vec3(1.0f, 0.6f, 0.0f);
+    }
+    if (c == TREE_CLASS_LANTERN) {
+        return vec3(1.0f, 1.0f, 1.0f);
+    }
+    return vec3(0.0f, 0.0f, 0.0f);
+}
+
+// Whether the surfaces write a G-buffer (occlusion.y 3 or 4) instead of their colour.
+TREE_FN bool treeWritesGBuffer(TreeRenderSettings s) { return s.occlusion.y >= 3.0f; }
+
+// What a surface of class c at pos writes as a G-buffer, seen from eye.
+TREE_FN vec3 treeGBufferColor(TreeRenderSettings s, uint c, vec3 pos, vec3 eye) {
+    if (s.occlusion.y == 3.0f) {
+        return treeClassColor(c);
+    }
+    float d = clamp((length(pos - eye) - s.occlusion.z) / max(s.occlusion.w - s.occlusion.z, 1e-6f), 0.0f, 1.0f);
+    return vec3(d, d, d);
 }
 
 // --- shading -----------------------------------------------------------------
@@ -1012,6 +1063,17 @@ TREE_FN TreeSite treeSiteAt(TreeTerrainParams t, TreePlacementParams p, int cx, 
 // A captured object (e.g. fitted to photographs): its albedo is the photographs' colour, light included, so it is
 // tinted like captured Gaussians (treeCapturedColor()) instead of lit.
 #define TREE_MATERIAL_CAPTURED 4.0f
+
+// The class of a scene mesh surface by its material.
+TREE_FN uint treeSceneClass(float material) {
+    if (material == TREE_MATERIAL_GLAZE) {
+        return TREE_CLASS_POT;
+    }
+    if (material == TREE_MATERIAL_CAPTURED) {
+        return TREE_CLASS_OBJECT;
+    }
+    return TREE_CLASS_SOIL;
+}
 
 // Where moss grows on the soil: patches a few centimetres wide at the
 // lantern's scale (it is 0.28 tall), 0 bare soil, 1 moss.

@@ -54,6 +54,8 @@ import scalar_buffer;
 [[vk::binding(15, 0)]] ScalarBuffer<vec4> staticColors;
 [[vk::binding(16, 0)]] ScalarBuffer<vec3> staticPositions;
 [[vk::binding(17, 0)]] ScalarBuffer<vec3> staticNormals;
+// The class of each static Gaussian (TREE_CLASS_*), for the G-buffers.
+[[vk::binding(18, 0)]] StructuredBuffer<uint> staticClasses;
 
 struct Push {
     uint segmentCapacity;
@@ -77,9 +79,13 @@ vec3 colorToSh0(vec3 c) {
 
 // The colour as the classical renderer outputs it, for a surface at pos with
 // this normal, the light read `lift` voxels out along it; the pot (glaze) takes
-// the light through the trees only, as there.
-vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal, bool glaze, float lift = 0.5f) {
+// the light through the trees only, as there. As a G-buffer, its class
+// `semantic` or its distance (treeGBufferColor()).
+vec3 displayColor(vec3 albedo, vec3 pos, vec3 normal, bool glaze, uint semantic, float lift = 0.5f) {
     TreeRenderSettings s = settings[0];
+    if (treeWritesGBuffer(s)) {
+        return treeGBufferColor(s, semantic, pos, camera.cameraWorldPos.xyz);
+    }
     vec3 at = pos + lift * s.lightGridMin.w * normal;
     vec2 light = glaze ? treeLightOfTreesAt(s, at) : treeLightAt(s, at);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, pos, s);
@@ -155,7 +161,7 @@ void stemGaussian(uint i, uint segment, uint local) {
     }
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normal, pos, settings[0].season.y));
     // A voxel and a half out, clear of the solid wood a thick stem fills the light volume with.
-    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal, false, 1.5f), alpha);
+    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal, false, TREE_CLASS_STEM, 1.5f), alpha);
 }
 
 // What a Gaussian of opacity `alpha` and in-plane sigmas `sx`, `sz` (leaf lengths) covers on screen, in square
@@ -273,7 +279,7 @@ void leafGaussian(uint i, uint leafIndex, uint local) {
     }
     vec3 albedo = treeLeafSeasonAlbedo(p, leaf.ids.y, treeHash(leaf.ids.z), leaf.ids.w);
     albedo = mix(albedo, vec3(0.8f), 0.7f * treeSnowOn(normal, pos, settings[0].season.y));
-    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal, false), alpha);
+    writeGaussian(i, pos, rot, scale, displayColor(albedo, pos, normal, false, TREE_CLASS_LEAF), alpha);
 }
 
 // A flat Gaussian on a static surface, its thin axis along the normal.
@@ -287,6 +293,11 @@ void surfelGaussian(uint slot, uint index) {
     if (v.color.w == TREE_MATERIAL_CAPTURED) {
         // Tinted like the captured Gaussians (see main()).
         TreeRenderSettings s = settings[0];
+        if (treeWritesGBuffer(s)) {
+            writeGaussian(slot, v.pos.xyz, rot, scale,
+                          treeGBufferColor(s, TREE_CLASS_OBJECT, v.pos.xyz, camera.cameraWorldPos.xyz), 0.95f);
+            return;
+        }
         float shade = treeCapturedShadeAt(s, v.pos.xyz, normal);
         writeGaussian(slot, v.pos.xyz, rot, scale, treeCapturedColor(v.color.rgb, normal, v.pos.xyz, shade, s), 0.95f);
         return;
@@ -294,7 +305,8 @@ void surfelGaussian(uint slot, uint index) {
     // Finer than the surfels' spacing, the structure is averaged.
     vec3 albedo = treeSceneAlbedoDetail(v.color, v.pos.xyz, 0.0f);
     albedo = mix(albedo, vec3(0.8f), treeSnowOn(normal, v.pos.xyz, settings[0].season.y));
-    writeGaussian(slot, v.pos.xyz, rot, scale, displayColor(albedo, v.pos.xyz, normal, v.color.w == TREE_MATERIAL_GLAZE),
+    writeGaussian(slot, v.pos.xyz, rot, scale,
+                  displayColor(albedo, v.pos.xyz, normal, v.color.w == TREE_MATERIAL_GLAZE, treeSceneClass(v.color.w)),
                   0.95f);
 }
 
@@ -305,6 +317,11 @@ void main() {
     if (g < pc.staticCount) {
         vec4 c = staticColors[g];
         TreeRenderSettings s = settings[0];
+        if (treeWritesGBuffer(s)) {
+            vec3 gbuffer = treeGBufferColor(s, staticClasses[g], staticPositions[g], camera.cameraWorldPos.xyz);
+            outColAlpha[g] = vec4((gbuffer - vec3(0.5f)) / SH_C0, c.a);
+            return;
+        }
         // The side that is seen: the Gaussian's thinnest axis turned towards the camera, counting as far as the
         // Gaussian is flat (the length of staticNormals); a round Gaussian's side is unknown.
         vec3 axis = staticNormals[g];

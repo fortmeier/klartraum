@@ -11,6 +11,9 @@ import glsl;
 // tree_render_common.glsl, tree_shading.glsl and tree_light.glsl before.
 
 vec4 treeSceneColor(vec3 worldPos, vec3 surfaceNormal, vec4 color, TreeRenderSettings s) {
+    if (treeWritesGBuffer(s)) {
+        return vec4(treeGBufferColor(s, treeSceneClass(color.w), worldPos, camera.cameraWorldPos.xyz), 1.0f);
+    }
     vec3 normal = normalize(surfaceNormal);
     if (color.w == TREE_MATERIAL_CAPTURED) {
         // Shaded like the captured Gaussians it stands among (tint_gaussians.comp).

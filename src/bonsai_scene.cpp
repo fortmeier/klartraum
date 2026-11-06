@@ -464,6 +464,7 @@ BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config) {
             [&](const Gaussian3D& g) {
                 return g.position[1] < object.rimHeight + margin && g.position[1] > object.footHeight - margin;
             });
+        scene.potGaussians = uint32_t(scene.objectGaussians.size());
     }
     // The objects on the soil, sunk a little so that their unseen undersides disappear in it.
     for (const BonsaiObjectPlacement& placement : config.objects) {

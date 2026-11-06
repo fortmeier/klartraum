@@ -65,6 +65,13 @@ private:
     float detail = 1.0f;
 };
 
+/// What a BonsaiRenderer's frames show (BonsaiRenderer::setOutput()).
+enum class BonsaiOutput {
+    Colour,  ///< the lit scene
+    Classes, ///< the class of every surface as its colour (tree::treeClassColor()), unlit
+    Depth,   ///< every surface's distance from the camera as grey, from near (black) to far (white)
+};
+
 struct BonsaiRenderConfig {
     VkExtent2D extent{1280, 720};
     BonsaiRenderMode mode = BonsaiRenderMode::Classical;
@@ -219,6 +226,15 @@ public:
     /// Places live occluder `index` for the next frames: world from its vertices' frame; scale 0 removes it.
     void setLiveOccluder(uint32_t index, const glm::mat4& worldFromVertices) {
         lightVolume->setMovingTransform(liveOccluderBase + index, worldFromVertices);
+    }
+    /// What the next frames show: the colours, or as G-buffers the surfaces' classes or distances (from `near` to
+    /// `far`). The background stays as setBackground() sets it (TREE_CLASS_BACKGROUND is black).
+    void setOutput(BonsaiOutput output, float near = 0.0f, float far = 1.0f) {
+        TreeRenderSettings values = settings->values().at(0);
+        values.occlusion.y = output == BonsaiOutput::Classes ? 3.0f : output == BonsaiOutput::Depth ? 4.0f : 0.0f;
+        values.occlusion.z = near;
+        values.occlusion.w = far;
+        settings->set(0, values);
     }
     /// The background of the next frames (with BonsaiRenderConfig::background).
     void setBackground(glm::vec3 colour) {

@@ -55,5 +55,5 @@ void main() {
         vec3 halfway = normalize(toCamera + s.sun.xyz);
         color += vec3(0.05f) * pow(max(dot(normal, halfway), 0.0f), 40.0f) * s.sun.w * light.x * s.lightColor.rgb;
     }
-    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s);
+    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s, TREE_CLASS_LEAF);
 }

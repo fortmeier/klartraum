@@ -38,7 +38,9 @@ namespace klartraum {
  */
 /// What TreeGaussians puts into its buffers besides (or instead of) the trees.
 struct TreeGaussianSources {
-    std::vector<Gaussian3D> captured;     ///< first; colours tinted and shaded every frame
+    std::vector<Gaussian3D> captured; ///< first; colours tinted and shaded every frame
+    /// The class of each captured Gaussian (TREE_CLASS_*) for the G-buffers; empty: all TREE_CLASS_OBJECT.
+    std::vector<uint32_t> capturedClasses;
     std::vector<TreeSceneVertex> surfels; ///< next; lit every frame
     BufferRef light;                      ///< the light volume (TreeLightVolume::getLight()), or none
     bool trees = true;                    ///< whether the trees' Gaussians follow

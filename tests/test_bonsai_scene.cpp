@@ -69,6 +69,9 @@
  * - trunksCastShadowsOfTheirWidth: in the morning sun, the shadow the bonsai's trunk casts on the soil from a little
  *   above its base is, across its band, about as wide as the trunk there, and the trunk's sunny side stays lit where
  *   the stems read their light
+ * - gBuffersShowClassesAndDepth: rendered as classes, a ball on the soil shows the object class at its middle, the
+ *   lantern the lantern's, the trunk the stem's, open soil the soil's and the background black; rendered as depth,
+ *   the ball's middle shows its distance from the camera
  * - movingShadowsGlide: a moving ball's shadow on the soil changes little from one small step of the ball to the
  *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
@@ -1783,4 +1786,79 @@ TEST_F(BonsaiRenderingTest, trunksCastShadowsOfTheirWidth) {
     const float far = lightAt(light, s, ring + (radius + 4.0f * s.lightGridMin.w) * sunward).x;
     std::cout << "sun at the trunk's sunny side " << near << ", farther out " << far << std::endl;
     EXPECT_GT(near, 0.85f * far);
+}
+
+TEST_F(BonsaiRenderingTest, gBuffersShowClassesAndDepth) {
+    BonsaiObjectPlacement placement;
+    placement.object = greyBall(false);
+    placement.position = glm::vec2(-0.6f, -0.2f);
+    placement.height = 0.5f;
+    BonsaiSceneConfig sceneConfig;
+    sceneConfig.treeCount = 1;
+    sceneConfig.objects.push_back(placement);
+    const BonsaiScene scene = makeBonsaiScene(sceneConfig);
+    const VkExtent2D extent{320, 240};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.background = true;
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    const glm::vec3 eye = scene.focus + glm::vec3(0.5f, 1.2f, 4.5f);
+    setCamera(bonsai.getCamera()->ubo, eye, scene.focus - glm::vec3(0.0f, 0.4f, 0.0f), 40.0f, 320.0f / 240.0f);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    const glm::mat4 clipFromWorld = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view;
+    const auto pixelOf = [&](glm::vec3 p) {
+        const glm::vec4 clip = clipFromWorld * glm::vec4(p, 1.0f);
+        return glm::ivec2(int((clip.x / clip.w * 0.5f + 0.5f) * extent.width),
+                          int((clip.y / clip.w * 0.5f + 0.5f) * extent.height));
+    };
+    const auto rgbAt = [&](const std::vector<uint8_t>& image, glm::ivec2 p) {
+        const size_t i = (size_t(p.y) * extent.width + size_t(p.x)) * 4;
+        return glm::vec3(image[i + 2], image[i + 1], image[i]) / 255.0f;
+    };
+    // The class whose colour is nearest.
+    const auto classAt = [&](const std::vector<uint8_t>& image, glm::ivec2 p) {
+        const glm::vec3 c = rgbAt(image, p);
+        uint32_t best = 0;
+        for (uint32_t k = 1; k < tree::TREE_CLASS_COUNT; ++k)
+            if (glm::length(tree::treeClassColor(k) - c) < glm::length(tree::treeClassColor(best) - c))
+                best = k;
+        return best;
+    };
+
+    bonsai.setOutput(BonsaiOutput::Classes);
+    bonsai.setBackground(glm::vec3(0.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const auto classes = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    writePpm("bonsai_classes", classes, extent);
+    const glm::vec3 ball(placement.position.x, scene.soilHeight(-0.6f, -0.2f) + 0.45f * placement.height, -0.2f);
+    EXPECT_EQ(classAt(classes, pixelOf(ball)), tree::TREE_CLASS_OBJECT);
+    EXPECT_EQ(classAt(classes, pixelOf(scene.lanternTranslation + glm::vec3(0.0f, 0.12f * scene.lanternScale, 0.0f))),
+              tree::TREE_CLASS_LANTERN);
+    const glm::vec3 trunk = glm::vec3(scene.trees.front().posScale) + glm::vec3(0.0f, 0.15f, 0.0f);
+    EXPECT_EQ(classAt(classes, pixelOf(trunk)), tree::TREE_CLASS_STEM);
+    const glm::vec2 open(-0.5f * scene.config.pot.halfLength, 0.5f * scene.config.pot.halfWidth);
+    EXPECT_EQ(classAt(classes, pixelOf(glm::vec3(open.x, scene.soilHeight(open.x, open.y), open.y))),
+              tree::TREE_CLASS_SOIL);
+    EXPECT_EQ(classAt(classes, glm::ivec2(2, 2)), tree::TREE_CLASS_BACKGROUND);
+
+    const float near = 2.0f, far = 10.0f;
+    bonsai.setOutput(BonsaiOutput::Depth, near, far);
+    bonsai.setBackground(glm::vec3(1.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const auto depth = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    const float radius = 0.5f * placement.height;
+    const float expected = (glm::length(ball - eye) - radius - near) / (far - near);
+    EXPECT_NEAR(rgbAt(depth, pixelOf(ball)).x, expected, 0.02f);
+    EXPECT_NEAR(rgbAt(depth, glm::ivec2(2, 2)).x, 1.0f, 0.01f);
+
+    // Back to colours.
+    bonsai.setOutput(BonsaiOutput::Colour);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const auto colour = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    EXPECT_NE(classAt(colour, pixelOf(ball)), tree::TREE_CLASS_OBJECT);
 }
