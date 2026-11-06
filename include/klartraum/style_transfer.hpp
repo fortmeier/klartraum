@@ -23,9 +23,10 @@ namespace klartraum {
  * @brief Restyles a rendering with an image-to-image network (scripts/neural/train_watercolor.py) and blends the
  *        result over it.
  *
- * `style_transfer_input.comp` makes the network's input at its size, half the frame's: the colour (and the depth)
- * averaged over 2 x 2 pixels and, for a network with 11 input channels, the classes of the G-buffer (the class whose
- * colour, tree::treeClassColor(), is nearest to pixel (2x + 1, 2y + 1)) one-hot, with `classes` and `depth` the
+ * `style_transfer_input.comp` makes the network's input at its size, the frame's or half of it: the colour (and the
+ * depth), averaged over 2 x 2 pixels at half the size, and, for a network with 11 input channels, the classes of the
+ * G-buffer (the class whose colour, tree::treeClassColor(), is nearest to pixel (x, y) or, at half the size,
+ * (2x + 1, 2y + 1)) one-hot, with `classes` and `depth` the
  * BonsaiRenderer's G-buffers of the same view; the ONNX network runs; `style_transfer_output.comp` resizes its output
  * bilinearly to the frame and blends it over `color` into `output` by setBlend(). The images are the frame's size
  * and in TRANSFER_SRC_OPTIMAL before (`producer` last writes them) and after; compile a graph from getOutput().
@@ -48,7 +49,8 @@ public:
         uint32_t frameWidth, frameHeight; ///< the frame's size
         uint32_t width, height;           ///< the network's size
         uint32_t channels;                ///< the network's input channels
-        uint32_t pad[3];
+        uint32_t scale;                   ///< the frame's size over the network's, 1 or 2
+        uint32_t pad[2];
     };
 
 private:

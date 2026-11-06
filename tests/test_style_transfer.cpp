@@ -6,9 +6,9 @@
  * TESTS:
  * - matchesPyTorch: the watercolor fixtures (scripts/neural/make_watercolor_fixture.py: a U-Net on the rendering, one
  *   on the rendering with its classes and depth, and the G-buffers modulating the decoder; fixed random weights; a
- *   192 x 128 frame of random colour, classes and depth) run by StyleTransfer at half the frame's size give PyTorch's
- *   output within 1e-3; at full blend the output image is that output resized to the frame within one step of 255,
- *   and at blend 0 it is the frame's colour unchanged
+ *   192 x 128 frame of random colour, classes and depth) run by StyleTransfer at half the frame's size, and the
+ *   G-buffer U-Net at the frame's full size, give PyTorch's output within 1e-3; at full blend the output image is that
+ * output resized to the frame within one step of 255, and at blend 0 it is the frame's colour unchanged
  **/
 
 #include <gtest/gtest.h>
@@ -91,11 +91,12 @@ TEST(StyleTransferTest, matchesPyTorch) {
     VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
     const VkExtent2D extent{kWidth, kHeight};
     const size_t pixels = size_t(kWidth) * kHeight;
-    for (const std::string kind : {"rgb", "gbuffers", "spade"}) {
+    for (const std::string kind : {"rgb", "gbuffers", "spade", "full"}) {
         SCOPED_TRACE(kind);
         const std::string stem = "data/onnx/watercolor_" + kind + "_fixture";
         const std::vector<uint8_t> images = readFile<uint8_t>(stem + "_images.bin", 3 * pixels * 4);
-        const std::vector<float> expected = readFile<float>(stem + "_output.bin", 3 * pixels / 4);
+        const size_t networkPixels = kind == "full" ? pixels : pixels / 4;
+        const std::vector<float> expected = readFile<float>(stem + "_output.bin", 3 * networkPixels);
         const std::vector<float> upsampled = readFile<float>(stem + "_upsampled.bin", 3 * pixels);
 
         std::shared_ptr<OffscreenTarget> frame[3];

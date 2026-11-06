@@ -13,6 +13,7 @@ struct Push {
     uint width;
     uint height;
     uint channels;
+    uint scale;
 };
 [[vk::push_constant]] ConstantBuffer<Push> pc;
 

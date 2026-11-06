@@ -4,9 +4,9 @@
 
 import glsl;
 
-// The input of StyleTransfer's network at half the frame's size, NCHW: the colour averaged over 2 x 2 pixels and,
-// for 11 channels, the classes of the G-buffer one-hot (the class whose colour is nearest to pixel (2x + 1, 2y + 1))
-// and the depth averaged over 2 x 2 pixels.
+// The input of StyleTransfer's network at the frame's size or half of it (scale 1 or 2), NCHW: the colour averaged
+// over scale x scale pixels and, for 11 channels, the classes of the G-buffer one-hot (the class whose colour is
+// nearest to pixel (scale x + scale / 2, scale y + scale / 2)) and the depth averaged over scale x scale pixels.
 
 #define TREE_FN
 #include "klartraum/tree/tree_shared.hpp"
@@ -17,6 +17,7 @@ struct Push {
     uint width;
     uint height;
     uint channels;
+    uint scale;
 };
 [[vk::push_constant]] ConstantBuffer<Push> pc;
 
@@ -26,6 +27,9 @@ struct Push {
 [[vk::binding(3, 0)]] RWStructuredBuffer<float> outputData;
 
 vec3 average(RWTexture2D<float4> image, ivec2 at) {
+    if (pc.scale == 1u) {
+        return image[at].rgb;
+    }
     return 0.25f * (image[at].rgb + image[at + ivec2(1, 0)].rgb + image[at + ivec2(0, 1)].rgb +
                     image[at + ivec2(1, 1)].rgb);
 }
@@ -37,7 +41,7 @@ void main() {
     if (pixel.x >= pc.width || pixel.y >= pc.height) {
         return;
     }
-    ivec2 at = ivec2(pixel) * 2;
+    ivec2 at = ivec2(pixel) * int(pc.scale);
     uint plane = pc.width * pc.height;
     uint offset = pixel.y * pc.width + pixel.x;
     vec3 color = average(colorImage, at);
@@ -45,7 +49,7 @@ void main() {
     outputData[plane + offset] = color.g;
     outputData[2u * plane + offset] = color.b;
     if (pc.channels == 11u) {
-        vec3 c = classImage[at + ivec2(1, 1)].rgb;
+        vec3 c = classImage[at + ivec2(int(pc.scale / 2u))].rgb;
         uint nearest = 0u;
         float best = 1e9f;
         for (uint k = 0u; k < TREE_CLASS_COUNT; ++k) {

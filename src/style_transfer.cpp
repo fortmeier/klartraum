@@ -19,15 +19,16 @@ StyleTransfer::StyleTransfer(VulkanContext& vulkanContext, const std::string& mo
     network->setName("StyleTransfer");
     const std::vector<uint32_t> dimensions = network->getInputDimensions("input");
     const uint32_t channels = dimensions.at(1), height = dimensions.at(2), width = dimensions.at(3);
-    if (width * 2 != frame.width || height * 2 != frame.height)
-        throw std::runtime_error("StyleTransfer: the network's input is not half the frame's size");
+    const uint32_t scale = frame.width / width;
+    if ((scale != 1 && scale != 2) || width * scale != frame.width || height * scale != frame.height)
+        throw std::runtime_error("StyleTransfer: the network's input is neither the frame's size nor half of it");
     gbuffers = channels == 11;
     if (channels != 3 && !gbuffers)
         throw std::runtime_error("StyleTransfer: the network takes " + std::to_string(channels) +
                                  " input channels, not 3 or 11");
     if (gbuffers && (!classes || !depth))
         throw std::runtime_error("StyleTransfer: the network needs the classes and depth G-buffers");
-    const Push push{frame.width, frame.height, width, height, channels, {0, 0, 0}};
+    const Push push{frame.width, frame.height, width, height, channels, scale, {0, 0}};
 
     tensor = vulkanContext.create<TensorElement<float>>(std::vector<uint32_t>{1, channels, height, width});
     input = vulkanContext.create<GeneralComputation<Push>>("shaders/tree/style_transfer_input.comp.spv");
