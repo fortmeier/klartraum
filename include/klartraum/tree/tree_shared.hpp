@@ -476,7 +476,8 @@ TREE_FN float treeGrownRadiusSlope(TreeTypeParams p, StemRecord s, float z, floa
 // --- G-buffers -----------------------------------------------------------------
 //
 // With occlusion.y 3 or 4 every surface writes, instead of its colour, its class (what it is: TREE_CLASS_*, as the
-// colours of treeClassColor()) or its distance from the camera (grey between occlusion.z and occlusion.w), unlit
+// colours of treeClassColor()) or its distance from the camera (grey between occlusion.z and occlusion.w, finer
+// with the three channels together, see treeGBufferColor()), unlit
 // and without haze, e.g. as inputs of a post-processing network.
 
 static const uint TREE_CLASS_BACKGROUND = 0u;
@@ -513,13 +514,15 @@ TREE_FN vec3 treeClassColor(uint c) {
 // Whether the surfaces write a G-buffer (occlusion.y 3 or 4) instead of their colour.
 TREE_FN bool treeWritesGBuffer(TreeRenderSettings s) { return s.occlusion.y >= 3.0f; }
 
-// What a surface of class c at pos writes as a G-buffer, seen from eye.
+// What a surface of class c at pos writes as a G-buffer, seen from eye. The depth d is written to red, and offset by
+// one and two thirds of an 8-bit step to green and blue: each channel stays linear in d (so blending keeps it), and
+// the mean of the three decoded channels, d = (r + g + b) / 3 - 1 / 255, resolves three times finer steps.
 TREE_FN vec3 treeGBufferColor(TreeRenderSettings s, uint c, vec3 pos, vec3 eye) {
     if (s.occlusion.y == 3.0f) {
         return treeClassColor(c);
     }
     float d = clamp((length(pos - eye) - s.occlusion.z) / max(s.occlusion.w - s.occlusion.z, 1e-6f), 0.0f, 1.0f);
-    return vec3(d, d, d);
+    return vec3(d, d + 1.0f / 765.0f, d + 2.0f / 765.0f);
 }
 
 // --- shading -----------------------------------------------------------------

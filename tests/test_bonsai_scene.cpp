@@ -71,7 +71,8 @@
  *   the stems read their light
  * - gBuffersShowClassesAndDepth: rendered as classes, a ball on the soil shows the object class at its middle, the
  *   lantern the lantern's, the trunk the stem's, open soil the soil's and the background black; rendered as depth,
- *   the ball's middle shows its distance from the camera
+ *   the ball's middle shows its distance from the camera, in red and, one and two thirds of a step later, in green and
+ *   blue
  * - movingShadowsGlide: a moving ball's shadow on the soil changes little from one small step of the ball to the
  *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
@@ -1855,6 +1856,13 @@ TEST_F(BonsaiRenderingTest, gBuffersShowClassesAndDepth) {
     const float expected = (glm::length(ball - eye) - radius - near) / (far - near);
     EXPECT_NEAR(rgbAt(depth, pixelOf(ball)).x, expected, 0.02f);
     EXPECT_NEAR(rgbAt(depth, glm::ivec2(2, 2)).x, 1.0f, 0.01f);
+    // Green and blue hold the depth one and two thirds of a step later.
+    const glm::vec3 channels = rgbAt(depth, pixelOf(ball));
+    const float decoded = (channels.x + channels.y + channels.z) / 3.0f - 1.0f / 255.0f;
+    EXPECT_NEAR(decoded, expected, 0.02f);
+    EXPECT_LE(channels.x, channels.y);
+    EXPECT_LE(channels.y, channels.z);
+    EXPECT_LE(channels.z - channels.x, 1.5f / 255.0f);
 
     // Back to colours.
     bonsai.setOutput(BonsaiOutput::Colour);
