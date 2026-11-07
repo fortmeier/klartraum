@@ -31,6 +31,9 @@
  * - textureRecoveryOnFixedGeometry: training only the texture of the pumpkin from a noise start on eight rendered
  *   views, one submit per step with the view advanced on the GPU, cuts the loss below 2 % of its first value and
  *   reproduces a held-out view with a PSNR above 30 dB inside the mesh
+ * - highlightsBarelyPullTheTexture: MeshTraining fits a texture to twelve views of which four carry a painted
+ *   highlight; with the highlight tolerance of imageLoss() a clean held-out view reaches a PSNR above 28 dB inside
+ *   the mesh, at least 3 dB more than without
  * - antialiasMatchesCpu: the antialiased colours equal a CPU evaluation of the silhouette crossings and blends on the
  *   GPU visibility, change pixels along the outline only, and leave the image interior untouched
  * - antialiasGradientsMatchFiniteDifferences: the image loss of the antialiased image (colour inside the mask,
@@ -1000,6 +1003,60 @@ TEST_F(DifferentiableRasterTest, textureRecoveryOnFixedGeometry) {
     EXPECT_GT(psnr, 30.0) << "held-out PSNR " << psnr << " dB";
     std::cout << "texture recovery: loss " << first << " -> " << last << ", held-out PSNR " << psnr << " dB"
               << std::endl;
+}
+
+TEST_F(DifferentiableRasterTest, highlightsBarelyPullTheTexture) {
+    // Twelve views of the textured pumpkin, four of them with a bright highlight painted in (a white disc in the
+    // mask); MeshTraining fits only the texture, from noise.
+    const uint32_t size = 64, textureWidth = 32, textureHeight = 16, pixels = size * size;
+    std::vector<glm::mat4> cameras = raster::cameraRing(6, 3.0f, 0.15f, 0.8f, 1.0f);
+    const auto upper = raster::cameraRing(6, 3.0f, 0.7f, 0.8f, 1.0f, 0.5f);
+    cameras.insert(cameras.end(), upper.begin(), upper.end());
+    const std::vector<glm::mat4> heldOut = {raster::cameraRing(1, 3.0f, 0.4f, 0.8f, 1.0f, 0.3f)[0]};
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(3);
+    const std::vector<float> truth = raster::syntheticPumpkinTexture(textureWidth, textureHeight);
+    std::vector<float> targets =
+        raster::renderImages(*vc, pumpkin, truth, textureWidth, textureHeight, cameras, size, size);
+    for (const uint32_t view : {1u, 4u, 7u, 10u}) {
+        const float cx = 24.0f + 4.0f * float(view % 3), cy = 26.0f + 3.0f * float(view % 2);
+        for (uint32_t p = 0; p < pixels; ++p) {
+            const float dx = float(p % size) + 0.5f - cx, dy = float(p / size) + 0.5f - cy;
+            float* t = &targets[4 * (size_t(view) * pixels + p)];
+            if (dx * dx + dy * dy < 36.0f)
+                for (int c = 0; c < 3; ++c)
+                    t[c] = std::min(t[c] + 0.6f * t[3], t[3]);
+        }
+    }
+    const std::vector<float> clean =
+        raster::renderImages(*vc, pumpkin, truth, textureWidth, textureHeight, heldOut, size, size);
+    const auto fit = [&](float tolerance) {
+        raster::MeshTrainingOptions options;
+        options.width = options.height = size;
+        options.textureWidth = textureWidth;
+        options.textureHeight = textureHeight;
+        options.geometry.learningRate = 0.0f;
+        options.laplacianWeight = 0.0f;
+        options.texture.learningRate = 0.02f;
+        options.highlightTolerance = tolerance;
+        raster::MeshTraining training(*vc, pumpkin, cameras, options);
+        training.setTargets(targets);
+        for (int step = 0; step < 900; ++step)
+            training.step();
+        const std::vector<float> image =
+            raster::renderImages(*vc, pumpkin, training.texture(), textureWidth, textureHeight, heldOut, size, size);
+        double squaredError = 0.0;
+        int count = 0;
+        for (uint32_t p = 0; p < pixels; ++p)
+            if (clean[4 * p + 3] > 0.99f)
+                for (int c = 0; c < 3; ++c, ++count)
+                    squaredError += (image[4 * p + c] - clean[4 * p + c]) * (image[4 * p + c] - clean[4 * p + c]);
+        return 10.0 * std::log10(count / squaredError);
+    };
+    const double plain = fit(0.0f), robust = fit(0.1f);
+    std::cout << "held-out PSNR with highlights in the targets: " << plain << " dB plain, " << robust
+              << " dB with the highlight tolerance" << std::endl;
+    EXPECT_GT(robust, plain + 3.0);
+    EXPECT_GT(robust, 28.0);
 }
 
 TEST_F(DifferentiableRasterTest, antialiasMatchesCpu) {

@@ -25,9 +25,12 @@ struct MeshTrainingOptions {
     uint32_t width = 128, height = 128;             ///< size of the target images in pixels
     uint32_t textureWidth = 64, textureHeight = 32; ///< size of the trained texture in texels
     float maskWeight = 1.0f;                        ///< weight of the coverage term of imageLoss()
-    float laplacianWeight = 100.0f;                 ///< weight of laplacianRegularizer(), 0 for none
-    training::AdamParameters geometry{0.002f};      ///< optimizer of the vertex positions
-    training::AdamParameters texture{0.01f};        ///< optimizer of the texels
+    /// Brightness above the rendering from which a target pixel counts as a highlight (imageLoss()), 0 for none;
+    /// not with viewColors.
+    float highlightTolerance = 0.0f;
+    float laplacianWeight = 100.0f;             ///< weight of laplacianRegularizer(), 0 for none
+    training::AdamParameters geometry{0.002f};  ///< optimizer of the vertex positions
+    training::AdamParameters texture{0.01f};    ///< optimizer of the texels
     bool viewColors = false;                    ///< learn a colour gain and offset per view (imageLossWithViewColors())
     float viewColorWeight = 0.01f;              ///< pull of the per-view corrections towards identity
     training::AdamParameters viewColor{0.002f}; ///< optimizer of the per-view corrections

@@ -25,7 +25,7 @@ struct ImagePushConstants {
 
 struct ImageLossPushConstants {
     uint32_t width, height;
-    float maskWeight;
+    float maskWeight, highlightTolerance;
 };
 
 struct ViewColorLossPushConstants {
@@ -123,12 +123,13 @@ ComputeGraphElementPtr compositeOverBackward(VulkanContext& vulkanContext, uint3
     return perPixel(vulkanContext, "shaders/raster/composite_over_backward.comp.spv", width, height);
 }
 
-ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight) {
+ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight,
+                                 float highlightTolerance) {
     if (width == 0 || height == 0)
         throw std::invalid_argument("imageLoss: the image size must be positive");
     auto operation =
         vulkanContext.create<GeneralComputation<ImageLossPushConstants>>("shaders/raster/image_loss.comp.spv");
-    operation->setPushConstants({{width, height, maskWeight}});
+    operation->setPushConstants({{width, height, maskWeight, highlightTolerance}});
     operation->setGroupCountX((width * height + 255) / 256);
     return operation;
 }

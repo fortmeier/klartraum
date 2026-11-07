@@ -118,7 +118,7 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         smoothing->setInput(antialiased, 8);
         auto loss = options.viewColors
                         ? imageLossWithViewColors(vulkanContext, w, h, options.maskWeight, options.viewColorWeight)
-                        : imageLoss(vulkanContext, w, h, options.maskWeight);
+                        : imageLoss(vulkanContext, w, h, options.maskWeight, options.highlightTolerance);
         if (options.viewColors) {
             viewColorValues = tensor(2 * views, 4);
             viewColorGradients = tensor(2 * views, 4);

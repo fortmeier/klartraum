@@ -98,10 +98,15 @@ ComputeGraphElementPtr compositeOverBackward(VulkanContext& vulkanContext, uint3
  * @brief The image loss of premultiplied colours against a masked target and its gradients: the sum over pixels of
  * (m |colour - target|^2 + maskWeight (coverage - m)^2) / (width x height), with m the target mask.
  *
+ * With @p highlightTolerance t > 0, the colour term of a pixel whose target is brighter (in luminance) than its colour
+ * by more than t is weighted by (t / excess)^2, a weight the gradient takes as constant: highlights that a single view
+ * sees (specular reflections) pull a colour much less than what the views agree on.
+ *
  * Slots: 0 colours (four floats per pixel: premultiplied rgb, coverage), 1 targets (four floats per pixel and view:
  * rgb and mask), 2 view index, 3 colour gradients (four floats per pixel, written), 4 loss (one float, added to).
  */
-ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight);
+ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight,
+                                 float highlightTolerance = 0.0f);
 
 /**
  * @brief imageLoss() with a colour correction per view: the colour c (coverage a) is compared as gain x c +
