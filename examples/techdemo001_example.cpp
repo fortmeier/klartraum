@@ -12,14 +12,15 @@
 //   1. Drop: the pumpkin falls onto the splatted bonsai pot with its soil and the lantern, shrinking to its size on
 //      the soil and turning to face the camera; the camera follows.
 //   2. Growth: the bonsai pine grows from a seedling, its trunk extending and branching out step by step.
-//   3. Days: the summer afternoon turns into night, then four days, one season each; the background is white by
-//      day and black by night, with a black sun by day and a white crescent moon by night where the light shines
-//      from.
+//   3. Days: the summer afternoon holds while a painted style fades in (with --style or --field; with --panels a
+//      training sample of the style beside it), then turns into night, then four days, one season each (with
+//      --panels the style's targets of the season by day and night beside them); the background is white by day and
+//      black by night, with a black sun by day and a white crescent moon by night where the light shines from.
 // Each chapter shows a caption with the work it builds on, lower left.
 //
 //   techdemo001_example [--pot FILE] [--photos DIR] [--width 1280] [--height 720] [--fps 30]
 //                       [--from 0] [--to 3] [--step 1] [--out-dir build/TestingOutput/techdemo001]
-//                       [--style MODEL.onnx | --field STEM]
+//                       [--style MODEL.onnx | --field STEM] [--panels DIR]
 //
 // --pot is the object.spz of splat_training_example for the bonsai pot (default:
 // build/TestingOutput/splat_training/bonsai/object.spz), --photos the pumpkin's photographs as prepared by
@@ -82,7 +83,7 @@ const std::vector<Chapter> kChapters = {
     {5.0f, {"Differentiable rasterization", "Laine et al. 2020, automatic differentiation in Slang"}},
     {2.5f, {"Gaussian splatting", "Kerbl et al. 2023, trained on 38 photographs"}},
     {5.0f, {"GPU tree generation", "Kuth et al. 2025, after Weber and Penn 1995"}},
-    {18.0f, {"Days and seasons", "one compute graph submission per frame"}},
+    {22.0f, {"Days and seasons", "one compute graph submission per frame"}},
 };
 
 // The frame's pixels as BGRA bytes, from an image in `layout`.
@@ -217,6 +218,97 @@ constexpr float kDepthNear = 2.0f, kDepthFar = 16.0f;
 // The box FieldStyle's world grids cover: the pot, the soil and the fully grown tree.
 constexpr glm::vec3 kFieldBoxLow(-1.7f, -0.55f, -1.3f), kFieldBoxHigh(1.7f, 3.7f, 1.2f);
 constexpr uint32_t kSequenceFrames = 8;
+
+// The side panels of the days (--panels, scripts/neural/prepare_style_panels.py): during the style's demonstration a
+// training sample (its rendering, classes, depth and watercolor target) in a 2 x 2 grid, then the watercolor targets
+// of the season shown by day and by night, the one of the time of day shown brighter. Labels are black on light
+// backgrounds and white on dark ones.
+class StylePanels {
+public:
+    StylePanels(const std::filesystem::path& folder, VkExtent2D extent, const std::shared_ptr<Font>& mono)
+        : extent(extent) {
+        for (const char* name : {"rendering", "classes", "depth", "target"})
+            sample.push_back(read(folder / ("sample_" + std::string(name) + ".ppm")));
+        for (const char* season : {"winter", "spring", "summer", "fall"})
+            for (const char* kind : {"day", "night"})
+                targets.push_back(read(folder / ("target_" + std::string(season) + "_" + kind + ".ppm")));
+        const auto label = [&](const std::string& text) {
+            TitleLayout layout;
+            layout.align = TextAlign::Left;
+            layout.pixelsPerUnit = float(extent.height);
+            layout.lines.push_back({text, mono, 400.0f, 0.021f, 0.0f});
+            return rasterizeTitle(layout);
+        };
+        for (const char* name : {"rendering", "classes", "depth", "watercolor target"})
+            sampleLabels.push_back(label(name));
+        for (const char* season : {"winter", "spring", "summer", "fall"})
+            for (const char* kind : {"day", "night"})
+                targetLabels.push_back(label(std::string(season) + " " + kind + ", watercolor target"));
+    }
+
+    // Draws the panels `seconds` into the days, the demonstration lasting `demonstration` seconds.
+    void draw(std::vector<uint8_t>& bgra, float seconds, float demonstration, float season, float background) const {
+        const glm::vec3 ink(background < 0.5f ? 1.0f : 0.0f);
+        const int margin = int(0.05f * float(extent.width)), gap = int(0.03f * float(extent.height));
+        if (seconds < demonstration) {
+            const float opacity = smooth((seconds - 0.2f) / 0.5f) * smooth((demonstration - seconds) / 0.4f);
+            const Picture& first = sample[0];
+            const int width = int(first.width), height = int(first.height), label = int(sampleLabels[0].height);
+            const int left = int(extent.width) - margin - 2 * width - gap;
+            const int top = (int(extent.height) - 2 * (label + gap / 2 + height) - gap) / 2;
+            for (int k = 0; k < 4; ++k) {
+                const int x = left + (k % 2) * (width + gap), y = top + (k / 2) * (label + gap / 2 + height + gap);
+                blendCaption(bgra, extent.width, extent.height, sampleLabels[k], x, y, ink, opacity);
+                blendPicture(bgra, extent.width, extent.height, sample[k].values, sample[k].width, sample[k].height, x,
+                             y + label + gap / 2, opacity);
+            }
+            return;
+        }
+        const float opacity = smooth((seconds - demonstration - 0.2f) / 0.5f);
+        // The season nearest the one shown (winter 0 = 4, spring 1.25, summer 2, fall 3.25).
+        const float points[] = {0.0f, 1.25f, 2.0f, 3.25f};
+        int nearest = 0;
+        float best = 1e9f;
+        for (int k = 0; k < 4; ++k) {
+            const float d = std::fmod(std::abs(season - points[k]), 4.0f);
+            if (std::min(d, 4.0f - d) < best) {
+                best = std::min(d, 4.0f - d);
+                nearest = k;
+            }
+        }
+        const bool night = background < 0.5f;
+        const Picture& first = targets[0];
+        const int width = int(first.width), height = int(first.height), label = int(targetLabels[0].height);
+        const int x = int(extent.width) - margin - width;
+        int y = (int(extent.height) - 2 * (label + gap / 2 + height) - gap) / 2;
+        for (int kind = 0; kind < 2; ++kind) {
+            const int k = 2 * nearest + kind;
+            const float shown = opacity * ((kind == 1) == night ? 1.0f : 0.45f);
+            blendCaption(bgra, extent.width, extent.height, targetLabels[k], x, y, ink, shown);
+            blendPicture(bgra, extent.width, extent.height, targets[k].values, targets[k].width, targets[k].height, x,
+                         y + label + gap / 2, shown);
+            y += label + gap / 2 + height + gap;
+        }
+    }
+
+private:
+    struct Picture {
+        std::vector<float> values; // four floats per pixel, rgb and 1
+        uint32_t width = 0, height = 0;
+    };
+
+    static Picture read(const std::filesystem::path& path) {
+        Picture picture;
+        picture.values = raster::readTexturePpm(path, picture.width, picture.height);
+        return picture;
+    }
+
+    // The frame's size the panels are laid out in.
+    VkExtent2D extent;
+    // The training sample (rendering, classes, depth, target) and the targets (per season: day, night).
+    std::vector<Picture> sample, targets;
+    std::vector<CoverageMask> sampleLabels, targetLabels;
+};
 
 // The conditions FieldStyle's network was trained with (train_watercolor_field.py: conditions()): time of day and
 // season on circles, the directional light (the moon's counted less), the exposure and the background.
@@ -451,7 +543,7 @@ int main(int argc, char** argv) {
     int fromChapter = 0, toChapter = int(kChapters.size()) - 1;
     uint32_t step = 1;
     uint32_t datasetCount = 0, sequenceCount = 0, datasetSeed = 1;
-    std::filesystem::path stylePath, fieldPath;
+    std::filesystem::path stylePath, fieldPath, panelsPath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -483,6 +575,8 @@ int main(int argc, char** argv) {
             stylePath = argv[++i];
         else if (arg == "--field" && hasValue)
             fieldPath = argv[++i];
+        else if (arg == "--panels" && hasValue)
+            panelsPath = argv[++i];
     }
     if (datasetCount > 0) {
         // Only the dataset, of the scene with the pumpkin of an earlier run: no chapters.
@@ -893,11 +987,17 @@ int main(int argc, char** argv) {
                                                  classes, coverage, depth, styled, bonsai.getOutput());
         ComputeGraph graph(vc, 1);
         graph.compileFrom(field ? field->getOutput() : style ? style->getOutput() : bonsai.getOutput());
+        // With --panels, the style's training data beside the days.
+        std::unique_ptr<StylePanels> panels;
+        if (!panelsPath.empty())
+            panels = std::make_unique<StylePanels>(panelsPath, extent, mono);
         bonsai.initialize(1);
         BonsaiDays days;
         // The growth's summer noon turns into the night over the first seconds; then four days from midnight.
-        const float afternoon = 4.0f;
-        days.secondsPerDay = (kChapters[3].seconds - afternoon) / 4.0f;
+        // First the style's demonstration: the summer afternoon holds while the style fades in; then the afternoon
+        // turns into the night, and four days from midnight.
+        const float demonstration = 4.0f, afternoon = 4.0f;
+        days.secondsPerDay = (kChapters[3].seconds - demonstration - afternoon) / 4.0f;
         days.dawn = 0.0f;
         days.seasons[0] = 2.0f, days.seasons[1] = 3.25f, days.seasons[2] = 4.0f, days.seasons[3] = 5.25f;
         const uint32_t begin = timeline.chapterStart(std::max(fromChapter, 2)), end = timeline.frameCount();
@@ -906,6 +1006,13 @@ int main(int argc, char** argv) {
             const float sinceGrowth = float(f - growthStart) / fps;
             const Pose pose = orbitPose(growthOrbit(sinceGrowth));
             bonsai.getCamera()->ubo = cameraOf(pose, aspect);
+            if (panels && f >= daysStart) {
+                // The bonsai moves left of the panels over the first second of the days (a shift of the image's
+                // centre, so the view itself stays the same).
+                const float shift = -0.36f * smooth(float(f - daysStart) / fps);
+                bonsai.getCamera()->ubo.proj =
+                    glm::translate(glm::mat4(1.0f), glm::vec3(shift, 0.0f, 0.0f)) * bonsai.getCamera()->ubo.proj;
+            }
             bonsai.getCamera()->update(0);
             bonsai.setView(pose.eye);
             float background = 1.0f, timeOfDay = 0.5f, season = 2.0f;
@@ -917,7 +1024,7 @@ int main(int argc, char** argv) {
                 bonsai.setTime(sinceGrowth, timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.3f * growth));
             } else {
                 // The camera keeps orbiting.
-                const float seconds = float(f - daysStart) / fps;
+                const float seconds = std::max(float(f - daysStart) / fps - demonstration, 0.0f);
                 setTrees(bonsai, scene, 1.0f);
                 timeOfDay =
                     seconds < afternoon ? 0.5f + 0.5f * seconds / afternoon : days.timeOfDayAt(seconds - afternoon);
@@ -926,8 +1033,9 @@ int main(int argc, char** argv) {
                 background = backgroundAt(timeOfDay, season);
             }
             bonsai.setBackground(glm::vec3(background));
-            // The watercolor style fades in over the first one and a half seconds of the days.
-            const float blend = f < daysStart ? 0.0f : smooth(float(f - daysStart) / fps / 1.5f);
+            // The watercolor style fades in over two seconds, one second into the days.
+            const float sinceDays = float(f) / fps - float(daysStart) / fps;
+            const float blend = f < daysStart ? 0.0f : smooth((sinceDays - 1.0f) / 2.0f);
             if (style) {
                 style->setBlend(blend);
                 if (style->usesGBuffers() && blend > 0.0f) {
@@ -972,6 +1080,8 @@ int main(int argc, char** argv) {
                 std::vector<uint8_t> image = readImage(vc, (style || field ? styled : frame)->getImage(0),
                                                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
                 drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
+                if (panels && f >= daysStart)
+                    panels->draw(image, sinceDays, demonstration, season, background);
                 finishFrame(f, std::move(image), background);
                 std::cout << "frame " << f << std::endl;
             }

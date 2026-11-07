@@ -245,9 +245,13 @@ chapters run in one continuous camera move:
    the lantern, casting its shadow, and the camera follows.
 3. **Growth:** the bonsai pine grows from a seedling, branching out step by
    step.
-4. **Days:** a summer afternoon turning into night, then four days, one season
-   each. The background is white by day and black by night, with a black sun
-   and a white crescent moon where the light comes from.
+4. **Days:** a summer afternoon holding while a painted style fades in (with
+   `--style` or `--field`), then turning into night, then four days, one
+   season each. The background is white by day and black by night, with a
+   black sun and a white crescent moon where the light comes from. With
+   `--panels`, the style's training data is shown beside: a training sample
+   (rendering, classes, depth, watercolor target) while the style fades in,
+   then the season's watercolor targets by day and by night.
 
 Each chapter shows a caption naming the work it builds on. Frames go to
 `<out-dir>/frames/frame_XXXX.ppm`. The trained pumpkin goes to
@@ -263,8 +267,9 @@ Each chapter shows a caption naming the work it builds on. Frames go to
 | `--step S` | Write every S-th frame, for previews |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo001`) |
 | `--dataset N` | Instead of the video: N renderings of the final scene from random cameras, seasons and times of day as `<out-dir>/dataset/image_XXXX.png`, each with its G-buffers (`class_XXXX.png`: the surfaces' classes; `depth_XXXX.png`: their distance from the camera; `coverage_XXXX.png` and `field_depth_XXXX.png`: how much of each pixel they cover and their distance as `--field` reads them), and `dataset.yaml` giving each one's camera, light, season and time of day (needs the pumpkin of an earlier run) |
-| `--style MODEL.onnx` | The days in a painted style: an image-to-image network of `scripts/neural/train_watercolor.py` (at half the frame's size, on the rendering and, if it takes 11 input channels, its classes and depth from two more renders of the frame) restyles every frame, fading in over the first 1.5 s of the days |
-| `--field STEM` | The days in a painted style anchored in the world: the style of `scripts/neural/train_watercolor_field.py` (`STEM.onnx` and `STEM.bin`) restyles every pixel from its colour, class, the world grids at the surface point it shows (classes, coverage and depth from three more renders of the frame) and the time of day, fading in over the first 1.5 s of the days |
+| `--style MODEL.onnx` | The days in a painted style: an image-to-image network of `scripts/neural/train_watercolor.py` (at half the frame's size, on the rendering and, if it takes 11 input channels, its classes and depth from two more renders of the frame) restyles every frame, fading in over two seconds, one second into the days |
+| `--field STEM` | The days in a painted style anchored in the world: the style of `scripts/neural/train_watercolor_field.py` (`STEM.onnx` and `STEM.bin`) restyles every pixel from its colour, class, the world grids at the surface point it shows (classes, coverage and depth from three more renders of the frame) and the time of day, fading in over two seconds, one second into the days |
+| `--panels DIR` | The style's training data beside the days, as `scripts/neural/prepare_style_panels.py` prepares it: a training sample with its G-buffers and target while the style fades in, then the targets of the season shown by day and by night |
 | `--sequences N` | With `--dataset`: also N short sequences of 8 frames (a slow orbit step and a few minutes of the day per frame) with G-buffers, in `<out-dir>/dataset/sequences/`, e.g. for temporal stability |
 | `--seed S` | Seed of the dataset's random choices (default 1) |
 
