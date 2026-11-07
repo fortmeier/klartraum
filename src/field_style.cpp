@@ -21,9 +21,9 @@ namespace {
 constexpr uint32_t kMagic = 0x444C464B; // "KFLD"
 constexpr uint32_t kInputChannels = 41;
 
-// The field file: a header of 12 uint32 (magic, version, channels per grid corner, the coarse grid's size xyz, the fine
-// grid's, the paper's planes, height and width) and the box (low xyz, high xyz, floats), then the coarse grid, the
-// fine grid and the paper as floats.
+// The field file: a header of 12 uint32 (magic, version 2, channels per grid corner, the coarse grid's size xyz, the
+// fine grid's, the paper tile's planes, height and width) and the box (low xyz, high xyz, floats), then the coarse
+// grid, the fine grid and the paper as floats.
 struct FieldFile {
     uint32_t header[12];
     float box[6];
@@ -35,8 +35,8 @@ FieldFile readField(const std::string& path) {
     FieldFile field;
     file.read(reinterpret_cast<char*>(field.header), sizeof(field.header));
     file.read(reinterpret_cast<char*>(field.box), sizeof(field.box));
-    if (!file || field.header[0] != kMagic || field.header[1] != 1 || field.header[2] != 8 || field.header[9] != 4)
-        throw std::runtime_error("FieldStyle: " + path + " is no field of version 1");
+    if (!file || field.header[0] != kMagic || field.header[1] != 2 || field.header[2] != 8 || field.header[9] != 4)
+        throw std::runtime_error("FieldStyle: " + path + " is no field of version 2");
     const auto product = [&](int first) {
         return size_t(field.header[first]) * field.header[first + 1] * field.header[first + 2];
     };

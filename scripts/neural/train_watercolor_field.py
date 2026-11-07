@@ -14,7 +14,8 @@ much as the rendering does:
 
 - a feature field on a grid in world space (two resolutions), looked up at the surface point the pixel shows (from
   its depth and camera): the style's washes and strokes stay on the objects;
-- a learned paper texture fixed to the screen, like the paper of a painting;
+- a learned paper texture fixed to the screen, like the paper of a painting: a tile repeated across the frame, learned
+  at random offsets, so that it does not depend on where in the frame the scene lies;
 - a few features of the geometry around the pixel (a small convolution on the classes and depth only, for outlines);
 - the rendering's colour, the pixel's class and the view's conditions (time of day, season, light);
 
@@ -49,6 +50,8 @@ CLASSES = len(PALETTE)
 WIDTH, HEIGHT = 1280, 720
 CONDITIONS = 7
 EDGES = 16  # features of the geometry around each pixel
+PAPER = 384  # texels of the paper tile along each side
+PAPER_PIXELS = 2  # frame pixels per paper texel along each side
 
 
 def read_rgb(path: Path, resample=Image.BOX) -> np.ndarray:
@@ -174,9 +177,10 @@ class Data:
 
 
 def inputs(view: dict, window: tuple[slice, slice], device: torch.device, jitter: float = 0.0,
-           rng: np.random.Generator | None = None) -> dict:
+           rng: np.random.Generator | None = None, paper_offset: tuple[float, float] = (0.0, 0.0)) -> dict:
     """The model's inputs for a window of a view, as tensors on `device`; with `jitter`, every distance moved by up
-    to that much at random, so the style learns not to depend on the depth's last steps."""
+    to that much at random, so the style learns not to depend on the depth's last steps; the paper is read at the
+    pixel coordinates moved by `paper_offset`."""
     rows, cols = window
     height, width = view["distance"].shape
     to = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(device)
@@ -190,12 +194,28 @@ def inputs(view: dict, window: tuple[slice, slice], device: torch.device, jitter
             "surface": to(finite.astype(np.float32)),
             "depth": to(np.clip((np.where(finite, distance, 16.0) - 2.0) / 14.0, 0.0, 1.0).astype(np.float32)),
             "points": to(surface_points(view["view"], distance, window, width, height)).permute(2, 0, 1),
-            "pixels": to(np.stack([(xs + 0.5) / width * 2 - 1, (ys + 0.5) / height * 2 - 1], -1).astype(np.float32)),
+            "pixels": to(np.stack([xs + paper_offset[0], ys + paper_offset[1]], -1).astype(np.float32)),
             "conditions": to(view["conditions"])}
 
 
 def batch(items: list[dict]) -> dict:
     return {k: torch.stack([item[k] for item in items]) for k in items[0]}
+
+
+def paper_at(paper: torch.Tensor, pixels: torch.Tensor) -> torch.Tensor:
+    """The paper tile (1, C, P, Q) repeated across the frame, PAPER_PIXELS frame pixels per texel, read bilinearly at
+    the pixels (B, h, w, 2: x, y): (B, C, h, w)."""
+    _, _, rows, columns = paper.shape
+    u = (pixels[..., 0] + 0.5) / PAPER_PIXELS - 0.5
+    v = (pixels[..., 1] + 0.5) / PAPER_PIXELS - 0.5
+    u0, v0 = torch.floor(u), torch.floor(v)
+    fu, fv = (u - u0)[:, None], (v - v0)[:, None]
+    i0, j0 = u0.long() % columns, v0.long() % rows
+    i1, j1 = (i0 + 1) % columns, (j0 + 1) % rows
+    texel = lambda j, i: paper[0][:, j, i].permute(1, 0, 2, 3)  # (B, C, h, w)
+    top = texel(j0, i0) * (1 - fu) + texel(j0, i1) * fu
+    bottom = texel(j1, i0) * (1 - fu) + texel(j1, i1) * fu
+    return top * (1 - fv) + bottom * fv
 
 
 class Grid(nn.Module):
@@ -231,7 +251,7 @@ class Grid(nn.Module):
 
 class FieldStyle(nn.Module):
     def __init__(self, low: np.ndarray, high: np.ndarray, fine: float = 0.02,
-                 paper: tuple[int, int] = (HEIGHT // 2, WIDTH // 2)) -> None:
+                 paper: tuple[int, int] = (PAPER, PAPER)) -> None:
         super().__init__()
         self.coarse = Grid(low, high, 4 * fine, 8)
         self.fine = Grid(low, high, fine, 8)
@@ -254,8 +274,7 @@ class FieldStyle(nn.Module):
         field = torch.cat([self.coarse(points), self.fine(points)], -1)
         field = field.reshape(b, h, w, 16).permute(0, 3, 1, 2) * surface
         # The paper shows where no surface is; on the surfaces, the field carries the grain, anchored to them.
-        paper = F.grid_sample(self.paper.expand(b, -1, -1, -1), x["pixels"], mode="bilinear",
-                              align_corners=False) * (1.0 - surface)
+        paper = paper_at(self.paper, x["pixels"]) * (1.0 - surface)
         edges = self.edges(torch.cat([onehot, x["depth"][:, None]], 1))
         cond = x["conditions"][:, :, None, None].expand(-1, -1, h, w)
         out = self.mlp(torch.cat([rgb, onehot, field, paper, edges, cond], 1))
@@ -288,8 +307,7 @@ def pack(model: "FieldStyle", x: dict) -> torch.Tensor:
     onehot = F.one_hot(x["classes"], CLASSES).permute(0, 3, 1, 2).float()
     flat = x["points"].permute(0, 2, 3, 1).reshape(-1, 3)
     field = torch.cat([model.coarse(flat), model.fine(flat)], -1).reshape(b, h, w, 16).permute(0, 3, 1, 2) * surface
-    paper = F.grid_sample(model.paper.expand(b, -1, -1, -1), x["pixels"], mode="bilinear",
-                          align_corners=False) * (1.0 - surface)
+    paper = paper_at(model.paper, x["pixels"]) * (1.0 - surface)
     cond = x["conditions"][:, :, None, None].expand(-1, -1, h, w)
     logit = torch.logit(x["rgb"].clamp(0.02, 0.98))
     return torch.cat([x["rgb"], onehot, x["depth"][:, None], field, paper, cond, logit], 1)
@@ -340,7 +358,7 @@ def export_runtime(model: "FieldStyle", example: dict, stem: Path) -> float:
         packed = pack(model, example)
         difference = float((exported(packed) - model(example)).abs().max())
     export_onnx(exported, packed, Path(f"{stem}.onnx"))
-    header = np.array([FIELD_MAGIC, 1, 8, *model.coarse.size, *model.fine.size, *model.paper.shape[1:]], np.uint32)
+    header = np.array([FIELD_MAGIC, 2, 8, *model.coarse.size, *model.fine.size, *model.paper.shape[1:]], np.uint32)
     box = np.concatenate([model.coarse.low.numpy(), model.coarse.low.numpy() + (np.array(model.coarse.size) - 1) /
                           model.coarse.scale.numpy()]).astype(np.float32)
     with open(f"{stem}.bin", "wb") as out:
@@ -384,7 +402,9 @@ def temporal_pair(data: Data, size: int, rng: np.random.Generator, device: torch
     rx = np.clip(ix - x0, 0, x1 - x0 - 1)
     mask = inside & (np.linalg.norm(earlier_points[ry, rx] - later_points, axis=-1) < 0.05)
     grid = np.stack([(px - x0 + 0.5) / (x1 - x0) * 2 - 1, (py - y0 + 0.5) / (y1 - y0) * 2 - 1], -1)
-    return (batch([inputs(earlier, region, device, jitter, rng)]), batch([inputs(later, window, device, jitter, rng)]),
+    offset = tuple(rng.uniform(0, PAPER * PAPER_PIXELS, 2))
+    return (batch([inputs(earlier, region, device, jitter, rng, offset)]),
+            batch([inputs(later, window, device, jitter, rng, offset)]),
             torch.from_numpy(grid.astype(np.float32))[None].to(device),
             torch.from_numpy(mask.astype(np.float32))[None, None].to(device))
 
@@ -542,7 +562,7 @@ def main() -> None:
             p = data.train[rng.integers(len(data.train))]
             top, left = rng.integers(HEIGHT - args.crop + 1), rng.integers(WIDTH - args.crop + 1)
             window = (slice(top, top + args.crop), slice(left, left + args.crop))
-            items.append(inputs(p, window, device, args.jitter, rng))
+            items.append(inputs(p, window, device, args.jitter, rng, tuple(rng.uniform(0, PAPER * PAPER_PIXELS, 2))))
             targets.append(torch.from_numpy(np.ascontiguousarray(p["style"][window])).to(device).permute(2, 0, 1))
         x, y = batch(items), torch.stack(targets).float() / 255.0
         out = model(x)

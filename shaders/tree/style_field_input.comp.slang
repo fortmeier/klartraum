@@ -8,7 +8,7 @@ import glsl;
 // size, NCHW: the colour (3), the classes of the G-buffer one-hot (7, the class whose colour is nearest), the depth
 // (1, the distance from the camera mapped from [2, 16] to [0, 1], 1 for background), the features of the two world
 // grids at the surface point the pixel shows (16, 0 for background), the paper's features at the pixel (4, 0 on
-// surfaces), the frame's conditions (7) and the logit of the colour (3, clamped to [0.02, 0.98]).
+// surfaces; a tile repeated across the frame, two pixels per texel), the frame's conditions (7) and the logit of the colour (3, clamped to [0.02, 0.98]).
 //
 // A pixel shows a surface where its class is not background and the surfaces cover more than 5 % of it (the coverage
 // G-buffer). Its distance comes from the depth G-buffer over black between the frame's near and far: the mean of its
@@ -69,13 +69,15 @@ void lookUp(uint offset, uvec3 size, vec3 p, inout float features[16], uint firs
     }
 }
 
-// The paper's plane `c` at texel (x, y), zero outside it (grid_sample's zero padding).
+// The paper's plane `c` at texel (x, y) of its tile, repeated across the frame.
 float paperAt(uint c, int x, int y) {
-    if (x < 0 || y < 0 || x >= int(pc.paperWidth) || y >= int(pc.paperHeight)) {
-        return 0.0f;
-    }
-    return field[pc.paperOffset + (c * pc.paperHeight + uint(y)) * pc.paperWidth + uint(x)];
+    int w = int(pc.paperWidth), h = int(pc.paperHeight);
+    uint i = uint(((x % w) + w) % w), j = uint(((y % h) + h) % h);
+    return field[pc.paperOffset + (c * pc.paperHeight + j) * pc.paperWidth + i];
 }
+
+// Frame pixels per paper texel along each side.
+static const float PAPER_PIXELS = 2.0f;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -121,8 +123,8 @@ void main() {
         lookUp(0u, uvec3(pc.coarseX, pc.coarseY, pc.coarseZ), p, features, 0u);
         lookUp(pc.fineOffset, uvec3(pc.fineX, pc.fineY, pc.fineZ), p, features, CHANNELS);
     } else {
-        float sx = (float(pixel.x) + 0.5f) * float(pc.paperWidth) / float(pc.width) - 0.5f;
-        float sy = (float(pixel.y) + 0.5f) * float(pc.paperHeight) / float(pc.height) - 0.5f;
+        float sx = (float(pixel.x) + 0.5f) / PAPER_PIXELS - 0.5f;
+        float sy = (float(pixel.y) + 0.5f) / PAPER_PIXELS - 0.5f;
         int x0 = int(floor(sx)), y0 = int(floor(sy));
         float fx = sx - float(x0), fy = sy - float(y0);
         for (uint k = 0u; k < 4u; ++k) {

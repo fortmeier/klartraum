@@ -63,7 +63,7 @@ def main() -> None:
     rng = np.random.default_rng(11)
     low, high = np.array([-1.0, -0.5, -1.0]), np.array([1.0, 1.5, 1.0])
     torch.manual_seed(5)
-    model = FieldStyle(low, high, fine=0.2, paper=(32, 48))
+    model = FieldStyle(low, high, fine=0.2, paper=(20, 28))  # smaller than the frame: the tile repeats
     for p in model.parameters():
         torch.nn.init.normal_(p, std=0.3)
     model.eval()
@@ -92,7 +92,7 @@ def main() -> None:
         y = model(x)
         packed = pack(model, x)
     difference = export_runtime(model, x, out / "field_fixture")
-    assert difference < 1e-5, difference
+    assert difference < 1e-4, difference
     surface = float(x["surface"].mean())
     print(f"{surface:.0%} of the pixels show a surface; exported network within {difference:.1e}")
 

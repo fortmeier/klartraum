@@ -34,12 +34,12 @@ std::pair<float, float> fieldDepthWindow(glm::vec3 eye, glm::vec3 low, glm::vec3
  * Every pixel is styled from what the renderer knows about it: its colour, class and distance from the camera (the
  * BonsaiRenderer's colour, classes, coverage and depth G-buffers of the same view: the coverage a depth rendering
  * over black whose window lies in front of everything, the depth one over black between the near and far of
- * setFrame()), the features of two grids in world space at the surface point it shows, the paper
- * at the pixel where it shows none, and the frame's conditions. `style_field_input.comp` packs these into the
- * network's 41 input planes, the ONNX network (the edge convolutions and the per-pixel MLP) runs at the
- * frame's size, and `style_transfer_output.comp` blends its output over `color` into `output` by setBlend(). The
- * grids and the paper come from the field file. The images are the frame's size and in TRANSFER_SRC_OPTIMAL before
- * (`producer` last writes them) and after; compile a graph from getOutput().
+ * setFrame()), the features of two grids in world space at the surface point it shows, the paper (a tile repeated
+ * across the frame, two pixels per texel) at the pixel where it shows none, and the frame's conditions.
+ * `style_field_input.comp` packs these into the network's 41 input planes, the ONNX network (the edge convolutions and
+ * the per-pixel MLP) runs at the frame's size, and `style_transfer_output.comp` blends its output over `color` into
+ * `output` by setBlend(). The grids and the paper come from the field file. The images are the frame's size and in
+ * TRANSFER_SRC_OPTIMAL before (`producer` last writes them) and after; compile a graph from getOutput().
  */
 class FieldStyle {
 public:
