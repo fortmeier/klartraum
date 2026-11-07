@@ -4,7 +4,7 @@
 
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["torch", "torchvision", "numpy", "pillow", "pyyaml"]
+# dependencies = ["torch", "torchvision", "numpy", "pillow", "pyyaml", "onnx"]
 # ///
 
 """Trains a watercolor stylization that is anchored in the world instead of the screen.
@@ -43,11 +43,12 @@ import yaml
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
-from train_watercolor import PALETTE, Perceptual  # noqa: E402
+from train_watercolor import PALETTE, PatchDiscriminator, Perceptual  # noqa: E402
 
 CLASSES = len(PALETTE)
 WIDTH, HEIGHT = 1280, 720
 CONDITIONS = 7
+EDGES = 16  # features of the geometry around each pixel
 
 
 def read_rgb(path: Path, resample=Image.BOX) -> np.ndarray:
@@ -156,7 +157,9 @@ class Data:
         for sequence in sequences["sequences"]:
             folder = gbuffers / "sequences" / sequence["name"]
             self.sequences.append([read_view(folder, frame, self.near, self.far) for frame in sequence["frames"]])
-        self.held_sequences = self.sequences[-max(len(self.sequences) // 5, 1):]
+        held_count = max(len(self.sequences) // 5, 1)
+        self.held_sequences = self.sequences[-held_count:]
+        self.train_sequences = self.sequences[:-held_count]
         if "field_box_low" in description:
             # The box the dataset's field depth was drawn for.
             self.low = np.array(description["field_box_low"], np.float64)
@@ -170,19 +173,23 @@ class Data:
             self.low, self.high = low - 0.1, high + 0.1
 
 
-def inputs(view: dict, window: tuple[slice, slice], device: torch.device) -> dict:
-    """The model's inputs for a window of a view, as tensors on `device`."""
+def inputs(view: dict, window: tuple[slice, slice], device: torch.device, jitter: float = 0.0,
+           rng: np.random.Generator | None = None) -> dict:
+    """The model's inputs for a window of a view, as tensors on `device`; with `jitter`, every distance moved by up
+    to that much at random, so the style learns not to depend on the depth's last steps."""
     rows, cols = window
     height, width = view["distance"].shape
     to = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(device)
     ys, xs = np.mgrid[rows, cols]
     distance = view["distance"][window]
+    if jitter > 0.0:
+        distance = distance + rng.uniform(-jitter, jitter, distance.shape).astype(np.float32)
     finite = np.isfinite(distance)
     return {"rgb": to(view["rgb"][window]).permute(2, 0, 1).float() / 255.0,
             "classes": to(view["classes"][window]).long(),
             "surface": to(finite.astype(np.float32)),
             "depth": to(np.clip((np.where(finite, distance, 16.0) - 2.0) / 14.0, 0.0, 1.0).astype(np.float32)),
-            "points": to(points(view, window)).permute(2, 0, 1),
+            "points": to(surface_points(view["view"], distance, window, width, height)).permute(2, 0, 1),
             "pixels": to(np.stack([(xs + 0.5) / width * 2 - 1, (ys + 0.5) / height * 2 - 1], -1).astype(np.float32)),
             "conditions": to(view["conditions"])}
 
@@ -229,9 +236,12 @@ class FieldStyle(nn.Module):
         self.coarse = Grid(low, high, 4 * fine, 8)
         self.fine = Grid(low, high, fine, 8)
         self.paper = nn.Parameter(torch.zeros(1, 4, *paper))
-        self.edges = nn.Sequential(nn.Conv2d(CLASSES + 1, 16, 3, padding=1), nn.ReLU(),
-                                   nn.Conv2d(16, 16, 3, padding=1), nn.ReLU(), nn.Conv2d(16, 8, 3, padding=1))
-        width = 3 + CLASSES + 16 + 4 + 8 + CONDITIONS
+        # About 17 pixels around each pixel, for outline strokes.
+        self.edges = nn.Sequential(nn.Conv2d(CLASSES + 1, 32, 3, padding=1), nn.ReLU(),
+                                   nn.Conv2d(32, 32, 3, padding=2, dilation=2), nn.ReLU(),
+                                   nn.Conv2d(32, 32, 3, padding=4, dilation=4), nn.ReLU(),
+                                   nn.Conv2d(32, EDGES, 3, padding=1))
+        width = 3 + CLASSES + 16 + 4 + EDGES + CONDITIONS
         self.mlp = nn.Sequential(nn.Conv2d(width, 64, 1), nn.ReLU(), nn.Conv2d(64, 64, 1), nn.ReLU(),
                                  nn.Conv2d(64, 64, 1), nn.ReLU(), nn.Conv2d(64, 3, 1))
 
@@ -291,16 +301,16 @@ class Exported(nn.Module):
     def __init__(self, model: "FieldStyle") -> None:
         super().__init__()
         e = model.edges
-        first = nn.Conv2d(INPUT_CHANNELS, 16, 3, padding=1)
+        first = nn.Conv2d(INPUT_CHANNELS, e[0].out_channels, 3, padding=1)
         with torch.no_grad():
             first.weight.zero_()
             first.weight[:, 3:11] = e[0].weight  # the classes and the depth
             first.bias.copy_(e[0].bias)
         self.edges = nn.Sequential(first, *list(e)[1:])
         m = model.mlp[0]
-        joined = nn.Conv2d(INPUT_CHANNELS + 8, 64, 1)
+        joined = nn.Conv2d(INPUT_CHANNELS + EDGES, 64, 1)
         # Columns of the MLP's input (rgb, classes, field, paper, edges, conditions) in the packed planes + edges.
-        columns = list(range(0, 10)) + list(range(11, 31)) + list(range(41, 49)) + list(range(31, 38))
+        columns = list(range(0, 10)) + list(range(11, 31)) + list(range(41, 41 + EDGES)) + list(range(31, 38))
         with torch.no_grad():
             joined.weight.zero_()
             joined.weight[:, columns] = m.weight
@@ -342,9 +352,68 @@ def export_runtime(model: "FieldStyle", example: dict, stem: Path) -> float:
     return difference
 
 
+def temporal_pair(data: Data, size: int, rng: np.random.Generator, device: torch.device, jitter: float):
+    """A window of a training sequence's frame and the region of the frame before that its surface points fall in:
+    the two inputs, the grid that samples the earlier output at the later window's points (grid_sample), and the
+    mask of the points seen in both."""
+    frames = data.train_sequences[rng.integers(len(data.train_sequences))]
+    k = rng.integers(len(frames) - 1)
+    earlier, later = frames[k], frames[k + 1]
+    height, width = later["distance"].shape
+    top, left = rng.integers(height - size + 1), rng.integers(width - size + 1)
+    window = (slice(top, top + size), slice(left, left + size))
+    later_points = points(later, window).astype(np.float64)
+    camera = earlier["view"]["camera"]
+    clip = np.concatenate([later_points, np.ones((size, size, 1))], -1) @ (
+        matrix(camera["projection"]) @ matrix(camera["view"])).T
+    px = (clip[..., 0] / clip[..., 3] * 0.5 + 0.5) * width - 0.5
+    py = (clip[..., 1] / clip[..., 3] * 0.5 + 0.5) * height - 0.5
+    inside = np.isfinite(later["distance"][window]) & (px >= 0) & (px <= width - 1) & (py >= 0) & (py <= height - 1)
+    if inside.sum() < 64:
+        return None
+    x0, x1 = int(max(0, np.floor(px[inside].min()) - 2)), int(min(width, np.ceil(px[inside].max()) + 3))
+    y0, y1 = int(max(0, np.floor(py[inside].min()) - 2)), int(min(height, np.ceil(py[inside].max()) + 3))
+    if (x1 - x0) * (y1 - y0) > 4 * size * size:
+        return None
+    region = (slice(y0, y1), slice(x0, x1))
+    ix = np.clip(np.round(px).astype(int), 0, width - 1)
+    iy = np.clip(np.round(py).astype(int), 0, height - 1)
+    # Seen in the earlier frame: its surface there lies where the later point is.
+    earlier_points = points(earlier, region)
+    ry = np.clip(iy - y0, 0, y1 - y0 - 1)
+    rx = np.clip(ix - x0, 0, x1 - x0 - 1)
+    mask = inside & (np.linalg.norm(earlier_points[ry, rx] - later_points, axis=-1) < 0.05)
+    grid = np.stack([(px - x0 + 0.5) / (x1 - x0) * 2 - 1, (py - y0 + 0.5) / (y1 - y0) * 2 - 1], -1)
+    return (batch([inputs(earlier, region, device, jitter, rng)]), batch([inputs(later, window, device, jitter, rng)]),
+            torch.from_numpy(grid.astype(np.float32))[None].to(device),
+            torch.from_numpy(mask.astype(np.float32))[None, None].to(device))
+
+
+def temporal_loss(model: nn.Module, pair) -> torch.Tensor:
+    """The output's change at the same surface points from one frame to the next, where the rendering does not
+    change: what the style adds on its own (from the depth's error, say)."""
+    x0, x1, grid, mask = pair
+    o0, o1 = model(x0), model(x1)
+    warp = lambda image: F.grid_sample(image, grid, mode="bilinear", padding_mode="border", align_corners=False)
+    change = (o1 - warp(o0)).abs().mean(1, keepdim=True)
+    rendering = (x1["rgb"] - warp(x0["rgb"])).abs().mean(1, keepdim=True)
+    weight = mask * torch.exp(-rendering * 30.0)
+    return (weight * change).sum() / (weight.sum() + 1.0)
+
+
+def bilinear(image: np.ndarray, fx: np.ndarray, fy: np.ndarray) -> np.ndarray:
+    """`image` (C, H, W) sampled bilinearly at pixel coordinates (fx, fy), inside it."""
+    x0, y0 = np.floor(fx).astype(int), np.floor(fy).astype(int)
+    ax, ay = fx - x0, fy - y0
+    top = image[:, y0, x0] * (1 - ax) + image[:, y0, x0 + 1] * ax
+    bottom = image[:, y0 + 1, x0] * (1 - ax) + image[:, y0 + 1, x0 + 1] * ax
+    return top * (1 - ay) + bottom * ay
+
+
 def flicker_ratio(model: nn.Module, data: Data, device: torch.device, excess: bool = False) -> float:
     """The mean change of the output between consecutive frames of the held-out sequences at the same surface points
-    (reprojected with depth and cameras, where seen in both), relative to that of the rendering.
+    (reprojected with depth and cameras, where seen in both, both images sampled bilinearly there), relative to that
+    of the rendering.
 
     With `excess`, relative to the change of the best affine colour mapping of the rendering to the output (fitted
     per frame): a brighter style scales the rendering's own changes, which is no flicker; 1 means the output changes
@@ -360,16 +429,17 @@ def flicker_ratio(model: nn.Module, data: Data, device: torch.device, excess: bo
                 clip = np.concatenate([later_points.astype(np.float64), np.ones((HEIGHT, WIDTH, 1))], -1) @ (
                     matrix(earlier["view"]["camera"]["projection"]) @ matrix(earlier["view"]["camera"]["view"])).T
                 ndc = clip[..., :2] / clip[..., 3:]
-                px = np.clip(((ndc[..., 0] * 0.5 + 0.5) * WIDTH).astype(int), 0, WIDTH - 1)
-                py = np.clip(((ndc[..., 1] * 0.5 + 0.5) * HEIGHT).astype(int), 0, HEIGHT - 1)
+                fx = np.clip((ndc[..., 0] * 0.5 + 0.5) * WIDTH - 0.5, 0, WIDTH - 1.001)
+                fy = np.clip((ndc[..., 1] * 0.5 + 0.5) * HEIGHT - 0.5, 0, HEIGHT - 1.001)
+                px, py = np.round(fx).astype(int), np.round(fy).astype(int)
                 seen = earlier_points[py, px]
                 mask = (later["classes"] > 0) & (np.abs(ndc) < 1).all(-1) & \
                        (np.linalg.norm(seen - later_points, axis=-1) < 0.1)
                 if mask.sum() < 100:
                     continue
-                o1, o0 = outputs[k + 1], outputs[k][:, py, px]
+                o1, o0 = outputs[k + 1], bilinear(outputs[k], fx, fy)
                 r1 = later["rgb"].transpose(2, 0, 1) / 255.0
-                r0 = earlier["rgb"][py, px].transpose(2, 0, 1) / 255.0
+                r0 = bilinear(earlier["rgb"].transpose(2, 0, 1) / 255.0, fx, fy)
                 if excess:
                     m = affine_fit(r1, o1, mask)
                     r1, r0 = affine_apply(m, r1), affine_apply(m, r0)
@@ -434,7 +504,12 @@ def main() -> None:
     parser.add_argument("--crop", type=int, default=320)
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--perceptual", type=float, default=0.05)
+    parser.add_argument("--gan", type=float, default=0.0, help="weight of a patch discriminator's loss")
+    parser.add_argument("--gan-from", type=float, default=0.25, help="share of the steps before the discriminator")
+    parser.add_argument("--temporal", type=float, default=0.0, help="weight of the temporal loss on the sequences")
+    parser.add_argument("--jitter", type=float, default=0.01, help="random change of the distances in training")
     parser.add_argument("--fine", type=float, default=0.02, help="cell size of the fine grid")
+    parser.add_argument("--load", type=Path, help="start from this field.pt (with --steps 0: evaluate and export it)")
     args = parser.parse_args()
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     torch.manual_seed(0)
@@ -446,11 +521,17 @@ def main() -> None:
     say(f"{len(data.train)} training pairs, {len(data.held)} held out, {len(data.sequences)} sequences; field box "
         f"{np.round(data.low, 2).tolist()} to {np.round(data.high, 2).tolist()}")
     model = FieldStyle(data.low, data.high, args.fine).to(device)
+    if args.load:
+        model.load_state_dict(torch.load(args.load, map_location=device)["model"])
     perceptual = Perceptual().to(device)
     grids = [model.coarse.features, model.fine.features, model.paper]
     others = [p for n, p in model.named_parameters() if not any(p is g for g in grids)]
     optimizer = torch.optim.Adam([{"params": grids, "lr": 1e-2}, {"params": others, "lr": 1e-3}])
     base = [g["lr"] for g in optimizer.param_groups]
+    # The discriminator sees the rendering, the classes and the output (or the target).
+    discriminator = PatchDiscriminator(3 + CLASSES + 3).to(device)
+    d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
+    condition = lambda x: torch.cat([x["rgb"], F.one_hot(x["classes"], CLASSES).permute(0, 3, 1, 2).float()], 1)
     start = time.time()
     for step in range(args.steps):
         factor = 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * step / args.steps))
@@ -461,15 +542,30 @@ def main() -> None:
             p = data.train[rng.integers(len(data.train))]
             top, left = rng.integers(HEIGHT - args.crop + 1), rng.integers(WIDTH - args.crop + 1)
             window = (slice(top, top + args.crop), slice(left, left + args.crop))
-            items.append(inputs(p, window, device))
+            items.append(inputs(p, window, device, args.jitter, rng))
             targets.append(torch.from_numpy(np.ascontiguousarray(p["style"][window])).to(device).permute(2, 0, 1))
         x, y = batch(items), torch.stack(targets).float() / 255.0
         out = model(x)
         l1 = F.l1_loss(out, y)
         loss = l1 + args.perceptual * perceptual(out, y)
+        if args.temporal > 0.0:
+            pair = temporal_pair(data, 192, rng, device, args.jitter)
+            if pair is not None:
+                loss = loss + args.temporal * temporal_loss(model, pair)
+        adversarial = args.gan > 0.0 and step >= args.gan_from * args.steps
+        if adversarial:
+            c = condition(x)
+            loss = loss + args.gan * F.softplus(-discriminator(torch.cat([c, out], 1))).mean()
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
+        if adversarial:
+            real = discriminator(torch.cat([c, y], 1))
+            fake = discriminator(torch.cat([c, out.detach()], 1))
+            d_loss = F.softplus(-real).mean() + F.softplus(fake).mean()
+            d_optimizer.zero_grad(set_to_none=True)
+            d_loss.backward()
+            d_optimizer.step()
         if step % 200 == 0:
             say(f"step {step}: l1 {float(l1.detach()):.4f}, loss {float(loss.detach()):.4f}, "
                 f"{time.time() - start:.0f} s")
