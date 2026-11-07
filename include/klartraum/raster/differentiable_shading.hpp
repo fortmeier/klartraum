@@ -6,6 +6,9 @@
 #define KLARTRAUM_RASTER_DIFFERENTIABLE_SHADING_HPP
 
 #include <cstdint>
+#include <vector>
+
+#include <glm/glm.hpp>
 
 #include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/vulkan_context.hpp"
@@ -57,6 +60,44 @@ ComputeGraphElementPtr shadeBackward(VulkanContext& vulkanContext, uint32_t widt
  */
 ComputeGraphElementPtr shadeColorBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
                                           uint32_t textureWidth, uint32_t textureHeight);
+
+/// Lights of the specular environment (specular()).
+constexpr uint32_t kSpecularLights = 4;
+
+/**
+ * @brief Adds every triangle's area-weighted normal to its vertices: the sums' directions are the smooth vertex
+ * normals (specular()).
+ *
+ * Slots: 0 positions (four floats per vertex), 1 triangles (three uint32 each), 2 normals (four floats per vertex,
+ * added to; clearBuffers() zeroes them before).
+ */
+ComputeGraphElementPtr vertexNormals(VulkanContext& vulkanContext, uint32_t triangleCount);
+
+/**
+ * @brief Adds a specular reflection to the shaded colours of the covered pixels (shaders/raster/specular.slang): per
+ * texel a material of a normal offset (a normal map in object space, xyz) and an amplitude a (w); an environment of
+ * kSpecularLights lights (direction xyz, amplitude b) and an exponent e (four floats after them: log e, 0, 0, 0),
+ * shared by all views. The grey a^2 sum_k b_k^2 max(dot(r, d_k), 0)^e is added, with r the direction to the eye
+ * reflected about the smooth normal (the vertex normals interpolated) tilted by the offset.
+ *
+ * Slots: 0-6 as shade(), 7 colours (four floats per pixel, added to), 8 material (four floats per texel), 9 lights
+ * (four floats per light, then four), 10 vertex normals (vertexNormals()), 11 eyes (four floats per view: the
+ * camera's position).
+ */
+ComputeGraphElementPtr specular(VulkanContext& vulkanContext, uint32_t width, uint32_t height, uint32_t textureWidth,
+                                uint32_t textureHeight);
+
+/**
+ * @brief Gradients of specular() with respect to the material and the lights, from the gradients of the colours.
+ *
+ * Slots: 0-6 as shade(), 7 colour gradients (four floats per pixel, rgb used), 8-11 as specular(), 12 material
+ * gradients (four floats per texel, added to), 13 light gradients (as the lights, added to).
+ */
+ComputeGraphElementPtr specularBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                        uint32_t textureWidth, uint32_t textureHeight);
+
+/** @brief The positions of @p cameras (clip-from-world matrices) as four floats each (xyz, 1), for specular(). */
+std::vector<float> cameraEyes(const std::vector<glm::mat4>& cameras);
 
 /**
  * @brief Analytic antialiasing of silhouettes (shaders/raster/antialias.slang): where a mesh edge separates two
