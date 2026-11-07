@@ -19,6 +19,7 @@
 //
 //   techdemo001_example [--pot FILE] [--photos DIR] [--width 1280] [--height 720] [--fps 30]
 //                       [--from 0] [--to 3] [--step 1] [--out-dir build/TestingOutput/techdemo001]
+//                       [--style MODEL.onnx | --field STEM]
 //
 // --pot is the object.spz of splat_training_example for the bonsai pot (default:
 // build/TestingOutput/splat_training/bonsai/object.spz), --photos the pumpkin's photographs as prepared by
@@ -27,12 +28,15 @@
 // every n-th frame for previews.
 
 #include <algorithm>
+#include <functional>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -49,6 +53,7 @@
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/demo_sky_marks.hpp"
 #include "klartraum/demo_timeline.hpp"
+#include "klartraum/field_style.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/raster/fitting_scene.hpp"
@@ -200,13 +205,32 @@ void copyImage(VulkanContext& vc, VkImage source, VkImage target, VkExtent2D ext
 
 // Writes `count` renderings of the bonsai scene (the trees fully grown, no wind) from random cameras at random seasons
 // and times of day to `directory` as PNG files, each with its G-buffers (class_XXXX.png: the surfaces' classes as
-// tree::treeClassColor(); depth_XXXX.png: their distance from the camera as grey from kDepthNear to kDepthFar), and
-// dataset.yaml giving each one's camera, light, season and time. The background is white by day and black by night
+// tree::treeClassColor(); depth_XXXX.png: their distance from the camera as grey from kDepthNear to kDepthFar;
+// coverage_XXXX.png: how much of every pixel the surfaces cover, as grey; field_depth_XXXX.png: their distance over
+// black as FieldStyle reads it, in the window of kFieldBoxLow..kFieldBoxHigh, with the finer steps of the three
+// channels, tree::treeGBufferColor()),
+// and dataset.yaml giving each one's camera, light, season and time. The background is white by day and black by night
 // as in the video; there are no captions and no sun or moon. With `sequences`, also that many short sequences of
 // kSequenceFrames frames each (a slow orbit step and a few minutes of the day from frame to frame) to
 // sequences/seq_XXX/, with sequences.yaml, e.g. for training and measuring temporal stability.
 constexpr float kDepthNear = 2.0f, kDepthFar = 16.0f;
+// The box FieldStyle's world grids cover: the pot, the soil and the fully grown tree.
+constexpr glm::vec3 kFieldBoxLow(-1.7f, -0.55f, -1.3f), kFieldBoxHigh(1.7f, 3.7f, 1.2f);
 constexpr uint32_t kSequenceFrames = 8;
+
+// The conditions FieldStyle's network was trained with (train_watercolor_field.py: conditions()): time of day and
+// season on circles, the directional light (the moon's counted less), the exposure and the background.
+std::array<float, 7> fieldConditions(float timeOfDay, float season, float lightIntensity, bool sun, float exposure,
+                                     float background) {
+    const float tau = 6.2831853f, s = season / 4.0f;
+    return {std::sin(tau * timeOfDay),
+            std::cos(tau * timeOfDay),
+            std::sin(tau * s),
+            std::cos(tau * s),
+            lightIntensity * (sun ? 1.0f : 0.3f),
+            exposure / 3.0f,
+            background};
+}
 
 void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfig config, VkExtent2D extent,
                   uint32_t count, uint32_t sequences, uint32_t seed, const std::filesystem::path& directory) {
@@ -246,9 +270,11 @@ void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfi
             }
         return nearest;
     };
+    const auto readTarget = [&]() {
+        return readImage(vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    };
     const auto writePng = [&](const std::filesystem::path& path) {
-        const std::vector<uint8_t> bgra =
-            readImage(vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+        const std::vector<uint8_t> bgra = readTarget();
         std::vector<uint8_t> rgb(3 * size_t(extent.width) * extent.height);
         for (size_t p = 0; p < size_t(extent.width) * extent.height; ++p)
             for (int c = 0; c < 3; ++c)
@@ -275,10 +301,21 @@ void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfi
         bonsai.setBackground(glm::vec3(0.0f));
         graph.submitAndWait(vc.getGraphicsQueue(), 0);
         writePng(folder / ("class_" + suffix + ".png"));
+        // How much of every pixel the surfaces cover: a depth rendering whose window lies in front of everything
+        // shows every surface white, over black.
+        bonsai.setOutput(BonsaiOutput::Depth, -2.0f, -1.0f);
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        writePng(folder / ("coverage_" + suffix + ".png"));
         bonsai.setOutput(BonsaiOutput::Depth, kDepthNear, kDepthFar);
         bonsai.setBackground(glm::vec3(1.0f));
         graph.submitAndWait(vc.getGraphicsQueue(), 0);
         writePng(folder / ("depth_" + suffix + ".png"));
+        // The depth as FieldStyle reads it: over black, in the window of the field's box.
+        const auto [fieldNear, fieldFar] = fieldDepthWindow(eye, kFieldBoxLow, kFieldBoxHigh);
+        bonsai.setOutput(BonsaiOutput::Depth, fieldNear, fieldFar);
+        bonsai.setBackground(glm::vec3(0.0f));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        writePng(folder / ("field_depth_" + suffix + ".png"));
         bonsai.setOutput(BonsaiOutput::Colour);
 
         const TreeRenderSettings s = bonsai.getSettings().values().at(0);
@@ -293,6 +330,10 @@ void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfi
         yaml << i << "- file: image_" << suffix << ".png\n"
              << i << "  classes: class_" << suffix << ".png\n"
              << i << "  depth: depth_" << suffix << ".png\n"
+             << i << "  coverage: coverage_" << suffix << ".png\n"
+             << i << "  field_depth: field_depth_" << suffix << ".png\n"
+             << i << "  field_depth_near: " << fieldNear << "\n"
+             << i << "  field_depth_far: " << fieldFar << "\n"
              << i << "  season: " << season << "\n"
              << i << "  season_name: " << seasonName(season) << "\n"
              << i << "  time_of_day: " << timeOfDay << "\n"
@@ -354,7 +395,10 @@ void writeDataset(VulkanContext& vc, const BonsaiScene& scene, BonsaiRenderConfi
 
     std::ofstream yaml(directory / "dataset.yaml");
     yaml << std::setprecision(6) << header << "width: " << extent.width << "\nheight: " << extent.height
-         << "\nseed: " << seed << "\ndepth_near: " << kDepthNear << "\ndepth_far: " << kDepthFar << "\nimages:\n";
+         << "\nseed: " << seed << "\ndepth_near: " << kDepthNear << "\ndepth_far: " << kDepthFar << "\nfield_box_low: ["
+         << kFieldBoxLow.x << ", " << kFieldBoxLow.y << ", " << kFieldBoxLow.z << "]"
+         << "\nfield_box_high: [" << kFieldBoxHigh.x << ", " << kFieldBoxHigh.y << ", " << kFieldBoxHigh.z << "]"
+         << "\nimages:\n";
     for (uint32_t i = 0; i < count; ++i) {
         const auto [azimuth, elevation, distance, lookAt] = randomView();
         const float timeOfDay = uniform(0.0f, 1.0f), season = uniform(0.0f, 4.0f);
@@ -407,7 +451,7 @@ int main(int argc, char** argv) {
     int fromChapter = 0, toChapter = int(kChapters.size()) - 1;
     uint32_t step = 1;
     uint32_t datasetCount = 0, sequenceCount = 0, datasetSeed = 1;
-    std::filesystem::path stylePath;
+    std::filesystem::path stylePath, fieldPath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -437,6 +481,8 @@ int main(int argc, char** argv) {
             sequenceCount = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--style" && hasValue)
             stylePath = argv[++i];
+        else if (arg == "--field" && hasValue)
+            fieldPath = argv[++i];
     }
     if (datasetCount > 0) {
         // Only the dataset, of the scene with the pumpkin of an earlier run: no chapters.
@@ -837,8 +883,16 @@ int main(int argc, char** argv) {
         if (!stylePath.empty())
             style = std::make_unique<StyleTransfer>(vc, stylePath.string(), frame, styled, bonsai.getOutput(), classes,
                                                     depth);
+        // With --field, the style anchored in the world (FieldStyle): it reads the classes, the coverage and the
+        // depth in its box's window, each from one more render of every frame.
+        std::unique_ptr<FieldStyle> field;
+        auto coverage = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        coverage->setClear(false);
+        if (!fieldPath.empty())
+            field = std::make_unique<FieldStyle>(vc, fieldPath.string() + ".onnx", fieldPath.string() + ".bin", frame,
+                                                 classes, coverage, depth, styled, bonsai.getOutput());
         ComputeGraph graph(vc, 1);
-        graph.compileFrom(style ? style->getOutput() : bonsai.getOutput());
+        graph.compileFrom(field ? field->getOutput() : style ? style->getOutput() : bonsai.getOutput());
         bonsai.initialize(1);
         BonsaiDays days;
         // The growth's summer noon turns into the night over the first seconds; then four days from midnight.
@@ -889,10 +943,34 @@ int main(int argc, char** argv) {
                     bonsai.setBackground(glm::vec3(background));
                 }
             }
+            if (field) {
+                field->setBlend(blend);
+                const auto [near, far] = field->depthWindow(pose.eye);
+                const TreeRenderSettings settings = bonsai.getSettings().values().at(0);
+                const TreeSky sky = treeSkyAt(timeOfDay, season);
+                const bool sun = glm::dot(sky.lightDirection, sky.sunDirection) > 0.999f;
+                const CameraMVP& camera = bonsai.getCamera()->ubo;
+                field->setFrame(camera.proj * camera.view, pose.eye, near, far,
+                                fieldConditions(timeOfDay, season, settings.sun.w, sun, settings.sky.w, background));
+                if (blend > 0.0f) {
+                    const std::pair<std::shared_ptr<OffscreenTarget>, std::function<void()>> gbuffers[] = {
+                        {classes, [&] { bonsai.setOutput(BonsaiOutput::Classes); }},
+                        {coverage, [&] { bonsai.setOutput(BonsaiOutput::Depth, -2.0f, -1.0f); }},
+                        {depth, [&] { bonsai.setOutput(BonsaiOutput::Depth, near, far); }}};
+                    bonsai.setBackground(glm::vec3(0.0f));
+                    for (const auto& [target, select] : gbuffers) {
+                        select();
+                        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                        copyImage(vc, frame->getImage(0), target->getImage(0), extent);
+                    }
+                    bonsai.setOutput(BonsaiOutput::Colour);
+                    bonsai.setBackground(glm::vec3(background));
+                }
+            }
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
             if ((f - begin) % step == 0) {
-                std::vector<uint8_t> image =
-                    readImage(vc, (style ? styled : frame)->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+                std::vector<uint8_t> image = readImage(vc, (style || field ? styled : frame)->getImage(0),
+                                                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
                 drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
                 finishFrame(f, std::move(image), background);
                 std::cout << "frame " << f << std::endl;
