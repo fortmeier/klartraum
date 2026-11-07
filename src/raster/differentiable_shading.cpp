@@ -19,6 +19,10 @@ struct ShadingPushConstants {
     uint32_t width, height, textureWidth, textureHeight;
 };
 
+struct ImagePushConstants {
+    uint32_t width, height;
+};
+
 struct ImageLossPushConstants {
     uint32_t width, height;
     float maskWeight;
@@ -71,6 +75,11 @@ ComputeGraphElementPtr shade(VulkanContext& vulkanContext, uint32_t width, uint3
     return shading(vulkanContext, "shaders/raster/shade.comp.spv", width, height, textureWidth, textureHeight);
 }
 
+ComputeGraphElementPtr surfaceDepth(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                    uint32_t textureWidth, uint32_t textureHeight) {
+    return shading(vulkanContext, "shaders/raster/surface_depth.comp.spv", width, height, textureWidth, textureHeight);
+}
+
 ComputeGraphElementPtr shadeBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
                                      uint32_t textureWidth, uint32_t textureHeight) {
     return shading(vulkanContext, "shaders/raster/shade_backward.comp.spv", width, height, textureWidth, textureHeight);
@@ -91,6 +100,27 @@ ComputeGraphElementPtr antialiasBackward(VulkanContext& vulkanContext, uint32_t 
                                          uint32_t textureWidth, uint32_t textureHeight) {
     return shading(vulkanContext, "shaders/raster/antialias_backward.comp.spv", width, height, textureWidth,
                    textureHeight);
+}
+
+namespace {
+
+ComputeGraphElementPtr perPixel(VulkanContext& vulkanContext, const char* shader, uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0)
+        throw std::invalid_argument("compositeOver: the image size must be positive");
+    auto operation = vulkanContext.create<GeneralComputation<ImagePushConstants>>(shader);
+    operation->setPushConstants({{width, height}});
+    operation->setGroupCountX((width * height + 255) / 256);
+    return operation;
+}
+
+} // namespace
+
+ComputeGraphElementPtr compositeOver(VulkanContext& vulkanContext, uint32_t width, uint32_t height) {
+    return perPixel(vulkanContext, "shaders/raster/composite_over.comp.spv", width, height);
+}
+
+ComputeGraphElementPtr compositeOverBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height) {
+    return perPixel(vulkanContext, "shaders/raster/composite_over_backward.comp.spv", width, height);
 }
 
 ComputeGraphElementPtr imageLoss(VulkanContext& vulkanContext, uint32_t width, uint32_t height, float maskWeight) {

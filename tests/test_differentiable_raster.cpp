@@ -36,6 +36,14 @@
  * - antialiasGradientsMatchFiniteDifferences: the image loss of the antialiased image (colour inside the mask,
  *   coverage everywhere) and its gradients with respect to sampled texels and vertex positions, silhouette vertices
  *   included, equal the CPU loss and its central differences, with the visibility of the GPU held fixed
+ * - surfaceDepthMatchesCpu: the surface depth of every covered pixel is the clip w of its triangle at the pixel centre
+ *   (perspective-correct, as a CPU evaluation), and background pixels are infinitely far
+ * - compositeOverMatchesFormula: premultiplied front colours over back colours give front + (1 - front coverage) x
+ *   back, and the backward pass gives the gradients of that formula to both from random output gradients
+ * - gaussiansOverMeshGradients: Gaussians in front of, inside and behind the pumpkin, blended until its surface depth
+ *   and composited over its antialiased image: the gradients of the image loss with respect to the Gaussians'
+ *   colours and opacities and to the texels equal central differences of the loss on the GPU, and both the Gaussians
+ *   and the texture get non-zero gradients
  * - silhouetteFittingFromMasks: training only the vertex positions of a sphere on the antialiased masks of eight
  *   views of an ellipsoid, one submit per step, reaches a silhouette IoU above 0.95 on a held-out view
  * - pumpkinReconstruction: MeshTraining with its default options fits geometry and texture of a noise-textured
@@ -62,6 +70,8 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <functional>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1116,6 +1126,301 @@ TEST_F(DifferentiableRasterTest, antialiasGradientsMatchFiniteDifferences) {
     EXPECT_GT(texelsChecked, 10);
     EXPECT_GT(verticesChecked, 20);
     EXPECT_GT(silhouetteChecked, 20);
+}
+
+TEST_F(DifferentiableRasterTest, surfaceDepthMatchesCpu) {
+    Scene scene(*vc, 80, 64, 32, 16);
+    auto depth = raster::surfaceDepth(*vc, scene.width, scene.height, scene.textureWidth, scene.textureHeight);
+    scene.connectShading(depth);
+    auto depths = vc->create<TensorElement<float>>(std::vector<uint32_t>{scene.width * scene.height});
+    depth->setInput(depths, 7);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(depth);
+    scene.upload(1);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<uint32_t> ids(scene.width * scene.height);
+    scene.visibility->getBuffer(0).memcopyTo(ids);
+    std::vector<float> gpu(ids.size());
+    depths->getDataBuffer(0).memcopyTo(gpu);
+    const glm::dmat4 camera(scene.cameras[1]);
+    int covered = 0;
+    for (uint32_t y = 0; y < scene.height; ++y) {
+        for (uint32_t x = 0; x < scene.width; ++x) {
+            const uint32_t pixel = y * scene.width + x;
+            if (ids[pixel] == 0) {
+                EXPECT_EQ(gpu[pixel], std::numeric_limits<float>::infinity()) << "background " << x << ", " << y;
+                continue;
+            }
+            // The clip w of the triangle's plane along the ray through the pixel centre: the screen-space barycentrics
+            // weighted by 1 / w, as the perspective-correct interpolation.
+            const glm::uvec3 t = scene.mesh.triangles[ids[pixel] - 1];
+            glm::dvec2 screen[3];
+            double w[3];
+            for (int c = 0; c < 3; ++c) {
+                const glm::dvec4 clip = camera * glm::dvec4(glm::dvec3(scene.mesh.positions[t[c]]), 1.0);
+                w[c] = clip.w;
+                screen[c] = (glm::dvec2(clip) / clip.w * 0.5 + 0.5) * glm::dvec2(scene.width, scene.height);
+            }
+            const glm::dvec2 p(x + 0.5, y + 0.5);
+            const auto edge = [](glm::dvec2 a, glm::dvec2 b, glm::dvec2 q) {
+                return (a.x - q.x) * (b.y - q.y) - (a.y - q.y) * (b.x - q.x);
+            };
+            const double area = edge(screen[1], screen[2], screen[0]);
+            const double l0 = edge(screen[1], screen[2], p) / area, l1 = edge(screen[2], screen[0], p) / area;
+            const double expected = 1.0 / (l0 / w[0] + l1 / w[1] + (1.0 - l0 - l1) / w[2]);
+            ++covered;
+            ASSERT_NEAR(gpu[pixel], expected, 1e-4 * expected) << "pixel " << x << ", " << y;
+        }
+    }
+    EXPECT_GT(covered, int(ids.size()) / 10);
+}
+
+TEST_F(DifferentiableRasterTest, compositeOverMatchesFormula) {
+    const uint32_t width = 37, height = 23, pixels = width * height;
+    std::vector<float> front(4 * pixels), back(4 * pixels), outputGradient(4 * pixels);
+    uint32_t state = 99u;
+    const auto next = [&]() {
+        state = state * 1664525u + 1013904223u;
+        return float(state >> 8) / float(1u << 24);
+    };
+    for (uint32_t i = 0; i < pixels; ++i) {
+        // Premultiplied: colour at most the coverage; some pixels empty or opaque.
+        const float a = i % 5 == 0 ? 0.0f : i % 7 == 0 ? 1.0f : next(), b = i % 3 == 0 ? 0.0f : next();
+        for (int c = 0; c < 3; ++c) {
+            front[4 * i + c] = a * next();
+            back[4 * i + c] = b * next();
+        }
+        front[4 * i + 3] = a;
+        back[4 * i + 3] = b;
+        for (int c = 0; c < 4; ++c)
+            outputGradient[4 * i + c] = next() - 0.5f;
+    }
+    const auto tensor = [&]() { return vc->create<TensorElement<float>>(std::vector<uint32_t>{pixels, 4}); };
+    auto frontTensor = tensor(), backTensor = tensor(), output = tensor(), gradients = tensor(),
+         frontGradients = tensor(), backGradients = tensor();
+    auto composite = raster::compositeOver(*vc, width, height);
+    composite->setInput(frontTensor, 0);
+    composite->setInput(backTensor, 1);
+    composite->setInput(output, 2);
+    auto backward = raster::compositeOverBackward(*vc, width, height);
+    backward->setInput(frontTensor, 0);
+    backward->setInput(backTensor, 1);
+    backward->setInput(gradients, 2);
+    backward->setInput(frontGradients, 3);
+    backward->setInput(backGradients, 4);
+    backward->addDependency(composite);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(backward);
+    frontTensor->getDataBuffer(0).memcopyFrom(front);
+    backTensor->getDataBuffer(0).memcopyFrom(back);
+    gradients->getDataBuffer(0).memcopyFrom(outputGradient);
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<float> out(4 * pixels), dFront(4 * pixels), dBack(4 * pixels);
+    output->getDataBuffer(0).memcopyTo(out);
+    frontGradients->getDataBuffer(0).memcopyTo(dFront);
+    backGradients->getDataBuffer(0).memcopyTo(dBack);
+    for (uint32_t i = 0; i < pixels; ++i) {
+        const float* f = &front[4 * i];
+        const float* b = &back[4 * i];
+        const float* g = &outputGradient[4 * i];
+        const float rest = 1.0f - f[3];
+        for (int c = 0; c < 4; ++c) {
+            ASSERT_NEAR(out[4 * i + c], f[c] + rest * b[c], 1e-6) << "pixel " << i << " channel " << c;
+            ASSERT_NEAR(dBack[4 * i + c], rest * g[c], 1e-6) << "pixel " << i << " channel " << c;
+        }
+        for (int c = 0; c < 3; ++c)
+            ASSERT_NEAR(dFront[4 * i + c], g[c], 1e-6) << "pixel " << i << " channel " << c;
+        const float coverage = g[3] - (g[0] * b[0] + g[1] * b[1] + g[2] * b[2] + g[3] * b[3]);
+        ASSERT_NEAR(dFront[4 * i + 3], coverage, 1e-6) << "pixel " << i;
+    }
+}
+
+TEST_F(DifferentiableRasterTest, gaussiansOverMeshGradients) {
+    // The pumpkin (radius about 1) with Gaussians around it: some in front, some inside or behind it.
+    Scene scene(*vc, 64, 48, 16, 8);
+    const uint32_t pixels = scene.width * scene.height, view = 1, w = scene.width, h = scene.height,
+                   tw = scene.textureWidth, th = scene.textureHeight;
+    uint32_t state = 4242u;
+    const auto next = [&]() {
+        state = state * 1664525u + 1013904223u;
+        return float(state >> 8) / float(1u << 24);
+    };
+    std::vector<glm::vec3> points;
+    while (points.size() < 40) {
+        const glm::vec3 p = glm::vec3(next(), next(), next()) * 2.8f - 1.4f;
+        if (glm::length(p) < 1.4f)
+            points.push_back(p);
+    }
+    splatting::SplatSet splats = splatting::splatsAt(points, 0.15f);
+    for (uint32_t i = 0; i < splats.size(); ++i) {
+        for (int c = 0; c < 3; ++c)
+            splats.colors[4 * i + c] = next();
+        splats.opacities[i] = 3.0f * next() - 1.0f;
+    }
+
+    const auto tensor = [&](uint32_t rows) { return vc->create<TensorElement<float>>(std::vector<uint32_t>{rows, 4}); };
+    auto depths = vc->create<TensorElement<float>>(std::vector<uint32_t>{pixels});
+    auto meshColors = tensor(pixels), antialiased = tensor(pixels), combined = tensor(pixels),
+         imageGradients = tensor(pixels), splatImageGradients = tensor(pixels), meshImageGradients = tensor(pixels),
+         colorGradients = tensor(pixels), vertexGradients = tensor(uint32_t(scene.mesh.positions.size())),
+         texelGradients = tensor(tw * th), targets = tensor(uint32_t(scene.cameras.size()) * pixels);
+    auto loss = vc->create<TensorElement<float>>(std::vector<uint32_t>{1});
+    auto clear = raster::clearBuffers(*vc);
+    clear->setInput(colorGradients, 0);
+    clear->setInput(vertexGradients, 1);
+    clear->setInput(texelGradients, 2);
+    clear->setInput(loss, 3);
+
+    auto depth = raster::surfaceDepth(*vc, w, h, tw, th);
+    scene.connectShading(depth);
+    depth->setInput(depths, 7);
+    auto shading = raster::shade(*vc, w, h, tw, th);
+    scene.connectShading(shading);
+    shading->setInput(meshColors, 7);
+    auto antialias = raster::antialias(*vc, w, h, tw, th);
+    scene.connectShading(antialias);
+    antialias->setInput(shading, 7, 7);
+    antialias->setInput(antialiased, 8);
+
+    splatting::SplatRasterOptions options;
+    options.width = w;
+    options.height = h;
+    options.capacity = 1u << 14;
+    const splatting::SplatParameters parameters = splatting::createSplatParameters(*vc, splats.size());
+    splatting::SplatForward forward(*vc, parameters, scene.cameraBuffer, scene.viewIndex, -1, options, depth, 7);
+
+    auto composite = raster::compositeOver(*vc, w, h);
+    composite->setInput(forward.render, 0, 3);
+    composite->setInput(antialias, 1, 8);
+    composite->setInput(combined, 2);
+    auto imageLoss = raster::imageLoss(*vc, w, h, 1.0f);
+    imageLoss->setInput(composite, 0, 2);
+    imageLoss->setInput(targets, 1);
+    imageLoss->setInput(scene.viewIndex, 2);
+    imageLoss->setInput(imageGradients, 3);
+    imageLoss->setInput(clear, 4, 3);
+    auto compositeBackward = raster::compositeOverBackward(*vc, w, h);
+    compositeBackward->setInput(forward.render, 0, 3);
+    compositeBackward->setInput(antialias, 1, 8);
+    compositeBackward->setInput(imageLoss, 2, 3);
+    compositeBackward->setInput(splatImageGradients, 3);
+    compositeBackward->setInput(meshImageGradients, 4);
+    splatting::SplatBackward backward(*vc, parameters, scene.cameraBuffer, scene.viewIndex, -1, forward,
+                                      compositeBackward, 3);
+    auto antialiasBackward = raster::antialiasBackward(*vc, w, h, tw, th);
+    scene.connectShading(antialiasBackward);
+    antialiasBackward->setInput(shading, 7, 7);
+    antialiasBackward->setInput(compositeBackward, 8, 4);
+    antialiasBackward->setInput(clear, 9, 0);
+    antialiasBackward->setInput(clear, 10, 1);
+    auto shadeBackward = raster::shadeColorBackward(*vc, w, h, tw, th);
+    scene.connectShading(shadeBackward);
+    shadeBackward->setInput(antialiasBackward, 7, 9);
+    shadeBackward->setInput(antialiasBackward, 8, 10);
+    shadeBackward->setInput(clear, 9, 2);
+    shadeBackward->addDependency(backward.projectBackward);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(shadeBackward);
+
+    scene.upload(view);
+    // Targets: a pattern, masked out on a diagonal band.
+    std::vector<float> target(4 * size_t(scene.cameras.size()) * pixels);
+    for (size_t i = 0; i < target.size() / 4; ++i) {
+        const uint32_t x = uint32_t(i % w), y = uint32_t(i / w % h);
+        target[4 * i] = 0.2f + 0.6f * float((x * 5 + y) % 7) / 7.0f;
+        target[4 * i + 1] = 0.4f;
+        target[4 * i + 2] = float(y) / float(h);
+        target[4 * i + 3] = (x + y) % 9 == 0 ? 0.0f : 1.0f;
+    }
+    targets->getDataBuffer(0).memcopyFrom(target);
+    const auto uploadSplats = [&]() {
+        parameters.means->getDataBuffer(0).memcopyFrom(splats.means);
+        parameters.logScales->getDataBuffer(0).memcopyFrom(splats.logScales);
+        parameters.rotations->getDataBuffer(0).memcopyFrom(splats.rotations);
+        parameters.colors->getDataBuffer(0).memcopyFrom(splats.colors);
+        parameters.opacities->getDataBuffer(0).memcopyFrom(splats.opacities);
+    };
+    const auto run = [&]() {
+        backward.statistics->getDataBuffer(0).memcopyFrom(std::vector<float>(2 * splats.size(), 0.0f));
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        std::vector<float> value(1);
+        loss->getDataBuffer(0).memcopyTo(value);
+        return double(value[0]);
+    };
+    uploadSplats();
+    run();
+    const auto read = [](const std::shared_ptr<TensorElement<float>>& t) {
+        std::vector<float> values(t->getDataElementCount());
+        t->getDataBuffer(0).memcopyTo(values);
+        return values;
+    };
+    const std::vector<float> splatColorGradients = read(backward.gradients.colors),
+                             opacityGradients = read(backward.gradients.opacities), texels = read(texelGradients);
+    const std::vector<float> splatImage = read(forward.colors), meshImage = read(antialiased);
+    std::vector<float> depthValues(pixels);
+    depths->getDataBuffer(0).memcopyTo(depthValues);
+    int meshPixels = 0, blendedPixels = 0;
+    for (uint32_t p = 0; p < pixels; ++p) {
+        meshPixels += depthValues[p] < std::numeric_limits<float>::infinity();
+        blendedPixels += meshImage[4 * p + 3] > 0.5f && splatImage[4 * p + 3] > 0.2f;
+    }
+    EXPECT_GT(meshPixels, int(pixels) / 10);
+    EXPECT_GT(blendedPixels, 30) << "Gaussians should partly cover the mesh";
+
+    // Central differences of the loss on the GPU (a float sum, so the steps are large): colours and texels enter it
+    // quadratically, so the differences are exact up to rounding. Opacities enter it smoothly except where a splat
+    // crosses an alpha threshold: their differences at two step sizes must agree, and since a large step also moves
+    // the 1/255 cut-off of the splat's footprint (a jump the gradient leaves out), they agree within 6 % only;
+    // splat_training's tests check the opacity gradients tightly against a CPU evaluation.
+    const auto difference = [&](float& value, float step, const std::function<void()>& upload) {
+        const float original = value;
+        value = original + step;
+        upload();
+        const double up = run();
+        value = original - step;
+        upload();
+        const double down = run();
+        value = original;
+        upload();
+        return (up - down) / (2.0 * step);
+    };
+    int splatChecked = 0, splatNonzero = 0, hiddenSplats = 0, opacityChecked = 0, opacitySkipped = 0;
+    for (uint32_t i = 0; i < splats.size(); ++i) {
+        bool contributes = false;
+        for (int c = 0; c < 3; ++c) {
+            const double expected = difference(splats.colors[4 * i + c], 0.2f, uploadSplats);
+            EXPECT_NEAR(splatColorGradients[4 * i + c], expected, 1e-6 + 0.02 * std::abs(expected))
+                << "colour " << c << " of Gaussian " << i;
+            ++splatChecked;
+            splatNonzero += std::abs(expected) > 1e-6;
+            contributes |= std::abs(expected) > 1e-6;
+        }
+        const double coarse = difference(splats.opacities[i], 0.1f, uploadSplats),
+                     fine = difference(splats.opacities[i], 0.05f, uploadSplats);
+        if (std::abs(coarse - fine) > 1e-6 + 0.01 * std::abs(fine)) {
+            ++opacitySkipped;
+        } else {
+            ++opacityChecked;
+            EXPECT_NEAR(opacityGradients[i], fine, 2e-6 + 0.06 * std::abs(fine)) << "opacity of Gaussian " << i;
+        }
+        hiddenSplats += !contributes && opacityGradients[i] == 0.0f;
+    }
+    std::vector<float> texture = scene.texture;
+    const auto uploadTexture = [&]() { scene.texels->getDataBuffer(0).memcopyFrom(texture); };
+    int texelNonzero = 0;
+    for (uint32_t t = 0; t < tw * th; ++t)
+        for (int c = 0; c < 3; ++c) {
+            const double expected = difference(texture[4 * t + c], 0.2f, uploadTexture);
+            EXPECT_NEAR(texels[4 * t + c], expected, 1e-6 + 0.02 * std::abs(expected))
+                << "texel " << t << " channel " << c;
+            texelNonzero += std::abs(expected) > 1e-6;
+        }
+    std::cout << "Gaussians over the mesh: " << splatNonzero << " of " << splatChecked << " colour gradients non-zero, "
+              << hiddenSplats << " Gaussians hidden, " << opacityChecked << " opacities checked (" << opacitySkipped
+              << " skipped as not smooth), " << texelNonzero << " texel gradients non-zero" << std::endl;
+    EXPECT_GT(splatNonzero, 30);
+    EXPECT_GT(opacityChecked, opacitySkipped);
+    EXPECT_GT(texelNonzero, 30);
 }
 
 TEST_F(DifferentiableRasterTest, silhouetteFittingFromMasks) {
