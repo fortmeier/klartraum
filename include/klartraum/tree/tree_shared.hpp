@@ -95,7 +95,7 @@ struct LeafRecord {
 // A vertex of the static scene meshes (pot, soil, table).
 struct TreeSceneVertex {
     vec4 pos;    // xyz, w unused
-    vec4 normal; // xyz, w unused
+    vec4 normal; // xyz; w: captured objects' highlight (exponent in the whole part, strength in the fraction), or 0
     vec4 color;  // rgb albedo, w material (TREE_MATERIAL_*)
 };
 

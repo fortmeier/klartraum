@@ -17,8 +17,11 @@ namespace klartraum::raster {
 
 namespace {
 
-struct CompositePushConstants {
+// The composite's push constants: composite_layer reads the frame's size, tree_captured_layer all of them.
+struct LitPushConstants {
     uint32_t width, height;
+    uint32_t textureWidth, textureHeight; // of the specular material
+    uint32_t specular;                    // 1: the training learns a specular reflection
 };
 
 // Moves its image (input 0) from GENERAL back to `layout`, where the frame's renderer left it.
@@ -115,10 +118,14 @@ MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, co
     drawModel = std::make_shared<HostValues<glm::mat4>>(vulkanContext,
                                                         std::vector<glm::mat4>{glm::mat4(1.0f), glm::mat4(1.0f)});
     const bool lit = options.lightSettings.element && options.light.element;
-    auto composite = vulkanContext.create<GeneralComputation<CompositePushConstants>>(
+    auto composite = vulkanContext.create<GeneralComputation<LitPushConstants>>(
         lit ? "shaders/tree/tree_captured_layer.comp.spv" : "shaders/raster/composite_layer.comp.spv");
     composite->setName("MeshMorphComposite");
-    composite->setPushConstants({{width, height}});
+    const bool specular = options.training.specular;
+    const bool ownMaterialSize = options.training.materialWidth > 0 && options.training.materialHeight > 0;
+    const uint32_t materialWidth = ownMaterialSize ? options.training.materialWidth : options.training.textureWidth;
+    const uint32_t materialHeight = ownMaterialSize ? options.training.materialHeight : options.training.textureHeight;
+    composite->setPushConstants({{width, height, materialWidth, materialHeight, specular ? 1u : 0u}});
     composite->setGroupCount((width + 15) / 16, (height + 15) / 16, 1);
     composite->setInput(frame, 0);
     composite->setInput(smoothing, 1, 8);
@@ -129,6 +136,12 @@ MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, co
         composite->setInput(drawModel, 5);
         options.lightSettings.connectTo(*composite, 6);
         options.light.connectTo(*composite, 7);
+        // The specular reflection's inputs; without one, small stand-ins the shader does not read.
+        const auto standIn = [&]() { return vulkanContext.create<Tensor>(std::vector<uint32_t>{1, 4}); };
+        composite->setInput(training->getCornerUvs(), 8);
+        composite->setInput(specular ? training->getMaterial() : standIn(), 9);
+        composite->setInput(specular ? training->getLights() : standIn(), 10);
+        composite->setInput(specular ? training->getVertexNormals() : standIn(), 11);
     }
     composite->setImageLayoutTransition(0, frameLayout, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT,

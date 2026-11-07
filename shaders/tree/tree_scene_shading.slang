@@ -10,7 +10,9 @@ import glsl;
 // the point light and the glaze's highlight; captured objects are tinted instead. The includer includes
 // tree_render_common.glsl, tree_shading.glsl and tree_light.glsl before.
 
-vec4 treeSceneColor(vec3 worldPos, vec3 surfaceNormal, vec4 color, TreeRenderSettings s) {
+// `highlight` (TreeSceneVertex::normal.w): a captured object's specular highlight, the exponent in its whole part and
+// the strength in its fraction; 0 for none.
+vec4 treeSceneColor(vec3 worldPos, vec3 surfaceNormal, vec4 color, TreeRenderSettings s, float highlight) {
     if (treeWritesGBuffer(s)) {
         return vec4(treeGBufferColor(s, treeSceneClass(color.w), worldPos, camera.cameraWorldPos.xyz), 1.0f);
     }
@@ -18,7 +20,18 @@ vec4 treeSceneColor(vec3 worldPos, vec3 surfaceNormal, vec4 color, TreeRenderSet
     if (color.w == TREE_MATERIAL_CAPTURED) {
         // Shaded like the captured Gaussians it stands among (tint_gaussians.comp).
         float shade = treeCapturedShadeAt(s, worldPos, normal);
-        return vec4(treeCapturedColor(color.rgb, normal, worldPos, shade, s), 1.0f);
+        vec3 captured = treeCapturedColor(color.rgb, normal, worldPos, shade, s);
+        if (highlight > 0.0f) {
+            // The sun's reflection, where its light reaches the point.
+            vec3 sun = normalize(s.sun.xyz);
+            vec3 toCamera = normalize(camera.cameraWorldPos.xyz - worldPos);
+            vec3 r = 2.0f * dot(normal, toCamera) * normal - toCamera;
+            float sunLit = clamp(treeLightAll(s, worldPos + sun * (1.5f * s.lightGridMin.w)).x, 0.0f, 1.0f);
+            float exponent = floor(highlight), strength = highlight - exponent;
+            captured += strength * pow(max(dot(r, sun), 0.0f), exponent) * sunLit * min(s.sun.w, 1.0f) *
+                        vec3(s.lightColor.x, s.lightColor.y, s.lightColor.z);
+        }
+        return vec4(captured, 1.0f);
     }
     float detail = clamp(1.5f - 140.0f * length(fwidth(worldPos)), 0.0f, 1.0f);
     vec3 albedo = treeSceneAlbedoDetail(color, worldPos, detail);

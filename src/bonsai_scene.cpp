@@ -176,7 +176,7 @@ void placeObject(BonsaiScene& scene, const BonsaiObject& object, const glm::mat4
         for (size_t c = 0; c < 3; ++c) {
             TreeSceneVertex v = object.mesh[t + c];
             v.pos = glm::vec4(glm::vec3(transform * glm::vec4(glm::vec3(v.pos), 1.0f)), 0.0f);
-            v.normal = glm::vec4(turn * glm::vec3(v.normal), 0.0f);
+            v.normal = glm::vec4(turn * glm::vec3(v.normal), v.normal.w);
             scene.mesh.push_back(v);
         }
     }
@@ -275,9 +275,13 @@ float BonsaiScene::potMeasure(float x, float z, float scale) const {
 
 float BonsaiScene::soilHeight(float x, float z) const { return tree::treeTerrainHeight(terrain, x, z); }
 
-BonsaiObject bonsaiObjectFromMesh(const raster::TriangleMesh& mesh, const std::vector<float>& texels, uint32_t width,
-                                  uint32_t height) {
+BonsaiObject bonsaiObjectFromMesh(const raster::TriangleMesh& coarse, const std::vector<float>& texels, uint32_t width,
+                                  uint32_t height, const BonsaiSpecular* specular) {
     BonsaiObject object;
+    // Finer triangles than the training's, so that the corners' colours keep the texture's detail.
+    raster::TriangleMesh mesh = coarse;
+    for (uint32_t level = 0; level < (specular ? specular->subdivisions : 0u); ++level)
+        mesh = raster::subdivide(mesh);
     // Smooth normals: the area-weighted face normals around each vertex.
     std::vector<glm::vec3> normals(mesh.positions.size(), glm::vec3(0.0f));
     for (const auto& t : mesh.triangles) {
@@ -297,11 +301,30 @@ BonsaiObject bonsaiObjectFromMesh(const raster::TriangleMesh& mesh, const std::v
         return glm::mix(glm::mix(texel(i0, j0), texel(i1, j0), x - fx), glm::mix(texel(i0, j1), texel(i1, j1), x - fx),
                         y - fy);
     };
+    // The specular material likewise (normal offset, amplitude).
+    const auto sampleMaterial = [&](glm::vec2 uv) {
+        const float x = uv.x * float(specular->width) - 0.5f, y = uv.y * float(specular->height) - 0.5f;
+        const float fx = std::floor(x), fy = std::floor(y);
+        const int w = int(specular->width), h = int(specular->height);
+        const int i0 = ((int(fx) % w) + w) % w, i1 = (i0 + 1) % w;
+        const int j0 = std::clamp(int(fy), 0, h - 1), j1 = std::clamp(int(fy) + 1, 0, h - 1);
+        const auto texel = [&](int i, int j) { return glm::make_vec4(&specular->material[4 * size_t(j * w + i)]); };
+        return glm::mix(glm::mix(texel(i0, j0), texel(i1, j0), x - fx), glm::mix(texel(i0, j1), texel(i1, j1), x - fx),
+                        y - fy);
+    };
     for (size_t t = 0; t < mesh.triangles.size(); ++t)
         for (int c = 0; c < 3; ++c) {
             const uint32_t v = mesh.triangles[t][c];
-            object.mesh.push_back({glm::vec4(mesh.positions[v], 0.0f), glm::vec4(glm::normalize(normals[v]), 0.0f),
-                                   glm::vec4(sample(mesh.cornerUvs[3 * t + c]), TREE_MATERIAL_CAPTURED)});
+            const glm::vec2 uv = mesh.cornerUvs[3 * t + c];
+            glm::vec4 normal(glm::normalize(normals[v]), 0.0f);
+            if (specular) {
+                const glm::vec4 m = sampleMaterial(uv);
+                const float strength = std::min(m.w * m.w * specular->brightness, 0.999f);
+                normal = glm::vec4(glm::normalize(glm::vec3(normal) + glm::vec3(m)),
+                                   std::max(std::floor(specular->exponent), 1.0f) + strength);
+            }
+            object.mesh.push_back(
+                {glm::vec4(mesh.positions[v], 0.0f), normal, glm::vec4(sample(uv), TREE_MATERIAL_CAPTURED)});
         }
     measureObject(object, mesh.positions);
     return object;

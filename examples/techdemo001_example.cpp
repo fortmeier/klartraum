@@ -58,6 +58,7 @@
 #include "klartraum/field_style.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/offscreen_target.hpp"
+#include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/raster/fitting_scene.hpp"
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/raster/mesh_morph.hpp"
@@ -311,6 +312,22 @@ private:
     std::vector<Picture> sample, targets;
     std::vector<CoverageMask> sampleLabels, targetLabels;
 };
+
+// Floats to and from a raw little-endian file (an empty vector if the file is missing).
+void writeFloats(const std::filesystem::path& path, const std::vector<float>& values) {
+    std::ofstream(path, std::ios::binary)
+        .write(reinterpret_cast<const char*>(values.data()), std::streamsize(values.size() * sizeof(float)));
+}
+
+std::vector<float> readFloats(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file)
+        return {};
+    std::vector<float> values(size_t(file.tellg()) / sizeof(float));
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(values.data()), std::streamsize(values.size() * sizeof(float)));
+    return values;
+}
 
 // The conditions FieldStyle's network was trained with (train_watercolor_field.py: conditions()): time of day and
 // season on circles, the directional light (the moon's counted less), the exposure and the background.
@@ -673,8 +690,7 @@ int main(int argc, char** argv) {
     // The pumpkin's photographs, masked, with their cameras in the unit sphere around it (up +y): the morph's targets.
     const raster::FittingScene photos = raster::loadFittingScene(photosPath);
     const glm::mat4 sceneFromUnit = photos.sceneFromUnitSphere();
-    // All training photographs; their glare (a glossy sheen on the skin that one view sees and the others do not) is
-    // let pass by the loss's highlight tolerance instead of bleaching the texture.
+    // All training photographs, glare included (a glossy sheen on the skin that one view sees and the others do not).
     const std::vector<uint32_t> used = photos.train;
     raster::MeshMorphOptions morphOptions;
     morphOptions.photographs = photos.targetsOf(used);
@@ -682,7 +698,15 @@ int main(int argc, char** argv) {
         morphOptions.photoCameras.push_back(camera * sceneFromUnit);
     std::cout << used.size() << " photographs of " << photos.width << " x " << photos.height << std::endl;
     morphOptions.training.stepsPerSubmit = 26;
-    morphOptions.training.highlightTolerance = 0.1f;
+    // The photographs' glare is a highlight the training learns: a normal map, an amplitude and the lights it reflects.
+    morphOptions.training.specular = true;
+    // A coarser material than the texture: the normal map follows the skin's ribs and bumps, not the photographs'
+    // small misalignments.
+    morphOptions.training.materialWidth = 256;
+    morphOptions.training.materialHeight = 128;
+    morphOptions.training.material.learningRate = 0.002f;
+    // What the highlight cannot explain is let pass rather than bleaching the texture.
+    morphOptions.training.highlightTolerance = 0.15f;
     morphOptions.training.width = photos.width;
     morphOptions.training.height = photos.height;
     // Fine enough for the carved face and the skin's ribs at the photographs' resolution.
@@ -701,6 +725,8 @@ int main(int argc, char** argv) {
         4 * size_t(morphOptions.training.textureWidth) * morphOptions.training.textureHeight, 0.0f);
     for (size_t i = 3; i < pumpkinTexture.size(); i += 4)
         pumpkinTexture[i] = 1.0f; // black
+    // Its specular reflection as the training learns it (MeshTraining::specularMaterial(), specularLights()).
+    std::vector<float> pumpkinMaterial, pumpkinLights;
 
     const auto chapterRange = [&](int chapter) {
         return std::pair{timeline.chapterStart(chapter), chapter + 1 < int(kChapters.size())
@@ -863,21 +889,39 @@ int main(int argc, char** argv) {
         }
         pumpkinMesh = morph.getTraining().mesh();
         pumpkinTexture = morph.getTraining().texture();
+        pumpkinMaterial = morph.getTraining().specularMaterial();
+        pumpkinLights = morph.getTraining().specularLights();
         raster::writeObj(pumpkinMesh, outDir / "pumpkin.obj", "pumpkin.ppm");
         raster::writeTexturePpm(pumpkinTexture, morphOptions.training.textureWidth, morphOptions.training.textureHeight,
                                 outDir / "pumpkin.ppm");
+        writeFloats(outDir / "pumpkin_material.bin", pumpkinMaterial);
+        writeFloats(outDir / "pumpkin_lights.bin", pumpkinLights);
     } else {
         // Later chapters only: the pumpkin of an earlier run.
         std::filesystem::path texturePath;
         pumpkinMesh = raster::readObj(outDir / "pumpkin.obj", &texturePath);
         uint32_t w = 0, h = 0;
         pumpkinTexture = raster::readTexturePpm(texturePath, w, h);
+        pumpkinMaterial = readFloats(outDir / "pumpkin_material.bin");
+        pumpkinLights = readFloats(outDir / "pumpkin_lights.bin");
     }
 
-    // Where the pumpkin comes to rest: on the soil, at its trained size.
+    // Where the pumpkin comes to rest: on the soil, at its trained size, glossy as the photographs showed it.
     BonsaiObjectPlacement placement;
-    placement.object = std::make_shared<BonsaiObject>(bonsaiObjectFromMesh(
-        pumpkinMesh, pumpkinTexture, morphOptions.training.textureWidth, morphOptions.training.textureHeight));
+    BonsaiSpecular gloss;
+    const size_t materialCount = size_t(morphOptions.training.materialWidth) * morphOptions.training.materialHeight;
+    if (pumpkinMaterial.size() == 4 * materialCount && pumpkinLights.size() == 4 * (raster::kSpecularLights + 1)) {
+        gloss.material = pumpkinMaterial;
+        gloss.width = morphOptions.training.materialWidth;
+        gloss.height = morphOptions.training.materialHeight;
+        gloss.exponent = 6.0f + std::exp(pumpkinLights[4 * raster::kSpecularLights]);
+        gloss.brightness = 0.0f;
+        for (uint32_t k = 0; k < raster::kSpecularLights; ++k)
+            gloss.brightness = std::max(gloss.brightness, pumpkinLights[4 * k + 3] * pumpkinLights[4 * k + 3]);
+    }
+    placement.object = std::make_shared<BonsaiObject>(
+        bonsaiObjectFromMesh(pumpkinMesh, pumpkinTexture, morphOptions.training.textureWidth,
+                             morphOptions.training.textureHeight, gloss.material.empty() ? nullptr : &gloss));
     placement.position = landing;
     // Facing the camera on the soil; placement.yaw turns the photographs' frame, whose face is turned by faceAngle.
     const float restYaw = facing(glm::vec3(landing.x, 0.0f, landing.y), orbitPose(orbitStart).eye);

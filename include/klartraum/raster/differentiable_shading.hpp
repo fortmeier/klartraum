@@ -76,7 +76,8 @@ ComputeGraphElementPtr vertexNormals(VulkanContext& vulkanContext, uint32_t tria
 /**
  * @brief Adds a specular reflection to the shaded colours of the covered pixels (shaders/raster/specular.slang): per
  * texel a material of a normal offset (a normal map in object space, xyz) and an amplitude a (w); an environment of
- * kSpecularLights lights (direction xyz, amplitude b) and an exponent e (four floats after them: log e, 0, 0, 0),
+ * kSpecularLights lights (direction xyz, amplitude b) and an exponent e = 6 + exp(x) (four floats after them: x, 0, 0,
+ * 0),
  * shared by all views. The grey a^2 sum_k b_k^2 max(dot(r, d_k), 0)^e is added, with r the direction to the eye
  * reflected about the smooth normal (the vertex normals interpolated) tilted by the offset.
  *

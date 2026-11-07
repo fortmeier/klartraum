@@ -9,6 +9,11 @@ import glsl;
 // shows (treeCapturedShadeAt()), so that the light changes smoothly across the mesh, and tinted by
 // treeCapturedColor(). Pixels at the outline that show no triangle take a neighbour's triangle.
 // image = lit(layer.rgb) + (1 - layer.a) * image.
+//
+// With `specular`, the mesh also reflects the sun as the training's specular reflection learned it
+// (shaders/raster/specular.slang): the normal map tilts the smooth vertex normal where the ray meets the triangle, and
+// the amplitude a, the brightest of the learned lights b and the learned exponent e (6 + exp(x)) give the highlight
+// a^2 b^2 max(dot(r, sun), 0)^e, scaled by the sun's light that reaches the point.
 
 #define TREE_FN
 #include "klartraum/tree/tree_shared.hpp"
@@ -19,6 +24,9 @@ import glsl;
 struct Push {
     uint width;
     uint height;
+    uint textureWidth;  // of the specular material
+    uint textureHeight;
+    uint specular;      // 1: add the specular reflection
 };
 [[vk::push_constant]] ConstantBuffer<Push> pc;
 
@@ -29,6 +37,23 @@ struct Push {
 [[vk::binding(4, 0)]] StructuredBuffer<uint> triangles;  // three vertices each
 [[vk::binding(5, 0)]] StructuredBuffer<mat4> drawing; // world from the morph's frame, the morph's frame from clip
 [[vk::binding(6, 0)]] StructuredBuffer<TreeRenderSettings> settings;
+[[vk::binding(8, 0)]] StructuredBuffer<vec2> cornerUvs;     // three per triangle
+[[vk::binding(9, 0)]] StructuredBuffer<vec4> material;      // per texel: normal offset xyz, amplitude
+[[vk::binding(10, 0)]] StructuredBuffer<vec4> lights;       // four (direction, amplitude), then (log exponent)
+[[vk::binding(11, 0)]] StructuredBuffer<vec4> vertexNormals; // per vertex, xyz: sums of area normals
+
+// The material at texture coordinate uv: bilinear, u wrapping and v clamped (as differentiable_shading.slang).
+vec4 materialAt(vec2 uv) {
+    float x = uv.x * float(pc.textureWidth) - 0.5f, y = uv.y * float(pc.textureHeight) - 0.5f;
+    float fx = floor(x), fy = floor(y);
+    int w = int(pc.textureWidth), h = int(pc.textureHeight);
+    int i0 = ((int(fx) % w) + w) % w, i1 = (i0 + 1) % w;
+    int j0 = clamp(int(fy), 0, h - 1), j1 = clamp(int(fy) + 1, 0, h - 1);
+    vec2 f = vec2(x - fx, y - fy);
+    vec4 top = mix(material[j0 * w + i0], material[j0 * w + i1], f.x);
+    vec4 bottom = mix(material[j1 * w + i0], material[j1 * w + i1], f.x);
+    return mix(top, bottom, f.y);
+}
 
 [shader("compute")]
 [numthreads(16, 16, 1)]
@@ -81,6 +106,33 @@ void main() {
         } else {
             float shade = treeCapturedShadeAt(s, world, vec3(0.0f));
             colour = treeCapturedColor(colour, face, world, shade, s);
+            if (pc.specular != 0u) {
+                // Barycentric coordinates of the hit in the triangle.
+                vec3 e0 = b - a, e1 = c - a, e2 = hit - a;
+                float d00 = dot(e0, e0), d01 = dot(e0, e1), d11 = dot(e1, e1);
+                float d20 = dot(e2, e0), d21 = dot(e2, e1);
+                float denominator = max(d00 * d11 - d01 * d01, 1e-20f);
+                float w1 = (d11 * d20 - d01 * d21) / denominator, w2 = (d00 * d21 - d01 * d20) / denominator;
+                vec3 bary = clamp(vec3(1.0f - w1 - w2, w1, w2), 0.0f, 1.0f);
+                bary /= bary.x + bary.y + bary.z;
+                vec2 uv = bary.x * cornerUvs[3u * t] + bary.y * cornerUvs[3u * t + 1u] + bary.z * cornerUvs[3u * t + 2u];
+                vec4 m4 = materialAt(uv);
+                vec3 smooth = bary.x * vertexNormals[triangles[3u * t]].xyz +
+                              bary.y * vertexNormals[triangles[3u * t + 1u]].xyz +
+                              bary.z * vertexNormals[triangles[3u * t + 2u]].xyz;
+                vec3 n = normalize((m * vec4(normalize(normalize(smooth) + m4.xyz), 0.0f)).xyz);
+                vec3 toEye = -normalize((m * vec4(along, 0.0f)).xyz);
+                vec3 r = 2.0f * dot(n, toEye) * n - toEye;
+                float brightest = 0.0f;
+                for (int k = 0; k < 4; ++k) {
+                    brightest = max(brightest, lights[k].w * lights[k].w);
+                }
+                float sunLit = clamp(treeLightAll(s, world + normalize(s.sun.xyz) * (1.5f * s.lightGridMin.w)).x, 0.0f,
+                                     1.0f);
+                float highlight = m4.w * m4.w * brightest *
+                                  pow(max(dot(r, normalize(s.sun.xyz)), 0.0f), 6.0f + exp(lights[4].x)) * sunLit;
+                colour += highlight * min(s.sun.w, 1.0f) * vec3(s.lightColor.x, s.lightColor.y, s.lightColor.z);
+            }
         }
     }
     vec4 below = image[p];

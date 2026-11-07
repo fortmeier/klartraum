@@ -9,6 +9,8 @@
  * - icosphereIsClosedAndOutward: the icosphere is a closed surface (Euler characteristic 2, every edge shared by two
  *   triangles), its triangles face outwards, and its corner texture coordinates lie in [0, 2) x [0, 1] with no
  *   triangle spanning more than a quarter turn in u
+ * - subdivisionKeepsSurfaceAndCoordinates: subdivide() quadruples the triangles of the synthetic pumpkin, which stays
+ *   closed, every new corner lies in its coarse triangle's plane with its texture coordinate interpolated there
  * - objAndTextureRoundTrip: a pumpkin with its texture written with writeObj() and writeTexturePpm() reads back
  *   with readObj() and readTexturePpm(): positions, triangles and corner coordinates within the printed precision,
  *   texels within 8 bits, and the texture path from the material file
@@ -502,6 +504,42 @@ TEST_F(DifferentiableRasterTest, icosphereIsClosedAndOutward) {
             hi = std::max(hi, uv.x);
         }
         EXPECT_LT(hi - lo, 0.25f) << "triangle " << t;
+    }
+}
+
+TEST_F(DifferentiableRasterTest, subdivisionKeepsSurfaceAndCoordinates) {
+    const raster::TriangleMesh mesh = raster::syntheticPumpkin(2);
+    const raster::TriangleMesh fine = raster::subdivide(mesh);
+    ASSERT_EQ(fine.triangles.size(), 4 * mesh.triangles.size());
+    ASSERT_EQ(fine.cornerUvs.size(), 3 * fine.triangles.size());
+    std::map<std::pair<uint32_t, uint32_t>, int> edges;
+    for (const auto& t : fine.triangles)
+        for (int c = 0; c < 3; ++c)
+            ++edges[std::minmax(t[c], t[(c + 1) % 3])];
+    for (const auto& [edge, uses] : edges)
+        EXPECT_EQ(uses, 2);
+    EXPECT_EQ(int(fine.positions.size()) - int(edges.size()) + int(fine.triangles.size()), 2) << "still closed";
+    for (size_t t = 0; t < mesh.triangles.size(); ++t) {
+        const glm::uvec3 coarse = mesh.triangles[t];
+        const glm::vec3 a = mesh.positions[coarse.x], b = mesh.positions[coarse.y], c = mesh.positions[coarse.z];
+        const glm::vec3 normal = glm::normalize(glm::cross(b - a, c - a));
+        for (size_t k = 0; k < 4; ++k) {
+            const size_t sub = 4 * t + k;
+            for (int corner = 0; corner < 3; ++corner) {
+                // Every corner lies in its coarse triangle's plane, with its coordinate interpolated alike.
+                const glm::vec3 p = fine.positions[fine.triangles[sub][corner]];
+                EXPECT_NEAR(glm::dot(p - a, normal), 0.0f, 1e-5f);
+                const glm::vec3 e0 = b - a, e1 = c - a, e2 = p - a;
+                const float d00 = glm::dot(e0, e0), d01 = glm::dot(e0, e1), d11 = glm::dot(e1, e1);
+                const float denominator = d00 * d11 - d01 * d01;
+                const float w1 = (d11 * glm::dot(e2, e0) - d01 * glm::dot(e2, e1)) / denominator;
+                const float w2 = (d00 * glm::dot(e2, e1) - d01 * glm::dot(e2, e0)) / denominator;
+                const glm::vec2 expected = (1.0f - w1 - w2) * mesh.cornerUvs[3 * t] + w1 * mesh.cornerUvs[3 * t + 1] +
+                                           w2 * mesh.cornerUvs[3 * t + 2];
+                EXPECT_NEAR(fine.cornerUvs[3 * sub + corner].x, expected.x, 1e-5f);
+                EXPECT_NEAR(fine.cornerUvs[3 * sub + corner].y, expected.y, 1e-5f);
+            }
+        }
     }
 }
 
@@ -1086,7 +1124,7 @@ TEST_F(DifferentiableRasterTest, specularGradientsMatchFiniteDifferences) {
         lights[4 * k] = directions[k].x, lights[4 * k + 1] = directions[k].y, lights[4 * k + 2] = directions[k].z;
         lights[4 * k + 3] = 0.6f + 0.4f * next();
     }
-    lights[4 * raster::kSpecularLights] = std::log(6.0f);
+    lights[4 * raster::kSpecularLights] = std::log(4.0f); // exponent 6 + 4
 
     const auto tensor = [&](uint32_t rows) { return vc->create<TensorElement<float>>(std::vector<uint32_t>{rows, 4}); };
     auto materialTensor = tensor(texelCount), lightTensor = tensor(raster::kSpecularLights + 1),
@@ -1215,7 +1253,7 @@ TEST_F(DifferentiableRasterTest, specularFitExplainsHighlights) {
         material[4 * t + 3] = 0.6f;
     const std::vector<float> lights = {
         0.3f, 1.0f, 0.5f, 0.8f, -0.7f,           0.5f, 0.6f, 0.6f, 0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f, std::log(24.0f), 0.0f, 0.0f, 0.0f};
+        0.0f, 0.0f, 1.0f, 0.0f, std::log(18.0f), 0.0f, 0.0f, 0.0f}; // exponent 6 + 18
     const auto tensor = [&](uint32_t rows) { return vc->create<TensorElement<float>>(std::vector<uint32_t>{rows, 4}); };
     auto materialTensor = tensor(textureWidth * textureHeight), lightTensor = tensor(raster::kSpecularLights + 1),
          normals = tensor(uint32_t(pumpkin.positions.size())), eyes = tensor(uint32_t(cameras.size())),

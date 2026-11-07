@@ -35,6 +35,9 @@
  * - capturedGaussiansTakeSnow: treeGaussianNormal is the thinnest axis turned up; treeCapturedColor covers what
  *   faces up with snow in winter only and scales by tint and shade
  * - lanternStandsOnTheSoil: the placed lantern capture's ground lies on the soil, its moss inside the pot
+ * - meshObjectCarriesItsHighlight: an object from a mesh with a specular material is subdivided, its normals tilted
+ *   by the normal map and unit long, and each vertex's normal.w holds the exponent (whole part) and a^2 x brightness
+ *   (fraction) where the material has an amplitude; without a material normal.w is 0
  * - capturedPotIsMeasured: a fitted pot mesh (tapered body on a saucer, a lid over its opening, a guessed bulge
  *   underneath, turned about +y) loads with its rim height, foot, rim rectangle and turn found
  * - capturedPotReplacesTheProceduralOne: with that pot the scene has no procedural pot; the captured one stands
@@ -540,6 +543,45 @@ TEST(BonsaiScene, lanternStandsOnTheSoil) {
     // The moss around the lantern lies on the soil, within the capture's own unevenness.
     std::nth_element(heights.begin(), heights.begin() + heights.size() / 2, heights.end());
     EXPECT_NEAR(heights[heights.size() / 2], 0.0f, 0.02f);
+}
+
+TEST(BonsaiScene, meshObjectCarriesItsHighlight) {
+    // A ball with a grey texture and a specular material: amplitude 0.5 on the upper half, none below; normal
+    // offsets along +x.
+    const raster::TriangleMesh ball = raster::icosphere(2);
+    const std::vector<float> grey(4 * 8 * 4, 0.5f);
+    BonsaiSpecular gloss;
+    gloss.width = 8;
+    gloss.height = 4;
+    for (uint32_t j = 0; j < gloss.height; ++j)
+        for (uint32_t i = 0; i < gloss.width; ++i)
+            gloss.material.insert(gloss.material.end(), {0.3f, 0.0f, 0.0f, j < gloss.height / 2 ? 0.5f : 0.0f});
+    gloss.exponent = 12.7f;
+    gloss.brightness = 2.0f;
+    gloss.subdivisions = 1;
+    const BonsaiObject plain = bonsaiObjectFromMesh(ball, grey, 8, 4);
+    const BonsaiObject shiny = bonsaiObjectFromMesh(ball, grey, 8, 4, &gloss);
+    EXPECT_EQ(plain.mesh.size(), 3 * ball.triangles.size());
+    ASSERT_EQ(shiny.mesh.size(), 4 * plain.mesh.size()) << "subdivided once";
+    int strong = 0, none = 0;
+    for (const TreeSceneVertex& v : plain.mesh)
+        EXPECT_EQ(v.normal.w, 0.0f);
+    for (const TreeSceneVertex& v : shiny.mesh) {
+        // The exponent in the whole part, a^2 x brightness in the fraction (at most 0.5 here).
+        const float exponent = std::floor(v.normal.w), strength = v.normal.w - exponent;
+        EXPECT_EQ(exponent, 12.0f);
+        EXPECT_LE(strength, 0.5f + 1e-5f);
+        strong += strength > 0.49f;
+        none += strength < 1e-4f;
+        EXPECT_NEAR(glm::length(glm::vec3(v.normal)), 1.0f, 1e-4f);
+    }
+    EXPECT_GT(strong, int(shiny.mesh.size()) / 5);
+    EXPECT_GT(none, int(shiny.mesh.size()) / 5);
+    // The offsets tilt the normals towards +x.
+    double tilt = 0.0;
+    for (size_t k = 0; k < shiny.mesh.size(); ++k)
+        tilt += shiny.mesh[k].normal.x;
+    EXPECT_GT(tilt / double(shiny.mesh.size()), 0.1);
 }
 
 TEST(BonsaiScene, capturedPotIsMeasured) {

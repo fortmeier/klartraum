@@ -106,12 +106,23 @@ struct BonsaiObject {
  */
 BonsaiObject loadBonsaiObject(const std::string& path);
 
+/** @brief A specular reflection of an object made from a mesh, as MeshTraining learns it (MeshTrainingOptions). */
+struct BonsaiSpecular {
+    std::vector<float> material; ///< per texel: normal offset xyz, amplitude a
+    uint32_t width = 0, height = 0;
+    float exponent = 16.0f;    ///< of the highlight
+    float brightness = 1.0f;   ///< factor on a^2, e.g. the brightest of the learned lights' b^2
+    uint32_t subdivisions = 2; ///< the mesh's triangles are split this many times into four
+};
+
 /**
  * @brief An object from a mesh in memory with its texture (four floats per texel, rgb used; u wraps, v clamps),
- * coloured from the texture at its corners, e.g. a mesh just trained by MeshTraining.
+ * coloured from the texture at its corners, e.g. a mesh just trained by MeshTraining. With @p specular, the mesh is
+ * subdivided first (finer corners keep more of the texture), its smooth normals are tilted by the normal map, and
+ * each vertex's normal.w holds the highlight: the exponent (whole part) and the strength a^2 x brightness (fraction).
  */
 BonsaiObject bonsaiObjectFromMesh(const raster::TriangleMesh& mesh, const std::vector<float>& texels, uint32_t width,
-                                  uint32_t height);
+                                  uint32_t height, const BonsaiSpecular* specular = nullptr);
 
 /** @brief Where an object stands on the soil. */
 struct BonsaiObjectPlacement {

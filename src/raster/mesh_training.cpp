@@ -83,13 +83,18 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
     vertexGradients = tensor(vertexCount, 4);
     textureGradients = tensor(texelCount, 4);
     lossValue = tensor(1, 1);
+    if (this->options.materialWidth == 0 || this->options.materialHeight == 0) {
+        this->options.materialWidth = tw;
+        this->options.materialHeight = th;
+    }
+    const uint32_t mw = this->options.materialWidth, mh = this->options.materialHeight, materialCount = mw * mh;
     if (options.specular) {
-        material = tensor(texelCount, 4);
+        material = tensor(materialCount, 4);
         lightValues = tensor(kSpecularLights + 1, 4);
-        materialGradients = tensor(texelCount, 4);
+        materialGradients = tensor(materialCount, 4);
         lightGradients = tensor(kSpecularLights + 1, 4);
         for (auto& moments : materialMoments)
-            moments = tensor(4 * texelCount, 1);
+            moments = tensor(4 * materialCount, 1);
         for (auto& moments : lightMoments)
             moments = tensor(4 * (kSpecularLights + 1), 1);
         vertexNormalSums = tensor(vertexCount, 4);
@@ -143,7 +148,7 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
             normalsOfStep->setInput(positions, 0);
             normalsOfStep->setInput(triangles, 1);
             normalsOfStep->setInput(clear, 2, 5);
-            auto shine = specular(vulkanContext, w, h, tw, th);
+            auto shine = specular(vulkanContext, w, h, mw, mh);
             connectSpecular(shine);
             shine->setInput(shading, 7, 7);
             shaded = shine;
@@ -212,14 +217,14 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         textureStep->addDependency(geometryStep);
         ComputeGraphElementPtr last = textureStep;
         if (options.specular) {
-            auto shineBackward = specularBackward(vulkanContext, w, h, tw, th);
+            auto shineBackward = specularBackward(vulkanContext, w, h, mw, mh);
             connectSpecular(shineBackward);
             shineBackward->setInput(smoothingBackward, 7, 9);
             shineBackward->setInput(clear, 12, 6);
             shineBackward->setInput(clear, 13, 7);
             // The texture's step reads the gradients of the same colours; the specular steps follow it.
             shineBackward->addDependency(shadingBackward);
-            auto materialStep = training::adamStep(vulkanContext, 4 * texelCount, options.material);
+            auto materialStep = training::adamStep(vulkanContext, 4 * materialCount, options.material);
             materialStep->setInput(material, 0);
             materialStep->setInput(shineBackward, 1, 12);
             materialStep->setInput(materialMoments[0], 2);
@@ -303,9 +308,10 @@ void MeshTraining::initialize() {
     }
     texels->getDataBuffer(0).memcopyFrom(noise);
     if (options.specular) {
-        // No normal offsets, a faint amplitude, four lights from above and around, exponent 16.
-        std::vector<float> start(4 * size_t(texelCount), 0.0f);
-        for (size_t t = 0; t < texelCount; ++t)
+        // No normal offsets, a faint amplitude, four lights from above and around, exponent 6 + exp(log 10) = 16.
+        const size_t materialCount = size_t(options.materialWidth) * options.materialHeight;
+        std::vector<float> start(4 * materialCount, 0.0f);
+        for (size_t t = 0; t < materialCount; ++t)
             start[4 * t + 3] = 0.2f;
         material->getDataBuffer(0).memcopyFrom(start);
         lightValues->getDataBuffer(0).memcopyFrom(std::vector<float>{0.0f,

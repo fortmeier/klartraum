@@ -18,7 +18,7 @@ import glsl;
 [[vk::binding(1, 1)]] StructuredBuffer<TreeRenderSettings> settings;
 
 layout(location = 0) in vec3 inWorldPos;
-layout(location = 1) in vec3 inNormal;
+layout(location = 1) in vec4 inNormal;
 layout(location = 2) in vec4 inColor;
 
 layout(location = 0) out vec4 outColor;
@@ -29,5 +29,5 @@ void main() {
     if (treeBehindScene(s)) {
         discard;
     }
-    outColor = treeSceneColor(inWorldPos, inNormal, inColor, s);
+    outColor = treeSceneColor(inWorldPos, inNormal.xyz, inColor, s, inNormal.w);
 }

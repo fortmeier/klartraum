@@ -34,9 +34,11 @@ struct MeshTrainingOptions {
     bool viewColors = false;                    ///< learn a colour gain and offset per view (imageLossWithViewColors())
     float viewColorWeight = 0.01f;              ///< pull of the per-view corrections towards identity
     training::AdamParameters viewColor{0.002f}; ///< optimizer of the per-view corrections
-    /// Learn a specular reflection besides the texture (specular()): a material per texel of the texture's size (a
-    /// normal map and an amplitude) and an environment of lights shared by all views.
+    /// Learn a specular reflection besides the texture (specular()): a material per texel (a normal map and an
+    /// amplitude) and an environment of lights shared by all views.
     bool specular = false;
+    /// Size of the specular material in texels; 0 for the texture's. A coarser material keeps the normal map smooth.
+    uint32_t materialWidth = 0, materialHeight = 0;
     training::AdamParameters material{0.005f}; ///< optimizer of the specular material
     training::AdamParameters lights{0.01f};    ///< optimizer of the specular environment
     uint32_t seed = 1;                         ///< seed of the noise the texture starts from
@@ -110,8 +112,10 @@ public:
     /** @brief Replaces the texture (four floats per texel). */
     void setTexture(const std::vector<float>& texels);
 
-    /// The specular material (four floats per texel: normal offset xyz, amplitude) and environment (four floats per
-    /// light, then log exponent and three zeros), e.g. for drawing them; null without MeshTrainingOptions::specular.
+    /// The specular material (four floats per texel of materialWidth x materialHeight: normal offset xyz, amplitude)
+    /// and environment (four floats per light, then the exponent's x of 6 + exp(x) and three zeros), e.g. for drawing
+    /// them; null without
+    /// MeshTrainingOptions::specular.
     std::shared_ptr<TensorElement<float>> getMaterial() const { return material; }
     std::shared_ptr<TensorElement<float>> getLights() const { return lightValues; }
     /// The vertex normals of the last step (four floats per vertex, the sums of area normals); null without specular.

@@ -13,14 +13,14 @@ import glsl;
 [[vk::binding(0, 1)]] StructuredBuffer<TreeSceneVertex> vertices;
 
 layout(location = 0) out vec3 outWorldPos;
-layout(location = 1) out vec3 outNormal;
+layout(location = 1) out vec4 outNormal; // xyz, and the highlight of captured objects (TreeSceneVertex)
 layout(location = 2) out vec4 outColor;
 
 [shader("vertex")]
 void main() {
     TreeSceneVertex v = vertices[gl_VertexIndex];
     outWorldPos = v.pos.xyz;
-    outNormal = v.normal.xyz;
+    outNormal = v.normal;
     outColor = v.color;
     gl_Position = camera.proj * camera.view * vec4(v.pos.xyz, 1.0f);
 }
