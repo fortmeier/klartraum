@@ -323,6 +323,7 @@ add_executable(
   tests/test_demo_timeline.cpp
   tests/test_demo_sky_marks.cpp
   tests/test_style_transfer.cpp
+  tests/test_field_style.cpp
   tests/test_image_fill.cpp
   tests/test_gaussian_lighting.cpp
   tests/test_tree_model.cpp
@@ -425,6 +426,7 @@ set(KLARTRAUM_LIB_SRC
   src/demo_timeline.cpp
   src/demo_sky_marks.cpp
   src/style_transfer.cpp
+  src/field_style.cpp
   src/image_fill.cpp
   ${SPZ_SRC}
   )
