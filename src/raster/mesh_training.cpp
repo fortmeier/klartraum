@@ -5,6 +5,7 @@
 #include "klartraum/raster/mesh_training.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 #include <glm/gtc/type_ptr.hpp>
@@ -82,6 +83,18 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
     vertexGradients = tensor(vertexCount, 4);
     textureGradients = tensor(texelCount, 4);
     lossValue = tensor(1, 1);
+    if (options.specular) {
+        material = tensor(texelCount, 4);
+        lightValues = tensor(kSpecularLights + 1, 4);
+        materialGradients = tensor(texelCount, 4);
+        lightGradients = tensor(kSpecularLights + 1, 4);
+        for (auto& moments : materialMoments)
+            moments = tensor(4 * texelCount, 1);
+        for (auto& moments : lightMoments)
+            moments = tensor(4 * (kSpecularLights + 1), 1);
+        vertexNormalSums = tensor(vertexCount, 4);
+        eyes = tensor(views, 4);
+    }
 
     // The steps of one submission, one after another; they share the parameters and the intermediate buffers.
     ComputeGraphElementPtr previous;
@@ -112,9 +125,32 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         auto shading = shade(vulkanContext, w, h, tw, th);
         connect(shading);
         shading->setInput(colors, 7);
+        // The shaded colours, with the specular reflection added when it is learned.
+        ComputeGraphElementPtr shaded = shading;
+        ComputeGraphElementPtr normalsOfStep;
+        const auto connectSpecular = [&](const ComputeGraphElementPtr& element) {
+            connect(element);
+            element->setInput(material, 8);
+            element->setInput(lightValues, 9);
+            element->setInput(normalsOfStep, 10, 2);
+            element->setInput(eyes, 11);
+        };
+        if (options.specular) {
+            clear->setInput(vertexNormalSums, 5);
+            clear->setInput(materialGradients, 6);
+            clear->setInput(lightGradients, 7);
+            normalsOfStep = vertexNormals(vulkanContext, triangleCount);
+            normalsOfStep->setInput(positions, 0);
+            normalsOfStep->setInput(triangles, 1);
+            normalsOfStep->setInput(clear, 2, 5);
+            auto shine = specular(vulkanContext, w, h, tw, th);
+            connectSpecular(shine);
+            shine->setInput(shading, 7, 7);
+            shaded = shine;
+        }
         auto smoothing = antialias(vulkanContext, w, h, tw, th);
         connect(smoothing);
-        smoothing->setInput(shading, 7, 7);
+        smoothing->setInput(shaded, 7, 7);
         smoothing->setInput(antialiased, 8);
         auto loss = options.viewColors
                         ? imageLossWithViewColors(vulkanContext, w, h, options.maskWeight, options.viewColorWeight)
@@ -135,7 +171,7 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         loss->setInput(clear, 4, 3);
         auto smoothingBackward = antialiasBackward(vulkanContext, w, h, tw, th);
         connect(smoothingBackward);
-        smoothingBackward->setInput(shading, 7, 7);
+        smoothingBackward->setInput(shaded, 7, 7);
         smoothingBackward->setInput(loss, 8, 3);
         smoothingBackward->setInput(clear, 9, 0);
         smoothingBackward->setInput(clear, 10, 1);
@@ -175,6 +211,30 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         textureStep->setInput(stepCount, 4);
         textureStep->addDependency(geometryStep);
         ComputeGraphElementPtr last = textureStep;
+        if (options.specular) {
+            auto shineBackward = specularBackward(vulkanContext, w, h, tw, th);
+            connectSpecular(shineBackward);
+            shineBackward->setInput(smoothingBackward, 7, 9);
+            shineBackward->setInput(clear, 12, 6);
+            shineBackward->setInput(clear, 13, 7);
+            // The texture's step reads the gradients of the same colours; the specular steps follow it.
+            shineBackward->addDependency(shadingBackward);
+            auto materialStep = training::adamStep(vulkanContext, 4 * texelCount, options.material);
+            materialStep->setInput(material, 0);
+            materialStep->setInput(shineBackward, 1, 12);
+            materialStep->setInput(materialMoments[0], 2);
+            materialStep->setInput(materialMoments[1], 3);
+            materialStep->setInput(stepCount, 4);
+            materialStep->addDependency(last);
+            auto lightStep = training::adamStep(vulkanContext, 4 * (kSpecularLights + 1), options.lights);
+            lightStep->setInput(lightValues, 0);
+            lightStep->setInput(shineBackward, 1, 13);
+            lightStep->setInput(lightMoments[0], 2);
+            lightStep->setInput(lightMoments[1], 3);
+            lightStep->setInput(stepCount, 4);
+            lightStep->addDependency(materialStep);
+            last = lightStep;
+        }
         if (options.viewColors) {
             auto viewColorStep = training::adamStep(vulkanContext, 8 * views, options.viewColor);
             viewColorStep->setInput(viewColorValues, 0);
@@ -242,6 +302,53 @@ void MeshTraining::initialize() {
         noise[i] = float(state >> 8) / float(1u << 24);
     }
     texels->getDataBuffer(0).memcopyFrom(noise);
+    if (options.specular) {
+        // No normal offsets, a faint amplitude, four lights from above and around, exponent 16.
+        std::vector<float> start(4 * size_t(texelCount), 0.0f);
+        for (size_t t = 0; t < texelCount; ++t)
+            start[4 * t + 3] = 0.2f;
+        material->getDataBuffer(0).memcopyFrom(start);
+        lightValues->getDataBuffer(0).memcopyFrom(std::vector<float>{0.0f,
+                                                                     1.0f,
+                                                                     0.3f,
+                                                                     0.7f,
+                                                                     1.0f,
+                                                                     0.4f,
+                                                                     0.6f,
+                                                                     0.7f,
+                                                                     -1.0f,
+                                                                     0.4f,
+                                                                     0.6f,
+                                                                     0.7f,
+                                                                     0.0f,
+                                                                     0.3f,
+                                                                     -1.0f,
+                                                                     0.7f,
+                                                                     std::log(16.0f),
+                                                                     0.0f,
+                                                                     0.0f,
+                                                                     0.0f});
+        for (auto* moments : {&materialMoments, &lightMoments})
+            for (auto& moment : *moments)
+                moment->getDataBuffer(0).memcopyFrom(std::vector<float>(moment->getDataElementCount(), 0.0f));
+        eyes->getDataBuffer(0).memcopyFrom(cameraEyes(cameras));
+    }
+}
+
+std::vector<float> MeshTraining::specularMaterial() const {
+    if (!material)
+        return {};
+    std::vector<float> values(material->getDataElementCount());
+    material->getDataBuffer(0).memcopyTo(values);
+    return values;
+}
+
+std::vector<float> MeshTraining::specularLights() const {
+    if (!lightValues)
+        return {};
+    std::vector<float> values(lightValues->getDataElementCount());
+    lightValues->getDataBuffer(0).memcopyTo(values);
+    return values;
 }
 
 void MeshTraining::setTargets(const std::vector<float>& values) {

@@ -37,6 +37,9 @@
  * - specularGradientsMatchFiniteDifferences: the image loss of the shaded pumpkin with a specular reflection (a
  *   random normal map and amplitude per texel, four lights and an exponent) and its gradients with respect to the
  *   lights and to sampled material texels equal central differences of the loss on the GPU, where it is smooth
+ * - specularFitExplainsHighlights: MeshTraining with the specular reflection fits texture, material and lights to
+ *   twelve views of a glossy pumpkin; a held-out view reaches a PSNR above 30 dB inside the mesh, at least 3 dB more
+ *   than a fit of the texture alone
  * - antialiasMatchesCpu: the antialiased colours equal a CPU evaluation of the silhouette crossings and blends on the
  *   GPU visibility, change pixels along the outline only, and leave the image interior untouched
  * - antialiasGradientsMatchFiniteDifferences: the image loss of the antialiased image (colour inside the mask,
@@ -1194,6 +1197,142 @@ TEST_F(DifferentiableRasterTest, specularGradientsMatchFiniteDifferences) {
     EXPECT_GE(texelsChecked, 20);
     EXPECT_GT(nonzero, 60);
     EXPECT_LT(skipped, (checked + skipped) / 5);
+}
+
+TEST_F(DifferentiableRasterTest, specularFitExplainsHighlights) {
+    // Thirteen views (the last held out) of the textured pumpkin with a glossy reflection of two lights.
+    const uint32_t size = 64, textureWidth = 32, textureHeight = 16, pixels = size * size;
+    std::vector<glm::mat4> cameras = raster::cameraRing(6, 3.0f, 0.15f, 0.8f, 1.0f);
+    const auto upper = raster::cameraRing(6, 3.0f, 0.7f, 0.8f, 1.0f, 0.5f);
+    cameras.insert(cameras.end(), upper.begin(), upper.end());
+    cameras.push_back(raster::cameraRing(1, 3.0f, 0.4f, 0.8f, 1.0f, 0.3f)[0]);
+    const uint32_t views = 12;
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(3);
+    Scene scene(*vc, size, size, textureWidth, textureHeight, cameras, pumpkin);
+    scene.texture = raster::syntheticPumpkinTexture(textureWidth, textureHeight);
+    std::vector<float> material(4 * size_t(textureWidth) * textureHeight, 0.0f);
+    for (size_t t = 0; t < material.size() / 4; ++t)
+        material[4 * t + 3] = 0.6f;
+    const std::vector<float> lights = {
+        0.3f, 1.0f, 0.5f, 0.8f, -0.7f,           0.5f, 0.6f, 0.6f, 0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f, std::log(24.0f), 0.0f, 0.0f, 0.0f};
+    const auto tensor = [&](uint32_t rows) { return vc->create<TensorElement<float>>(std::vector<uint32_t>{rows, 4}); };
+    auto materialTensor = tensor(textureWidth * textureHeight), lightTensor = tensor(raster::kSpecularLights + 1),
+         normals = tensor(uint32_t(pumpkin.positions.size())), eyes = tensor(uint32_t(cameras.size())),
+         colors = tensor(pixels), antialiased = tensor(pixels);
+    auto clear = raster::clearBuffers(*vc);
+    clear->setInput(normals, 0);
+    auto smooth = raster::vertexNormals(*vc, uint32_t(pumpkin.triangles.size()));
+    smooth->setInput(scene.positions, 0);
+    smooth->setInput(scene.triangles, 1);
+    smooth->setInput(clear, 2, 0);
+    auto shading = raster::shade(*vc, size, size, textureWidth, textureHeight);
+    scene.connectShading(shading);
+    shading->setInput(colors, 7);
+    auto shine = raster::specular(*vc, size, size, textureWidth, textureHeight);
+    scene.connectShading(shine);
+    shine->setInput(shading, 7, 7);
+    shine->setInput(materialTensor, 8);
+    shine->setInput(lightTensor, 9);
+    shine->setInput(smooth, 10, 2);
+    shine->setInput(eyes, 11);
+    auto smoothing = raster::antialias(*vc, size, size, textureWidth, textureHeight);
+    scene.connectShading(smoothing);
+    smoothing->setInput(shine, 7, 7);
+    smoothing->setInput(antialiased, 8);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(smoothing);
+    scene.upload(0);
+    materialTensor->getDataBuffer(0).memcopyFrom(material);
+    lightTensor->getDataBuffer(0).memcopyFrom(lights);
+    eyes->getDataBuffer(0).memcopyFrom(raster::cameraEyes(cameras));
+    std::vector<float> targets;
+    for (uint32_t view = 0; view < uint32_t(cameras.size()); ++view) {
+        scene.viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{view});
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        std::vector<float> image(4 * pixels);
+        antialiased->getDataBuffer(0).memcopyTo(image);
+        targets.insert(targets.end(), image.begin(), image.end());
+    }
+    const std::vector<float> training(targets.begin(), targets.begin() + 4 * size_t(views) * pixels);
+    const std::vector<float> heldOut(targets.begin() + 4 * size_t(views) * pixels, targets.end());
+    double highlight = 0.0; // how much brighter than the texture the held-out view gets
+    const std::vector<float> diffuse =
+        raster::renderImages(*vc, pumpkin, scene.texture, textureWidth, textureHeight, {cameras.back()}, size, size);
+    for (uint32_t p = 0; p < pixels; ++p)
+        highlight = std::max(highlight, double(heldOut[4 * p] - diffuse[4 * p]));
+    ASSERT_GT(highlight, 0.2) << "the held-out view should show a highlight";
+
+    // Fits the texture (and with `shiny` the material and lights) and renders the held-out view.
+    const auto fit = [&](bool shiny) {
+        raster::MeshTrainingOptions options;
+        options.width = options.height = size;
+        options.textureWidth = textureWidth;
+        options.textureHeight = textureHeight;
+        options.geometry.learningRate = 0.0f;
+        options.laplacianWeight = 0.0f;
+        options.texture.learningRate = 0.02f;
+        options.specular = shiny;
+        options.material.learningRate = 0.01f;
+        options.lights.learningRate = 0.01f;
+        const std::vector<glm::mat4> trainingCameras(cameras.begin(), cameras.begin() + views);
+        raster::MeshTraining fitting(*vc, pumpkin, trainingCameras, options);
+        fitting.setTargets(training);
+        for (int step = 0; step < 2400; ++step)
+            fitting.step();
+        if (!shiny)
+            return raster::renderImages(*vc, pumpkin, fitting.texture(), textureWidth, textureHeight, {cameras.back()},
+                                        size, size);
+        Scene fitted(*vc, size, size, textureWidth, textureHeight, cameras, pumpkin);
+        fitted.texture = fitting.texture();
+        auto c = tensor(pixels), a = tensor(pixels), n = tensor(uint32_t(pumpkin.positions.size())),
+             m = tensor(textureWidth * textureHeight), l = tensor(raster::kSpecularLights + 1),
+             e = tensor(uint32_t(cameras.size()));
+        auto clearNormals = raster::clearBuffers(*vc);
+        clearNormals->setInput(n, 0);
+        auto vn = raster::vertexNormals(*vc, uint32_t(pumpkin.triangles.size()));
+        vn->setInput(fitted.positions, 0);
+        vn->setInput(fitted.triangles, 1);
+        vn->setInput(clearNormals, 2, 0);
+        auto sh = raster::shade(*vc, size, size, textureWidth, textureHeight);
+        fitted.connectShading(sh);
+        sh->setInput(c, 7);
+        auto sp = raster::specular(*vc, size, size, textureWidth, textureHeight);
+        fitted.connectShading(sp);
+        sp->setInput(sh, 7, 7);
+        sp->setInput(m, 8);
+        sp->setInput(l, 9);
+        sp->setInput(vn, 10, 2);
+        sp->setInput(e, 11);
+        auto aa = raster::antialias(*vc, size, size, textureWidth, textureHeight);
+        fitted.connectShading(aa);
+        aa->setInput(sp, 7, 7);
+        aa->setInput(a, 8);
+        ComputeGraph g(*vc, 1);
+        g.compileFrom(aa);
+        fitted.upload(uint32_t(cameras.size()) - 1);
+        m->getDataBuffer(0).memcopyFrom(fitting.specularMaterial());
+        l->getDataBuffer(0).memcopyFrom(fitting.specularLights());
+        e->getDataBuffer(0).memcopyFrom(raster::cameraEyes(cameras));
+        g.submitAndWait(vc->getGraphicsQueue(), 0);
+        std::vector<float> image(4 * pixels);
+        a->getDataBuffer(0).memcopyTo(image);
+        return image;
+    };
+    const auto psnr = [&](const std::vector<float>& image) {
+        double squaredError = 0.0;
+        int count = 0;
+        for (uint32_t p = 0; p < pixels; ++p)
+            if (heldOut[4 * p + 3] > 0.99f)
+                for (int c = 0; c < 3; ++c, ++count)
+                    squaredError += (image[4 * p + c] - heldOut[4 * p + c]) * (image[4 * p + c] - heldOut[4 * p + c]);
+        return 10.0 * std::log10(count / squaredError);
+    };
+    const double matte = psnr(fit(false)), shiny = psnr(fit(true));
+    std::cout << "held-out PSNR of a glossy pumpkin: " << matte << " dB with a texture alone, " << shiny
+              << " dB with the specular reflection" << std::endl;
+    EXPECT_GT(shiny, matte + 3.0);
+    EXPECT_GT(shiny, 30.0);
 }
 
 TEST_F(DifferentiableRasterTest, antialiasMatchesCpu) {

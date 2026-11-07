@@ -34,8 +34,13 @@ struct MeshTrainingOptions {
     bool viewColors = false;                    ///< learn a colour gain and offset per view (imageLossWithViewColors())
     float viewColorWeight = 0.01f;              ///< pull of the per-view corrections towards identity
     training::AdamParameters viewColor{0.002f}; ///< optimizer of the per-view corrections
-    uint32_t seed = 1;                          ///< seed of the noise the texture starts from
-    uint32_t stepsPerSubmit = 1;                ///< training steps recorded one after another into one submission
+    /// Learn a specular reflection besides the texture (specular()): a material per texel of the texture's size (a
+    /// normal map and an amplitude) and an environment of lights shared by all views.
+    bool specular = false;
+    training::AdamParameters material{0.005f}; ///< optimizer of the specular material
+    training::AdamParameters lights{0.01f};    ///< optimizer of the specular environment
+    uint32_t seed = 1;                         ///< seed of the noise the texture starts from
+    uint32_t stepsPerSubmit = 1;               ///< training steps recorded one after another into one submission
     /// Whether the training compiles a graph of its own (step() submits it); otherwise its elements join the
     /// caller's graph (compile from getOutput(), then call initialize()).
     bool ownGraph = true;
@@ -105,6 +110,17 @@ public:
     /** @brief Replaces the texture (four floats per texel). */
     void setTexture(const std::vector<float>& texels);
 
+    /// The specular material (four floats per texel: normal offset xyz, amplitude) and environment (four floats per
+    /// light, then log exponent and three zeros), e.g. for drawing them; null without MeshTrainingOptions::specular.
+    std::shared_ptr<TensorElement<float>> getMaterial() const { return material; }
+    std::shared_ptr<TensorElement<float>> getLights() const { return lightValues; }
+    /// The vertex normals of the last step (four floats per vertex, the sums of area normals); null without specular.
+    std::shared_ptr<TensorElement<float>> getVertexNormals() const { return vertexNormalSums; }
+
+    /** @brief The current specular material and environment (see getMaterial()); empty without specular. */
+    std::vector<float> specularMaterial() const;
+    std::vector<float> specularLights() const;
+
 private:
     using Tensor = TensorElement<float>;
     using UintBuffer = BufferElement<VulkanBuffer<uint32_t>>;
@@ -129,6 +145,10 @@ private:
     // The intermediate images and the gradients, cleared at the start of every step.
     std::shared_ptr<Tensor> colors, antialiased, imageGradients, colorGradients, vertexGradients, textureGradients,
         lossValue;
+    // The specular material and environment (with MeshTrainingOptions::specular), their gradients and Adam moments,
+    // the vertex normals and the cameras' positions.
+    std::shared_ptr<Tensor> material, lightValues, materialGradients, lightGradients, materialMoments[2],
+        lightMoments[2], vertexNormalSums, eyes;
     std::unique_ptr<ComputeGraph> trainingGraph;
 };
 
