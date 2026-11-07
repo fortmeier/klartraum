@@ -274,6 +274,7 @@ add_executable(
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
   tests/test_differentiable_raster.cpp
+  tests/test_scene_training.cpp
   tests/test_splat_training.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
@@ -385,6 +386,7 @@ set(KLARTRAUM_LIB_SRC
   src/raster/image_target.cpp
   src/raster/mesh_morph.cpp
   src/raster/mesh_training.cpp
+  src/raster/scene_training.cpp
   src/raster/visibility_pass.cpp
   src/splatting/splat_training.cpp
   src/glyph_atlas.cpp
