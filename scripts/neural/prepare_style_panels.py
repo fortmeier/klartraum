@@ -15,7 +15,8 @@ watercolor target by day and by night. They go to --out as binary PPM files at t
 - target_<season>_<day|night>.ppm for winter, spring, summer and fall (--target-width x height).
 
 The views are the dataset's (techdemo001_example --dataset) whose season and time of day lie nearest to each panel's,
-among those that show the bonsai large enough.
+among those that show the bonsai large enough; day panels take views of a white background, night panels views of a
+black one (not of the twilight between).
 
     uv run scripts/neural/prepare_style_panels.py --dataset DIR --styles DIR --out DIR
 """
@@ -31,6 +32,7 @@ from PIL import Image
 
 SEASONS = {"winter": 0.0, "spring": 1.25, "summer": 2.0, "fall": 3.25}
 TIMES = {"day": 0.5, "night": 0.0}
+BACKGROUNDS = {"day": 1.0, "night": 0.0}
 
 
 def season_distance(a: float, b: float) -> float:
@@ -69,14 +71,16 @@ def main() -> None:
     large = [v for v in views if v["filled"] > 0.12] or views
     used: set[str] = set()
 
-    def nearest(season: float, time: float) -> dict:
-        choice = min((v for v in large if v["file"] not in used),
+    def nearest(season: float, time: float, background: float | None = None) -> dict:
+        candidates = [v for v in large if v["file"] not in used and
+                      (background is None or abs(v["background"] - background) < 0.01)]
+        choice = min(candidates,
                      key=lambda v: season_distance(v["season"], season) + 2.0 * time_distance(v["time_of_day"], time))
         used.add(choice["file"])
         return choice
 
     args.out.mkdir(parents=True, exist_ok=True)
-    sample = nearest(SEASONS["summer"], 0.55)
+    sample = nearest(SEASONS["summer"], 0.55, BACKGROUNDS["day"])
     size = (args.sample_width, args.sample_height)
     write_ppm(Image.open(args.dataset / sample["file"]), size, args.out / "sample_rendering.ppm")
     write_ppm(Image.open(args.dataset / sample["classes"]), size, args.out / "sample_classes.ppm")
@@ -86,7 +90,7 @@ def main() -> None:
     size = (args.target_width, args.target_height)
     for name, season in SEASONS.items():
         for kind, time in TIMES.items():
-            view = nearest(season, time)
+            view = nearest(season, time, BACKGROUNDS[kind])
             write_ppm(Image.open(args.styles / view["file"]), size, args.out / f"target_{name}_{kind}.ppm")
             print(f"{name} {kind}: {view['file']} (season {view['season']:.2f}, {view['clock']})")
 

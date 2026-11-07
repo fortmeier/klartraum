@@ -12,14 +12,15 @@
 //   1. Drop: the pumpkin falls onto the splatted bonsai pot with its soil and the lantern, shrinking to its size on
 //      the soil and turning to face the camera; the camera follows.
 //   2. Growth: the bonsai pine grows from a seedling, its trunk extending and branching out step by step.
-//   3. Days: the summer afternoon holds while a painted style fades in (with --style or --field; with --panels a
-//      training sample of the style beside it), then turns into night, then four days, one season each (with
+//   3. Style transfer: the summer afternoon holds while a painted style fades in (with --style or --field; with
+//      --panels a training sample of the style beside it).
+//   4. Days: the afternoon turns into night, then four days, one season each, stormy in fall and winter (with
 //      --panels the style's targets of the season by day and night beside them); the background is white by day and
-//      black by night, with a black sun by day and a white crescent moon by night where the light shines from.
+//      black by night.
 // Each chapter shows a caption with the work it builds on, lower left.
 //
 //   techdemo001_example [--pot FILE] [--photos DIR] [--width 1280] [--height 720] [--fps 30]
-//                       [--from 0] [--to 3] [--step 1] [--out-dir build/TestingOutput/techdemo001]
+//                       [--from 0] [--to 4] [--step 1] [--out-dir build/TestingOutput/techdemo001]
 //                       [--style MODEL.onnx | --field STEM] [--panels DIR]
 //
 // --pot is the object.spz of splat_training_example for the bonsai pot (default:
@@ -79,11 +80,15 @@ struct Chapter {
     std::vector<std::string> caption; // first line large, the others small
 };
 
+// Whether the days show a black sun by day and a white crescent moon by night where the light comes from.
+constexpr bool kSkyMarks = false;
+
 const std::vector<Chapter> kChapters = {
     {5.0f, {"Differentiable rasterization", "Laine et al. 2020, automatic differentiation in Slang"}},
     {2.5f, {"Gaussian splatting", "Kerbl et al. 2023, trained on 38 photographs"}},
     {5.0f, {"GPU tree generation", "Kuth et al. 2025, after Weber and Penn 1995"}},
-    {22.0f, {"Days and seasons", "one compute graph submission per frame"}},
+    {4.0f, {"Watercolor style transfer", "per pixel from G-buffers and world-anchored features, 185 painted pairs"}},
+    {18.0f, {"Days and seasons", "one compute graph submission per frame"}},
 };
 
 // The frame's pixels as BGRA bytes, from an image in `layout`.
@@ -221,8 +226,7 @@ constexpr uint32_t kSequenceFrames = 8;
 
 // The side panels of the days (--panels, scripts/neural/prepare_style_panels.py): during the style's demonstration a
 // training sample (its rendering, classes, depth and watercolor target) in a 2 x 2 grid, then the watercolor targets
-// of the season shown by day and by night, the one of the time of day shown brighter. Labels are black on light
-// backgrounds and white on dark ones.
+// of the season shown by day and by night. Labels are black on light backgrounds and white on dark ones.
 class StylePanels {
 public:
     StylePanels(const std::filesystem::path& folder, VkExtent2D extent, const std::shared_ptr<Font>& mono)
@@ -276,17 +280,15 @@ public:
                 nearest = k;
             }
         }
-        const bool night = background < 0.5f;
         const Picture& first = targets[0];
         const int width = int(first.width), height = int(first.height), label = int(targetLabels[0].height);
         const int x = int(extent.width) - margin - width;
         int y = (int(extent.height) - 2 * (label + gap / 2 + height) - gap) / 2;
         for (int kind = 0; kind < 2; ++kind) {
             const int k = 2 * nearest + kind;
-            const float shown = opacity * ((kind == 1) == night ? 1.0f : 0.45f);
-            blendCaption(bgra, extent.width, extent.height, targetLabels[k], x, y, ink, shown);
+            blendCaption(bgra, extent.width, extent.height, targetLabels[k], x, y, ink, opacity);
             blendPicture(bgra, extent.width, extent.height, targets[k].values, targets[k].width, targets[k].height, x,
-                         y + label + gap / 2, shown);
+                         y + label + gap / 2, opacity);
             y += label + gap / 2 + height + gap;
         }
     }
@@ -671,35 +673,21 @@ int main(int argc, char** argv) {
     // The pumpkin's photographs, masked, with their cameras in the unit sphere around it (up +y): the morph's targets.
     const raster::FittingScene photos = raster::loadFittingScene(photosPath);
     const glm::mat4 sceneFromUnit = photos.sceneFromUnitSphere();
-    // Photographs with much glare (a washed-out, glossy sheen on the skin: bright pixels of little colour) are left
-    // out; their sheen would bleach the texture where they see the pumpkin.
-    std::vector<uint32_t> used;
-    for (const uint32_t view : photos.train) {
-        const float* photo = &photos.targets[4 * size_t(photos.width) * photos.height * view];
-        size_t covered = 0, glare = 0;
-        for (size_t p = 0; p < size_t(photos.width) * photos.height; ++p) {
-            if (photo[4 * p + 3] < 0.99f)
-                continue;
-            const float hi = std::max({photo[4 * p], photo[4 * p + 1], photo[4 * p + 2]});
-            const float lo = std::min({photo[4 * p], photo[4 * p + 1], photo[4 * p + 2]});
-            ++covered;
-            glare += hi > 0.6f && (hi - lo) < 0.4f * hi;
-        }
-        if (glare < 0.15 * double(covered))
-            used.push_back(view);
-    }
+    // All training photographs; their glare (a glossy sheen on the skin that one view sees and the others do not) is
+    // let pass by the loss's highlight tolerance instead of bleaching the texture.
+    const std::vector<uint32_t> used = photos.train;
     raster::MeshMorphOptions morphOptions;
     morphOptions.photographs = photos.targetsOf(used);
     for (const glm::mat4& camera : photos.camerasOf(used))
         morphOptions.photoCameras.push_back(camera * sceneFromUnit);
-    std::cout << used.size() << " of " << photos.train.size() << " photographs of " << photos.width << " x "
-              << photos.height << " (the others with too much glare)" << std::endl;
-    morphOptions.training.stepsPerSubmit = 13;
+    std::cout << used.size() << " photographs of " << photos.width << " x " << photos.height << std::endl;
+    morphOptions.training.stepsPerSubmit = 26;
+    morphOptions.training.highlightTolerance = 0.1f;
     morphOptions.training.width = photos.width;
     morphOptions.training.height = photos.height;
-    // Fine enough for the carved face at the photographs' resolution.
-    morphOptions.training.textureWidth = 512;
-    morphOptions.training.textureHeight = 256;
+    // Fine enough for the carved face and the skin's ribs at the photographs' resolution.
+    morphOptions.training.textureWidth = 1024;
+    morphOptions.training.textureHeight = 512;
     morphOptions.frame = extent;
 
     // The trained pumpkin, carried from chapter to chapter. The sphere it starts from is turned so that its texture
@@ -996,12 +984,14 @@ int main(int argc, char** argv) {
         // The growth's summer noon turns into the night over the first seconds; then four days from midnight.
         // First the style's demonstration: the summer afternoon holds while the style fades in; then the afternoon
         // turns into the night, and four days from midnight.
-        const float demonstration = 4.0f, afternoon = 4.0f;
-        days.secondsPerDay = (kChapters[3].seconds - demonstration - afternoon) / 4.0f;
+        const float demonstration = kChapters[3].seconds, afternoon = 4.0f;
+        days.secondsPerDay = (kChapters[4].seconds - afternoon) / 4.0f;
         days.dawn = 0.0f;
         days.seasons[0] = 2.0f, days.seasons[1] = 3.25f, days.seasons[2] = 4.0f, days.seasons[3] = 5.25f;
         const uint32_t begin = timeline.chapterStart(std::max(fromChapter, 2)), end = timeline.frameCount();
         const uint32_t growthStart = timeline.chapterStart(2), daysStart = timeline.chapterStart(3);
+        // The time the wind's gusts follow: faster in storms, integrated so that it never jumps.
+        float windTime = 0.0f;
         for (uint32_t f = begin; f < end; ++f) {
             const float sinceGrowth = float(f - growthStart) / fps;
             const Pose pose = orbitPose(growthOrbit(sinceGrowth));
@@ -1029,7 +1019,12 @@ int main(int argc, char** argv) {
                 timeOfDay =
                     seconds < afternoon ? 0.5f + 0.5f * seconds / afternoon : days.timeOfDayAt(seconds - afternoon);
                 season = seconds < afternoon ? days.seasons[0] : days.seasonAt(seconds - afternoon);
-                bonsai.setTime(sinceGrowth, timeOfDay, season, glm::vec4(1.0f, 0.0f, 0.0f, 0.4f));
+                // Storms in fall and winter: from summer (2) the wind rises into fall (3.25), blows through winter
+                // (4) and calms down towards spring (5.25).
+                const float storm = smooth((season - 2.5f) / 0.6f) * (1.0f - smooth((season - 4.5f) / 0.6f));
+                windTime += (1.0f + 1.5f * storm) / fps;
+                bonsai.setTime(sinceGrowth + windTime, timeOfDay, season,
+                               glm::vec4(1.0f, 0.0f, 0.0f, 0.4f + 1.8f * storm));
                 background = backgroundAt(timeOfDay, season);
             }
             bonsai.setBackground(glm::vec3(background));
@@ -1079,7 +1074,8 @@ int main(int argc, char** argv) {
             if ((f - begin) % step == 0) {
                 std::vector<uint8_t> image = readImage(vc, (style || field ? styled : frame)->getImage(0),
                                                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
-                drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
+                if (kSkyMarks)
+                    drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
                 if (panels && f >= daysStart)
                     panels->draw(image, sinceDays, demonstration, season, background);
                 finishFrame(f, std::move(image), background);

@@ -245,13 +245,13 @@ chapters run in one continuous camera move:
    the lantern, casting its shadow, and the camera follows.
 3. **Growth:** the bonsai pine grows from a seedling, branching out step by
    step.
-4. **Days:** a summer afternoon holding while a painted style fades in (with
-   `--style` or `--field`), then turning into night, then four days, one
-   season each. The background is white by day and black by night, with a
-   black sun and a white crescent moon where the light comes from. With
-   `--panels`, the style's training data is shown beside: a training sample
-   (rendering, classes, depth, watercolor target) while the style fades in,
-   then the season's watercolor targets by day and by night.
+4. **Style transfer:** a summer afternoon holding while a painted style fades
+   in (with `--style` or `--field`); with `--panels`, a training sample of the
+   style beside it (rendering, classes, depth, watercolor target).
+5. **Days:** the afternoon turning into night, then four days, one season
+   each, stormy in fall and winter. The background is white by day and black
+   by night. With `--panels`, the season's watercolor targets by day and by
+   night beside them.
 
 Each chapter shows a caption naming the work it builds on. Frames go to
 `<out-dir>/frames/frame_XXXX.ppm`. The trained pumpkin goes to
@@ -263,7 +263,7 @@ Each chapter shows a caption naming the work it builds on. Frames go to
 | `--photos DIR` | The pumpkin's photographs as prepared by `scripts/mesh_fitting/prepare_data.py`, the morph's targets (default `build/TestingOutput/real_data/pumpkin_closed_1_512`) |
 | `--width W`, `--height H` | Frame size (default 1280 x 720) |
 | `--fps F` | Frames per second (default 30) |
-| `--from N`, `--to M` | Render chapters N to M (0 to 3) |
+| `--from N`, `--to M` | Render chapters N to M (0 to 4) |
 | `--step S` | Write every S-th frame, for previews |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo001`) |
 | `--dataset N` | Instead of the video: N renderings of the final scene from random cameras, seasons and times of day as `<out-dir>/dataset/image_XXXX.png`, each with its G-buffers (`class_XXXX.png`: the surfaces' classes; `depth_XXXX.png`: their distance from the camera; `coverage_XXXX.png` and `field_depth_XXXX.png`: how much of each pixel they cover and their distance as `--field` reads them), and `dataset.yaml` giving each one's camera, light, season and time of day (needs the pumpkin of an earlier run) |
