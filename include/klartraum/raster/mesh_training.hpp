@@ -157,6 +157,36 @@ private:
 };
 
 /**
+ * @brief Renders a mesh of a fixed topology from fixed cameras with the shading and antialiasing of the training, again
+ * and again with new vertex positions and texture (e.g. a training's progress): the graph is built once.
+ */
+class MeshImages {
+public:
+    /** @brief For @p mesh's topology and corner texture coordinates, a texture of the size given, and @p cameras. */
+    MeshImages(VulkanContext& vulkanContext, const TriangleMesh& mesh, uint32_t textureWidth, uint32_t textureHeight,
+               const std::vector<glm::mat4>& cameras, uint32_t width, uint32_t height);
+    ~MeshImages();
+    MeshImages(const MeshImages&) = delete;
+    MeshImages& operator=(const MeshImages&) = delete;
+
+    /**
+     * @brief The images of @p mesh (its positions; the topology given at construction) with @p texture (four floats
+     * per texel) from every camera: four floats per pixel and view (premultiplied rgb, coverage), views one after
+     * another.
+     */
+    std::vector<float> render(const TriangleMesh& mesh, const std::vector<float>& texture);
+
+private:
+    // The context the graph runs on; it outlives this object.
+    VulkanContext& vulkanContext;
+    uint32_t cameraCount, vertexCount, texelCount, pixels;
+    // What changes between renders, the drawn view and the output.
+    std::shared_ptr<TensorElement<float>> positions, texels, antialiased;
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> viewIndex;
+    std::unique_ptr<ComputeGraph> graph;
+};
+
+/**
  * @brief Renders @p mesh with @p texture from every camera with the shading and antialiasing of the training:
  * four floats per pixel and view (premultiplied rgb, coverage), views one after another.
  */

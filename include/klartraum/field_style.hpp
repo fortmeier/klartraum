@@ -39,7 +39,9 @@ std::pair<float, float> fieldDepthWindow(glm::vec3 eye, glm::vec3 low, glm::vec3
  * `style_field_input.comp` packs these into the network's 41 input planes, the ONNX network (the edge convolutions and
  * the per-pixel MLP) runs at the frame's size, and `style_transfer_output.comp` blends its output over `color` into
  * `output` by setBlend(). The grids and the paper come from the field file. The images are the frame's size and in
- * TRANSFER_SRC_OPTIMAL before (`producer` last writes them) and after; compile a graph from getOutput().
+ * TRANSFER_SRC_OPTIMAL before (`producer`, if any, last writes them in the same graph; without, the images are filled
+ * before the graph is submitted, e.g. copied from another graph's renderings) and after; compile a graph from
+ * getOutput().
  */
 class FieldStyle {
 public:

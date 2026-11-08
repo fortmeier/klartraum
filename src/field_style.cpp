@@ -105,7 +105,8 @@ FieldStyle::FieldStyle(VulkanContext& vulkanContext, const std::string& modelPat
     input->setInput(tensor, 3);
     input->setInput(frameValues, 4);
     input->setInput(fieldData, 5);
-    input->addDependency(producer);
+    if (producer)
+        input->addDependency(producer);
     network->setInputTensor("input", input, 3);
 
     // The output pass of StyleTransfer, at the frame's size.

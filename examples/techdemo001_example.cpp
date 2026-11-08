@@ -21,19 +21,20 @@
 //
 //   techdemo001_example [--pot FILE] [--photos DIR] [--width 1280] [--height 720] [--fps 30]
 //                       [--from 0] [--to 4] [--step 1] [--out-dir build/TestingOutput/techdemo001]
-//                       [--style MODEL.onnx | --field STEM] [--panels DIR]
+//                       [--style MODEL.onnx | --field STEM] [--panels DIR] [--video FILE.mp4]
 //
 // --pot is the object.spz of splat_training_example for the bonsai pot (default:
 // build/TestingOutput/splat_training/bonsai/object.spz), --photos the pumpkin's photographs as prepared by
 // scripts/mesh_fitting/prepare_data.py (default: build/TestingOutput/real_data/pumpkin_closed_1_512). Frames go to
 // <out-dir>/frames/frame_XXXX.ppm, numbered through the whole video; --from/--to select chapters, --step renders
-// every n-th frame for previews.
+// every n-th frame for previews; with --video they go straight to an H.264 video through ffmpeg instead.
 
 #include <algorithm>
 #include <functional>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -562,7 +563,7 @@ int main(int argc, char** argv) {
     int fromChapter = 0, toChapter = int(kChapters.size()) - 1;
     uint32_t step = 1;
     uint32_t datasetCount = 0, sequenceCount = 0, datasetSeed = 1;
-    std::filesystem::path stylePath, fieldPath, panelsPath;
+    std::filesystem::path stylePath, fieldPath, panelsPath, videoPath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -596,6 +597,8 @@ int main(int argc, char** argv) {
             fieldPath = argv[++i];
         else if (arg == "--panels" && hasValue)
             panelsPath = argv[++i];
+        else if (arg == "--video" && hasValue)
+            videoPath = argv[++i];
     }
     if (datasetCount > 0) {
         // Only the dataset, of the scene with the pumpkin of an earlier run: no chapters.
@@ -636,11 +639,24 @@ int main(int argc, char** argv) {
                          litSideTowards(view, sky.moonDirection, sky.sunDirection), glm::vec3(1.0f),
                          moon.opacity * (1.0f - background) * smooth(sky.moonElevation / 0.08f), background);
     };
+    // With --video, the frames go straight to ffmpeg (H.264, as raw BGRA through a pipe) instead of to PPM files.
+    std::unique_ptr<FILE, int (*)(FILE*)> video(nullptr, pclose);
+    if (!videoPath.empty()) {
+        std::ostringstream command;
+        command << "ffmpeg -y -loglevel error -f rawvideo -pix_fmt bgra -s " << extent.width << "x" << extent.height
+                << " -r " << fps << " -i - -c:v libx264 -pix_fmt yuv420p -crf 18 \"" << videoPath.string() << "\"";
+        video.reset(popen(command.str().c_str(), "w"));
+        if (!video)
+            throw std::runtime_error("cannot start ffmpeg");
+    }
     const auto finishFrame = [&](uint32_t frame, std::vector<uint8_t> bgra, float background) {
         const int chapter = timeline.chapterAt(frame);
         const float opacity = timeline.captionOpacity({chapter, 0.6f, 0.4f, 0.5f}, frame);
         drawCaption(bgra, extent, captions[chapter], opacity, 1.0f - background);
-        writePpm(frameName(frame), bgra, extent);
+        if (video)
+            std::fwrite(bgra.data(), 1, bgra.size(), video.get());
+        else
+            writePpm(frameName(frame), bgra, extent);
     };
 
     // The bonsai: the splatted pot with soil, lantern and a bonsai pine.
@@ -861,13 +877,15 @@ int main(int argc, char** argv) {
             photographPanels.push_back(third(&morphOptions.photographs[4 * photoPixels * view]));
             shownCameras.push_back(morphOptions.photoCameras[view]);
         }
+        // Renders the training's mesh from the four cameras, its graph built once.
+        raster::MeshImages shownImages(vc, pumpkinMesh, morphOptions.training.textureWidth,
+                                       morphOptions.training.textureHeight, shownCameras, photoWidth, photoHeight);
         const float trainingStart = 0.5f; // seconds into the title
         const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, float opacity) {
             if (opacity <= 0.0f)
                 return;
-            const std::vector<float> renderings = raster::renderImages(
-                vc, morph.getTraining().mesh(), morph.getTraining().texture(), morphOptions.training.textureWidth,
-                morphOptions.training.textureHeight, shownCameras, photoWidth, photoHeight);
+            const std::vector<float> renderings =
+                shownImages.render(morph.getTraining().mesh(), morph.getTraining().texture());
             const int gap = int(0.02f * float(extent.height));
             const int left = int(extent.width) - int(0.05f * float(extent.width)) - 2 * int(panelWidth) - gap;
             const int grid = int(photographLabel.height) + gap / 2 + 2 * int(panelHeight) + gap;
@@ -1035,16 +1053,23 @@ int main(int argc, char** argv) {
         if (!stylePath.empty())
             style = std::make_unique<StyleTransfer>(vc, stylePath.string(), frame, styled, bonsai.getOutput(), classes,
                                                     depth);
-        // With --field, the style anchored in the world (FieldStyle): it reads the classes, the coverage and the
-        // depth in its box's window, each from one more render of every frame.
+        // With --field, the style anchored in the world (FieldStyle): it reads the colour, the classes, the coverage
+        // and the depth in its box's window, each from a render of the frame, copied aside. The style is a graph of
+        // its own, submitted once per frame after the renders, and only while it shows.
         std::unique_ptr<FieldStyle> field;
         auto coverage = std::make_shared<OffscreenTarget>(vc, extent, 1);
+        auto colour = std::make_shared<OffscreenTarget>(vc, extent, 1);
         coverage->setClear(false);
-        if (!fieldPath.empty())
-            field = std::make_unique<FieldStyle>(vc, fieldPath.string() + ".onnx", fieldPath.string() + ".bin", frame,
-                                                 classes, coverage, depth, styled, bonsai.getOutput());
+        colour->setClear(false);
+        std::unique_ptr<ComputeGraph> styleGraph;
+        if (!fieldPath.empty()) {
+            field = std::make_unique<FieldStyle>(vc, fieldPath.string() + ".onnx", fieldPath.string() + ".bin", colour,
+                                                 classes, coverage, depth, styled, nullptr);
+            styleGraph = std::make_unique<ComputeGraph>(vc, 1);
+            styleGraph->compileFrom(field->getOutput());
+        }
         ComputeGraph graph(vc, 1);
-        graph.compileFrom(field ? field->getOutput() : style ? style->getOutput() : bonsai.getOutput());
+        graph.compileFrom(style ? style->getOutput() : bonsai.getOutput());
         // With --panels, the style's training data beside the days.
         std::unique_ptr<StylePanels> panels;
         if (!panelsPath.empty())
@@ -1143,8 +1168,13 @@ int main(int argc, char** argv) {
                 }
             }
             graph.submitAndWait(vc.getGraphicsQueue(), 0);
+            const bool styledByField = field && blend > 0.0f;
+            if (styledByField) {
+                copyImage(vc, frame->getImage(0), colour->getImage(0), extent);
+                styleGraph->submitAndWait(vc.getGraphicsQueue(), 0);
+            }
             if ((f - begin) % step == 0) {
-                std::vector<uint8_t> image = readImage(vc, (style || field ? styled : frame)->getImage(0),
+                std::vector<uint8_t> image = readImage(vc, (style || styledByField ? styled : frame)->getImage(0),
                                                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
                 if (kSkyMarks)
                     drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
@@ -1162,6 +1192,11 @@ int main(int argc, char** argv) {
         writeDataset(vc, scene, renderConfig, extent, datasetCount, sequenceCount, datasetSeed, outDir / "dataset");
         return 0;
     }
-    std::cout << "frames in " << (outDir / "frames").string() << std::endl;
+    if (video) {
+        video.reset();
+        std::cout << "video " << videoPath.string() << std::endl;
+    } else {
+        std::cout << "frames in " << (outDir / "frames").string() << std::endl;
+    }
     return 0;
 }
