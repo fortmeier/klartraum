@@ -311,6 +311,7 @@ add_executable(
   tests/test_gguf_quants.cpp
   tests/test_gguf_layers.cpp
   tests/test_dit_layers.cpp
+  tests/test_qwen_image_vae.cpp
   tests/test_gguf_qwen35.cpp
   tests/test_gguf_tokenizer.cpp
   tests/test_render_over_targets.cpp
