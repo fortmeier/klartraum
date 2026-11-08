@@ -101,6 +101,30 @@ ComputeGraphElementPtr specularBackward(VulkanContext& vulkanContext, uint32_t w
 std::vector<float> cameraEyes(const std::vector<glm::mat4>& cameras);
 
 /**
+ * @brief Cameras as poses (shaders/raster/camera_pose.slang): each camera M = P R(q) T(-e), with q a quaternion, e the
+ * eye's position and P the fixed rest. Splits @p cameras into their rests (16 floats each, as the cameras are packed)
+ * and their poses at rest (eight floats each: q = (0, 0, 0, 1), then e and a zero).
+ */
+void cameraPoses(const std::vector<glm::mat4>& cameras, std::vector<float>& rests, std::vector<float>& poses);
+
+/**
+ * @brief Builds every camera from its pose: M = P R(q) T(-e), and its eye.
+ *
+ * Slots: 0 rests (16 floats per view), 1 poses (eight floats per view), 2 cameras (16 floats per view, written), 3 eyes
+ * (four floats per view, written).
+ */
+ComputeGraphElementPtr cameraBuild(VulkanContext& vulkanContext, uint32_t viewCount);
+
+/**
+ * @brief The gradients of the drawn view's pose from the vertex gradients of the same step (dL/dx with the camera
+ * fixed): moving the camera is moving the mesh the other way.
+ *
+ * Slots: 0 positions (four floats per vertex), 1 vertex gradients (four floats per vertex), 2 poses, 3 view index (one
+ * uint32), 4 pose gradients (eight floats per view, added to).
+ */
+ComputeGraphElementPtr cameraPoseBackward(VulkanContext& vulkanContext, uint32_t vertexCount);
+
+/**
  * @brief Analytic antialiasing of silhouettes (shaders/raster/antialias.slang): where a mesh edge separates two
  * neighbouring pixels, the pixel partly covered by the other surface blends towards its colour by the covered
  * fraction, which is differentiable in the edge's vertices.

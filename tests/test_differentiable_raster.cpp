@@ -42,6 +42,15 @@
  * - specularFitExplainsHighlights: MeshTraining with the specular reflection fits texture, material and lights to
  *   twelve views of a glossy pumpkin; a held-out view reaches a PSNR above 30 dB inside the mesh, at least 3 dB more
  *   than a fit of the texture alone
+ * - posedCamerasMatchTheGiven: MeshTraining with trainable poses builds cameras equal to the given ones at rest, its
+ *   poses are the identity quaternion and the given eyes, and a pose moved by hand moves the built camera's eye
+ * - poseGradientsFollowTheVertexGradients: for the textured pumpkin seen from a turned and moved pose against a
+ *   picture from another camera, the pose gradients (quaternion and eye) are the step's vertex gradients carried
+ *   through y = R(q) (x - e), as central differences of that map on the CPU give them (the vertex gradients hold the
+ *   visibility fixed, so the loss's own differences along a whole moving silhouette are no fair measure)
+ * - posesRecoverDisturbedCameras: fitting the texture of the pumpkin to twelve views given with disturbed cameras,
+ *   the trained poses put the vertices at less than half the distance from the true cameras' places, and a held-out
+ *   view gets at least 2 dB more PSNR than without them
  * - antialiasMatchesCpu: the antialiased colours equal a CPU evaluation of the silhouette crossings and blends on the
  *   GPU visibility, change pixels along the outline only, and leave the image interior untouched
  * - antialiasGradientsMatchFiniteDifferences: the image loss of the antialiased image (colour inside the mask,
@@ -89,6 +98,7 @@
 #include <string>
 #include <vector>
 
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include "klartraum/computegraph/bufferelement.hpp"
@@ -1371,6 +1381,182 @@ TEST_F(DifferentiableRasterTest, specularFitExplainsHighlights) {
               << " dB with the specular reflection" << std::endl;
     EXPECT_GT(shiny, matte + 3.0);
     EXPECT_GT(shiny, 30.0);
+}
+
+namespace {
+
+// `camera` moved by a rigid motion about its eye: turned by `angle` radians about `axis` (in the world) and its eye
+// shifted by `shift`.
+glm::mat4 disturbCamera(const glm::mat4& camera, glm::vec3 axis, float angle, glm::vec3 shift) {
+    const std::vector<float> eyes = raster::cameraEyes({camera});
+    const glm::vec3 eye(eyes[0], eyes[1], eyes[2]);
+    // M = P T(-e); disturbed: P R T(-(e + shift)).
+    const glm::mat4 rest = camera * glm::translate(glm::mat4(1.0f), eye);
+    return rest * glm::rotate(glm::mat4(1.0f), angle, glm::normalize(axis)) *
+           glm::translate(glm::mat4(1.0f), -(eye + shift));
+}
+
+} // namespace
+
+TEST_F(DifferentiableRasterTest, posedCamerasMatchTheGiven) {
+    const std::vector<glm::mat4> cameras = raster::cameraRing(3, 3.0f, 0.4f, 0.8f, 1.0f);
+    raster::MeshTrainingOptions options;
+    options.width = options.height = 32;
+    options.textureWidth = 16;
+    options.textureHeight = 8;
+    options.poses = true;
+    options.geometry.learningRate = options.texture.learningRate = options.pose.learningRate = 0.0f;
+    raster::MeshTraining training(*vc, raster::icosphere(2), cameras, options);
+    training.step();
+    const std::vector<glm::mat4> built = training.currentCameras();
+    ASSERT_EQ(built.size(), cameras.size());
+    for (size_t v = 0; v < cameras.size(); ++v)
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                EXPECT_NEAR(built[v][c][r], cameras[v][c][r], 1e-5f * (1.0f + std::abs(cameras[v][c][r])))
+                    << "view " << v << " column " << c << " row " << r;
+    const std::vector<float> poses = training.cameraPoses();
+    const std::vector<float> eyes = raster::cameraEyes(cameras);
+    for (size_t v = 0; v < cameras.size(); ++v) {
+        EXPECT_EQ(poses[8 * v + 3], 1.0f) << "the identity quaternion";
+        for (int c = 0; c < 3; ++c)
+            EXPECT_NEAR(poses[8 * v + 4 + c], eyes[4 * v + c], 1e-5f);
+    }
+    // A moved pose moves the built camera: the eye a little to the side.
+    std::vector<float> moved = poses;
+    moved[4] += 0.1f;
+    training.setCameraPoses(moved);
+    training.step();
+    const std::vector<float> builtEyes = raster::cameraEyes(training.currentCameras());
+    EXPECT_NEAR(builtEyes[0], eyes[0] + 0.1f, 1e-4f);
+}
+
+TEST_F(DifferentiableRasterTest, poseGradientsFollowTheVertexGradients) {
+    // One view of the textured pumpkin against a picture from a slightly turned and shifted camera, the pose itself
+    // turned and moved from rest. The camera sees x at y = R(q) (x - e): its pose gradients are those of the step's
+    // vertex gradients carried through that map, here by central differences on the CPU.
+    const uint32_t size = 64, textureWidth = 32, textureHeight = 16;
+    const glm::mat4 camera = raster::cameraRing(1, 3.0f, 0.4f, 0.8f, 1.0f, 0.3f)[0];
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(3);
+    const std::vector<float> texture = raster::syntheticPumpkinTexture(textureWidth, textureHeight);
+    const glm::mat4 truth = disturbCamera(camera, {0.3f, 1.0f, 0.2f}, 0.02f, {0.02f, -0.01f, 0.015f});
+    raster::MeshTrainingOptions options;
+    options.width = options.height = size;
+    options.textureWidth = textureWidth;
+    options.textureHeight = textureHeight;
+    options.poses = true;
+    options.laplacianWeight = 0.0f;
+    options.geometry.learningRate = options.texture.learningRate = options.pose.learningRate = 0.0f;
+    raster::MeshTraining training(*vc, pumpkin, {camera}, options);
+    training.setTexture(texture);
+    training.setTargets(raster::renderImages(*vc, pumpkin, texture, textureWidth, textureHeight, {truth}, size, size));
+    std::vector<float> pose = training.cameraPoses();
+    const glm::quat turn = glm::angleAxis(0.01f, glm::normalize(glm::vec3(1.0f, 0.2f, -0.4f)));
+    pose[0] = turn.x, pose[1] = turn.y, pose[2] = turn.z, pose[3] = turn.w;
+    pose[4] += 0.01f, pose[6] -= 0.02f;
+    training.setCameraPoses(pose);
+    training.step();
+    std::vector<float> poseGradients(8), vertexGradients(4 * pumpkin.positions.size());
+    training.getPoseGradients()->getDataBuffer(0).memcopyTo(poseGradients);
+    training.getVertexGradients()->getDataBuffer(0).memcopyTo(vertexGradients);
+
+    // y(q, e) for vertex x, with q normalized (as camera_pose.slang).
+    const auto viewPoint = [](const std::vector<double>& p, const glm::dvec3& x) {
+        glm::dquat q(p[3], p[0], p[1], p[2]);
+        q = glm::normalize(q);
+        return q * (x - glm::dvec3(p[4], p[5], p[6]));
+    };
+    std::vector<double> expected(7, 0.0);
+    const std::vector<double> at(pose.begin(), pose.begin() + 7);
+    const glm::dquat rotation = glm::normalize(glm::dquat(at[3], at[0], at[1], at[2]));
+    double largest = 0.0;
+    for (size_t i = 0; i < pumpkin.positions.size(); ++i) {
+        const glm::dvec3 x(pumpkin.positions[i]);
+        const glm::dvec3 g(vertexGradients[4 * i], vertexGradients[4 * i + 1], vertexGradients[4 * i + 2]);
+        const glm::dvec3 gy = rotation * g; // dL/dy
+        for (int k = 0; k < 7; ++k) {
+            std::vector<double> up = at, down = at;
+            up[k] += 1e-6;
+            down[k] -= 1e-6;
+            expected[k] += glm::dot(gy, (viewPoint(up, x) - viewPoint(down, x)) / 2e-6);
+        }
+    }
+    for (int k = 0; k < 7; ++k)
+        largest = std::max(largest, std::abs(expected[k]));
+    ASSERT_GT(largest, 1e-3) << "the picture should pull the pose";
+    for (int k = 0; k < 7; ++k)
+        EXPECT_NEAR(poseGradients[k], expected[k], 2e-3 * largest + 1e-3 * std::abs(expected[k]))
+            << "pose parameter " << k;
+}
+
+TEST_F(DifferentiableRasterTest, posesRecoverDisturbedCameras) {
+    // Twelve views of the textured pumpkin, given with disturbed cameras (each turned by about a degree and its eye
+    // moved by about 0.04); fitting the texture with and without the poses. The shape stays fixed.
+    const uint32_t size = 64, textureWidth = 32, textureHeight = 16, pixels = size * size;
+    std::vector<glm::mat4> cameras = raster::cameraRing(6, 3.0f, 0.15f, 0.8f, 1.0f);
+    const auto upper = raster::cameraRing(6, 3.0f, 0.7f, 0.8f, 1.0f, 0.5f);
+    cameras.insert(cameras.end(), upper.begin(), upper.end());
+    const std::vector<glm::mat4> heldOut = {raster::cameraRing(1, 3.0f, 0.4f, 0.8f, 1.0f, 0.3f)[0]};
+    const raster::TriangleMesh pumpkin = raster::syntheticPumpkin(3);
+    const std::vector<float> truth = raster::syntheticPumpkinTexture(textureWidth, textureHeight);
+    const std::vector<float> targets =
+        raster::renderImages(*vc, pumpkin, truth, textureWidth, textureHeight, cameras, size, size);
+    std::vector<glm::mat4> disturbed;
+    uint32_t state = 5u;
+    const auto next = [&]() {
+        state = state * 1664525u + 1013904223u;
+        return float(state >> 8) / float(1u << 24) - 0.5f;
+    };
+    for (const glm::mat4& camera : cameras)
+        disturbed.push_back(
+            disturbCamera(camera, {next(), next(), next()}, 0.02f, 0.08f * glm::vec3(next(), next(), next())));
+    // How far the cameras put the mesh's vertices from where the true ones do, in pixels, on average.
+    const auto misplacement = [&](const std::vector<glm::mat4>& estimated) {
+        double sum = 0.0;
+        int count = 0;
+        for (size_t v = 0; v < cameras.size(); ++v)
+            for (const glm::vec3& p : pumpkin.positions) {
+                const glm::vec4 a = cameras[v] * glm::vec4(p, 1.0f), b = estimated[v] * glm::vec4(p, 1.0f);
+                sum += 0.5 * double(size) * glm::length(glm::vec2(a) / a.w - glm::vec2(b) / b.w);
+                ++count;
+            }
+        return sum / count;
+    };
+    const std::vector<float> clean =
+        raster::renderImages(*vc, pumpkin, truth, textureWidth, textureHeight, heldOut, size, size);
+    const auto fit = [&](bool posed, std::vector<glm::mat4>& estimated) {
+        raster::MeshTrainingOptions options;
+        options.width = options.height = size;
+        options.textureWidth = textureWidth;
+        options.textureHeight = textureHeight;
+        options.geometry.learningRate = 0.0f;
+        options.laplacianWeight = 0.0f;
+        options.texture.learningRate = 0.02f;
+        options.poses = posed;
+        options.pose.learningRate = 0.001f;
+        raster::MeshTraining training(*vc, pumpkin, disturbed, options);
+        training.setTargets(targets);
+        for (int step = 0; step < 2400; ++step)
+            training.step();
+        estimated = training.currentCameras();
+        const std::vector<float> image =
+            raster::renderImages(*vc, pumpkin, training.texture(), textureWidth, textureHeight, heldOut, size, size);
+        double squaredError = 0.0;
+        int count = 0;
+        for (uint32_t p = 0; p < pixels; ++p)
+            if (clean[4 * p + 3] > 0.99f)
+                for (int c = 0; c < 3; ++c, ++count)
+                    squaredError += (image[4 * p + c] - clean[4 * p + c]) * (image[4 * p + c] - clean[4 * p + c]);
+        return 10.0 * std::log10(count / squaredError);
+    };
+    std::vector<glm::mat4> fixedCameras, posedCameras;
+    const double plain = fit(false, fixedCameras), posed = fit(true, posedCameras);
+    const double before = misplacement(disturbed), after = misplacement(posedCameras);
+    std::cout << "disturbed cameras: held-out PSNR " << plain << " dB with them, " << posed
+              << " dB with trained poses; vertices misplaced by " << before << " px, " << after << " px after"
+              << std::endl;
+    EXPECT_LT(after, 0.5 * before);
+    EXPECT_GT(posed, plain + 2.0);
 }
 
 TEST_F(DifferentiableRasterTest, antialiasMatchesCpu) {

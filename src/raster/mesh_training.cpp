@@ -98,7 +98,15 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         for (auto& moments : lightMoments)
             moments = tensor(4 * (kSpecularLights + 1), 1);
         vertexNormalSums = tensor(vertexCount, 4);
+    }
+    if (options.specular || options.poses)
         eyes = tensor(views, 4);
+    if (options.poses) {
+        poses = tensor(views, 8);
+        rests = tensor(views, 16);
+        poseGradients = tensor(views, 8);
+        for (auto& moments : poseMoments)
+            moments = tensor(8 * views, 1);
     }
 
     // The steps of one submission, one after another; they share the parameters and the intermediate buffers.
@@ -106,11 +114,26 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
     for (uint32_t stepIndex = 0; stepIndex < std::max(options.stepsPerSubmit, 1u); ++stepIndex) {
         auto nextView = cycleView(vulkanContext, views);
         nextView->setInput(viewIndex, 0);
+        // The cameras (and their eyes): given, or built from the trained poses before the step reads them.
+        ComputeGraphElementPtr build;
+        if (options.poses) {
+            build = cameraBuild(vulkanContext, views);
+            build->setInput(rests, 0);
+            build->setInput(poses, 1);
+            build->setInput(cameraBuffer, 2);
+            build->setInput(eyes, 3);
+        }
+        const auto connectCameras = [&](const ComputeGraphElementPtr& element, int slot) {
+            if (build)
+                element->setInput(build, slot, 2);
+            else
+                element->setInput(cameraBuffer, slot);
+        };
         auto visibility = std::make_shared<UintBuffer>(vulkanContext, pixels);
         auto pass = std::make_shared<VisibilityPass>(vulkanContext, w, h, triangleCount);
         pass->setInput(positions, 0);
         pass->setInput(triangles, 1);
-        pass->setInput(cameraBuffer, 2);
+        connectCameras(pass, 2);
         pass->setInput(nextView, 3, 0);
         pass->setInput(visibility, 4);
         const auto connect = [&](const ComputeGraphElementPtr& element) {
@@ -118,7 +141,7 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
             element->setInput(triangles, 1);
             element->setInput(cornerUvs, 2);
             element->setInput(texels, 3);
-            element->setInput(cameraBuffer, 4);
+            connectCameras(element, 4);
             element->setInput(nextView, 5, 0);
             element->setInput(pass, 6, 4);
         };
@@ -138,7 +161,10 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
             element->setInput(material, 8);
             element->setInput(lightValues, 9);
             element->setInput(normalsOfStep, 10, 2);
-            element->setInput(eyes, 11);
+            if (build)
+                element->setInput(build, 11, 3);
+            else
+                element->setInput(eyes, 11);
         };
         if (options.specular) {
             clear->setInput(vertexNormalSums, 5);
@@ -185,6 +211,18 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         shadingBackward->setInput(smoothingBackward, 7, 9);
         shadingBackward->setInput(smoothingBackward, 8, 10);
         shadingBackward->setInput(clear, 9, 2);
+        // The drawn view's pose gradients from the vertex gradients, before the regularizer adds to them and before
+        // the geometry's step moves the vertices. (The specular term's dependence on the eye is left out.)
+        ComputeGraphElementPtr poseBackward;
+        if (options.poses) {
+            clear->setInput(poseGradients, 8);
+            poseBackward = cameraPoseBackward(vulkanContext, vertexCount);
+            poseBackward->setInput(positions, 0);
+            poseBackward->setInput(shadingBackward, 1, 8);
+            poseBackward->setInput(poses, 2);
+            poseBackward->setInput(nextView, 3, 0);
+            poseBackward->setInput(clear, 4, 8);
+        }
         ComputeGraphElementPtr geometryGradient = shadingBackward;
         int geometrySlot = 8;
         if (options.laplacianWeight > 0.0f) {
@@ -194,6 +232,8 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
             regularizer->setInput(neighbours, 2);
             regularizer->setInput(shadingBackward, 3, 8);
             regularizer->setInput(loss, 4, 4);
+            if (poseBackward)
+                regularizer->addDependency(poseBackward);
             geometryGradient = regularizer;
             geometrySlot = 3;
         }
@@ -208,6 +248,8 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         geometryStep->setInput(positionMoments[1], 3);
         geometryStep->setInput(stepCount, 4);
         geometryStep->addDependency(counter);
+        if (poseBackward)
+            geometryStep->addDependency(poseBackward);
         auto textureStep = training::adamStep(vulkanContext, 4 * texelCount, options.texture);
         textureStep->setInput(texels, 0);
         textureStep->setInput(shadingBackward, 1, 9);
@@ -216,6 +258,16 @@ MeshTraining::MeshTraining(VulkanContext& vulkanContext, const TriangleMesh& sta
         textureStep->setInput(stepCount, 4);
         textureStep->addDependency(geometryStep);
         ComputeGraphElementPtr last = textureStep;
+        if (options.poses) {
+            auto poseStep = training::adamStep(vulkanContext, 8 * views, options.pose);
+            poseStep->setInput(poses, 0);
+            poseStep->setInput(poseBackward, 1, 4);
+            poseStep->setInput(poseMoments[0], 2);
+            poseStep->setInput(poseMoments[1], 3);
+            poseStep->setInput(stepCount, 4);
+            poseStep->addDependency(last);
+            last = poseStep;
+        }
         if (options.specular) {
             auto shineBackward = specularBackward(vulkanContext, w, h, mw, mh);
             connectSpecular(shineBackward);
@@ -279,6 +331,14 @@ void MeshTraining::initialize() {
     triangles->getBuffer(0).memcopyFrom(packTriangles(start));
     cornerUvs->getDataBuffer(0).memcopyFrom(packCornerUvs(start));
     cameraBuffer->getDataBuffer(0).memcopyFrom(packCameras(cameras));
+    if (options.poses) {
+        std::vector<float> restValues, poseValues;
+        raster::cameraPoses(cameras, restValues, poseValues);
+        rests->getDataBuffer(0).memcopyFrom(restValues);
+        poses->getDataBuffer(0).memcopyFrom(poseValues);
+        for (auto& moment : poseMoments)
+            moment->getDataBuffer(0).memcopyFrom(std::vector<float>(moment->getDataElementCount(), 0.0f));
+    }
     if (options.laplacianWeight > 0.0f) { // the adjacency is allocated only as an input of the regularizer
         adjacencyOffsets->getBuffer(0).memcopyFrom(adjacency.offsets);
         neighbours->getBuffer(0).memcopyFrom(adjacency.neighbours);
@@ -337,8 +397,9 @@ void MeshTraining::initialize() {
         for (auto* moments : {&materialMoments, &lightMoments})
             for (auto& moment : *moments)
                 moment->getDataBuffer(0).memcopyFrom(std::vector<float>(moment->getDataElementCount(), 0.0f));
-        eyes->getDataBuffer(0).memcopyFrom(cameraEyes(cameras));
     }
+    if (eyes)
+        eyes->getDataBuffer(0).memcopyFrom(cameraEyes(cameras));
 }
 
 void MeshTraining::setSpecular(const std::vector<float>& values, const std::vector<float>& lights) {
@@ -347,6 +408,29 @@ void MeshTraining::setSpecular(const std::vector<float>& values, const std::vect
         throw std::invalid_argument("MeshTraining: no specular reflection of that size");
     material->getDataBuffer(0).memcopyFrom(values);
     lightValues->getDataBuffer(0).memcopyFrom(lights);
+}
+
+std::vector<glm::mat4> MeshTraining::currentCameras() const {
+    std::vector<float> values(cameraBuffer->getDataElementCount());
+    cameraBuffer->getDataBuffer(0).memcopyTo(values);
+    std::vector<glm::mat4> result;
+    for (size_t v = 0; v < values.size() / 16; ++v)
+        result.push_back(glm::make_mat4(&values[16 * v]));
+    return result;
+}
+
+std::vector<float> MeshTraining::cameraPoses() const {
+    if (!poses)
+        return {};
+    std::vector<float> values(poses->getDataElementCount());
+    poses->getDataBuffer(0).memcopyTo(values);
+    return values;
+}
+
+void MeshTraining::setCameraPoses(const std::vector<float>& values) {
+    if (!poses || values.size() != poses->getDataElementCount())
+        throw std::invalid_argument("MeshTraining: no poses of that size");
+    poses->getDataBuffer(0).memcopyFrom(values);
 }
 
 std::vector<float> MeshTraining::specularMaterial() const {
