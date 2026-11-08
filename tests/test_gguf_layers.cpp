@@ -10,6 +10,8 @@
  * - MatMulAllWeightTypes: matMul of every supported weight type, with a bias, matches a CPU product of the
  *   dequantized rows for token and row counts that are not multiples of the tiles
  * - MatMulAccumulates: matMul with accumulate adds the products to the output in place
+ * - FullAttentionMatchesSoftmaxAttention: fullAttention, over all keys and causal, matches a CPU softmax attention
+ *   for a token count that is not a multiple of its blocks
  * - MatVecAccumulateAndLastToken: matVec with accumulate adds to the output in place;
  *   with lastTokenOnly it computes the last token only
  * - RmsNormRowsPerToken: rmsNorm normalizes several rows per token and leaves inactive
@@ -267,6 +269,47 @@ TEST_F(GgufLayersTest, MatMulAccumulates) {
     for (size_t i = 0; i < expected.size(); ++i)
         expected[i] += start[i];
     expectClose(read(output), expected, 1e-4f);
+}
+
+TEST_F(GgufLayersTest, FullAttentionMatchesSoftmaxAttention) {
+    // A token count that is not a multiple of the 16 queries and keys per block; scores large enough to need the
+    // online softmax's rescaling.
+    constexpr uint32_t tokens = 70, heads = 3, dim = 128;
+    for (const bool causal : {false, true}) {
+        SCOPED_TRACE(causal ? "causal" : "full");
+        const auto q = random(tokens * heads * dim, 1.0f), k = random(tokens * heads * dim, 1.0f),
+                   v = random(tokens * heads * dim);
+        auto queries = tensor(q.size()), keys = tensor(k.size()), values = tensor(v.size()), output = tensor(q.size());
+        auto graph = compile(gl::fullAttention(*vc, tokens, heads, causal), {queries, keys, values, output});
+        queries->setData(0, q);
+        keys->setData(0, k);
+        values->setData(0, v);
+        graph->submitAndWait(vc->getGraphicsQueue(), 0);
+        std::vector<float> expected(q.size());
+        for (uint32_t h = 0; h < heads; ++h)
+            for (uint32_t t = 0; t < tokens; ++t) {
+                const uint32_t last = causal ? t + 1 : tokens;
+                std::vector<double> scores(last);
+                double maximum = -1e300;
+                for (uint32_t s2 = 0; s2 < last; ++s2) {
+                    double dot = 0.0;
+                    for (uint32_t d = 0; d < dim; ++d)
+                        dot += double(q[(t * heads + h) * dim + d]) * k[(s2 * heads + h) * dim + d];
+                    scores[s2] = dot / std::sqrt(double(dim));
+                    maximum = std::max(maximum, scores[s2]);
+                }
+                double total = 0.0;
+                for (auto& score : scores)
+                    total += score = std::exp(score - maximum);
+                for (uint32_t d = 0; d < dim; ++d) {
+                    double sum = 0.0;
+                    for (uint32_t s2 = 0; s2 < last; ++s2)
+                        sum += scores[s2] * v[(s2 * heads + h) * dim + d];
+                    expected[(t * heads + h) * dim + d] = float(sum / total);
+                }
+            }
+        expectClose(read(output), expected, 1e-4f);
+    }
 }
 
 TEST_F(GgufLayersTest, MatVecAccumulateAndLastToken) {

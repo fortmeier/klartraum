@@ -72,6 +72,14 @@ ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, GgmlType type, uint3
                               uint32_t tokens, bool hasBias = false, bool accumulate = false);
 
 /**
+ * @brief Multi-head attention of all @p tokens queries over all tokens' keys, or with @p causal over the keys up to
+ * their own (`shaders/gguf/full_attention.comp.slang`), heads of 128 values, softmax scaled by 1/sqrt(128).
+ *
+ * Slots: 0 queries, 1 keys, 2 values, 3 output, each [tokens][heads][128].
+ */
+ComputeGraphElementPtr fullAttention(VulkanContext& vulkanContext, uint32_t tokens, uint32_t heads, bool causal);
+
+/**
  * @brief RMS normalization of the `rowsPerToken` rows of `width` values of
  * every active token, scaled per element.
  *
