@@ -643,6 +643,7 @@ it is repainted. Images are binary PPM files.
 | `--steps N` | Denoising steps (default 8, the Lightning LoRA's) |
 | `--seed N` | Seed of the initial noise (default 0) |
 | `--image FILE` | Input image (PPM of the image size) for image-to-image |
+| `--batch FILE` | Image-to-image of many inputs with one prompt: every line of FILE names an input and an output PPM; the models load once and every image starts from the same noise |
 | `--strength S` | Share of the steps run on the input, 0 to 1 (default 0.6) |
 | `--out FILE` | Output PPM (default `build/TestingOutput/qwen_image/image.ppm`) |
 | `--transformer FILE`, `--text-encoder FILE`, `--lora FILE` | Model files (defaults in `build/models/qwen-image/`) |
