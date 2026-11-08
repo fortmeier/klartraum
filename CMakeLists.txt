@@ -313,6 +313,7 @@ add_executable(
   tests/test_dit_layers.cpp
   tests/test_qwen_image_vae.cpp
   tests/test_qwen_text_encoder.cpp
+  tests/test_qwen_image_transformer.cpp
   tests/test_gguf_qwen35.cpp
   tests/test_gguf_tokenizer.cpp
   tests/test_render_over_targets.cpp
@@ -393,6 +394,7 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_network.cpp
   src/gguf_weight_store.cpp
   src/qwen_text_encoder.cpp
+  src/qwen_image_transformer.cpp
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp

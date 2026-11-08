@@ -188,3 +188,13 @@ target_link_libraries(qwen_chat_example
 )
 
 add_dependencies(qwen_chat_example Shaders)
+
+add_executable(qwen_image_example
+    qwen_image_example.cpp
+)
+
+target_link_libraries(qwen_image_example
+    klartraum_lib
+)
+
+add_dependencies(qwen_image_example Shaders)

@@ -33,6 +33,7 @@ relative to the working directory.
 | `title_morph_example` | The promo opening shot: the title, made of the scene's Gaussians, morphs into the turning lantern (needs `KLARTRAUM_WITH_FREETYPE`) | no |
 | `autodiff_training_example` | Training a small network on the GPU, with gradients from Slang's automatic differentiation | no |
 | `qwen_chat_example` | A chat in the terminal with the Qwen3.6-27B language model, run from a GGUF file | no |
+| `qwen_image_example` | Text-to-image and image-to-image with the Qwen-Image diffusion model (GGUF transformer and text encoder, ONNX VAE) | no |
 
 ### Camera controls
 
@@ -618,4 +619,34 @@ use and the speed of the last turn, `/quit` exits.
 ./build/examples/qwen_chat_example
 ./build/examples/qwen_chat_example --think --system "You are a concise assistant."
 ./build/examples/qwen_chat_example --greedy --prompt "What is a Vulkan compute shader?"
+```
+
+### `qwen_image_example`
+
+Text-to-image and image-to-image with [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image):
+`QwenTextEncoder` turns the prompt into an embedding, `QwenImageTransformer`
+denoises the latent in 8 flow-matching steps with the Lightning LoRA, and the
+VAE graphs decode it. The stages run one after another, so only one large
+model is on the GPU at a time (the transformer takes about 13 GB). Set up the
+models with the scripts in
+[`scripts/qwen_image/`](https://github.com/fortmeier/klartraum/tree/main/scripts/qwen_image);
+Qwen-Image is third-party software under its own license and not part of
+Klartraum. With `--image`, the input is encoded and noised to the schedule's
+noise level after skipping the first steps, so `--strength` sets how much of
+it is repainted. Images are binary PPM files.
+
+| Option | Meaning |
+|---|---|
+| `--prompt TEXT` | What to paint |
+| `--size H W` | Image size, multiples of 16 (default 512 512); needs the VAE graphs of that size |
+| `--steps N` | Denoising steps (default 8, the Lightning LoRA's) |
+| `--seed N` | Seed of the initial noise (default 0) |
+| `--image FILE` | Input image (PPM of the image size) for image-to-image |
+| `--strength S` | Share of the steps run on the input, 0 to 1 (default 0.6) |
+| `--out FILE` | Output PPM (default `build/TestingOutput/qwen_image/image.ppm`) |
+| `--transformer FILE`, `--text-encoder FILE`, `--lora FILE` | Model files (defaults in `build/models/qwen-image/`) |
+
+```bash
+./build/examples/qwen_image_example --prompt "a bonsai tree in a clay pot, watercolor painting"
+./build/examples/qwen_image_example --prompt "an ink drawing" --image rendering.ppm --strength 0.5 --out ink.ppm
 ```
