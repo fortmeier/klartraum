@@ -5,8 +5,9 @@
 // One Adam step (Kingma & Ba 2015) on a parameter tensor, in place. The step
 // number t comes from a counter on the GPU (step_counter.comp.slang), so a
 // pre-recorded training graph applies the right bias corrections every
-// submission, and the learning rate schedule: an exponential decay to
-// learningRate x finalFactor over decaySteps steps (none for decaySteps 0).
+// submission, and the learning rate schedule: a change to learningRate x
+// finalFactor over decaySteps steps (none for decaySteps 0), exponential or,
+// with cosine, along half a cosine (slow at first and at the end).
 
 struct PushConstants {
     uint elementCount;
@@ -16,6 +17,7 @@ struct PushConstants {
     float epsilon;
     uint decaySteps;
     float finalFactor;
+    uint cosine;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -38,7 +40,9 @@ void main(uint3 globalId: SV_DispatchThreadID) {
     const float t = float(step[0]);
     const float mHat = m / (1.0 - pow(pc.beta1, t));
     const float vHat = v / (1.0 - pow(pc.beta2, t));
-    const float learningRate =
-        pc.decaySteps > 0 ? pc.learningRate * pow(pc.finalFactor, min(t / float(pc.decaySteps), 1.0)) : pc.learningRate;
+    const float progress = pc.decaySteps > 0 ? min(t / float(pc.decaySteps), 1.0) : 0.0;
+    const float factor = pc.cosine != 0 ? 1.0 + (pc.finalFactor - 1.0) * 0.5 * (1.0 - cos(3.14159265 * progress))
+                                        : pow(pc.finalFactor, progress);
+    const float learningRate = pc.decaySteps > 0 ? pc.learningRate * factor : pc.learningRate;
     parameters[i] -= learningRate * mHat / (sqrt(vHat) + pc.epsilon);
 }

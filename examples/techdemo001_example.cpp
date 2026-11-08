@@ -720,11 +720,11 @@ int main(int argc, char** argv) {
     // small misalignments.
     morphOptions.training.materialWidth = 256;
     morphOptions.training.materialHeight = 128;
-    // The texture and its gloss start slowly, so that the pumpkin stays dark for a while, and speed up tenfold or so
-    // over the training (Adam's schedule grows with a final factor above 1), so that the colours still come in fully.
-    morphOptions.training.texture = {0.0005f, 0.9f, 0.999f, 1e-8f, 3000, 12.0f};
-    morphOptions.training.material = {0.0003f, 0.9f, 0.999f, 1e-8f, 3000, 10.0f};
-    morphOptions.training.lights = {0.001f, 0.9f, 0.999f, 1e-8f, 3000, 10.0f};
+    // The texture and its gloss start very slowly, so that the pumpkin stays dark for a while, and speed up along half
+    // a cosine to fifty or sixty times that over the training (Adam's schedule), so that the colours still come in.
+    morphOptions.training.texture = {0.0001f, 0.9f, 0.999f, 1e-8f, 3400, 60.0f, true};
+    morphOptions.training.material = {0.00006f, 0.9f, 0.999f, 1e-8f, 3400, 50.0f, true};
+    morphOptions.training.lights = {0.0002f, 0.9f, 0.999f, 1e-8f, 3400, 50.0f, true};
     // What the highlight cannot explain is let pass rather than bleaching the texture.
     morphOptions.training.highlightTolerance = 0.15f;
     morphOptions.training.width = photos.width;
