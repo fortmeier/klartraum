@@ -704,7 +704,11 @@ int main(int argc, char** argv) {
     // small misalignments.
     morphOptions.training.materialWidth = 256;
     morphOptions.training.materialHeight = 128;
-    morphOptions.training.material.learningRate = 0.002f;
+    // The texture and its gloss start slowly, so that the pumpkin stays dark for a while, and speed up tenfold or so
+    // over the training (Adam's schedule grows with a final factor above 1), so that the colours still come in fully.
+    morphOptions.training.texture = {0.0005f, 0.9f, 0.999f, 1e-8f, 3000, 12.0f};
+    morphOptions.training.material = {0.0003f, 0.9f, 0.999f, 1e-8f, 3000, 10.0f};
+    morphOptions.training.lights = {0.001f, 0.9f, 0.999f, 1e-8f, 3000, 10.0f};
     // What the highlight cannot explain is let pass rather than bleaching the texture.
     morphOptions.training.highlightTolerance = 0.15f;
     morphOptions.training.width = photos.width;
@@ -934,9 +938,12 @@ int main(int argc, char** argv) {
         gloss.width = morphOptions.training.materialWidth;
         gloss.height = morphOptions.training.materialHeight;
         gloss.exponent = 6.0f + std::exp(pumpkinLights[4 * raster::kSpecularLights]);
+        // The brightest learned light, brought from the photographs' exposure to the scene's (as the morph's layer,
+        // tree_captured_layer.comp: SUN_GLOSS).
         gloss.brightness = 0.0f;
         for (uint32_t k = 0; k < raster::kSpecularLights; ++k)
             gloss.brightness = std::max(gloss.brightness, pumpkinLights[4 * k + 3] * pumpkinLights[4 * k + 3]);
+        gloss.brightness *= 0.35f;
     }
     placement.object = std::make_shared<BonsaiObject>(
         bonsaiObjectFromMesh(pumpkinMesh, pumpkinTexture, morphOptions.training.textureWidth,

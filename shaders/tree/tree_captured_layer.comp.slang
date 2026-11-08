@@ -13,7 +13,8 @@ import glsl;
 // With `specular`, the mesh also reflects the sun as the training's specular reflection learned it
 // (shaders/raster/specular.slang): the normal map tilts the smooth vertex normal where the ray meets the triangle, and
 // the amplitude a, the brightest of the learned lights b and the learned exponent e (6 + exp(x)) give the highlight
-// a^2 b^2 max(dot(r, sun), 0)^e, scaled by the sun's light that reaches the point.
+// SUN_GLOSS a^2 b^2 max(dot(r, sun), 0)^e, scaled by the sun's light that reaches the point; SUN_GLOSS brings the
+// highlight of the photographs' exposure to the scene's.
 
 #define TREE_FN
 #include "klartraum/tree/tree_shared.hpp"
@@ -41,6 +42,9 @@ struct Push {
 [[vk::binding(9, 0)]] StructuredBuffer<vec4> material;      // per texel: normal offset xyz, amplitude
 [[vk::binding(10, 0)]] StructuredBuffer<vec4> lights;       // four (direction, amplitude), then (log exponent)
 [[vk::binding(11, 0)]] StructuredBuffer<vec4> vertexNormals; // per vertex, xyz: sums of area normals
+
+// The scene's highlight relative to the photographs' (see above).
+static const float SUN_GLOSS = 0.35f;
 
 // The material at texture coordinate uv: bilinear, u wrapping and v clamped (as differentiable_shading.slang).
 vec4 materialAt(vec2 uv) {
@@ -129,7 +133,7 @@ void main() {
                 }
                 float sunLit = clamp(treeLightAll(s, world + normalize(s.sun.xyz) * (1.5f * s.lightGridMin.w)).x, 0.0f,
                                      1.0f);
-                float highlight = m4.w * m4.w * brightest *
+                float highlight = SUN_GLOSS * m4.w * m4.w * brightest *
                                   pow(max(dot(r, normalize(s.sun.xyz)), 0.0f), 6.0f + exp(lights[4].x)) * sunLit;
                 colour += highlight * min(s.sun.w, 1.0f) * vec3(s.lightColor.x, s.lightColor.y, s.lightColor.z);
             }
