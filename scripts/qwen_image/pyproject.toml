@@ -11,7 +11,9 @@ dependencies = [
     "onnxruntime",
     "pillow",
     "safetensors",
+    "tokenizers",
     "torch==2.15.0",
+    "transformers",
 ]
 
 [tool.uv]
