@@ -727,6 +727,9 @@ int main(int argc, char** argv) {
     morphOptions.training.texture = {0.002f, 0.9f, 0.999f, 1e-8f, 3400, 0.005f, true};
     morphOptions.training.material = {0.001f, 0.9f, 0.999f, 1e-8f, 3400, 0.005f, true};
     morphOptions.training.lights = {0.003f, 0.9f, 0.999f, 1e-8f, 3400, 0.005f, true};
+    // The photographs' estimated camera poses are refined too.
+    morphOptions.training.poses = true;
+    morphOptions.training.pose = {0.0005f, 0.9f, 0.999f, 1e-8f, 3400, 0.005f, true};
     // What the highlight cannot explain is let pass rather than bleaching the texture.
     morphOptions.training.highlightTolerance = 0.15f;
     morphOptions.training.width = photos.width;
@@ -864,6 +867,7 @@ int main(int argc, char** argv) {
         const size_t photoPixels = size_t(photoWidth) * photoHeight, photoCount = morphOptions.photoCameras.size();
         std::vector<std::vector<float>> photographPanels;
         std::vector<glm::mat4> shownCameras;
+        std::vector<size_t> shownViews;
         for (size_t k = 0; k < 4; ++k) {
             size_t view = k * photoCount / 4;
             double largest = -1.0;
@@ -878,6 +882,7 @@ int main(int argc, char** argv) {
             }
             photographPanels.push_back(third(&morphOptions.photographs[4 * photoPixels * view]));
             shownCameras.push_back(morphOptions.photoCameras[view]);
+            shownViews.push_back(view);
         }
         // Renders the training's mesh from the four cameras, its graph built once.
         raster::MeshImages shownImages(vc, pumpkinMesh, morphOptions.training.textureWidth,
@@ -886,6 +891,12 @@ int main(int argc, char** argv) {
         const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, float opacity) {
             if (opacity <= 0.0f)
                 return;
+            // From the cameras as trained so far.
+            const std::vector<glm::mat4> trained = morph.getTraining().currentCameras();
+            std::vector<glm::mat4> cameras;
+            for (const size_t view : shownViews)
+                cameras.push_back(trained[view]);
+            shownImages.setCameras(cameras);
             const std::vector<float> renderings =
                 shownImages.render(morph.getTraining().mesh(), morph.getTraining().texture());
             const int gap = int(0.02f * float(extent.height));

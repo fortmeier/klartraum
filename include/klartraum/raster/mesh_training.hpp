@@ -201,10 +201,15 @@ public:
      */
     std::vector<float> render(const TriangleMesh& mesh, const std::vector<float>& texture);
 
+    /** @brief Replaces the cameras (as many as given at construction), e.g. by a training's trained ones. */
+    void setCameras(const std::vector<glm::mat4>& cameras);
+
 private:
     // The context the graph runs on; it outlives this object.
     VulkanContext& vulkanContext;
     uint32_t cameraCount, vertexCount, texelCount, pixels;
+    // The cameras, column-major 4 x 4 per view.
+    std::shared_ptr<TensorElement<float>> cameraBuffer;
     // What changes between renders, the drawn view and the output.
     std::shared_ptr<TensorElement<float>> positions, texels, antialiased;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> viewIndex;
