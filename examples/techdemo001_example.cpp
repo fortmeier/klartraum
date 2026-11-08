@@ -720,11 +720,11 @@ int main(int argc, char** argv) {
     // small misalignments.
     morphOptions.training.materialWidth = 256;
     morphOptions.training.materialHeight = 128;
-    // The texture and its gloss start very slowly, so that the pumpkin stays dark for a while, and speed up along half
-    // a cosine to fifty or sixty times that over the training (Adam's schedule), so that the colours still come in.
-    morphOptions.training.texture = {0.0001f, 0.9f, 0.999f, 1e-8f, 3400, 60.0f, true};
-    morphOptions.training.material = {0.00006f, 0.9f, 0.999f, 1e-8f, 3400, 50.0f, true};
-    morphOptions.training.lights = {0.0002f, 0.9f, 0.999f, 1e-8f, 3400, 50.0f, true};
+    // The texture and its gloss learn slowly, so that the pumpkin stays dark for a while, and ever slower along half a
+    // cosine to a twentieth over the training (Adam's schedule), so that they settle.
+    morphOptions.training.texture = {0.002f, 0.9f, 0.999f, 1e-8f, 3400, 0.05f, true};
+    morphOptions.training.material = {0.001f, 0.9f, 0.999f, 1e-8f, 3400, 0.05f, true};
+    morphOptions.training.lights = {0.003f, 0.9f, 0.999f, 1e-8f, 3400, 0.05f, true};
     // What the highlight cannot explain is let pass rather than bleaching the texture.
     morphOptions.training.highlightTolerance = 0.15f;
     morphOptions.training.width = photos.width;
@@ -980,8 +980,8 @@ int main(int argc, char** argv) {
     renderConfig.background = true;
     renderConfig.numberPaths = 1;
 
-    // Chapter 1: the drop, the pumpkin still drawn by the morph (which keeps refining it), lit by the scene and
-    // casting its shadow as it falls.
+    // Chapter 1: the drop, the pumpkin still drawn by the morph, as trained (it learns no further: a training started
+    // anew would change it from frame to frame), lit by the scene and casting its shadow as it falls.
     if (fromChapter <= 1 && toChapter >= 1) {
         auto frame = std::make_shared<OffscreenTarget>(vc, extent, 1);
         BonsaiRenderConfig dropConfig = renderConfig;
@@ -990,6 +990,10 @@ int main(int argc, char** argv) {
         BonsaiRenderer bonsai(vc, sceneWithoutPumpkin, frame, dropConfig);
         const VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         raster::MeshMorphOptions litMorph = morphOptions;
+        for (training::AdamParameters* adam : {&litMorph.training.geometry, &litMorph.training.texture,
+                                               &litMorph.training.material, &litMorph.training.lights})
+            adam->learningRate = 0.0f;
+        litMorph.training.stepsPerSubmit = 1;
         litMorph.lightSettings = bonsai.getSettingsRef();
         litMorph.light = bonsai.getLightVolume().getLight();
         raster::MeshMorph morph(vc, pumpkinMesh, GaussianSoABuffers{}, frame, layout, bonsai.getOutput(), litMorph);
@@ -999,6 +1003,8 @@ int main(int argc, char** argv) {
         bonsai.initialize(1);
         morph.initialize();
         morph.getTraining().setTexture(pumpkinTexture);
+        if (!pumpkinMaterial.empty())
+            morph.getTraining().setSpecular(pumpkinMaterial, pumpkinLights);
         bonsai.setBackground(glm::vec3(1.0f));
         const auto [begin, end] = chapterRange(1);
         const float duration = float(end - begin) / fps;

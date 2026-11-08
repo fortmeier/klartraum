@@ -121,6 +121,9 @@ public:
     /// The vertex normals of the last step (four floats per vertex, the sums of area normals); null without specular.
     std::shared_ptr<TensorElement<float>> getVertexNormals() const { return vertexNormalSums; }
 
+    /** @brief Replaces the specular material and environment (as getMaterial() and getLights() hold them). */
+    void setSpecular(const std::vector<float>& material, const std::vector<float>& lights);
+
     /** @brief The current specular material and environment (see getMaterial()); empty without specular. */
     std::vector<float> specularMaterial() const;
     std::vector<float> specularLights() const;
