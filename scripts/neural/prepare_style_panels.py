@@ -8,15 +8,17 @@
 # ///
 
 """Prepares the side panels of tech demo 001's days (techdemo001_example --panels DIR) from the watercolor training
-data: a training sample of a summer day (its rendering, classes, depth and watercolor target) and, for each season, a
-watercolor target by day and by night. They go to --out as binary PPM files at the panels' sizes:
+data: a training sample of a summer day (its rendering, classes, depth and watercolor target) and a gallery of six
+watercolor targets of the seasons by day and by night. They go to --out as binary PPM files at the panels' sizes:
 
 - sample_rendering.ppm, sample_classes.ppm, sample_depth.ppm, sample_target.ppm (--sample-width x height);
-- target_<season>_<day|night>.ppm for winter, spring, summer and fall (--target-width x height).
+- gallery_0.ppm ... gallery_5.ppm (--target-width x height), watercolor targets of summer, fall and winter by day and
+  of spring, fall and winter by night, each the view the bonsai fills most among those within 0.3 of its season;
+  gallery.txt
+  lists them as "file season time" lines.
 
-The views are the dataset's (techdemo001_example --dataset) whose season and time of day lie nearest to each panel's,
-among those that show the bonsai large enough; day panels take views of a white background, night panels views of a
-black one (not of the twilight between).
+The views are the dataset's (techdemo001_example --dataset); day panels take views of a white background, night panels
+views of a black one (within 0.05; winter's midday is a little grey; not of the twilight between).
 
     uv run scripts/neural/prepare_style_panels.py --dataset DIR --styles DIR --out DIR
 """
@@ -31,7 +33,9 @@ import yaml
 from PIL import Image
 
 SEASONS = {"winter": 0.0, "spring": 1.25, "summer": 2.0, "fall": 3.25}
-TIMES = {"day": 0.5, "night": 0.0}
+# Every season once, days to the left and nights to the right in the panels' 2 x 3 grid.
+GALLERY = [("summer", "day"), ("spring", "night"), ("fall", "day"), ("fall", "night"), ("winter", "day"),
+           ("winter", "night")]
 BACKGROUNDS = {"day": 1.0, "night": 0.0}
 
 
@@ -59,8 +63,8 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--sample-width", type=int, default=224)
     parser.add_argument("--sample-height", type=int, default=126)
-    parser.add_argument("--target-width", type=int, default=320)
-    parser.add_argument("--target-height", type=int, default=180)
+    parser.add_argument("--target-width", type=int, default=224)
+    parser.add_argument("--target-height", type=int, default=126)
     args = parser.parse_args()
     views = [v for v in yaml.safe_load((args.dataset / "dataset.yaml").read_text())["images"]
              if (args.styles / v["file"]).exists()]
@@ -87,13 +91,20 @@ def main() -> None:
     write_ppm(Image.open(args.dataset / sample["depth"]), size, args.out / "sample_depth.ppm")
     write_ppm(Image.open(args.styles / sample["file"]), size, args.out / "sample_target.ppm")
     print(f"sample: {sample['file']} (season {sample['season']:.2f}, {sample['clock']})")
+    # The gallery beside the seasons: six close views, three days and three nights, every season.
     size = (args.target_width, args.target_height)
-    for name, season in SEASONS.items():
-        for kind, time in TIMES.items():
-            view = nearest(season, time, BACKGROUNDS[kind])
-            write_ppm(Image.open(args.styles / view["file"]), size, args.out / f"target_{name}_{kind}.ppm")
-            print(f"{name} {kind}: {view['file']} (season {view['season']:.2f}, {view['clock']})")
-
+    lines = []
+    for k, (name, kind) in enumerate(GALLERY):
+        candidates = [v for v in views if v["file"] not in used and
+                      abs(v["background"] - BACKGROUNDS[kind]) < 0.05 and
+                      season_distance(v["season"], SEASONS[name]) < 0.3]
+        view = max(candidates, key=lambda v: v["filled"])
+        used.add(view["file"])
+        write_ppm(Image.open(args.styles / view["file"]), size, args.out / f"gallery_{k}.ppm")
+        lines.append(f"gallery_{k}.ppm {name} {kind}")
+        print(f"gallery {k}, {name} {kind}: {view['file']} (season {view['season']:.2f}, {view['clock']}, "
+              f"fills {view['filled']:.0%})")
+    (args.out / "gallery.txt").write_text("\n".join(lines) + "\n")
 
 if __name__ == "__main__":
     main()

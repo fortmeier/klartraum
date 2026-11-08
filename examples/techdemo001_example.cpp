@@ -62,6 +62,7 @@
 #include "klartraum/raster/fitting_scene.hpp"
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/raster/mesh_morph.hpp"
+#include "klartraum/raster/mesh_training.hpp"
 #include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/rendering/gaussian_splatting_factory.hpp"
 #include "klartraum/rendering/text_gaussians.hpp"
@@ -226,17 +227,23 @@ constexpr glm::vec3 kFieldBoxLow(-1.7f, -0.55f, -1.3f), kFieldBoxHigh(1.7f, 3.7f
 constexpr uint32_t kSequenceFrames = 8;
 
 // The side panels of the days (--panels, scripts/neural/prepare_style_panels.py): during the style's demonstration a
-// training sample (its rendering, classes, depth and watercolor target) in a 2 x 2 grid, then the watercolor targets
-// of the season shown by day and by night. Labels are black on light backgrounds and white on dark ones.
+// training sample (its rendering, classes, depth and watercolor target) in a 2 x 2 grid, then a gallery of six
+// watercolor targets (gallery.txt), 2 x 3. Labels are black on light backgrounds and white on dark ones.
 class StylePanels {
 public:
     StylePanels(const std::filesystem::path& folder, VkExtent2D extent, const std::shared_ptr<Font>& mono)
         : extent(extent) {
         for (const char* name : {"rendering", "classes", "depth", "target"})
             sample.push_back(read(folder / ("sample_" + std::string(name) + ".ppm")));
-        for (const char* season : {"winter", "spring", "summer", "fall"})
-            for (const char* kind : {"day", "night"})
-                targets.push_back(read(folder / ("target_" + std::string(season) + "_" + kind + ".ppm")));
+        // The gallery: "file season time" lines.
+        std::ifstream list(folder / "gallery.txt");
+        std::vector<std::string> names;
+        for (std::string file, season, time; list >> file >> season >> time;) {
+            targets.push_back(read(folder / file));
+            names.push_back(season + " " + time);
+        }
+        if (targets.size() != 6)
+            throw std::runtime_error("StylePanels: gallery.txt should list six pictures");
         const auto label = [&](const std::string& text) {
             TitleLayout layout;
             layout.align = TextAlign::Left;
@@ -246,13 +253,13 @@ public:
         };
         for (const char* name : {"rendering", "classes", "depth", "watercolor target"})
             sampleLabels.push_back(label(name));
-        for (const char* season : {"winter", "spring", "summer", "fall"})
-            for (const char* kind : {"day", "night"})
-                targetLabels.push_back(label(std::string(season) + " " + kind + ", watercolor target"));
+        for (const std::string& name : names)
+            targetLabels.push_back(label(name));
+        galleryLabel = label("watercolor targets");
     }
 
     // Draws the panels `seconds` into the days, the demonstration lasting `demonstration` seconds.
-    void draw(std::vector<uint8_t>& bgra, float seconds, float demonstration, float season, float background) const {
+    void draw(std::vector<uint8_t>& bgra, float seconds, float demonstration, float background) const {
         const glm::vec3 ink(background < 0.5f ? 1.0f : 0.0f);
         const int margin = int(0.05f * float(extent.width)), gap = int(0.03f * float(extent.height));
         if (seconds < demonstration) {
@@ -269,28 +276,20 @@ public:
             }
             return;
         }
+        // The gallery, 2 x 3, under its title.
         const float opacity = smooth((seconds - demonstration - 0.2f) / 0.5f);
-        // The season nearest the one shown (winter 0 = 4, spring 1.25, summer 2, fall 3.25).
-        const float points[] = {0.0f, 1.25f, 2.0f, 3.25f};
-        int nearest = 0;
-        float best = 1e9f;
-        for (int k = 0; k < 4; ++k) {
-            const float d = std::fmod(std::abs(season - points[k]), 4.0f);
-            if (std::min(d, 4.0f - d) < best) {
-                best = std::min(d, 4.0f - d);
-                nearest = k;
-            }
-        }
         const Picture& first = targets[0];
         const int width = int(first.width), height = int(first.height), label = int(targetLabels[0].height);
-        const int x = int(extent.width) - margin - width;
-        int y = (int(extent.height) - 2 * (label + gap / 2 + height) - gap) / 2;
-        for (int kind = 0; kind < 2; ++kind) {
-            const int k = 2 * nearest + kind;
+        const int cell = label + gap / 3 + height + gap / 2;
+        const int left = int(extent.width) - margin - 2 * width - gap / 2;
+        int top = (int(extent.height) - 3 * cell - int(galleryLabel.height) - gap / 2) / 2;
+        blendCaption(bgra, extent.width, extent.height, galleryLabel, left, top, ink, opacity);
+        top += int(galleryLabel.height) + gap / 2;
+        for (int k = 0; k < 6; ++k) {
+            const int x = left + (k % 2) * (width + gap / 2), y = top + (k / 2) * cell;
             blendCaption(bgra, extent.width, extent.height, targetLabels[k], x, y, ink, opacity);
             blendPicture(bgra, extent.width, extent.height, targets[k].values, targets[k].width, targets[k].height, x,
-                         y + label + gap / 2, opacity);
-            y += label + gap / 2 + height + gap;
+                         y + label + gap / 3, opacity);
         }
     }
 
@@ -308,9 +307,10 @@ private:
 
     // The frame's size the panels are laid out in.
     VkExtent2D extent;
-    // The training sample (rendering, classes, depth, target) and the targets (per season: day, night).
+    // The training sample (rendering, classes, depth, target) and the gallery of targets.
     std::vector<Picture> sample, targets;
     std::vector<CoverageMask> sampleLabels, targetLabels;
+    CoverageMask galleryLabel;
 };
 
 // Floats to and from a raw little-endian file (an empty vector if the file is missing).
@@ -813,22 +813,22 @@ int main(int argc, char** argv) {
         setTrees(light, sceneWithoutPumpkin, 0.0f);
         auto colours = std::dynamic_pointer_cast<BufferElementSinglePath<VulkanBuffer<glm::vec4>>>(
             textData->buffers().colAlpha.element);
-        // On the right, from the start of the training on: the photograph the frame's last training step used and the
-        // training's rendering of the mesh from that photograph's camera, at half their size, labelled; a new pair
-        // every frame, so that the prediction is seen getting better from the sphere on.
-        const uint32_t panelWidth = morphOptions.training.width / 2, panelHeight = morphOptions.training.height / 2;
-        const auto halve = [&](const float* picture) {
-            std::vector<float> half(4 * size_t(panelWidth) * panelHeight);
-            const uint32_t width = morphOptions.training.width;
+        // On the right, from the start of the training on: four fixed photographs (2 x 2, above) and the training's
+        // mesh with its current texture seen from their cameras (2 x 2, below), at a third of their size, labelled, so
+        // that the texture is seen getting better from the sphere on. The four are spread over the photographs: from
+        // each quarter of them the one that shows the pumpkin largest.
+        const uint32_t photoWidth = morphOptions.training.width, photoHeight = morphOptions.training.height;
+        const uint32_t panelWidth = photoWidth / 3, panelHeight = photoHeight / 3;
+        const auto third = [&](const float* picture) {
+            std::vector<float> small(4 * size_t(panelWidth) * panelHeight, 0.0f);
             for (uint32_t y = 0; y < panelHeight; ++y)
                 for (uint32_t x = 0; x < panelWidth; ++x)
-                    for (int c = 0; c < 4; ++c)
-                        half[4 * (size_t(y) * panelWidth + x) + c] =
-                            0.25f * (picture[4 * (size_t(2 * y) * width + 2 * x) + c] +
-                                     picture[4 * (size_t(2 * y) * width + 2 * x + 1) + c] +
-                                     picture[4 * (size_t(2 * y + 1) * width + 2 * x) + c] +
-                                     picture[4 * (size_t(2 * y + 1) * width + 2 * x + 1) + c]);
-            return half;
+                    for (uint32_t dy = 0; dy < 3; ++dy)
+                        for (uint32_t dx = 0; dx < 3; ++dx)
+                            for (int c = 0; c < 4; ++c)
+                                small[4 * (size_t(y) * panelWidth + x) + c] +=
+                                    picture[4 * (size_t(3 * y + dy) * photoWidth + 3 * x + dx) + c] / 9.0f;
+            return small;
         };
         const auto label = [&](const char* text) {
             TitleLayout layout;
@@ -837,30 +837,49 @@ int main(int argc, char** argv) {
             layout.lines.push_back({text, mono, 400.0f, 0.021f, 0.0f});
             return rasterizeTitle(layout);
         };
-        const CoverageMask photographLabel = label("photograph"), renderingLabel = label("rendering");
-        std::vector<float> photographPanel, renderingPanel;
+        const CoverageMask photographLabel = label("photographs"),
+                           renderingLabel = label("renderings with the current texture");
+        const size_t photoPixels = size_t(photoWidth) * photoHeight, photoCount = morphOptions.photoCameras.size();
+        std::vector<std::vector<float>> photographPanels;
+        std::vector<glm::mat4> shownCameras;
+        for (size_t k = 0; k < 4; ++k) {
+            size_t view = k * photoCount / 4;
+            double largest = -1.0;
+            for (size_t v = k * photoCount / 4; v < (k + 1) * photoCount / 4; ++v) {
+                double coverage = 0.0;
+                for (size_t p = 0; p < photoPixels; ++p)
+                    coverage += morphOptions.photographs[4 * (photoPixels * v + p) + 3];
+                if (coverage > largest) {
+                    largest = coverage;
+                    view = v;
+                }
+            }
+            photographPanels.push_back(third(&morphOptions.photographs[4 * photoPixels * view]));
+            shownCameras.push_back(morphOptions.photoCameras[view]);
+        }
         const float trainingStart = 0.5f; // seconds into the title
         const auto drawTraining = [&](std::vector<uint8_t>& bgra, raster::MeshMorph& morph, float opacity) {
             if (opacity <= 0.0f)
                 return;
-            {
-                const uint32_t view = morph.getTraining().lastView();
-                const size_t pixels = size_t(morphOptions.training.width) * morphOptions.training.height;
-                photographPanel = halve(&morphOptions.photographs[4 * pixels * view]);
-                std::vector<float> rendering(morph.getTraining().getRendering()->getDataElementCount());
-                morph.getTraining().getRendering()->getDataBuffer(0).memcopyTo(rendering);
-                renderingPanel = halve(rendering.data());
-            }
-            const int x = int(extent.width) - int(panelWidth) - int(0.05f * float(extent.width));
-            const int gap = int(0.03f * float(extent.height));
-            const int total = 2 * int(panelHeight) + 2 * int(photographLabel.height) + 3 * gap;
-            int y = (int(extent.height) - total) / 2;
-            for (const auto& [picture, text] :
-                 {std::pair{&photographPanel, &photographLabel}, {&renderingPanel, &renderingLabel}}) {
-                blendCaption(bgra, extent.width, extent.height, *text, x, y, glm::vec3(0.0f), opacity);
-                y += int(text->height) + gap / 2;
-                blendPicture(bgra, extent.width, extent.height, *picture, panelWidth, panelHeight, x, y, opacity);
-                y += int(panelHeight) + gap;
+            const std::vector<float> renderings = raster::renderImages(
+                vc, morph.getTraining().mesh(), morph.getTraining().texture(), morphOptions.training.textureWidth,
+                morphOptions.training.textureHeight, shownCameras, photoWidth, photoHeight);
+            const int gap = int(0.02f * float(extent.height));
+            const int left = int(extent.width) - int(0.05f * float(extent.width)) - 2 * int(panelWidth) - gap;
+            const int grid = int(photographLabel.height) + gap / 2 + 2 * int(panelHeight) + gap;
+            int y = (int(extent.height) - 2 * grid - gap) / 2;
+            for (int block = 0; block < 2; ++block) {
+                blendCaption(bgra, extent.width, extent.height, block == 0 ? photographLabel : renderingLabel, left, y,
+                             glm::vec3(0.0f), opacity);
+                y += int(photographLabel.height) + gap / 2;
+                for (int k = 0; k < 4; ++k) {
+                    const std::vector<float> picture =
+                        block == 0 ? photographPanels[k] : third(&renderings[4 * photoPixels * size_t(k)]);
+                    blendPicture(bgra, extent.width, extent.height, picture, panelWidth, panelHeight,
+                                 left + (k % 2) * (int(panelWidth) + gap), y + (k / 2) * (int(panelHeight) + gap),
+                                 opacity);
+                }
+                y += 2 * int(panelHeight) + 2 * gap;
             }
         };
         const auto [begin, end] = chapterRange(0);
@@ -1063,12 +1082,14 @@ int main(int argc, char** argv) {
                 timeOfDay =
                     seconds < afternoon ? 0.5f + 0.5f * seconds / afternoon : days.timeOfDayAt(seconds - afternoon);
                 season = seconds < afternoon ? days.seasons[0] : days.seasonAt(seconds - afternoon);
-                // Storms in fall and winter: from summer (2) the wind rises into fall (3.25), blows through winter
-                // (4) and calms down towards spring (5.25).
-                const float storm = smooth((season - 2.5f) / 0.6f) * (1.0f - smooth((season - 4.5f) / 0.6f));
+                // Storms in fall and winter: full within 0.6 seasons of 3.6 (between fall at 3.25 and winter at 4 =
+                // 0), on the season's circle (seasonAt() wraps it), calm from 1.2 seasons away, so summer (2) and
+                // spring (1.25) are calm and the wind changes smoothly through the wrap.
+                const float around = std::fmod(std::abs(season - 3.6f), 4.0f);
+                const float storm = 1.0f - smooth((std::min(around, 4.0f - around) - 0.6f) / 0.6f);
                 windTime += (1.0f + 1.5f * storm) / fps;
                 bonsai.setTime(sinceGrowth + windTime, timeOfDay, season,
-                               glm::vec4(1.0f, 0.0f, 0.0f, 0.4f + 1.8f * storm));
+                               glm::vec4(1.0f, 0.0f, 0.0f, 0.4f + 2.2f * storm));
                 background = backgroundAt(timeOfDay, season);
             }
             bonsai.setBackground(glm::vec3(background));
@@ -1121,7 +1142,7 @@ int main(int argc, char** argv) {
                 if (kSkyMarks)
                     drawSky(image, bonsai.getCamera()->ubo.view, treeSkyAt(timeOfDay, season), background);
                 if (panels && f >= daysStart)
-                    panels->draw(image, sinceDays, demonstration, season, background);
+                    panels->draw(image, sinceDays, demonstration, background);
                 finishFrame(f, std::move(image), background);
                 std::cout << "frame " << f << std::endl;
             }
