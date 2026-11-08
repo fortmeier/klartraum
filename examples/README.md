@@ -428,6 +428,7 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--turns T` | Turns of the camera around the pot during the video (default 0.5) |
 | `--enhancer M` | The Gaussian renderer also runs the neural enhancer of distant trees (`TreeEnhancer`, an ONNX model of `scripts/neural/train_tree_enhancer.py` at the image's size) and writes its images as `enhanced_NNNN.ppm` beside the Gaussian ones |
 | `--fly-in S` | Render a flight of S seconds instead of views or days: from the first view outside the pot down to the `--ground` place at noon of the season, ending with a slow pan; takes precedence over `--video`. Without `--ground` (scale 0.6 or more), the flight goes low over a field into a dense forest and ends at 1.7 m among the trunks |
+| `--gbuffers` | With `--fly-in`: also write every frame's G-buffers, `<renderer>_class_NNNN.ppm` (the surfaces' classes) and `<renderer>_depth_NNNN.ppm` (their distance from the camera as grey from 0 to a far plane that grows with the camera's height), and `<out-dir>/cameras_<renderer>.csv` with each frame's camera and depth window |
 | `--from N`, `--to M` | Render only the video frames N to M - 1 |
 | `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |

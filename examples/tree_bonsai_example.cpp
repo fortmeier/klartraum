@@ -12,7 +12,7 @@
 //                       [--ground X,Z,METERS,HEADING] [--no-grass] [--profile] [--budget MS]
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
 //                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--moss-patches 250]
-//                       [--enhancer MODEL.onnx] [--out-dir build/TestingOutput/tree_bonsai]
+//                       [--enhancer MODEL.onnx] [--gbuffers] [--out-dir build/TestingOutput/tree_bonsai]
 //                       [--pot FILE] [--object FILE,X,Z,HEIGHT[,YAW]]... [--style S]
 //                       [--species mixed|pine|broadleaf] [--soil-mound M] [--tree-size F] [--tree-spread F]
 //
@@ -30,6 +30,8 @@
 // neural enhancer of distant trees (TreeEnhancer, a model of
 // scripts/neural/train_tree_enhancer.py at the image's size) after it; its
 // images go to <out-dir>/frames/enhanced_<frame>.ppm beside the Gaussian ones.
+// With --gbuffers, every fly-in frame also gets its G-buffers, <renderer>_class_<frame>.ppm and
+// <renderer>_depth_<frame>.ppm, and <out-dir>/cameras.csv the frames' cameras and depth windows.
 // With --pot, a captured pot (object.spz of splat_training_example or object.obj of
 // mesh_texture_fitting_example) replaces the procedural one, and --object places
 // captured objects on the soil (at x, z, HEIGHT units tall, turned by YAW radians).
@@ -129,6 +131,7 @@ int main(int argc, char** argv) {
     uint32_t toFrame = UINT32_MAX;
     std::filesystem::path outDir = "build/TestingOutput/tree_bonsai";
     std::string enhancerPath;
+    bool gbuffers = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -166,6 +169,8 @@ int main(int argc, char** argv) {
             budgetMs = std::stof(argv[++i]);
         } else if (arg == "--no-grass") {
             grass = false;
+        } else if (arg == "--gbuffers") {
+            gbuffers = true;
         } else if (arg == "--profile") {
             profile = true;
         } else if (arg == "--video") {
@@ -314,6 +319,15 @@ int main(int argc, char** argv) {
                 scene.focus + distance * glm::vec3(std::sin(azimuth) * std::cos(elevation), std::sin(elevation),
                                                    std::cos(azimuth) * std::cos(elevation));
             const float above = groundView.z / scene.config.scale.metersPerUnit();
+            std::ofstream cameras;
+            float depthFar = 50.0f; // the depth window of the G-buffers, fitted per frame
+            if (gbuffers) {
+                cameras.open(outDir / ("cameras_" + std::string(modeName) + ".csv"),
+                             fromFrame > 0 ? std::ios::app : std::ios::trunc);
+                if (fromFrame == 0)
+                    cameras << "frame,eye_x,eye_y,eye_z,look_x,look_y,look_z,near_plane,fov_y_degrees,depth_near,"
+                               "depth_far\n";
+            }
             for (uint32_t frame = fromFrame; frame < std::min(frames, toFrame); ++frame) {
                 const float seconds = float(frame) / fps;
                 const float u = float(frame) / float(std::max(frames - 1, 1u));
@@ -334,6 +348,47 @@ int main(int argc, char** argv) {
                 char name[64];
                 std::snprintf(name, sizeof(name), "%s_%04u.ppm", modeName, frame);
                 writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+                if (gbuffers) {
+                    // Classes, then the distance from the camera as grey from 0 to a far plane fitted to the frame:
+                    // the 98th percentile of the covered pixels' distances (the background is black in the classes)
+                    // lands near 80 % of the grey range, so the depth stays resolved from the pot's view down to the
+                    // forest floor. The window starts from the previous frame's.
+                    bonsai.setOutput(BonsaiOutput::Classes);
+                    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                    const auto classes = readImage(vc, target->getImage(0), extent);
+                    std::snprintf(name, sizeof(name), "%s_class_%04u.ppm", modeName, frame);
+                    writePpm(outDir / "frames" / name, classes, extent);
+                    std::vector<uint8_t> depth;
+                    for (int attempt = 0; attempt < 12; ++attempt) {
+                        bonsai.setOutput(BonsaiOutput::Depth, 0.0f, depthFar);
+                        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                        depth = readImage(vc, target->getImage(0), extent);
+                        std::vector<uint8_t> covered;
+                        for (size_t p = 0; p < classes.size(); p += 4)
+                            if (classes[p] | classes[p + 1] | classes[p + 2])
+                                covered.push_back(depth[p]);
+                        if (covered.empty())
+                            break;
+                        const size_t rank = covered.size() * 98 / 100;
+                        std::nth_element(covered.begin(), covered.begin() + rank, covered.end());
+                        const float percentile = float(covered[rank]);
+                        float next = depthFar;
+                        if (percentile >= 255.0f)
+                            next = depthFar * 2.0f;
+                        else if (percentile < 150.0f)
+                            next = depthFar * std::max(percentile, 4.0f) / 205.0f;
+                        next = std::min(next, 50.0f);
+                        if (next == depthFar)
+                            break;
+                        depthFar = next;
+                    }
+                    std::snprintf(name, sizeof(name), "%s_depth_%04u.ppm", modeName, frame);
+                    writePpm(outDir / "frames" / name, depth, extent);
+                    bonsai.setOutput(BonsaiOutput::Colour);
+                    cameras << frame << "," << pose.eye.x << "," << pose.eye.y << "," << pose.eye.z << ","
+                            << pose.lookAt.x << "," << pose.lookAt.y << "," << pose.lookAt.z << "," << pose.nearPlane
+                            << ",40,0," << depthFar << "\n";
+                }
                 if (enhancer) {
                     std::snprintf(name, sizeof(name), "enhanced_%04u.ppm", frame);
                     writePpm(outDir / "frames" / name, readImage(vc, enhancedTarget->getImage(0), extent), extent);
@@ -386,6 +441,15 @@ int main(int argc, char** argv) {
             if (ground) {
                 // Standing in the landscape, looking a little down along the heading (turned by the view).
                 const float above = groundView.z / scene.config.scale.metersPerUnit();
+                std::ofstream cameras;
+                float depthFar = 50.0f; // the depth window of the G-buffers, fitted per frame
+                if (gbuffers) {
+                    cameras.open(outDir / ("cameras_" + std::string(modeName) + ".csv"),
+                                 fromFrame > 0 ? std::ios::app : std::ios::trunc);
+                    if (fromFrame == 0)
+                        cameras << "frame,eye_x,eye_y,eye_z,look_x,look_y,look_z,near_plane,fov_y_degrees,depth_near,"
+                                   "depth_far\n";
+                }
                 eye = glm::vec3(groundView.x, scene.soilHeight(groundView.x, groundView.y) + above, groundView.y);
                 const float heading = glm::radians(groundView.w) + 2.0f * 3.14159265f * float(view) / float(views);
                 lookAt = eye + glm::vec3(std::sin(heading), -0.08f, -std::cos(heading));
