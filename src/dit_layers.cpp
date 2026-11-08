@@ -25,6 +25,10 @@ struct ActivationPushConstants {
     uint32_t count, kind;
 };
 
+struct CopyPushConstants {
+    uint32_t count, sourceOffset, destinationOffset;
+};
+
 struct RotaryPushConstants {
     uint32_t tokens, heads;
 };
@@ -77,6 +81,16 @@ ComputeGraphElementPtr rotary(VulkanContext& vulkanContext, uint32_t tokens, uin
     auto operation = vulkanContext.create<GeneralComputation<RotaryPushConstants>>("shaders/dit/rotary.comp.spv");
     operation->setPushConstants({{tokens, heads}});
     operation->setGroupCount(tokens, heads, 1);
+    return operation;
+}
+
+ComputeGraphElementPtr copy(VulkanContext& vulkanContext, uint32_t count, uint32_t sourceOffset,
+                            uint32_t destinationOffset) {
+    if (count == 0)
+        throw std::invalid_argument("copy: the count must be positive");
+    auto operation = vulkanContext.create<GeneralComputation<CopyPushConstants>>("shaders/dit/copy.comp.spv");
+    operation->setPushConstants({{count, sourceOffset, destinationOffset}});
+    setGroups(*operation, count);
     return operation;
 }
 
