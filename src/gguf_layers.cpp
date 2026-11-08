@@ -26,6 +26,10 @@ struct MatVecPushConstants {
     uint32_t outputStride;
 };
 
+struct MatMulPushConstants {
+    uint32_t rows, columns, rowBytes, tokens, accumulate, hasBias;
+};
+
 struct RmsNormPushConstants {
     uint32_t width;
     uint32_t rowsPerToken;
@@ -101,6 +105,13 @@ const char* matVecShader(GgmlType type) {
     }
 }
 
+// The matmul shader of a weight type: the matvec shader's name with "matmul".
+std::string matMulShader(GgmlType type) {
+    std::string name = matVecShader(type);
+    name.replace(name.find("matvec"), 6, "matmul");
+    return name;
+}
+
 // Bytes of one block in the GPU layout.
 uint32_t gpuBlockBytes(GgmlType type) {
     switch (type) {
@@ -156,6 +167,20 @@ ComputeGraphElementPtr matVec(VulkanContext& vulkanContext, GgmlType type, uint3
     auto operation = computation(vulkanContext, matVecShader(type), constants);
     constexpr uint32_t rowsPerGroup = 8; // SUBGROUPS * ROWS_PER_SUBGROUP in matvec.glsl
     setGroups(*operation, (rows + rowsPerGroup - 1) / rowsPerGroup);
+    return operation;
+}
+
+ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, GgmlType type, uint32_t rows, uint32_t columns,
+                              uint32_t tokens, bool hasBias, bool accumulate) {
+    if (columns % 64 != 0 || columns % ggmlBlockSize(type) != 0)
+        throw std::runtime_error("GGUF matMul columns must be a multiple of 64 and of the block size");
+    if (rows == 0 || tokens == 0)
+        throw std::runtime_error("GGUF matMul needs rows and tokens");
+    MatMulPushConstants constants{
+        rows, columns, uint32_t(gpuRowBytes(type, columns)), tokens, accumulate ? 1u : 0u, hasBias ? 1u : 0u};
+    auto operation = computation(vulkanContext, matMulShader(type).c_str(), constants);
+    // TILE_ROWS x TILE_TOKENS per workgroup in matmul.slang.
+    operation->setGroupCount((rows + 63) / 64, (tokens + 63) / 64, 1);
     return operation;
 }
 

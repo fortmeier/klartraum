@@ -61,6 +61,17 @@ ComputeGraphElementPtr matVec(VulkanContext& vulkanContext, GgmlType type, uint3
                               bool lastTokenOnly = false);
 
 /**
+ * @brief Y = X W^T + bias for @p tokens tokens at once and a `rows` x `columns` weight matrix of @p type
+ * (`shaders/gguf/matmul.slang`), e.g. the image tokens of a diffusion transformer.
+ *
+ * Slots: 0 weights (as for matVec()), 1 input [tokens][columns], 2 bias (rows floats, read with @p hasBias; any float
+ * tensor without), 3 output [tokens][rows]. With @p accumulate the products are added to the output in place.
+ * @throws std::runtime_error For unsupported types or columns not a multiple of 64 (or of the type's block size).
+ */
+ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, GgmlType type, uint32_t rows, uint32_t columns,
+                              uint32_t tokens, bool hasBias = false, bool accumulate = false);
+
+/**
  * @brief RMS normalization of the `rowsPerToken` rows of `width` values of
  * every active token, scaled per element.
  *
