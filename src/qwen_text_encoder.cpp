@@ -21,6 +21,8 @@ namespace {
 
 constexpr uint32_t kHeadDim = 128;
 
+// Qwen-Image's prompt template around the user's prompt, as in diffusers' QwenImagePipeline (Apache-2.0); the model
+// was trained with it, and the embedding drops its first kTemplateTokens tokens.
 const char* const kTemplate = "<|im_start|>system\nDescribe the image by detailing the color, shape, size, texture, "
                               "quantity, text, spatial relationships of the objects and background:<|im_end|>\n"
                               "<|im_start|>user\n";
