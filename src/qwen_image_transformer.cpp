@@ -61,13 +61,22 @@ QwenImageTransformer::QwenImageTransformer(VulkanContext& vulkanContext, const s
             throw std::runtime_error("QwenImageTransformer: " + options.lora + " is not a converted LoRA");
         loraWeights = std::make_unique<GgufWeightStore>(vulkanContext, *loraFile);
     }
+    if (!options.controlnet.empty()) {
+        controlFile = std::make_unique<GgufFile>(options.controlnet);
+        if (controlFile->getString("general.architecture") != "qwen_image_controlnet")
+            throw std::runtime_error("QwenImageTransformer: " + options.controlnet + " is not a converted ControlNet");
+        while (controlFile->hasTensor("controlnet_blocks." + std::to_string(controlLayers) + ".weight"))
+            ++controlLayers;
+        controlWeights = std::make_unique<GgufWeightStore>(vulkanContext, *controlFile);
+    }
     build();
 }
 
 QwenImageTransformer::~QwenImageTransformer() = default;
 
 uint64_t QwenImageTransformer::getWeightBytes() const {
-    return weights->getBytes() + (loraWeights ? loraWeights->getBytes() : 0);
+    return weights->getBytes() + (loraWeights ? loraWeights->getBytes() : 0) +
+           (controlWeights ? controlWeights->getBytes() : 0);
 }
 
 QwenImageTransformer::Tensor QwenImageTransformer::deviceTensor(size_t elements, bool hostVisible) {
@@ -92,26 +101,26 @@ void QwenImageTransformer::append(const std::string& name, const ComputeGraphEle
     operations.push_back(operation);
 }
 
-void QwenImageTransformer::linear(const std::string& name, const Tensor& input, const Tensor& out, uint32_t tokens,
-                                  bool accumulate) {
-    const auto& info = file->getTensor(name + ".weight");
+void QwenImageTransformer::linear(const WeightSource& source, const std::string& name, const Tensor& input,
+                                  const Tensor& out, uint32_t tokens, bool accumulate) {
+    const auto& info = source.file->getTensor(name + ".weight");
     const uint32_t rows = uint32_t(info.rowCount()), columns = uint32_t(info.rowLength());
-    const bool hasBias = file->hasTensor(name + ".bias");
-    ComputeGraphElementPtr bias = hasBias ? ComputeGraphElementPtr(weights->floats(name + ".bias")) : input;
+    const bool hasBias = source.file->hasTensor(name + ".bias");
+    ComputeGraphElementPtr bias = hasBias ? ComputeGraphElementPtr(source.weights->floats(name + ".bias")) : input;
     append(name, gl::matMul(*vulkanContext, info.type, rows, columns, tokens, hasBias, accumulate),
-           {weights->encoded(name + ".weight"), input, bias, out});
-    if (!loraFile || !loraFile->hasTensor(name + ".lora_down.weight"))
+           {source.weights->encoded(name + ".weight"), input, bias, out});
+    if (!source.lora || !source.lora->hasTensor(name + ".lora_down.weight"))
         return;
-    const auto& down = loraFile->getTensor(name + ".lora_down.weight");
-    const auto& up = loraFile->getTensor(name + ".lora_up.weight");
+    const auto& down = source.lora->getTensor(name + ".lora_down.weight");
+    const auto& up = source.lora->getTensor(name + ".lora_up.weight");
     const uint32_t rank = uint32_t(down.rowCount());
     if (down.rowLength() != columns || up.rowCount() != rows || up.rowLength() != rank ||
         uint64_t(tokens) * rank > loraScratch->getDataElementCount())
         throw std::runtime_error("QwenImageTransformer: the LoRA of " + name + " does not fit the layer");
     append(name + ".lora_down", gl::matMul(*vulkanContext, down.type, rank, columns, tokens),
-           {loraWeights->encoded(name + ".lora_down.weight"), input, input, loraScratch});
+           {source.loraWeights->encoded(name + ".lora_down.weight"), input, input, loraScratch});
     append(name + ".lora_up", gl::matMul(*vulkanContext, up.type, rows, rank, tokens, false, true),
-           {loraWeights->encoded(name + ".lora_up.weight"), loraScratch, loraScratch, out});
+           {source.loraWeights->encoded(name + ".lora_up.weight"), loraScratch, loraScratch, out});
 }
 
 void QwenImageTransformer::build() {
@@ -129,6 +138,10 @@ void QwenImageTransformer::build() {
     textCosines = deviceTensor(size_t(Tt) * kHeadDim / 2, true);
     textSines = deviceTensor(size_t(Tt) * kHeadDim / 2, true);
     loraScratch = deviceTensor(size_t(maxTokens) * 128);
+    if (controlFile) {
+        control = deviceTensor(size_t(Ti) * kPatchChannels, true);
+        controlScale = deviceTensor(kDim, true);
+    }
 
     auto promptNormed = deviceTensor(size_t(Tt) * kTextDim);
     auto hiddenTime = deviceTensor(kDim);
@@ -141,20 +154,25 @@ void QwenImageTransformer::build() {
     auto feedForward = deviceTensor(size_t(maxTokens) * kFeedForward);
     auto heads = deviceTensor(size_t(maxTokens) * kDim); // per-head normed and turned queries or keys
 
-    // Inputs: patches and prompt into the streams; the timestep embedding.
-    linear("img_in", latent, image, Ti);
-    append("txt_norm", gl::rmsNorm(*vulkanContext, kTextDim, 1, kEpsilon, Tt),
-           {prompt, weights->floats("txt_norm.weight"), textParams, promptNormed});
-    linear("txt_in", promptNormed, text, Tt);
-    linear("time_text_embed.timestep_embedder.linear_1", sinusoid, hiddenTime, 1);
-    append("silu", dl::activation(*vulkanContext, dl::Activation::Silu, kDim), {hiddenTime});
-    linear("time_text_embed.timestep_embedder.linear_2", hiddenTime, conditioning, 1);
-    append("silu", dl::activation(*vulkanContext, dl::Activation::Silu, kDim), {conditioning});
+    const WeightSource model{file.get(), weights.get(), loraFile.get(), loraWeights.get()};
+
+    // A network's inputs: the patches and the prompt into its streams, and its timestep embedding.
+    auto appendInputs = [&](const WeightSource& w, const Tensor& imageStream, const Tensor& textStream,
+                            const Tensor& conditioning) {
+        linear(w, "img_in", latent, imageStream, Ti);
+        append("txt_norm", gl::rmsNorm(*vulkanContext, kTextDim, 1, kEpsilon, Tt),
+               {prompt, w.weights->floats("txt_norm.weight"), textParams, promptNormed});
+        linear(w, "txt_in", promptNormed, textStream, Tt);
+        linear(w, "time_text_embed.timestep_embedder.linear_1", sinusoid, hiddenTime, 1);
+        append("silu", dl::activation(*vulkanContext, dl::Activation::Silu, kDim), {hiddenTime});
+        linear(w, "time_text_embed.timestep_embedder.linear_2", hiddenTime, conditioning, 1);
+        append("silu", dl::activation(*vulkanContext, dl::Activation::Silu, kDim), {conditioning});
+    };
 
     // A stream's queries, keys and values into its rows of the joint buffers, normed and turned.
-    auto projectStream = [&](const std::string& block, const Tensor& normed, uint32_t tokens, uint32_t firstRow,
-                             const std::shared_ptr<WordTensor>& params, const Tensor& cosines, const Tensor& sines,
-                             bool isText) {
+    auto projectStream = [&](const WeightSource& w, const std::string& block, const Tensor& normed, uint32_t tokens,
+                             uint32_t firstRow, const std::shared_ptr<WordTensor>& params, const Tensor& cosines,
+                             const Tensor& sines, bool isText) {
         const std::string q = isText ? "attn.add_q_proj" : "attn.to_q", k = isText ? "attn.add_k_proj" : "attn.to_k",
                           v = isText ? "attn.add_v_proj" : "attn.to_v";
         const std::string normQ = isText ? "attn.norm_added_q" : "attn.norm_q",
@@ -163,66 +181,93 @@ void QwenImageTransformer::build() {
         const auto& projection = isText ? textProjection : imageProjection;
         for (const auto& [weight, norm, target] :
              {std::tuple{q, normQ, jointQueries}, std::tuple{k, normK, jointKeys}}) {
-            linear(block + weight, normed, projection, tokens);
+            linear(w, block + weight, normed, projection, tokens);
             append("qk_norm", gl::rmsNorm(*vulkanContext, kHeadDim, kHeads, kEpsilon, tokens),
-                   {projection, weights->floats(block + norm + ".weight"), params, heads});
+                   {projection, w.weights->floats(block + norm + ".weight"), params, heads});
             append("rotary", dl::rotary(*vulkanContext, tokens, kHeads), {cosines, sines, heads});
             append("copy", dl::copy(*vulkanContext, count, 0, offset), {heads, target});
         }
-        linear(block + v, normed, projection, tokens);
+        linear(w, block + v, normed, projection, tokens);
         append("copy", dl::copy(*vulkanContext, count, 0, offset), {projection, jointValues});
     };
 
-    const uint32_t blockCount = options.blocks != 0 ? std::min(options.blocks, layers) : layers;
-    for (uint32_t index = 0; index < blockCount; ++index) {
-        const std::string block = "transformer_blocks." + std::to_string(index) + ".";
-        linear(block + "img_mod.1", conditioning, imageModulation, 1);
-        linear(block + "txt_mod.1", conditioning, textModulation, 1);
+    // One double-stream block (`block` the tensor name prefix) on the streams.
+    auto appendBlock = [&](const WeightSource& w, const std::string& block, const Tensor& imageStream,
+                           const Tensor& textStream, const Tensor& conditioning) {
+        linear(w, block + "img_mod.1", conditioning, imageModulation, 1);
+        linear(w, block + "txt_mod.1", conditioning, textModulation, 1);
 
         // Attention over the joint [text; image] sequence.
         append("img_norm1", dl::layerNormModulate(*vulkanContext, kDim, Ti, 0, kDim, kEpsilon),
-               {image, imageModulation, imageNormed});
+               {imageStream, imageModulation, imageNormed});
         append("txt_norm1", dl::layerNormModulate(*vulkanContext, kDim, Tt, 0, kDim, kEpsilon),
-               {text, textModulation, textNormed});
-        projectStream(block, imageNormed, Ti, Tt, imageParams, imageCosines, imageSines, false);
-        projectStream(block, textNormed, Tt, 0, textParams, textCosines, textSines, true);
+               {textStream, textModulation, textNormed});
+        projectStream(w, block, imageNormed, Ti, Tt, imageParams, imageCosines, imageSines, false);
+        projectStream(w, block, textNormed, Tt, 0, textParams, textCosines, textSines, true);
         append("attention", gl::fullAttention(*vulkanContext, joint, kHeads, false),
                {jointQueries, jointKeys, jointValues, jointOut});
         append("copy", dl::copy(*vulkanContext, Ti * kDim, Tt * kDim, 0), {jointOut, imageNormed});
-        linear(block + "attn.to_out.0", imageNormed, imageProjection, Ti);
+        linear(w, block + "attn.to_out.0", imageNormed, imageProjection, Ti);
         append("img_gate1", dl::gatedResidual(*vulkanContext, kDim, Ti, 2 * kDim),
-               {imageProjection, imageModulation, image});
+               {imageProjection, imageModulation, imageStream});
         append("copy", dl::copy(*vulkanContext, Tt * kDim, 0, 0), {jointOut, textNormed});
-        linear(block + "attn.to_add_out", textNormed, textProjection, Tt);
+        linear(w, block + "attn.to_add_out", textNormed, textProjection, Tt);
         append("txt_gate1", dl::gatedResidual(*vulkanContext, kDim, Tt, 2 * kDim),
-               {textProjection, textModulation, text});
+               {textProjection, textModulation, textStream});
 
         // MLPs.
         for (const bool isText : {false, true}) {
             const uint32_t tokens = isText ? Tt : Ti;
-            const auto& stream = isText ? text : image;
+            const auto& stream = isText ? textStream : imageStream;
             const auto& modulation = isText ? textModulation : imageModulation;
             const auto& normed = isText ? textNormed : imageNormed;
             const auto& projection = isText ? textProjection : imageProjection;
             const std::string mlp = block + (isText ? "txt_mlp" : "img_mlp");
             append("norm2", dl::layerNormModulate(*vulkanContext, kDim, tokens, 3 * kDim, 4 * kDim, kEpsilon),
                    {stream, modulation, normed});
-            linear(mlp + ".net.0.proj", normed, feedForward, tokens);
+            linear(w, mlp + ".net.0.proj", normed, feedForward, tokens);
             append("gelu", dl::activation(*vulkanContext, dl::Activation::GeluTanh, tokens * kFeedForward),
                    {feedForward});
-            linear(mlp + ".net.2", feedForward, projection, tokens);
+            linear(w, mlp + ".net.2", feedForward, projection, tokens);
             append("gate2", dl::gatedResidual(*vulkanContext, kDim, tokens, 5 * kDim),
                    {projection, modulation, stream});
         }
+    };
+
+    // The ControlNet: its own inputs, with the control latent embedded into its image stream, its blocks, and per
+    // block a projection of its image stream into a residual.
+    if (controlFile) {
+        const WeightSource net{controlFile.get(), controlWeights.get(), nullptr, nullptr};
+        auto controlImage = deviceTensor(size_t(Ti) * kDim), controlText = deviceTensor(size_t(Tt) * kDim);
+        auto controlConditioning = deviceTensor(kDim);
+        appendInputs(net, controlImage, controlText, controlConditioning);
+        linear(net, "controlnet_x_embedder", control, controlImage, Ti, true);
+        for (uint32_t index = 0; index < controlLayers; ++index) {
+            appendBlock(net, "transformer_blocks." + std::to_string(index) + ".", controlImage, controlText,
+                        controlConditioning);
+            controlResiduals.push_back(deviceTensor(size_t(Ti) * kDim, true));
+            linear(net, "controlnet_blocks." + std::to_string(index), controlImage, controlResiduals.back(), Ti);
+        }
+    }
+
+    appendInputs(model, image, text, conditioning);
+    const uint32_t blockCount = options.blocks != 0 ? std::min(options.blocks, layers) : layers;
+    // diffusers: block i gets the residual i / ceil(blocks / residuals), times the conditioning scale.
+    const uint32_t interval = controlLayers != 0 ? (layers + controlLayers - 1) / controlLayers : 1;
+    for (uint32_t index = 0; index < blockCount; ++index) {
+        appendBlock(model, "transformer_blocks." + std::to_string(index) + ".", image, text, conditioning);
+        if (controlFile)
+            append("control", dl::gatedResidual(*vulkanContext, kDim, Ti, 0),
+                   {controlResiduals[index / interval], controlScale, image});
     }
 
     if (options.blocks == 0) {
         // AdaLayerNormContinuous: scale first, then shift.
         auto outputModulation = deviceTensor(2 * kDim);
-        linear("norm_out.linear", conditioning, outputModulation, 1);
+        linear(model, "norm_out.linear", conditioning, outputModulation, 1);
         append("norm_out", dl::layerNormModulate(*vulkanContext, kDim, Ti, kDim, 0, kEpsilon),
                {image, outputModulation, imageNormed});
-        linear("proj_out", imageNormed, velocity, Ti);
+        linear(model, "proj_out", imageNormed, velocity, Ti);
     }
 
     inputs[0] = options.blocks == 0 ? velocity : image;
@@ -234,6 +279,10 @@ void QwenImageTransformer::_setup(VulkanContext& vulkanContext, uint32_t numberP
     weights->upload(setupQueue);
     if (loraWeights)
         loraWeights->upload(setupQueue);
+    if (controlWeights) {
+        controlWeights->upload(setupQueue);
+        setControlScale(1.0f);
+    }
     imageParams->getDataBuffer().memcopyFrom(std::vector<uint32_t>{imageTokens, 0, 0, 0});
     textParams->getDataBuffer().memcopyFrom(std::vector<uint32_t>{textTokens, 0, 0, 0});
 
@@ -285,6 +334,30 @@ void QwenImageTransformer::setSigma(float sigma) {
         values[half + k] = std::sin(argument);
     }
     sinusoid->getDataBuffer().memcopyFrom(values);
+}
+
+void QwenImageTransformer::setControl(const std::vector<float>& values) {
+    if (!control)
+        throw std::runtime_error("QwenImageTransformer: setControl() needs a ControlNet");
+    if (values.size() != size_t(imageTokens) * kPatchChannels)
+        throw std::runtime_error("QwenImageTransformer: the control latent must hold imageTokens x 64 values");
+    control->getDataBuffer().memcopyFrom(values);
+}
+
+void QwenImageTransformer::setControlScale(float scale) {
+    if (!controlScale)
+        throw std::runtime_error("QwenImageTransformer: setControlScale() needs a ControlNet");
+    controlScale->getDataBuffer().memcopyFrom(std::vector<float>(kDim, scale));
+}
+
+std::vector<float> QwenImageTransformer::readControlResiduals() {
+    std::vector<float> values;
+    std::vector<float> residual(size_t(imageTokens) * kDim);
+    for (const auto& tensor : controlResiduals) {
+        tensor->getDataBuffer().memcopyTo(residual);
+        values.insert(values.end(), residual.begin(), residual.end());
+    }
+    return values;
 }
 
 std::vector<float> QwenImageTransformer::readVelocity() {
