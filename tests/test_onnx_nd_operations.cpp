@@ -26,6 +26,8 @@
  *   trailing-only pads
  * - Conv3dCausalTemporalKernel: Conv3d applies a causal 3x1x1 temporal kernel
  * - Conv3dPointwiseWithBias: Conv3d applies a pointwise 1x1x1 kernel with bias
+ * - ConvWithoutBias: a 2D Conv without the optional bias input (3x3 with pads and 1x1, as in DPT's neck) writes
+ *   its output and adds no bias
  * - WideRankThreeAttentionRunsUnfused: Single-head rank-three attention with a 1024-wide
  *   head runs unfused and matches a CPU reference
  * - EluDefaultAndCustomAlpha: Elu keeps positive values and maps negative ones to
@@ -449,6 +451,34 @@ TEST(OnnxNdOperationsTest, Conv3dCausalTemporalKernel) {
 
 TEST(OnnxNdOperationsTest, Conv3dPointwiseWithBias) {
     runConv3dCase("conv3d_pointwise", {{1, 48, 3, 4, 4}, {48, 48, 1, 1, 1}, {1, 1, 1}, {0, 0, 0, 0, 0, 0}}, 50);
+}
+
+TEST(OnnxNdOperationsTest, ConvWithoutBias) {
+    // 2D cases as depth-one 3D cases of the CPU reference (NCHW is NC1HW in memory), with a zero bias.
+    const Conv3dCase cases[] = {{{1, 6, 1, 9, 11}, {5, 6, 1, 3, 3}, {1, 1, 1}, {0, 1, 1, 0, 1, 1}},
+                                {{1, 8, 1, 7, 5}, {12, 8, 1, 1, 1}, {1, 1, 1}, {0, 0, 0, 0, 0, 0}}};
+    uint32_t seed = 60;
+    for (const auto& c : cases) {
+        const Shape output = conv3dOutputShape(c);
+        const Shape input2d{c.input[0], c.input[1], c.input[3], c.input[4]};
+        const Shape weights2d{c.weights[0], c.weights[1], c.weights[3], c.weights[4]};
+        const Shape output2d{output[0], output[1], output[3], output[4]};
+        ModelBuilder builder("conv2d_without_bias_" + std::to_string(c.weights[3]));
+        builder.input("x", input2d);
+        builder.output("y", output2d);
+        const auto x = patternedValues(elementCount(input2d), seed);
+        const auto w = patternedValues(elementCount(weights2d), seed + 1);
+        builder.floatInitializer("w", weights2d, w);
+        auto* node = builder.node("Conv", {"x", "w"}, {"y"});
+        ModelBuilder::ints(node, "kernel_shape", {c.weights[3], c.weights[4]});
+        ModelBuilder::ints(node, "strides", {1, 1});
+        ModelBuilder::ints(node, "pads", {c.pads[1], c.pads[2], c.pads[4], c.pads[5]});
+        ModelBuilder::ints(node, "dilations", {1, 1});
+        ModelBuilder::integer(node, "group", 1);
+        expectNear(builder.run({{"x", x}}, "y"), conv3dReference(c, x, w, std::vector<float>(c.weights[0], 0.0f)),
+                   2e-5f);
+        seed += 10;
+    }
 }
 
 TEST(OnnxNdOperationsTest, WideRankThreeAttentionRunsUnfused) {

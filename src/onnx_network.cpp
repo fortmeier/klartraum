@@ -21,6 +21,23 @@
 
 namespace klartraum {
 
+namespace {
+
+// The slot of a node's first output: after its inputs (the empty optional ones left out), except for Conv and
+// ConvTranspose, whose layers keep slot 2 for the bias, given or not.
+int firstOutputSlot(const onnx::NodeProto& node) {
+    int slot = 0;
+    for (const auto& inputName : node.input()) {
+        if (!inputName.empty())
+            ++slot;
+    }
+    if ((node.op_type() == "Conv" || node.op_type() == "ConvTranspose") && slot == 2)
+        slot = 3;
+    return slot;
+}
+
+} // namespace
+
 OnnxNetwork::OnnxNetwork(VulkanContext& vulkanContext, const std::string& modelPath)
     : vulkanContext(&vulkanContext),
       modelPath(modelPath) {
@@ -826,11 +843,7 @@ void OnnxNetwork::createGraphElementsFromOutputTensors() {
             createTensorOperationOutputs(vulkanContext, node, name2TensorInfo);
         for (const auto& [name, output] : outputs) {
             graphDataElements[name] = output;
-            int slot = 0;
-            for (const auto& inputName : node.input()) {
-                if (!inputName.empty())
-                    ++slot;
-            }
+            int slot = firstOutputSlot(node);
             for (int outputIndex = 0; outputIndex < node.output_size(); ++outputIndex) {
                 if (node.output(outputIndex) == name) {
                     slot += outputIndex;
@@ -878,6 +891,12 @@ void OnnxNetwork::connectGraphElements() {
                 auto [input, slot] = outputName2GraphElementAndSlot.at(index);
                 operation->setInput(input, startIndex, slot);
             }
+            ++startIndex;
+        }
+
+        // Without the optional bias, the weights hold a Conv's bias slot (the layer reads no bias then).
+        if (startIndex < firstOutputSlot(node)) {
+            operation->setInput(operation->getInputs().at(1), startIndex);
             ++startIndex;
         }
 
