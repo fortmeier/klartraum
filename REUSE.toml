@@ -30,6 +30,7 @@ path = [
     "site/*.html",
     "data/onnx/*.onnx",
     "data/onnx/*.bin",
+    "tests/data/gguf/*.gguf",
 ]
 SPDX-FileCopyrightText = "Dirk Fortmeier"
 SPDX-License-Identifier = "MIT"
