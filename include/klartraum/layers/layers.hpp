@@ -276,11 +276,13 @@ ComputeGraphElementPtr resizeNearest(VulkanContext& vulkanContext, const Shape& 
 
 /**
  * @brief Bilinear resize of an NCHW tensor to @p output's height and width with
- * half-pixel centres (PyTorch's align_corners=False), clamped at the borders.
+ * half-pixel centres (PyTorch's align_corners=False), clamped at the borders; with
+ * @p alignCorners, the corner pixels' centres coincide (align_corners=True).
  *
  * Slots: 0 input, 1 scales (bound but not read), 2 output.
  */
-ComputeGraphElementPtr resizeLinear(VulkanContext& vulkanContext, const Shape& input, const Shape& output);
+ComputeGraphElementPtr resizeLinear(VulkanContext& vulkanContext, const Shape& input, const Shape& output,
+                                    bool alignCorners = false);
 
 /**
  * @brief Permutes the axes of @p input (rank up to eight).

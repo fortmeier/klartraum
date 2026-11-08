@@ -513,6 +513,8 @@ ComputeGraphElementPtr createResize(VulkanContext* vulkanContext, const onnx::No
     // pytorch_half_pixel differs from half_pixel only for outputs of size one.
     if (mode == "linear" && (coordinates == "half_pixel" || coordinates == "pytorch_half_pixel"))
         return layers::resizeLinear(*vulkanContext, input, output);
+    if (mode == "linear" && coordinates == "align_corners")
+        return layers::resizeLinear(*vulkanContext, input, output, true);
     throw std::runtime_error("Unsupported Resize mode " + mode + " with coordinates " + coordinates);
 }
 

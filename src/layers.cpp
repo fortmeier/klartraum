@@ -194,7 +194,7 @@ ComputeGraphElementPtr conv(VulkanContext& vulkanContext, const ConvAttributes& 
     std::copy(attributes.strides.begin(), attributes.strides.end(), constants.strides);
     copyDimensions(input, constants.dimInput);
     copyDimensions(weights, constants.dimWeights);
-    constants.dimBias[0] = bias.empty() ? 1 : bias[0];
+    constants.dimBias[0] = bias.empty() ? 0 : bias[0];
     for (size_t i = 0; i < 4; ++i)
         constants.dimOutput[i] = output[i];
 
@@ -361,7 +361,7 @@ ComputeGraphElementPtr convTranspose(VulkanContext& vulkanContext, const ConvAtt
         constants.dimInput[i] = input[i];
         constants.dimWeights[i] = i < weights.size() ? weights[i] : 1;
     }
-    constants.dimBias[0] = bias.empty() ? 1 : bias[0];
+    constants.dimBias[0] = bias.empty() ? 0 : bias[0];
     // output = (input - 1) * stride - 2 * pad + kernel
     constants.dimOutput[0] = input[0];
     constants.dimOutput[1] = weights[1];
@@ -676,10 +676,11 @@ ComputeGraphElementPtr resizeNearest(VulkanContext& vulkanContext, const Shape& 
     return operation;
 }
 
-ComputeGraphElementPtr resizeLinear(VulkanContext& vulkanContext, const Shape& input, const Shape& output) {
+ComputeGraphElementPtr resizeLinear(VulkanContext& vulkanContext, const Shape& input, const Shape& output,
+                                    bool alignCorners) {
     if (input.size() != 4 || output.size() != 4)
         throw std::runtime_error("Resize requires rank four");
-    ResizePushConstants constants{input[0], input[1], input[2], input[3], output[2], output[3]};
+    ResizePushConstants constants{input[0], input[1], input[2], input[3], output[2], output[3], alignCorners ? 1u : 0u};
     auto operation = computation(vulkanContext, "shaders/onnx/resize_linear.comp.spv", constants);
     operation->setGroupCountX((elementCount(output) + 63) / 64);
     return operation;

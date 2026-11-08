@@ -4,7 +4,8 @@
 
 // Bilinear Resize of an NCHW tensor with half-pixel centres (ONNX half_pixel / pytorch_half_pixel, PyTorch's
 // align_corners=False): output pixel x samples the input at (x + 0.5) * inputWidth / outputWidth - 0.5, clamped
-// to the border pixels.
+// to the border pixels. With alignCorners (ONNX align_corners), x samples at x * (inputWidth - 1) /
+// (outputWidth - 1), so the corner pixels' centres coincide.
 
 struct PushConstants {
     uint batch;
@@ -13,6 +14,7 @@ struct PushConstants {
     uint inputWidth;
     uint outputHeight;
     uint outputWidth;
+    uint alignCorners;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -30,10 +32,16 @@ void main(uint3 globalId: SV_DispatchThreadID) {
     uint value = index / pc.outputWidth;
     uint y = value % pc.outputHeight;
     uint plane = value / pc.outputHeight;
-    float sx = clamp((float(x) + 0.5) * float(pc.inputWidth) / float(pc.outputWidth) - 0.5, 0.0,
-                     float(pc.inputWidth - 1));
-    float sy = clamp((float(y) + 0.5) * float(pc.inputHeight) / float(pc.outputHeight) - 0.5, 0.0,
-                     float(pc.inputHeight - 1));
+    float sx, sy;
+    if (pc.alignCorners != 0) {
+        sx = pc.outputWidth > 1 ? float(x) * float(pc.inputWidth - 1) / float(pc.outputWidth - 1) : 0.0;
+        sy = pc.outputHeight > 1 ? float(y) * float(pc.inputHeight - 1) / float(pc.outputHeight - 1) : 0.0;
+    } else {
+        sx = (float(x) + 0.5) * float(pc.inputWidth) / float(pc.outputWidth) - 0.5;
+        sy = (float(y) + 0.5) * float(pc.inputHeight) / float(pc.outputHeight) - 0.5;
+    }
+    sx = clamp(sx, 0.0, float(pc.inputWidth - 1));
+    sy = clamp(sy, 0.0, float(pc.inputHeight - 1));
     uint x0 = uint(sx);
     uint y0 = uint(sy);
     uint x1 = min(x0 + 1, pc.inputWidth - 1);
