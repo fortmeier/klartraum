@@ -20,6 +20,7 @@ distributes a build has to pass these notices on with it.
 | Vulkan headers | from the Vulkan SDK used for the build | MIT (dual-licensed Apache-2.0 OR MIT) |
 | Fonts in `build/fonts/` (only with `KLARTRAUM_WITH_FREETYPE`; Space Grotesk, Geist, Unbounded, Syne, IBM Plex Sans, Fraunces, JetBrains Mono) | google/fonts at commit 47d54ca | OFL-1.1 |
 | Unicode Character Database (category tables in `src/unicode_categories.inc`) | 15.0.0 | Unicode-3.0 |
+| stb_image_write (PNG writing in `src/image_io.cpp`, bundled with GLFW) | 1.16 | MIT (dual-licensed MIT OR Unlicense) |
 
 Not included in builds, but used by them or by the tests:
 
@@ -917,4 +918,30 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+```
+
+## stb_image_write
+
+Version: 1.16, as bundled with GLFW 3.5.1 in `3rdparty/glfw/deps/stb_image_write.h`; compiled into
+`src/image_io.cpp`. Dual-licensed under the MIT License or the Unlicense (public domain); used under the MIT
+License:
+
+```text
+ALTERNATIVE A - MIT License
+Copyright (c) 2017 Sean Barrett
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```

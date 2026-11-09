@@ -11,7 +11,8 @@
 //                       [--distance 4.2] [--elevation 0.32] [--azimuth 0.35] [--season 2]
 //                       [--ground X,Z,METERS,HEADING] [--no-grass] [--profile] [--budget MS]
 //                       [--video] [--days 4] [--seconds-per-day 10] [--fps 30] [--wind 0.5]
-//                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--moss-patches 250]
+//                       [--turns 0.5] [--fly-in SECONDS] [--from 0] [--to N] [--frame-stride 1] [--image-format ppm]
+//                       [--moss-patches 250]
 //                       [--enhancer MODEL.onnx] [--gbuffers] [--out-dir build/TestingOutput/tree_bonsai]
 //                       [--pot FILE] [--object FILE,X,Z,HEIGHT[,YAW]]... [--style S]
 //                       [--species mixed|pine|broadleaf] [--soil-mound M] [--tree-size F] [--tree-spread F]
@@ -53,6 +54,7 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/image_io.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/tree/bonsai_flight.hpp"
 #include "klartraum/tree/bonsai_renderer.hpp"
@@ -84,13 +86,8 @@ std::vector<uint8_t> readImage(VulkanContext& vc, VkImage image, VkExtent2D exte
     return pixels;
 }
 
-void writePpm(const std::filesystem::path& path, const std::vector<uint8_t>& bgra, VkExtent2D extent) {
-    std::ofstream file(path, std::ios::binary);
-    file << "P6\n" << extent.width << " " << extent.height << "\n255\n";
-    for (size_t i = 0; i < bgra.size(); i += 4) {
-        const char rgb[3] = {char(bgra[i + 2]), char(bgra[i + 1]), char(bgra[i])};
-        file.write(rgb, 3);
-    }
+void writeFrame(const std::filesystem::path& path, const std::vector<uint8_t>& bgra, VkExtent2D extent) {
+    writeImageBgra(path, bgra, extent.width, extent.height);
 }
 
 // `nearPlane` follows how close the camera is to the ground: from outside the pot 0.05 units, standing in a large
@@ -129,6 +126,8 @@ int main(int argc, char** argv) {
     uint32_t mossPatches = BonsaiRenderConfig{}.mossPatches;
     uint32_t fromFrame = 0;
     uint32_t toFrame = UINT32_MAX;
+    uint32_t frameStride = 1;
+    std::string imageFormat = "ppm";
     std::filesystem::path outDir = "build/TestingOutput/tree_bonsai";
     std::string enhancerPath;
     bool gbuffers = false;
@@ -191,6 +190,14 @@ int main(int argc, char** argv) {
             mossPatches = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--from" && hasValue) {
             fromFrame = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--image-format" && hasValue) {
+            imageFormat = argv[++i];
+            if (imageFormat != "ppm" && imageFormat != "png") {
+                std::cerr << "--image-format must be ppm or png" << std::endl;
+                return 1;
+            }
+        } else if (arg == "--frame-stride" && hasValue) {
+            frameStride = std::max(1, std::stoi(argv[++i]));
         } else if (arg == "--to" && hasValue) {
             toFrame = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--style" && hasValue) {
@@ -345,9 +352,13 @@ int main(int argc, char** argv) {
                 graph.submitAndWait(vc.getGraphicsQueue(), 0);
                 bonsai.setView(pose.eye);
                 graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                // Every frame is simulated (the placement streams in, the wind moves); only every frameStride-th
+                // frame is written.
+                if (frame % frameStride != 0)
+                    continue;
                 char name[64];
-                std::snprintf(name, sizeof(name), "%s_%04u.ppm", modeName, frame);
-                writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+                std::snprintf(name, sizeof(name), "%s_%04u.%s", modeName, frame, imageFormat.c_str());
+                writeFrame(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
                 if (gbuffers) {
                     // Classes, then the distance from the camera as grey from 0 to a far plane fitted to the frame:
                     // the 98th percentile of the covered pixels' distances (the background is black in the classes)
@@ -356,8 +367,8 @@ int main(int argc, char** argv) {
                     bonsai.setOutput(BonsaiOutput::Classes);
                     graph.submitAndWait(vc.getGraphicsQueue(), 0);
                     const auto classes = readImage(vc, target->getImage(0), extent);
-                    std::snprintf(name, sizeof(name), "%s_class_%04u.ppm", modeName, frame);
-                    writePpm(outDir / "frames" / name, classes, extent);
+                    std::snprintf(name, sizeof(name), "%s_class_%04u.%s", modeName, frame, imageFormat.c_str());
+                    writeFrame(outDir / "frames" / name, classes, extent);
                     std::vector<uint8_t> depth;
                     for (int attempt = 0; attempt < 12; ++attempt) {
                         bonsai.setOutput(BonsaiOutput::Depth, 0.0f, depthFar);
@@ -382,16 +393,16 @@ int main(int argc, char** argv) {
                             break;
                         depthFar = next;
                     }
-                    std::snprintf(name, sizeof(name), "%s_depth_%04u.ppm", modeName, frame);
-                    writePpm(outDir / "frames" / name, depth, extent);
+                    std::snprintf(name, sizeof(name), "%s_depth_%04u.%s", modeName, frame, imageFormat.c_str());
+                    writeFrame(outDir / "frames" / name, depth, extent);
                     bonsai.setOutput(BonsaiOutput::Colour);
                     cameras << frame << "," << pose.eye.x << "," << pose.eye.y << "," << pose.eye.z << ","
                             << pose.lookAt.x << "," << pose.lookAt.y << "," << pose.lookAt.z << "," << pose.nearPlane
                             << ",40,0," << depthFar << "\n";
                 }
                 if (enhancer) {
-                    std::snprintf(name, sizeof(name), "enhanced_%04u.ppm", frame);
-                    writePpm(outDir / "frames" / name, readImage(vc, enhancedTarget->getImage(0), extent), extent);
+                    std::snprintf(name, sizeof(name), "enhanced_%04u.%s", frame, imageFormat.c_str());
+                    writeFrame(outDir / "frames" / name, readImage(vc, enhancedTarget->getImage(0), extent), extent);
                 }
                 if (frame % 30 == 0) {
                     std::cout << modeName << " frame " << frame << " / " << frames << std::endl;
@@ -423,7 +434,7 @@ int main(int argc, char** argv) {
                 }
                 char name[64];
                 std::snprintf(name, sizeof(name), "%s_%04u.ppm", modeName, frame);
-                writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+                writeFrame(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
                 if (frame % 30 == 0) {
                     std::cout << modeName << " frame " << frame << " / " << frames << std::endl;
                 }
@@ -470,7 +481,7 @@ int main(int argc, char** argv) {
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
             char name[64];
             std::snprintf(name, sizeof(name), "%s_%03u.ppm", modeName, view);
-            writePpm(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+            writeFrame(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
             std::cout << modeName << " view " << view << ": " << ms << " ms" << std::endl;
             if (profile) {
                 // The last frame's GPU times, longest first.

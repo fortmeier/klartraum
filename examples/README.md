@@ -34,6 +34,7 @@ relative to the working directory.
 | `autodiff_training_example` | Training a small network on the GPU, with gradients from Slang's automatic differentiation | no |
 | `qwen_chat_example` | A chat in the terminal with the Qwen3.6-27B language model, run from a GGUF file | no |
 | `qwen_image_example` | Text-to-image and image-to-image with the Qwen-Image diffusion model (GGUF transformer and text encoder, ONNX VAE) | no |
+| `landscape_gbuffer_example` | Metric depth and semantic classes of images, estimated by two networks (ONNX) | no |
 
 ### Camera controls
 
@@ -430,6 +431,8 @@ the start azimuth plus 2π·*i*/*views*. Images go to
 | `--fly-in S` | Render a flight of S seconds instead of views or days: from the first view outside the pot down to the `--ground` place at noon of the season, ending with a slow pan; takes precedence over `--video`. Without `--ground` (scale 0.6 or more), the flight goes low over a field into a dense forest and ends at 1.7 m among the trunks |
 | `--gbuffers` | With `--fly-in`: also write every frame's G-buffers, `<renderer>_class_NNNN.ppm` (the surfaces' classes) and `<renderer>_depth_NNNN.ppm` (their distance from the camera as grey from 0 to a far plane that grows with the camera's height), and `<out-dir>/cameras_<renderer>.csv` with each frame's camera and depth window |
 | `--from N`, `--to M` | Render only the video frames N to M - 1 |
+| `--frame-stride N` | With `--fly-in`: simulate every frame but write only every N-th (e.g. for training data) |
+| `--image-format ppm\|png` | Format of the fly-in's frames and G-buffers (default ppm; png is lossless and several times smaller) |
 | `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
 | `--pot FILE` | A captured pot in place of the procedural one: `object.spz` of `splat_training_example` or `object.obj` of `mesh_texture_fitting_example`. It is scaled to the procedural pot's length at its rim, and the soil fills it up to just below the rim |
@@ -632,7 +635,10 @@ model is on the GPU at a time (the transformer takes about 13 GB). Set up the
 models with the scripts in
 [`scripts/qwen_image/`](https://github.com/fortmeier/klartraum/tree/main/scripts/qwen_image);
 Qwen-Image is third-party software under its own license and not part of
-Klartraum. With `--image`, the input is encoded and noised to the schedule's
+Klartraum. With `--control`, the depth ControlNet Union
+([InstantX](https://huggingface.co/InstantX/Qwen-Image-ControlNet-Union),
+converted by `scripts/qwen_image/convert_controlnet.py`) makes the image
+follow a depth map. With `--image`, the input is encoded and noised to the schedule's
 noise level after skipping the first steps, so `--strength` sets how much of
 it is repainted. Images are binary PPM files.
 
@@ -643,7 +649,10 @@ it is repainted. Images are binary PPM files.
 | `--steps N` | Denoising steps (default 8, the Lightning LoRA's) |
 | `--seed N` | Seed of the initial noise (default 0) |
 | `--image FILE` | Input image (PPM of the image size) for image-to-image |
-| `--batch FILE` | Image-to-image of many inputs with one prompt: every line of FILE names an input and an output PPM; the models load once and every image starts from the same noise |
+| `--batch FILE` | Many images with one prompt: every line of FILE names an input (`-` for none), an output and optionally a control PPM; the models load once and every image starts from the same noise |
+| `--control FILE` | Control image for the ControlNet (a depth map: near white, far black), PPM of the image size |
+| `--control-scale S` | The ControlNet's conditioning scale (default 1) |
+| `--controlnet FILE` | The ControlNet (default: the converted ControlNet Union in `build/models/qwen-image/controlnet/`) |
 | `--strength S` | Share of the steps run on the input, 0 to 1 (default 0.6) |
 | `--out FILE` | Output PPM (default `build/TestingOutput/qwen_image/image.ppm`) |
 | `--transformer FILE`, `--text-encoder FILE`, `--lora FILE` | Model files (defaults in `build/models/qwen-image/`) |
@@ -651,4 +660,26 @@ it is repainted. Images are binary PPM files.
 ```bash
 ./build/examples/qwen_image_example --prompt "a bonsai tree in a clay pot, watercolor painting"
 ./build/examples/qwen_image_example --prompt "an ink drawing" --image rendering.ppm --strength 0.5 --out ink.ppm
+```
+
+### `landscape_gbuffer_example`
+
+Estimates G-buffers of photographs or generated images with two networks run in
+Klartraum: the metric depth of Depth Anything V2 Metric Outdoor Small (Apache-2.0)
+and the 150 ADE20K classes of UperNet ConvNeXt-Base (MIT). Export the ONNX graphs
+first with `scripts/landscape/export_depth.py` and `scripts/landscape/export_semseg.py`;
+the models are third-party software under their own licenses and not part of
+Klartraum. Every image (binary PPM of any size) is resized to each network's input
+and its outputs are scaled back. Per image it writes `<name>_depth.f32` (metres,
+float32), `<name>_depth.pgm` (centimetres, 16 bit), `<name>_class.pgm` (class
+indices) and `<name>_class.ppm` (the classes in colour).
+
+| Option | Meaning |
+|---|---|
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/landscape_gbuffers`) |
+| `--depth-model FILE` | Depth graph (default: the 518 x 924 export in `build/models/depth/onnx/`) |
+| `--segmentation-model FILE` | Segmentation graph (default: the 512 x 896 export in `build/models/semseg/onnx/`) |
+
+```bash
+./build/examples/landscape_gbuffer_example --out-dir build/TestingOutput/landscape_gbuffers photo1.ppm photo2.ppm
 ```

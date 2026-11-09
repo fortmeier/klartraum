@@ -198,3 +198,13 @@ target_link_libraries(qwen_image_example
 )
 
 add_dependencies(qwen_image_example Shaders)
+
+add_executable(landscape_gbuffer_example
+    landscape_gbuffer_example.cpp
+)
+
+target_link_libraries(landscape_gbuffer_example
+    klartraum_lib
+)
+
+add_dependencies(landscape_gbuffer_example Shaders)
