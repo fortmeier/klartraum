@@ -49,11 +49,20 @@ def usable(classes: np.ndarray) -> bool:
     return (classes == 1).mean() <= 0.02 and (classes == 0).mean() <= 0.6
 
 
+MIN_ALIGNMENT = 0.0  # set from --min-alignment
+
+
 def load_split(directory: Path) -> tuple[list[str], torch.Tensor, torch.Tensor]:
-    """The usable samples with a photo: their ids, inputs [N, 5, H, W] (uint8 RGB, depth, class index) and photos."""
+    """The usable samples with a photo: their ids, inputs [N, 5, H, W] (uint8 RGB, depth, class index) and photos.
+    With MIN_ALIGNMENT, samples whose photo follows its rendering's depth worse than that (check_photo_alignment.py's
+    alignment.json; samples not scored yet count as aligned) are left out."""
+    alignment_path = directory / "alignment.json"
+    alignment = json.loads(alignment_path.read_text()) if alignment_path.exists() else {}
     ids, inputs, photos = [], [], []
     for photo in sorted((directory / "photo").glob("*.ppm")):
         sample = photo.stem
+        if alignment.get(sample, 1.0) < MIN_ALIGNMENT:
+            continue
         try:
             target = np.asarray(Image.open(photo).convert("RGB"))
         except Exception:
@@ -110,12 +119,20 @@ class Generator(nn.Module):
         self.down = nn.ModuleList([Block(INPUT_CHANNELS, widths[0])] +
                                   [Block(widths[i - 1], widths[i], stride=2) for i in range(1, len(widths))])
         self.up = nn.ModuleList([Block(widths[i] + widths[i - 1], widths[i - 1]) for i in range(len(widths) - 1, 0, -1)])
+        # The depth channel is smoothed first: its 8-bit steps would otherwise show as contour lines (rings on near
+        # trunks). A fixed 9 x 9 Gaussian of sigma 2.5 px, not a parameter, so older checkpoints load.
+        radius = torch.arange(-4, 5, dtype=torch.float32)
+        gauss = torch.exp(-radius**2 / (2 * 2.5**2))
+        kernel = torch.outer(gauss, gauss)
+        self.register_buffer("depth_blur", (kernel / kernel.sum()).view(1, 1, 9, 9), persistent=False)
         self.out = nn.Conv2d(widths[0], 3, 1)
         # Starts as a neutral grey, away from the sigmoid's flat ends.
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        depth = F.conv2d(x[:, 3:4], self.depth_blur, padding=4)
+        x = torch.cat([x[:, :3], depth, x[:, 4:]], dim=1)
         skips = []
         for block in self.down:
             x = block(x)
@@ -219,6 +236,8 @@ def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng
         x, y = x[:, :, top:top + size, left:left + size], y[:, :, top:top + size, left:left + size]
         if rng.random() < 0.5:
             x, y = x.flip(3), y.flip(3)
+        # Dither the 8-bit depth by up to one grey level, so its steps carry no information.
+        x[:, 3:4] = x[:, 3:4] + (torch.rand_like(x[:, 3:4]) - 0.5) / 255.0
         xs.append(x)
         ys.append(y)
     return torch.cat(xs), torch.cat(ys)
@@ -285,9 +304,13 @@ def main() -> None:
     parser.add_argument("--r1", type=float, default=1.0)
     parser.add_argument("--reload", type=int, default=2000)
     parser.add_argument("--every", type=int, default=2000)
+    parser.add_argument("--min-alignment", type=float, default=0.0,
+                        help="leave out photos following their depth worse than this (check_photo_alignment.py)")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--reset-discriminator", action="store_true", help="with --resume: start a new discriminator")
     args = parser.parse_args()
+    global MIN_ALIGNMENT
+    MIN_ALIGNMENT = args.min_alignment
     args.out.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     rng = np.random.default_rng(1)
