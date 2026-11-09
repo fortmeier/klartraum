@@ -7,6 +7,8 @@
  * - ppmHoldsHeaderAndPixels: writeImage() with a .ppm path writes a binary PPM header and the RGB pixels unchanged
  * - pngHoldsSignatureAndSize: with a .png path it writes a PNG (signature, IHDR with the image's width and height)
  *   smaller than the PPM for a smooth image
+ * - pngDecodesToSamePixels: decoding the PNG (chunk CRCs, inflate, undoing every row's filter) gives back the
+ *   pixels exactly, for RGB, grey and RGBA images with noisy and smooth rows
  * - bgraDropsAlphaAndSwapsChannels: writeImageBgra() of a BGRA readback writes the pixels as RGB
  * - unknownExtensionThrows: other extensions are rejected
  **/
@@ -18,7 +20,10 @@
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <random>
 #include <vector>
+
+#include <zlib.h>
 
 #include "klartraum/image_io.hpp"
 
@@ -49,6 +54,58 @@ uint32_t bigEndian(const std::vector<uint8_t>& bytes, size_t offset) {
            bytes[offset + 3];
 }
 
+// Decodes an 8-bit PNG written by writeImage(): checks every chunk's CRC, inflates the IDAT data and undoes the
+// filters (None, Sub, Up, Average, Paeth); returns the pixels and sets width, height and channels.
+std::vector<uint8_t> decodePng(const std::vector<uint8_t>& bytes, uint32_t& width, uint32_t& height,
+                               uint32_t& channels) {
+    std::vector<uint8_t> compressed;
+    size_t at = 8;
+    while (at + 12 <= bytes.size()) {
+        const uint32_t length = bigEndian(bytes, at);
+        const std::string type(bytes.begin() + at + 4, bytes.begin() + at + 8);
+        const uint32_t crc = uint32_t(::crc32(0, bytes.data() + at + 4, length + 4));
+        EXPECT_EQ(crc, bigEndian(bytes, at + 8 + length)) << type;
+        if (type == "IHDR") {
+            width = bigEndian(bytes, at + 8);
+            height = bigEndian(bytes, at + 12);
+            EXPECT_EQ(bytes[at + 16], 8) << "bit depth";
+            const uint8_t colour = bytes[at + 17];
+            channels = colour == 0 ? 1 : colour == 2 ? 3 : colour == 4 ? 2 : 4;
+        } else if (type == "IDAT") {
+            compressed.insert(compressed.end(), bytes.begin() + at + 8, bytes.begin() + at + 8 + length);
+        }
+        at += 12 + length;
+    }
+    const size_t stride = size_t(width) * channels;
+    std::vector<uint8_t> filtered((stride + 1) * height);
+    uLongf size = uLongf(filtered.size());
+    EXPECT_EQ(uncompress(filtered.data(), &size, compressed.data(), uLong(compressed.size())), Z_OK);
+    std::vector<uint8_t> pixels(stride * height);
+    for (uint32_t y = 0; y < height; ++y) {
+        const uint8_t filter = filtered[y * (stride + 1)];
+        const uint8_t* in = &filtered[y * (stride + 1) + 1];
+        uint8_t* out = &pixels[y * stride];
+        const uint8_t* above = y > 0 ? &pixels[(y - 1) * stride] : nullptr;
+        for (size_t i = 0; i < stride; ++i) {
+            const int a = i >= channels ? out[i - channels] : 0, b = above ? above[i] : 0,
+                      c = above && i >= channels ? above[i - channels] : 0;
+            int predicted = 0;
+            if (filter == 1)
+                predicted = a;
+            else if (filter == 2)
+                predicted = b;
+            else if (filter == 3)
+                predicted = (a + b) / 2;
+            else if (filter == 4) {
+                const int p = a + b - c, pa = std::abs(p - a), pb = std::abs(p - b), pc = std::abs(p - c);
+                predicted = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+            }
+            out[i] = uint8_t(in[i] + predicted);
+        }
+    }
+    return pixels;
+}
+
 } // namespace
 
 TEST(ImageIoTest, ppmHoldsHeaderAndPixels) {
@@ -74,6 +131,28 @@ TEST(ImageIoTest, pngHoldsSignatureAndSize) {
     EXPECT_EQ(bigEndian(bytes, 16), 64u);
     EXPECT_EQ(bigEndian(bytes, 20), 32u);
     EXPECT_LT(bytes.size(), pixels.size());
+}
+
+TEST(ImageIoTest, pngDecodesToSamePixels) {
+    std::filesystem::create_directories(kDirectory);
+    std::mt19937 rng(5);
+    for (const uint32_t channels : {3u, 1u, 4u}) {
+        SCOPED_TRACE(std::to_string(channels) + " channels");
+        constexpr uint32_t width = 57, height = 33;
+        // Noisy rows and smooth rows, so that different filters win.
+        std::vector<uint8_t> pixels(size_t(width) * height * channels);
+        for (uint32_t y = 0; y < height; ++y)
+            for (size_t i = 0; i < size_t(width) * channels; ++i)
+                pixels[y * width * channels + i] = y % 3 == 0 ? uint8_t(rng()) : uint8_t(i * 3 + y * 7);
+        const auto path = kDirectory / ("pixels_" + std::to_string(channels) + ".png");
+        writeImage(path, pixels.data(), width, height, channels);
+        uint32_t w = 0, h = 0, c = 0;
+        const auto decoded = decodePng(readBytes(path), w, h, c);
+        EXPECT_EQ(w, width);
+        EXPECT_EQ(h, height);
+        EXPECT_EQ(c, channels);
+        EXPECT_EQ(decoded, pixels);
+    }
 }
 
 TEST(ImageIoTest, bgraDropsAlphaAndSwapsChannels) {

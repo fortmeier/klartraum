@@ -12,8 +12,9 @@
 namespace klartraum {
 
 /**
- * @brief Writes an 8-bit image of @p channels (1 grey, 3 RGB or 4 RGBA) interleaved channels as PNG or binary
- * PPM/PGM, chosen by the extension of @p path (.png, .ppm for RGB, .pgm for grey).
+ * @brief Writes an 8-bit image of @p channels (1 grey, 2 grey + alpha, 3 RGB or 4 RGBA) interleaved channels as
+ * PNG (deflated by zlib, adaptive row filters) or binary PPM/PGM, chosen by the extension of @p path (.png, .ppm for
+ * RGB, .pgm for grey).
  * @throws std::invalid_argument For other extensions or channel counts the format cannot hold.
  * @throws std::runtime_error If the file cannot be written.
  */
