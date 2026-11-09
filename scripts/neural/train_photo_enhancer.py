@@ -225,8 +225,10 @@ def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng
 
 
 def r1_penalty(discriminator: nn.Module, real_pair: torch.Tensor) -> torch.Tensor:
+    """R1: the squared gradient of the discriminator's score per sample (the mean of its patch logits) with respect
+    to the real pairs, averaged over the batch."""
     real_pair = real_pair.detach().requires_grad_(True)
-    total = sum(logits.sum() for _, logits in discriminator(real_pair))
+    total = sum(logits.mean(dim=(1, 2, 3)).sum() for _, logits in discriminator(real_pair))
     (gradient,) = torch.autograd.grad(total, real_pair, create_graph=True)
     return gradient.pow(2).flatten(1).sum(1).mean()
 
@@ -284,6 +286,7 @@ def main() -> None:
     parser.add_argument("--reload", type=int, default=2000)
     parser.add_argument("--every", type=int, default=2000)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--reset-discriminator", action="store_true", help="with --resume: start a new discriminator")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -301,10 +304,11 @@ def main() -> None:
     if args.resume and checkpoint.exists():
         state = torch.load(checkpoint, map_location=device)
         generator.load_state_dict(state["generator"])
-        discriminator.load_state_dict(state["discriminator"])
         ema.load_state_dict(state["ema"])
         optimise_g.load_state_dict(state["optimise_g"])
-        optimise_d.load_state_dict(state["optimise_d"])
+        if not args.reset_discriminator:
+            discriminator.load_state_dict(state["discriminator"])
+            optimise_d.load_state_dict(state["optimise_d"])
         step = state["step"]
     (args.out / "args.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=1))
 
@@ -341,6 +345,8 @@ def main() -> None:
         loss_vgg = vgg.distance(fake, y)
         loss_g = args.l1 * loss_l1 + args.perceptual * loss_vgg
         loss_adv = loss_fm = torch.zeros((), device=device)
+        if not adversarial:
+            loss_d = torch.zeros((), device=device)
         if adversarial:
             fake_pair, real_pair = torch.cat([x, fake], 1), torch.cat([x, y], 1)
             fake_results, real_results = discriminator(fake_pair), discriminator(real_pair)
@@ -360,6 +366,7 @@ def main() -> None:
 
         if step % 100 == 0:
             line = (f"step {step} l1 {loss_l1.item():.4f} vgg {loss_vgg.item():.4f} adv {loss_adv.item():.3f} "
+                    f"d {float(loss_d):.3f} "
                     f"fm {loss_fm.item():.4f} ({(time.time() - started) / 100:.2f} s/step)")
             print(line, flush=True)
             log.write(line + "\n")
