@@ -316,6 +316,7 @@ add_executable(
   tests/test_qwen_image_transformer.cpp
   tests/test_landscape_networks.cpp
   tests/test_image_io.cpp
+  tests/test_photo_enhancer.cpp
   tests/test_gguf_qwen35.cpp
   tests/test_gguf_tokenizer.cpp
   tests/test_render_over_targets.cpp
