@@ -16,6 +16,7 @@ struct PushConstants {
     uint features;
     uint tableSize;
     uint grids;
+    uint outputOffset; // channels of the output before the features
     uint classes[4];
     uint resolutions[16];
 };
@@ -24,7 +25,7 @@ struct PushConstants {
 [[vk::binding(0, 0)]] StructuredBuffer<float> coordinates; // [3][height][width]
 [[vk::binding(1, 0)]] StructuredBuffer<float> classes;     // [height][width]
 [[vk::binding(2, 0)]] StructuredBuffer<float> table;       // [grids][levels][tableSize][features]
-[[vk::binding(3, 0)]] RWStructuredBuffer<float> output;    // [levels * features][height][width]
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> output;    // [outputOffset + levels * features][height][width]
 
 uint cornerIndex(uint3 corner, uint resolution) {
     uint r = resolution + 1u;
@@ -61,6 +62,7 @@ void main(uint3 id: SV_DispatchThreadID) {
                 for (uint f = 0u; f < pc.features; ++f) sums[f] += w * table[entry + f];
             }
         }
-        for (uint f = 0u; f < pc.features; ++f) output[(level * pc.features + f) * pixels + p] = sums[f];
+        for (uint f = 0u; f < pc.features; ++f)
+            output[(pc.outputOffset + level * pc.features + f) * pixels + p] = sums[f];
     }
 }

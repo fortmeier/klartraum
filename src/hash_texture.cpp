@@ -15,7 +15,7 @@ namespace klartraum::neural {
 namespace {
 
 struct HashTexturePushConstants {
-    uint32_t width, height, levels, features, tableSize, grids;
+    uint32_t width, height, levels, features, tableSize, grids, outputOffset;
     uint32_t classes[4];
     uint32_t resolutions[16];
 };
@@ -65,9 +65,15 @@ ComputeGraphElementPtr hashTexture(VulkanContext& vulkanContext, const HashTextu
     for (uint32_t resolution : shape.resolutions)
         if (resolution == 0 || resolution > (1u << 20))
             throw std::invalid_argument("hashTexture: resolutions must be between 1 and 2^20");
-    HashTexturePushConstants constants{
-        shape.width, shape.height, shape.levels, shape.features, shape.tableSize, uint32_t(shape.classes.size()), {},
-        {}};
+    HashTexturePushConstants constants{shape.width,
+                                       shape.height,
+                                       shape.levels,
+                                       shape.features,
+                                       shape.tableSize,
+                                       uint32_t(shape.classes.size()),
+                                       shape.outputOffset,
+                                       {},
+                                       {}};
     for (size_t g = 0; g < shape.classes.size(); ++g)
         constants.classes[g] = shape.classes[g];
     for (size_t l = 0; l < shape.levels; ++l)

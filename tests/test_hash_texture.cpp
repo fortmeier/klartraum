@@ -8,6 +8,8 @@
  *   equal a CPU implementation of the same multi-resolution hash encoding (direct index on coarse levels, Instant
  *   NGP's spatial hash on fine ones, trilinear blending), each pixel from its class's grid, zeros for classes without
  *   one, for an image size that is not a multiple of the workgroup
+ * - outputOffsetKeepsLeadingChannels: with an output offset, the features land after that many channels and the
+ *   leading channels keep their values
  * - lookupMatchesTrainedTexture: with a texture exported by scripts/neural/train_photo_enhancer.py --texture, the
  *   layer reproduces the features PyTorch computed for its reference coordinates (skips without the export)
  **/
@@ -73,14 +75,15 @@ std::vector<float> readFloats(const std::filesystem::path& path) {
 
 // Runs the layer once and returns its features [levels * features][height][width].
 std::vector<float> runLayer(const neural::HashTextureShape& shape, const std::vector<float>& coordinates,
-                            const std::vector<float>& classes, const std::vector<float>& table) {
+                            const std::vector<float>& classes, const std::vector<float>& table,
+                            const std::vector<float>& initialOutput = {}) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     auto coordinateTensor = vc.create<TensorElement<float>>(std::vector<uint32_t>{uint32_t(coordinates.size())});
     auto classTensor = vc.create<TensorElement<float>>(std::vector<uint32_t>{uint32_t(classes.size())});
     auto tableTensor = vc.create<TensorElement<float>>(std::vector<uint32_t>{uint32_t(table.size())});
     auto output = vc.create<TensorElement<float>>(
-        std::vector<uint32_t>{shape.levels * shape.features * shape.height * shape.width});
+        std::vector<uint32_t>{(shape.outputOffset + shape.levels * shape.features) * shape.height * shape.width});
     auto layer = neural::hashTexture(vc, shape);
     layer->setInput(coordinateTensor, 0);
     layer->setInput(classTensor, 1);
@@ -91,6 +94,8 @@ std::vector<float> runLayer(const neural::HashTextureShape& shape, const std::ve
     coordinateTensor->getDataBuffer(0).memcopyFrom(coordinates);
     classTensor->getDataBuffer(0).memcopyFrom(classes);
     tableTensor->getDataBuffer(0).memcopyFrom(table);
+    if (!initialOutput.empty())
+        output->getDataBuffer(0).memcopyFrom(initialOutput);
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     std::vector<float> features(output->getDataElementCount());
     output->getDataBuffer(0).memcopyTo(features);
@@ -138,6 +143,28 @@ TEST(HashTextureTest, lookupMatchesReference) {
     }
     std::cout << "largest difference " << worst << std::endl;
     EXPECT_LT(worst, 1e-5f);
+}
+
+TEST(HashTextureTest, outputOffsetKeepsLeadingChannels) {
+    neural::HashTextureShape shape;
+    shape.width = 19;
+    shape.height = 7;
+    shape.levels = 2;
+    shape.features = 2;
+    shape.tableSize = 1u << 10;
+    shape.resolutions = {4, 8};
+    shape.classes = {3};
+    const size_t pixels = size_t(shape.width) * shape.height;
+    std::vector<float> table(shape.levels * shape.tableSize * shape.features, 0.5f);
+    std::vector<float> coordinates(3 * pixels, 0.3f), classes(pixels, 3.0f);
+    const auto plain = runLayer(shape, coordinates, classes, table);
+    shape.outputOffset = 3;
+    std::vector<float> initial(size_t(shape.outputOffset + 4) * pixels, -7.0f);
+    const auto offset = runLayer(shape, coordinates, classes, table, initial);
+    for (size_t i = 0; i < size_t(shape.outputOffset) * pixels; ++i)
+        ASSERT_EQ(offset[i], -7.0f) << i;
+    for (size_t i = 0; i < plain.size(); ++i)
+        ASSERT_EQ(offset[size_t(shape.outputOffset) * pixels + i], plain[i]) << i;
 }
 
 TEST(HashTextureTest, lookupMatchesTrainedTexture) {

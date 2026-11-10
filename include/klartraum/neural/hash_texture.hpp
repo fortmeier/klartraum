@@ -26,6 +26,7 @@ struct HashTextureShape {
     uint32_t tableSize = 1u << 17;     ///< entries per level, a power of two
     std::vector<uint32_t> resolutions; ///< cells per axis of each level, at most 16 levels
     std::vector<uint32_t> classes;     ///< the surface class of each grid, at most 4 grids
+    uint32_t outputOffset = 0;         ///< channels of the output before the features (e.g. a network's other inputs)
 
     /**
      * @brief Reads the shape written next to an exported texture (train_photo_enhancer.py: `<stem>_texture.txt`, lines
@@ -42,7 +43,8 @@ struct HashTextureShape {
  * not), the levels' features side by side; pixels of other classes get zeros.
  *
  * Slots: 0 coordinates [3][height][width] (u, v, id in [0, 1]), 1 classes [height][width] (class indices as floats),
- * 2 table [grids][levels][tableSize][features], 3 output [levels * features][height][width].
+ * 2 table [grids][levels][tableSize][features], 3 output [outputOffset + levels * features][height][width] (the
+ * first outputOffset channels are left as they are).
  */
 ComputeGraphElementPtr hashTexture(VulkanContext& vulkanContext, const HashTextureShape& shape);
 
