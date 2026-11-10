@@ -433,6 +433,8 @@ def main() -> None:
             discriminator.load_state_dict(state["discriminator"])
             optimise_d.load_state_dict(state["optimise_d"])
         step = state["step"]
+    # The best validation score (L1 + VGG of the EMA generator) so far, of best_checkpoint.pt.
+    best = state.get("best", float("inf")) if args.resume and checkpoint.exists() else float("inf")
     (args.out / "args.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=1))
 
     ids, inputs, photos, coords = [], None, None, None
@@ -504,18 +506,26 @@ def main() -> None:
             # Until held-out pairs exist, the grid shows training pairs (marked in the file name).
             shown = validation if validation[0] else (ids[:6], inputs[:6], photos[:6],
                                                       coords[:6] if coords is not None else None)
-            evaluate(ema, vgg, shown, args.out, step, device, log, "validation" if validation[0] else "train")
+            score = evaluate(ema, vgg, shown, args.out, step, device, log, "validation" if validation[0] else "train")
+            if validation[0] and score < best:
+                best = score
+                torch.save({"ema": ema.state_dict(), "step": step, "score": score}, args.out / "best_checkpoint.pt")
+                export(ema, args.out / "photo_enhancer_best.onnx", inputs.shape[2], inputs.shape[3])
+                line = f"best validation so far at step {step}: {score:.4f}"
+                print(line, flush=True)
+                log.write(line + "\n")
             torch.save({"generator": generator.state_dict(), "discriminator": discriminator.state_dict(),
                         "ema": ema.state_dict(), "optimise_g": optimise_g.state_dict(),
-                        "optimise_d": optimise_d.state_dict(), "step": step}, checkpoint)
+                        "optimise_d": optimise_d.state_dict(), "step": step, "best": best}, checkpoint)
             export(ema, args.out / "photo_enhancer.onnx", inputs.shape[2], inputs.shape[3])
 
 
 @torch.no_grad()
-def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: str = "validation") -> None:
+def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: str = "validation") -> float:
+    """Logs the mean L1 and VGG distance of the pairs and writes a grid of the first six; returns L1 + VGG."""
     ids, inputs, photos, coords = validation
     if not ids:
-        return
+        return float("inf")
     l1 = perceptual = 0.0
     shown_x, shown_y, shown_z = [], [], []
     for k in range(len(ids)):
@@ -534,6 +544,7 @@ def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: s
     log.write(line + "\n")
     log.flush()
     write_grid(out / f"{split}_{step:06d}.png", shown_x, shown_y, shown_z)
+    return (l1 + perceptual) / len(ids)
 
 
 if __name__ == "__main__":
