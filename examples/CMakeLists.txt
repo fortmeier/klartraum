@@ -208,3 +208,13 @@ target_link_libraries(landscape_gbuffer_example
 )
 
 add_dependencies(landscape_gbuffer_example Shaders)
+
+add_executable(photo_enhancer_example
+    photo_enhancer_example.cpp
+)
+
+target_link_libraries(photo_enhancer_example
+    klartraum_lib
+)
+
+add_dependencies(photo_enhancer_example Shaders)

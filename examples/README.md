@@ -35,6 +35,7 @@ relative to the working directory.
 | `qwen_chat_example` | A chat in the terminal with the Qwen3.6-27B language model, run from a GGUF file | no |
 | `qwen_image_example` | Text-to-image and image-to-image with the Qwen-Image diffusion model (GGUF transformer and text encoder, ONNX VAE) | no |
 | `landscape_gbuffer_example` | Metric depth and semantic classes of images, estimated by two networks (ONNX) | no |
+| `photo_enhancer_example` | The bonsai landscape's forest fly-in made photo-realistic: G-buffers, a learnable hash-grid surface texture and a GAN generator (ONNX) per frame | no |
 
 ### Camera controls
 
@@ -682,4 +683,33 @@ indices) and `<name>_class.ppm` (the classes in colour).
 
 ```bash
 ./build/examples/landscape_gbuffer_example --out-dir build/TestingOutput/landscape_gbuffers photo1.ppm photo2.ppm
+```
+
+### `photo_enhancer_example`
+
+Renders the forest fly-in of `tree_bonsai_example` (`--fly-in`, the classical
+renderer at 1280 x 720) and turns every frame into a photograph-like image on the
+GPU. The frame's G-buffers (colour, classes, 16-bit depth and the surface
+coordinates u, v and object id) are downsampled to the 832 x 464 sample size of
+training. `neural::hashTexture()` looks up a learnable surface texture there: one
+multi-resolution 3D hash grid (Instant NGP) over (u, v, id) per surface class
+(soil, stem and leaf). The photo enhancer's generator, an ONNX graph, then turns the
+G-buffers and texture features into the image. Train the model with
+`scripts/neural/train_photo_enhancer.py` (with its texture option) on Qwen-Image photographs of
+the flights, which also writes the texture next to the ONNX graph
+(`<stem>.onnx`, `<stem>_texture.txt`, `<stem>_texture_f32.bin`). Frames go to
+`<out-dir>/frames/frame_NNNN.png` (enhanced) and `render_NNNN.png` (the
+downsampled rendering), as PNG.
+
+| Option | Meaning |
+|---|---|
+| `--model STEM` | The exported model (default `build/TestingOutput/gan_runs/v6/photo_enhancer`) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/photo_enhancer`) |
+| `--seed N`, `--azimuth A`, `--season S` | The scene and the flight's start, as in `tree_bonsai_example` (defaults 7, -2.09, 2) |
+| `--fly-in SECONDS` | Length of the flight at 30 frames per second (default 24) |
+| `--every N`, `--from F`, `--to T` | Enhance every N-th frame of frames F to T (all frames are simulated) |
+
+```bash
+./build/examples/photo_enhancer_example --out-dir build/TestingOutput/photo_enhancer
+ffmpeg -framerate 30 -i build/TestingOutput/photo_enhancer/frames/frame_%04d.png -pix_fmt yuv420p enhanced.mp4
 ```
