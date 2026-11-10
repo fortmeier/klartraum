@@ -5,9 +5,10 @@
 /**
  * TESTS:
  * - generatorMatchesPyTorch: the photo enhancer's generator exported by scripts/neural/train_photo_enhancer.py runs in
- *   Klartraum and reproduces the PyTorch image of its stored reference input
+ *   Klartraum and reproduces the PyTorch image of its stored reference input (11 G-buffer channels, and with a
+ *   surface texture its features after them)
  *
- * The graph and its reference are written by the training into build/TestingOutput/gan_runs/v1/ (not in the
+ * The graph and its reference are written by the training into build/TestingOutput/gan_runs/v6/ (not in the
  * repository); the test skips without them.
  **/
 
@@ -27,7 +28,7 @@ using namespace klartraum;
 
 namespace {
 
-const std::string kModel = "./build/TestingOutput/gan_runs/v1/photo_enhancer";
+const std::string kModel = "./build/TestingOutput/gan_runs/v6/photo_enhancer";
 
 std::vector<float> readFloats(const std::string& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -46,11 +47,13 @@ TEST(PhotoEnhancerTest, generatorMatchesPyTorch) {
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     auto network = vc.create<OnnxNetwork>(kModel + ".onnx");
     network->retainTensor("image");
-    auto input = vc.create<TensorElement<float>>(std::vector<uint32_t>{1, 11, 464, 832});
+    const auto reference = readFloats(kModel + "_input_f32.bin");
+    const auto channels = uint32_t(reference.size() / (464 * 832));
+    auto input = vc.create<TensorElement<float>>(std::vector<uint32_t>{1, channels, 464, 832});
     network->setInputTensor("input", input, -1);
     ComputeGraph graph(vc, 1);
     graph.compileFrom(network);
-    input->getDataBuffer(0).memcopyFrom(readFloats(kModel + "_input_f32.bin"));
+    input->getDataBuffer(0).memcopyFrom(reference);
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("image"));
     ASSERT_NE(output, nullptr);

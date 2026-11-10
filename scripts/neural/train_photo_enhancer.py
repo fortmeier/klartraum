@@ -328,8 +328,25 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     model.load_state_dict({k: v.cpu() for k, v in generator.generator.state_dict().items()})
     if textured:
         # The texture's tables, [classes][levels][table][features], for the Klartraum lookup.
-        tables = torch.stack([grid.embeddings.detach().cpu() for grid in generator.texture.grids])
+        texture = generator.texture
+        tables = torch.stack([grid.embeddings.detach().cpu() for grid in texture.grids])
         tables.numpy().astype(np.float32).tofile(path.with_name(path.stem + "_texture_f32.bin"))
+        # The shape for Klartraum (neural::HashTextureShape::fromFile()) and a reference for its parity test: random
+        # coordinates over every class, with and without a grid, and PyTorch's features of them.
+        grid = texture.grids[0]
+        lines = [f"width {width}", f"height {height}", f"levels {grid.levels}", f"features {grid.features}",
+                 f"table {grid.table}", "resolutions " + " ".join(str(r) for r in grid.resolutions),
+                 "classes " + " ".join(str(c) for c in texture.classes)]
+        path.with_name(path.stem + "_texture.txt").write_text("\n".join(lines) + "\n")
+        reference = torch.Generator().manual_seed(1)
+        coordinates = torch.rand(1, 3, height, width, generator=reference)
+        classes = torch.randint(0, CLASSES, (1, height, width), generator=reference)
+        device = grid.embeddings.device
+        with torch.no_grad():
+            features = texture(coordinates.to(device), classes.to(device)).cpu()
+        coordinates.numpy().tofile(path.with_name(path.stem + "_texture_coordinates_f32.bin"))
+        classes.float().numpy().tofile(path.with_name(path.stem + "_texture_classes_f32.bin"))
+        features.numpy().tofile(path.with_name(path.stem + "_texture_features_f32.bin"))
     channels = INPUT_CHANNELS + (generator.texture.channels if textured else 0)
     example = torch.rand(1, channels, height, width, generator=torch.Generator().manual_seed(0))
     with torch.no_grad():
