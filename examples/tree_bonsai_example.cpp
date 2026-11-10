@@ -31,8 +31,9 @@
 // neural enhancer of distant trees (TreeEnhancer, a model of
 // scripts/neural/train_tree_enhancer.py at the image's size) after it; its
 // images go to <out-dir>/frames/enhanced_<frame>.ppm beside the Gaussian ones.
-// With --gbuffers, every fly-in frame also gets its G-buffers, <renderer>_class_<frame>.ppm and
-// <renderer>_depth_<frame>.ppm, and <out-dir>/cameras.csv the frames' cameras and depth windows.
+// With --gbuffers, every fly-in frame also gets its G-buffers, <renderer>_class_<frame>.ppm,
+// <renderer>_depth_<frame>.ppm, the surface coordinates <renderer>_u_<frame>.ppm and <renderer>_v_<frame>.ppm and the
+// 16-bit depth <renderer>_depth16_<frame>.ppm, and <out-dir>/cameras.csv the frames' cameras and depth windows.
 // With --pot, a captured pot (object.spz of splat_training_example or object.obj of
 // mesh_texture_fitting_example) replaces the procedural one, and --object places
 // captured objects on the soil (at x, z, HEIGHT units tall, turned by YAW radians).
@@ -395,6 +396,16 @@ int main(int argc, char** argv) {
                     }
                     std::snprintf(name, sizeof(name), "%s_depth_%04u.%s", modeName, frame, imageFormat.c_str());
                     writeFrame(outDir / "frames" / name, depth, extent);
+                    // Surface coordinates with object ids, and the depth as 16 bits over the same window.
+                    const std::pair<const char*, BonsaiOutput> extra[] = {{"u", BonsaiOutput::CoordinatesU},
+                                                                          {"v", BonsaiOutput::CoordinatesV},
+                                                                          {"depth16", BonsaiOutput::Depth16}};
+                    for (const auto& [kind, output] : extra) {
+                        bonsai.setOutput(output, 0.0f, depthFar);
+                        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                        std::snprintf(name, sizeof(name), "%s_%s_%04u.%s", modeName, kind, frame, imageFormat.c_str());
+                        writeFrame(outDir / "frames" / name, readImage(vc, target->getImage(0), extent), extent);
+                    }
                     bonsai.setOutput(BonsaiOutput::Colour);
                     cameras << frame << "," << pose.eye.x << "," << pose.eye.y << "," << pose.eye.z << ","
                             << pose.lookAt.x << "," << pose.lookAt.y << "," << pose.lookAt.z << "," << pose.nearPlane

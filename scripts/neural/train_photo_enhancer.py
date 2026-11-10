@@ -50,10 +50,13 @@ def usable(classes: np.ndarray) -> bool:
 
 
 MIN_ALIGNMENT = 0.0  # set from --min-alignment
+TEXTURE = False  # set from --texture: samples need <split>/coords/<sample>.npz (add_surface_coordinates.py)
 
 
-def load_split(directory: Path) -> tuple[list[str], torch.Tensor, torch.Tensor]:
-    """The usable samples with a photo: their ids, inputs [N, 5, H, W] (uint8 RGB, depth, class index) and photos.
+def load_split(directory: Path):
+    """The usable samples with a photo: their ids, inputs [N, 5, H, W] (uint8 RGB, depth, class index), photos and,
+    with TEXTURE, their surface coordinates [N, 4, H, W] float32 (u, v, object id, precise inverse depth; samples
+    without them are left out), else None.
     With MIN_ALIGNMENT, samples whose photo follows its rendering's depth worse than that (check_photo_alignment.py's
     alignment.json; samples not scored yet count as aligned) are left out."""
     alignment_path = directory / "alignment.json"
@@ -61,10 +64,13 @@ def load_split(directory: Path) -> tuple[list[str], torch.Tensor, torch.Tensor]:
     # Samples found faulty by eye (e.g. a symbol painted where the 8-bit depth shows contour lines).
     reject_path = directory / "reject.txt"
     rejected = set(reject_path.read_text().split()) if reject_path.exists() else set()
-    ids, inputs, photos = [], [], []
+    ids, inputs, photos, coords = [], [], [], []
     for photo in sorted((directory / "photo").glob("*.ppm")):
         sample = photo.stem
         if alignment.get(sample, 1.0) < MIN_ALIGNMENT or sample in rejected:
+            continue
+        coords_path = directory / "coords" / f"{sample}.npz"
+        if TEXTURE and not coords_path.exists():
             continue
         try:
             target = np.asarray(Image.open(photo).convert("RGB"))
@@ -78,15 +84,22 @@ def load_split(directory: Path) -> tuple[list[str], torch.Tensor, torch.Tensor]:
         inputs.append(np.concatenate([render, depth[..., None], classes[..., None]], axis=2))
         photos.append(target)
         ids.append(sample)
+        if TEXTURE:
+            stored = np.load(coords_path)
+            coords.append(np.concatenate([stored["uvid"], stored["depth"][None]]).astype(np.float32))
     if not ids:
-        return ids, torch.empty(0), torch.empty(0)
+        return ids, torch.empty(0), torch.empty(0), None
     return (ids, torch.from_numpy(np.stack(inputs)).permute(0, 3, 1, 2).contiguous(),
-            torch.from_numpy(np.stack(photos)).permute(0, 3, 1, 2).contiguous())
+            torch.from_numpy(np.stack(photos)).permute(0, 3, 1, 2).contiguous(),
+            torch.from_numpy(np.stack(coords)) if TEXTURE else None)
 
 
-def network_input(raw: torch.Tensor) -> torch.Tensor:
-    """[N, 5, H, W] uint8 (RGB, depth, class) -> [N, 11, H, W] float in [0, 1]."""
+def network_input(raw: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
+    """[N, 5, H, W] uint8 (RGB, depth, class) -> [N, 11, H, W] float in [0, 1]; with coords, the precise inverse depth
+    (their channel 3) in place of the 8-bit one."""
     rgb_depth = raw[:, :4].float() / 255.0
+    if coords is not None:
+        rgb_depth = torch.cat([rgb_depth[:, :3], coords[:, 3:4].to(rgb_depth.device)], dim=1)
     one_hot = F.one_hot(raw[:, 4].long().clamp(0, CLASSES - 1), CLASSES).permute(0, 3, 1, 2).float()
     return torch.cat([rgb_depth, one_hot], dim=1)
 
@@ -117,9 +130,10 @@ class Block(nn.Sequential):
 class Generator(nn.Module):
     """U-Net: 5 levels (1, 1/2, ..., 1/16), bilinear upsampling (no transposed convolutions, which leave grids)."""
 
-    def __init__(self, widths=(32, 64, 128, 256, 256)):
+    def __init__(self, widths=(32, 64, 128, 256, 256), extra: int = 0, blur_depth: bool = True):
         super().__init__()
-        self.down = nn.ModuleList([Block(INPUT_CHANNELS, widths[0])] +
+        self.blur_depth = blur_depth
+        self.down = nn.ModuleList([Block(INPUT_CHANNELS + extra, widths[0])] +
                                   [Block(widths[i - 1], widths[i], stride=2) for i in range(1, len(widths))])
         self.up = nn.ModuleList([Block(widths[i] + widths[i - 1], widths[i - 1]) for i in range(len(widths) - 1, 0, -1)])
         # The depth channel is smoothed first: its 8-bit steps would otherwise show as contour lines (rings on near
@@ -134,8 +148,9 @@ class Generator(nn.Module):
         nn.init.zeros_(self.out.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        depth = F.conv2d(x[:, 3:4], self.depth_blur, padding=4)
-        x = torch.cat([x[:, :3], depth, x[:, 4:]], dim=1)
+        if self.blur_depth:
+            depth = F.conv2d(x[:, 3:4], self.depth_blur, padding=4)
+            x = torch.cat([x[:, :3], depth, x[:, 4:]], dim=1)
         skips = []
         for block in self.down:
             x = block(x)
@@ -147,6 +162,25 @@ class Generator(nn.Module):
             x = F.interpolate(x, scale_factor=2.0, mode="bilinear", align_corners=False)
             x = block(torch.cat([x, skip], dim=1))
         return torch.sigmoid(self.out(x))
+
+
+class TexturedModel(nn.Module):
+    """The generator, with a learnable surface texture (hash_texture.SurfaceTexture) whose features at each pixel's
+    surface coordinates join its input (deferred neural rendering); without texture just the generator."""
+
+    def __init__(self, texture: bool = False):
+        super().__init__()
+        from hash_texture import SurfaceTexture
+
+        self.texture = SurfaceTexture() if texture else None
+        extra = self.texture.channels if texture else 0
+        # The precise depth of the coordinate G-buffers needs no smoothing.
+        self.generator = Generator(extra=extra, blur_depth=not texture)
+
+    def forward(self, x: torch.Tensor, uvid: torch.Tensor | None = None, classes: torch.Tensor | None = None):
+        if self.texture is not None:
+            x = torch.cat([x, self.texture(uvid, classes)], dim=1)
+        return self.generator(x)
 
 
 class PatchDiscriminator(nn.Module):
@@ -224,26 +258,40 @@ def augment_pair(pair: torch.Tensor) -> torch.Tensor:
     return pair * mask
 
 
-def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng: np.random.Generator):
-    """Random crops (at scale 1 or 1/2 of the sample, flipped half the time) of inputs and photos."""
-    xs, ys = [], []
+def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng: np.random.Generator,
+          coords: torch.Tensor | None = None):
+    """Random crops (at scale 1 or 1/2 of the sample, flipped half the time): network inputs, photos and, with coords,
+    the surface coordinates (u, v, id) and class indices for the texture (subsampled, never blended), else None."""
+    xs, ys, uvids, classes = [], [], [], []
     n, _, h, w = inputs.shape
     for _ in range(count):
         k = int(rng.integers(n))
-        x, y = network_input(inputs[k:k + 1]), photos[k:k + 1].float() / 255.0
+        c = coords[k:k + 1] if coords is not None else None
+        x, y = network_input(inputs[k:k + 1], c), photos[k:k + 1].float() / 255.0
+        uvid = c[:, :3] if c is not None else None
+        cls = inputs[k:k + 1, 4].long()
         if rng.random() < 0.3 and min(h, w) // 2 >= size:
             x = F.interpolate(x, scale_factor=0.5, mode="area")
             y = F.interpolate(y, scale_factor=0.5, mode="area")
+            uvid = uvid[:, :, ::2, ::2] if uvid is not None else None
+            cls = cls[:, ::2, ::2]
         hh, ww = x.shape[2:]
         top, left = int(rng.integers(hh - size + 1)), int(rng.integers(ww - size + 1))
         x, y = x[:, :, top:top + size, left:left + size], y[:, :, top:top + size, left:left + size]
+        cls = cls[:, top:top + size, left:left + size]
+        uvid = uvid[:, :, top:top + size, left:left + size] if uvid is not None else None
         if rng.random() < 0.5:
-            x, y = x.flip(3), y.flip(3)
+            x, y, cls = x.flip(3), y.flip(3), cls.flip(2)
+            uvid = uvid.flip(3) if uvid is not None else None
         # Dither the 8-bit depth by up to one grey level, so its steps carry no information.
-        x[:, 3:4] = x[:, 3:4] + (torch.rand_like(x[:, 3:4]) - 0.5) / 255.0
+        if coords is None:
+            x[:, 3:4] = x[:, 3:4] + (torch.rand_like(x[:, 3:4]) - 0.5) / 255.0
         xs.append(x)
         ys.append(y)
-    return torch.cat(xs), torch.cat(ys)
+        classes.append(cls)
+        if uvid is not None:
+            uvids.append(uvid)
+    return torch.cat(xs), torch.cat(ys), (torch.cat(uvids) if uvids else None), torch.cat(classes)
 
 
 def r1_penalty(discriminator: nn.Module, real_pair: torch.Tensor) -> torch.Tensor:
@@ -275,9 +323,15 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     from export_depth import constants_to_initializers
     from export_vae import add_initializer_value_info, remove_dead_nodes, require_concrete_shapes
 
-    model = Generator().eval()
-    model.load_state_dict({k: v.cpu() for k, v in generator.state_dict().items()})
-    example = torch.rand(1, INPUT_CHANNELS, height, width, generator=torch.Generator().manual_seed(0))
+    textured = generator.texture is not None
+    model = Generator(extra=generator.texture.channels if textured else 0, blur_depth=not textured).eval()
+    model.load_state_dict({k: v.cpu() for k, v in generator.generator.state_dict().items()})
+    if textured:
+        # The texture's tables, [classes][levels][table][features], for the Klartraum lookup.
+        tables = torch.stack([grid.embeddings.detach().cpu() for grid in generator.texture.grids])
+        tables.numpy().astype(np.float32).tofile(path.with_name(path.stem + "_texture_f32.bin"))
+    channels = INPUT_CHANNELS + (generator.texture.channels if textured else 0)
+    example = torch.rand(1, channels, height, width, generator=torch.Generator().manual_seed(0))
     with torch.no_grad():
         torch.onnx.export(model, (example,), str(path), input_names=["input"], output_names=["image"],
                           opset_version=17, dynamo=False, do_constant_folding=True)
@@ -311,20 +365,44 @@ def main() -> None:
     parser.add_argument("--every", type=int, default=2000)
     parser.add_argument("--min-alignment", type=float, default=0.0,
                         help="leave out photos following their depth worse than this (check_photo_alignment.py)")
+    parser.add_argument("--texture", action="store_true",
+                        help="learn a hash-grid surface texture over the coordinate G-buffers (add_surface_coordinates.py)")
+    parser.add_argument("--init-from", type=Path,
+                        help="start the generator from this checkpoint's (new input channels start at zero)")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--reset-discriminator", action="store_true", help="with --resume: start a new discriminator")
     args = parser.parse_args()
-    global MIN_ALIGNMENT
+    global MIN_ALIGNMENT, TEXTURE
     MIN_ALIGNMENT = args.min_alignment
+    TEXTURE = args.texture
     args.out.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     rng = np.random.default_rng(1)
     torch.manual_seed(1)
 
-    generator, discriminator, vgg = Generator().to(device), MultiScaleDiscriminator().to(device), Vgg().to(device)
-    optimise_g = torch.optim.Adam(generator.parameters(), lr=1e-4, betas=(0.5, 0.999))
+    generator = TexturedModel(args.texture).to(device)
+    discriminator, vgg = MultiScaleDiscriminator().to(device), Vgg().to(device)
+    if args.init_from:
+        start = torch.load(args.init_from, map_location=device)["ema"]
+        own = generator.generator.state_dict()
+        for key, value in start.items():
+            key = key.removeprefix("generator.")
+            if key in own and own[key].shape != value.shape:
+                # The first convolution's new input channels (the texture features) start at zero.
+                padded = torch.zeros_like(own[key])
+                padded[:, :value.shape[1]] = value
+                value = padded
+            own[key] = value
+        generator.generator.load_state_dict(own)
+    # The texture's table entries learn faster (Instant NGP uses 1e-2 for the encoding).
+    texture_params = list(generator.texture.parameters()) if generator.texture is not None else []
+    network_params = list(generator.generator.parameters())
+    groups = [{"params": network_params, "lr": 1e-4}]
+    if texture_params:
+        groups.append({"params": texture_params, "lr": 1e-2, "betas": (0.9, 0.99)})
+    optimise_g = torch.optim.Adam(groups, lr=1e-4, betas=(0.5, 0.999))
     optimise_d = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
-    ema = Generator().to(device)
+    ema = TexturedModel(args.texture).to(device)
     ema.load_state_dict(generator.state_dict())
     ema.requires_grad_(False)
     step = 0
@@ -340,23 +418,24 @@ def main() -> None:
         step = state["step"]
     (args.out / "args.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=1))
 
-    ids, inputs, photos = [], None, None
+    ids, inputs, photos, coords = [], None, None, None
     validation = load_split(args.data / "validation")
     log = open(args.out / "log.txt", "a")
     started = time.time()
     while step < args.steps:
         if inputs is None or step % args.reload == 0:
-            ids, inputs, photos = load_split(args.data / "train")
+            ids, inputs, photos, coords = load_split(args.data / "train")
             print(f"step {step}: {len(ids)} training pairs, {len(validation[0])} validation pairs", flush=True)
             if len(ids) < 4:
                 time.sleep(120)
                 inputs = None
                 continue
-        x, y = crops(inputs, photos, args.batch, args.crop, rng)
-        x, y = x.to(device), y.to(device)
+        x, y, uvid, cls = crops(inputs, photos, args.batch, args.crop, rng, coords)
+        x, y, cls = x.to(device), y.to(device), cls.to(device)
+        uvid = uvid.to(device) if uvid is not None else None
         adversarial = step >= args.adversarial_start
 
-        fake = generator(x)
+        fake = generator(x, uvid, cls)
         if adversarial:
             real_pair, fake_pair = torch.cat([x, y], 1), torch.cat([x, fake.detach()], 1)
             loss_d = 0.0
@@ -387,7 +466,7 @@ def main() -> None:
             loss_g = loss_g + args.adversarial * loss_adv + args.feature_matching * loss_fm
         optimise_g.zero_grad(set_to_none=True)
         loss_g.backward()
-        torch.nn.utils.clip_grad_norm_(generator.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(network_params, 1.0)
         optimise_g.step()
         with torch.no_grad():
             for e, g in zip(ema.parameters(), generator.parameters()):
@@ -406,7 +485,8 @@ def main() -> None:
             if not validation[0] or step % args.reload == 0:
                 validation = load_split(args.data / "validation")
             # Until held-out pairs exist, the grid shows training pairs (marked in the file name).
-            shown = validation if validation[0] else (ids[:6], inputs[:6], photos[:6])
+            shown = validation if validation[0] else (ids[:6], inputs[:6], photos[:6],
+                                                      coords[:6] if coords is not None else None)
             evaluate(ema, vgg, shown, args.out, step, device, log, "validation" if validation[0] else "train")
             torch.save({"generator": generator.state_dict(), "discriminator": discriminator.state_dict(),
                         "ema": ema.state_dict(), "optimise_g": optimise_g.state_dict(),
@@ -416,15 +496,16 @@ def main() -> None:
 
 @torch.no_grad()
 def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: str = "validation") -> None:
-    ids, inputs, photos = validation
+    ids, inputs, photos, coords = validation
     if not ids:
         return
     l1 = perceptual = 0.0
     shown_x, shown_y, shown_z = [], [], []
     for k in range(len(ids)):
-        x = network_input(inputs[k:k + 1]).to(device)
+        c = coords[k:k + 1] if coords is not None else None
+        x = network_input(inputs[k:k + 1], c).to(device)
         y = photos[k:k + 1].float().to(device) / 255.0
-        z = model(x)
+        z = model(x, c[:, :3].to(device) if c is not None else None, inputs[k:k + 1, 4].long().to(device))
         l1 += F.l1_loss(z, y).item()
         perceptual += vgg.distance(z, y).item()
         if k < 6:
