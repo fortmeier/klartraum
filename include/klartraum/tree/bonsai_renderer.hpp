@@ -67,9 +67,12 @@ private:
 
 /// What a BonsaiRenderer's frames show (BonsaiRenderer::setOutput()).
 enum class BonsaiOutput {
-    Colour,  ///< the lit scene
-    Classes, ///< the class of every surface as its colour (tree::treeClassColor()), unlit
-    Depth,   ///< every surface's distance from the camera as grey, from near (black) to far (white)
+    Colour,       ///< the lit scene
+    Classes,      ///< the class of every surface as its colour (tree::treeClassColor()), unlit
+    Depth,        ///< every surface's distance from the camera as grey, from near (black) to far (white)
+    CoordinatesU, ///< surface coordinate u (16 bits: red high byte, green low byte), blue the object id's high byte
+    CoordinatesV, ///< surface coordinate v (as CoordinatesU), blue the object id's low byte
+    Depth16,      ///< Depth as 16 bits from near to far (red high byte, green low byte)
 };
 
 struct BonsaiRenderConfig {
@@ -231,7 +234,12 @@ public:
     /// `far`). The background stays as setBackground() sets it (TREE_CLASS_BACKGROUND is black).
     void setOutput(BonsaiOutput output, float near = 0.0f, float far = 1.0f) {
         TreeRenderSettings values = settings->values().at(0);
-        values.occlusion.y = output == BonsaiOutput::Classes ? 3.0f : output == BonsaiOutput::Depth ? 4.0f : 0.0f;
+        values.occlusion.y = output == BonsaiOutput::Classes        ? 3.0f
+                             : output == BonsaiOutput::Depth        ? 4.0f
+                             : output == BonsaiOutput::CoordinatesU ? 6.0f
+                             : output == BonsaiOutput::CoordinatesV ? 7.0f
+                             : output == BonsaiOutput::Depth16      ? 8.0f
+                                                                    : 0.0f;
         values.occlusion.z = near;
         values.occlusion.w = far;
         settings->set(0, values);

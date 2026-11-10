@@ -73,7 +73,8 @@ class Flight:
         """Distance from the camera per G-buffer pixel; NaN on the background."""
         depth = read_ppm(self.frame_path(frame, "depth")).astype(np.float64)
         covered = read_ppm(self.frame_path(frame, "class")).any(axis=2)
-        d = depth.mean(axis=2) / 255.0 - 1.0 / 255.0
+        # The channels hold d offset by 0, 1/3 and 2/3 of an 8-bit step (treeGBufferColor()).
+        d = depth.mean(axis=2) / 255.0 - 1.0 / 765.0
         far = float(self.cameras[frame]["depth_far"])
         return np.where(covered, np.clip(d, 0.0, 1.0) * far, np.nan)
 

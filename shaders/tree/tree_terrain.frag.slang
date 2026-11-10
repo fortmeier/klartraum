@@ -74,6 +74,11 @@ void main() {
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
     light.x *= clamp(inSunlight, 0.0f, 1.0f);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
+    // Surface coordinates of the terrain: its world position over the ground (unique across the landscape), object id 2.
+    if (treeWritesCoordinates(s)) {
+        outColor = vec4(treeCoordinateColor(s, fract(inWorldPos.xz), 2u), 1.0f);
+        return;
+    }
     if (treeWritesGBuffer(s)) {
         outColor = vec4(treeGBufferColor(s, TREE_CLASS_SOIL, inWorldPos, camera.cameraWorldPos.xyz), 1.0f);
         return;

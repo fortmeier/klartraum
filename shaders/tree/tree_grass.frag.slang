@@ -42,6 +42,11 @@ void main() {
     vec2 light = treeLightAt(s, inWorldPos + 0.5f * s.lightGridMin.w * normal);
     light.x *= clamp(inSunlight, 0.0f, 1.0f);
     vec3 color = treeShadeLit(inAlbedo, normal, s, light) + treePointLight(inAlbedo, normal, inWorldPos, s);
+    // Surface coordinates of the grass: its world position over the ground (unique across the landscape), object id 3.
+    if (treeWritesCoordinates(s)) {
+        outColor = vec4(treeCoordinateColor(s, fract(inWorldPos.xz), 3u), 1.0f);
+        return;
+    }
     if (treeWritesGBuffer(s)) {
         outColor = vec4(treeGBufferColor(s, TREE_CLASS_SOIL, inWorldPos, camera.cameraWorldPos.xyz), 1.0f);
         return;

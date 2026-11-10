@@ -31,6 +31,7 @@ layout(location = 2) out vec3 outColor;
 layout(location = 3) out vec3 outBark; // x angle around, y along the stem in world units, z radius
 layout(location = 4) out vec3 outTangent; // around the stem
 layout(location = 5) nointerpolation out uint outType;
+layout(location = 6) nointerpolation out uint outObjectId; // per stem (seed) of a tree (instance), treeObjectId()
 
 [shader("vertex")]
 void main() {
@@ -94,5 +95,6 @@ void main() {
     outBark = vec3(phi, d.shape.w * z, ring.radius);
     outTangent = -sin(phi) * x + cos(phi) * y;
     outType = treeType(d.ids);
+    outObjectId = treeObjectId(d.ids.y, d.ids.z);
     gl_Position = camera.proj * camera.view * vec4(worldPos, 1.0f);
 }

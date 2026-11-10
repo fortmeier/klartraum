@@ -15,6 +15,16 @@ vec4 treeOutputColor(vec3 linearColor, TreeRenderSettings s) {
 // baking impostors (TreeImpostorAtlas, s.occlusion.y) 1 its albedo (square-rooted for precision, at least 1/255 so
 // that it stands out from the black background) or 2 its normal (mapped to [0, 1]), or as a G-buffer its class
 // `semantic` or its distance (treeGBufferColor()).
+// treeSurfaceOutput() of a surface with surface coordinates uv and an object id (treeObjectId()), which it writes as
+// the coordinate G-buffers (treeCoordinateColor()).
+vec4 treeSurfaceOutput(vec3 linearColor, vec3 albedo, vec3 normal, vec3 pos, TreeRenderSettings s, uint semantic,
+                       vec2 uv, uint objectId) {
+    if (treeWritesCoordinates(s)) {
+        return vec4(treeCoordinateColor(s, uv, objectId), 1.0f);
+    }
+    return treeSurfaceOutput(linearColor, albedo, normal, pos, s, semantic);
+}
+
 vec4 treeSurfaceOutput(vec3 linearColor, vec3 albedo, vec3 normal, vec3 pos, TreeRenderSettings s, uint semantic) {
     if (treeWritesGBuffer(s)) {
         return vec4(treeGBufferColor(s, semantic, pos, camera.cameraWorldPos.xyz), 1.0f);

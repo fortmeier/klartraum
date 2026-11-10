@@ -511,18 +511,54 @@ TREE_FN vec3 treeClassColor(uint c) {
     return vec3(0.0f, 0.0f, 0.0f);
 }
 
-// Whether the surfaces write a G-buffer (occlusion.y 3 or 4) instead of their colour.
+// Whether the surfaces write a G-buffer (occlusion.y 3, 4, 6, 7 or 8) instead of their colour.
 TREE_FN bool treeWritesGBuffer(TreeRenderSettings s) { return s.occlusion.y >= 3.0f; }
 
-// What a surface of class c at pos writes as a G-buffer, seen from eye. The depth d is written to red, and offset by
-// one and two thirds of an 8-bit step to green and blue: each channel stays linear in d (so blending keeps it), and
-// the mean of the three decoded channels, d = (r + g + b) / 3 - 1 / 255, resolves three times finer steps.
+// A value in [0, 1] as 16 bits: the high byte (as red) and the low byte (as green) of an 8-bit target. The G-buffer
+// passes are opaque, so the bytes reach the target unblended.
+TREE_FN vec2 treeEncode16(float value) {
+    uint q = uint(clamp(value, 0.0f, 1.0f) * 65535.0f + 0.5f);
+    return vec2(float(q >> 8u), float(q & 255u)) / 255.0f;
+}
+
+// What a surface of class c at pos writes as a G-buffer, seen from eye (occlusion.y 3 classes, 4 depth, 6 and 7
+// surface coordinates, 8 16-bit depth; see treeCoordinateColor() for the coordinates of surfaces that have them).
+// Depth (4): d is written to red, and offset by one and two thirds of an 8-bit step to green and blue: each channel
+// stays linear in d (so blending keeps it), and the mean of the three decoded channels, d = (r + g + b) / 3 - 1 / 765,
+// resolves three times finer steps. 16-bit depth (8): d as treeEncode16() in red and green.
+// Surfaces without coordinates write the coordinates 0 and the object id 0.
 TREE_FN vec3 treeGBufferColor(TreeRenderSettings s, uint c, vec3 pos, vec3 eye) {
     if (s.occlusion.y == 3.0f) {
         return treeClassColor(c);
     }
+    if (s.occlusion.y == 6.0f || s.occlusion.y == 7.0f) {
+        return vec3(0.0f);
+    }
     float d = clamp((length(pos - eye) - s.occlusion.z) / max(s.occlusion.w - s.occlusion.z, 1e-6f), 0.0f, 1.0f);
+    if (s.occlusion.y == 8.0f) {
+        vec2 bytes = treeEncode16(d);
+        return vec3(bytes.x, bytes.y, 0.0f);
+    }
     return vec3(d, d + 1.0f / 765.0f, d + 2.0f / 765.0f);
+}
+
+// Whether the surfaces write their surface coordinates (occlusion.y 6: u, 7: v).
+TREE_FN bool treeWritesCoordinates(TreeRenderSettings s) { return s.occlusion.y == 6.0f || s.occlusion.y == 7.0f; }
+
+// The surface-coordinate G-buffer of a surface with coordinates uv (each repeating in [0, 1)) and a 16-bit object id:
+// with occlusion.y 6, u as treeEncode16() in red and green and the id's high byte in blue; with 7, v and the id's low
+// byte.
+TREE_FN vec3 treeCoordinateColor(TreeRenderSettings s, vec2 uv, uint id) {
+    bool second = s.occlusion.y == 7.0f;
+    vec2 bytes = treeEncode16(second ? uv.y : uv.x);
+    float idByte = float(second ? (id & 255u) : ((id >> 8u) & 255u)) / 255.0f;
+    return vec3(bytes.x, bytes.y, idByte);
+}
+
+// A 16-bit object id from two words, never 0 (which marks surfaces without coordinates).
+TREE_FN uint treeObjectId(uint a, uint b) {
+    uint id = treeHash2(a, b) & 0xffffu;
+    return id == 0u ? 1u : id;
 }
 
 // --- shading -----------------------------------------------------------------

@@ -76,6 +76,10 @@
  *   lantern the lantern's, the trunk the stem's, open soil the soil's and the background black; rendered as depth,
  *   the ball's middle shows its distance from the camera, in red and, one and two thirds of a step later, in green and
  *   blue
+ * - coordinateGBuffersFollowSurfaces: rendered as surface coordinates (u and v, 16 bits each over two channels, and a
+ *   16-bit object id), up a trunk v rises from pixel to pixel (modulo its wrap at 1) under one non-zero id; the
+ *   trees' trunks have different ids; the 16-bit depth agrees with the three-channel depth on the covered pixels
+ *   apart from edges
  * - movingShadowsGlide: a moving ball's shadow on the soil changes little from one small step of the ball to the
  *   next (no voxels switching on and off)
  * - litMorphShadesLikeTheScene: a MeshMorph drawn into the bonsai frame with the scene's light, its sphere a moving
@@ -92,6 +96,9 @@
  **/
 
 #include <gtest/gtest.h>
+
+#include <optional>
+#include <set>
 
 #include <algorithm>
 #include <array>
@@ -1911,4 +1918,107 @@ TEST_F(BonsaiRenderingTest, gBuffersShowClassesAndDepth) {
     graph.submitAndWait(vc->getGraphicsQueue(), 0);
     const auto colour = readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
     EXPECT_NE(classAt(colour, pixelOf(ball)), tree::TREE_CLASS_OBJECT);
+}
+
+TEST_F(BonsaiRenderingTest, coordinateGBuffersFollowSurfaces) {
+    const BonsaiScene scene = makeBonsaiScene(BonsaiSceneConfig{});
+    ASSERT_GE(scene.trees.size(), 2u);
+    const VkExtent2D extent{320, 240};
+    auto target = std::make_shared<OffscreenTarget>(*vc, extent, 1);
+    BonsaiRenderConfig config;
+    config.extent = extent;
+    config.background = true;
+    BonsaiRenderer bonsai(*vc, scene, target, config);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(bonsai.getOutput());
+    bonsai.initialize(1);
+    const glm::vec3 eye = scene.focus + glm::vec3(0.5f, 1.2f, 4.5f);
+    setCamera(bonsai.getCamera()->ubo, eye, scene.focus - glm::vec3(0.0f, 0.4f, 0.0f), 40.0f, 320.0f / 240.0f);
+    bonsai.getCamera()->update(0);
+    bonsai.setTime(1.0f, 0.5f, 2.0f, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    bonsai.setBackground(glm::vec3(0.0f));
+    const glm::mat4 clipFromWorld = bonsai.getCamera()->ubo.proj * bonsai.getCamera()->ubo.view;
+    const auto render = [&](BonsaiOutput output, float near = 0.0f, float far = 1.0f) {
+        bonsai.setOutput(output, near, far);
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        return readImage(*vc, target->getImage(0), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extent);
+    };
+    const auto classes = render(BonsaiOutput::Classes);
+    const auto us = render(BonsaiOutput::CoordinatesU);
+    const auto vs = render(BonsaiOutput::CoordinatesV);
+    // Byte index of pixel p (BGRA), or none outside the image.
+    const auto index = [&](glm::vec3 point) -> std::optional<size_t> {
+        const glm::vec4 clip = clipFromWorld * glm::vec4(point, 1.0f);
+        const int x = int((clip.x / clip.w * 0.5f + 0.5f) * extent.width);
+        const int y = int((clip.y / clip.w * 0.5f + 0.5f) * extent.height);
+        if (x < 0 || y < 0 || x >= int(extent.width) || y >= int(extent.height))
+            return std::nullopt;
+        return (size_t(y) * extent.width + size_t(x)) * 4;
+    };
+    // A 16-bit value from red (high byte) and green (low byte), in [0, 1]; blue holds a byte of the object id.
+    const auto value16 = [](const std::vector<uint8_t>& image, size_t k) {
+        return float(image[k + 2] * 256u + image[k + 1]) / 65535.0f;
+    };
+    const auto isStem = [&](size_t k) {
+        return glm::length(glm::vec3(classes[k + 2], classes[k + 1], classes[k]) / 255.0f -
+                           tree::treeClassColor(tree::TREE_CLASS_STEM)) < 0.1f;
+    };
+    const auto idAt = [&](size_t k) { return uint32_t(us[k]) * 256u + vs[k]; };
+
+    // Up the first trunk in 5 mm steps, over the pixels that show this trunk (stem class, its id).
+    const glm::vec3 base = glm::vec3(scene.trees[0].posScale);
+    std::optional<uint32_t> trunkId;
+    std::vector<float> along;
+    std::optional<size_t> previous;
+    for (float h = 0.02f; h <= 0.15f; h += 0.005f) {
+        const auto k = index(base + glm::vec3(0.0f, h, 0.0f));
+        if (!k || !isStem(*k) || k == previous) // a new pixel of the trunk
+            continue;
+        previous = k;
+        if (!trunkId)
+            trunkId = idAt(*k);
+        if (idAt(*k) == *trunkId)
+            along.push_back(value16(vs, *k));
+    }
+    ASSERT_TRUE(trunkId.has_value());
+    EXPECT_NE(*trunkId, 0u);
+    int rising = 0;
+    for (size_t i = 1; i < along.size(); ++i) {
+        const float step = along[i] - along[i - 1] - std::floor(along[i] - along[i - 1]); // modulo the wrap at 1
+        rising += step > 0.0f && step < 0.25f;
+    }
+    std::cout << "trunk id " << *trunkId << ": v rises in " << rising << " of " << along.size() - 1 << " steps"
+              << std::endl;
+    ASSERT_GE(along.size(), 5u);
+    EXPECT_GE(rising, int(along.size() - 1) * 3 / 4);
+
+    // The trees' trunks, 3 cm above their bases where visible, have different ids.
+    std::set<uint32_t> ids;
+    for (const auto& tree : scene.trees) {
+        const auto k = index(glm::vec3(tree.posScale) + glm::vec3(0.0f, 0.03f, 0.0f));
+        if (k && isStem(*k))
+            ids.insert(idAt(*k));
+    }
+    std::cout << ids.size() << " distinct trunk ids" << std::endl;
+    EXPECT_GE(ids.size(), 2u);
+
+    // The 16-bit depth agrees with the three-channel depth (1/765 steps) over the covered pixels, apart from edges,
+    // where the three-channel depth is blended.
+    const float near = 2.0f, far = 10.0f;
+    const auto depth8 = render(BonsaiOutput::Depth, near, far);
+    const auto depth16 = render(BonsaiOutput::Depth16, near, far);
+    double sum = 0.0;
+    size_t covered = 0, agreeing = 0;
+    for (size_t k = 0; k < depth8.size(); k += 4) {
+        if (!(classes[k] | classes[k + 1] | classes[k + 2]))
+            continue;
+        const float d8 = (depth8[k + 2] + depth8[k + 1] + depth8[k]) / 765.0f - 1.0f / 765.0f;
+        const float difference = std::abs(value16(depth16, k) - d8);
+        sum += difference;
+        agreeing += difference <= 2.5f / 765.0f; // its three channels round separately
+        ++covered;
+    }
+    std::cout << "16-bit vs 8-bit depth over " << covered << " pixels: mean " << sum / covered << ", "
+              << 100.0 * agreeing / covered << " % within 2.5 / 765" << std::endl;
+    EXPECT_GT(double(agreeing) / covered, 0.97);
 }

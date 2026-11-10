@@ -24,6 +24,7 @@ layout(location = 4) in vec3 inTangent;
 
 [[vk::binding(2, 1)]] StructuredBuffer<TreeTypeParams> params;
 layout(location = 5) nointerpolation in uint inType;
+layout(location = 6) nointerpolation in uint inObjectId;
 
 layout(location = 0) out vec4 outColor;
 
@@ -58,5 +59,8 @@ void main() {
     // A voxel and a half out, clear of the solid wood a thick stem fills the light volume with.
     vec2 light = treeLightAt(s, inWorldPos + 1.5f * s.lightGridMin.w * normal);
     vec3 color = treeShadeLit(albedo, normal, s, light) + treePointLight(albedo, normal, inWorldPos, s);
-    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s, TREE_CLASS_STEM);
+    // Surface coordinates: u around the stem, v along it in units of its circumference (so the bark's proportions
+    // hold on thick and thin stems).
+    vec2 coordinates = vec2(fract(inBark.x / 6.2831853f), fract(inBark.y / (6.2831853f * max(inBark.z, 1e-6f))));
+    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s, TREE_CLASS_STEM, coordinates, inObjectId);
 }

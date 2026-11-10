@@ -22,6 +22,7 @@ layout(location = 2) in vec3 inColor;
 layout(location = 3) in vec2 inCurveUv;
 layout(location = 4) in float inCurveSide;
 layout(location = 5) in vec2 inLeafPos;
+layout(location = 6) nointerpolation in uint inObjectId;
 
 layout(location = 0) out vec4 outColor;
 
@@ -55,5 +56,7 @@ void main() {
         vec3 halfway = normalize(toCamera + s.sun.xyz);
         color += vec3(0.05f) * pow(max(dot(normal, halfway), 0.0f), 40.0f) * s.sun.w * light.x * s.lightColor.rgb;
     }
-    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s, TREE_CLASS_LEAF);
+    // Surface coordinates: across and along the leaf, in leaf lengths.
+    vec2 coordinates = vec2(fract(inLeafPos.x + 0.5f), fract(inLeafPos.y));
+    outColor = treeSurfaceOutput(color, albedo, normal, inWorldPos, s, TREE_CLASS_LEAF, coordinates, inObjectId);
 }

@@ -34,6 +34,7 @@ layout(location = 2) out vec3 outColor;
 layout(location = 3) out vec2 outCurveUv;
 layout(location = 4) out float outCurveSide; // 0 inner triangle, 1 keep the chord side, -1 the control side
 layout(location = 5) out vec2 outLeafPos;    // position on the lobe, in leaf lengths
+layout(location = 6) nointerpolation out uint outObjectId; // per leaf (seed) of a tree (instance), treeObjectId()
 
 [shader("vertex")]
 void main() {
@@ -87,6 +88,7 @@ void main() {
         q.x = -q.x;
     }
     outLeafPos = q;
+    outObjectId = treeObjectId(leaf.ids.y, leaf.ids.z);
 
     // Flattening takes away the area between chords and curves; growing the leaf keeps its area.
     float areaScale = sqrt(treeLeafHalfArea(o, 0.0f) / max(treeLeafHalfArea(o, flatten), 1e-6f));
