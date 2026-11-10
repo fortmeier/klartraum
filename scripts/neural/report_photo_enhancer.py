@@ -32,6 +32,7 @@ def main() -> None:
     parser.add_argument("run", type=Path)
     parser.add_argument("--flight", type=Path)
     parser.add_argument("--every", type=int, default=3, help="every n-th fly-in frame for the mp4")
+    parser.add_argument("--uv-flight", type=Path, help="the fly-in's coordinate G-buffers (textured checkpoints)")
     parser.add_argument("--label", default=time.strftime("%m%d_%H%M"))
     args = parser.parse_args()
     out = args.run / "hourly" / args.label
@@ -74,7 +75,8 @@ def main() -> None:
         checkpoint = out / "checkpoint.pt"
         shutil.copy(args.run / "checkpoint.pt", checkpoint)
         subprocess.run([sys.executable, str(Path(__file__).with_name("enhance_flight.py")), str(args.flight),
-                        str(checkpoint), str(out / "flight"), "--every", str(args.every)], check=True)
+                        str(checkpoint), str(out / "flight"), "--every", str(args.every)]
+                       + (["--uv-flight", str(args.uv_flight)] if args.uv_flight else []), check=True)
         checkpoint.unlink()
 
 
