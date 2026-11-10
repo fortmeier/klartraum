@@ -58,10 +58,13 @@ def load_split(directory: Path) -> tuple[list[str], torch.Tensor, torch.Tensor]:
     alignment.json; samples not scored yet count as aligned) are left out."""
     alignment_path = directory / "alignment.json"
     alignment = json.loads(alignment_path.read_text()) if alignment_path.exists() else {}
+    # Samples found faulty by eye (e.g. a symbol painted where the 8-bit depth shows contour lines).
+    reject_path = directory / "reject.txt"
+    rejected = set(reject_path.read_text().split()) if reject_path.exists() else set()
     ids, inputs, photos = [], [], []
     for photo in sorted((directory / "photo").glob("*.ppm")):
         sample = photo.stem
-        if alignment.get(sample, 1.0) < MIN_ALIGNMENT:
+        if alignment.get(sample, 1.0) < MIN_ALIGNMENT or sample in rejected:
             continue
         try:
             target = np.asarray(Image.open(photo).convert("RGB"))
@@ -298,6 +301,8 @@ def main() -> None:
     parser.add_argument("--crop", type=int, default=256)
     parser.add_argument("--l1", type=float, default=1.0)
     parser.add_argument("--perceptual", type=float, default=1.0)
+    parser.add_argument("--colour", type=float, default=0.0,
+                        help="weight of L1 at 1/8 resolution: colour mood and large-scale brightness only")
     parser.add_argument("--feature-matching", type=float, default=2.0)
     parser.add_argument("--adversarial", type=float, default=0.1)
     parser.add_argument("--adversarial-start", type=int, default=2000, help="steps of reconstruction losses only")
@@ -367,6 +372,8 @@ def main() -> None:
         loss_l1 = F.l1_loss(fake, y)
         loss_vgg = vgg.distance(fake, y)
         loss_g = args.l1 * loss_l1 + args.perceptual * loss_vgg
+        if args.colour > 0:
+            loss_g = loss_g + args.colour * F.l1_loss(F.avg_pool2d(fake, 8), F.avg_pool2d(y, 8))
         loss_adv = loss_fm = torch.zeros((), device=device)
         if not adversarial:
             loss_d = torch.zeros((), device=device)
