@@ -258,7 +258,11 @@ int main(int argc, char** argv) {
                 count *= d;
             std::vector<float> values(count, 0.0f);
             const bool bias = name.size() > 5 && name.substr(name.size() - 5) == ".bias";
-            const bool norm = name.find(".1.") != std::string::npos || name.find(".4.") != std::string::npos;
+            // A block's layers 1 and 4 are its ChannelNorms ("generator.down.1.4.weight": block 1, layer 4).
+            const std::string stem = name.substr(0, name.find_last_of('.'));
+            const std::string layer = stem.substr(stem.find_last_of('.') + 1);
+            const bool inBlock = name.rfind("generator.down.", 0) == 0 || name.rfind("generator.up.", 0) == 0;
+            const bool norm = inBlock && (layer == "1" || layer == "4");
             const bool zeroStart = name.find("film.gammas") != std::string::npos ||
                                    name.find("film.betas") != std::string::npos ||
                                    name.find(".out.") != std::string::npos;
