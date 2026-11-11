@@ -758,9 +758,10 @@ surface texture, the local U-Net generator (3 levels, ChannelNorm, ELU) and one
 appearance code per view are trained with the photometric losses (L1 and L1 of
 8 x 8 block means), optionally the VGG perceptual loss and a PatchGAN, on random
 crops, with Adam and an exponential moving average.
-Views with an alignment score below the threshold (`alignment.json` of
-`scripts/neural/check_photo_alignment.py`) or more than 60 % background are left
-out. Every `--every` steps the averaged parameters go to `<out>/parameters/` and
+Views with more than 60 % background or whose photo follows the rendering too
+loosely (`neural::PhotoAlignment`: the rank correlation of Depth Anything's
+estimate of the photo with the rendered depth, kept in
+`<split>/alignment_klartraum.txt`) are left out. Every `--every` steps the averaged parameters go to `<out>/parameters/` and
 the held-out views are rendered with the codes' mean
 (`<out>/validation_NNNNNN.png`: rendering, photo, enhanced; the L1 in
 `<out>/log.txt`).

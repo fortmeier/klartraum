@@ -4,7 +4,8 @@
 
 // Trains the crate's photo enhancer entirely in Klartraum (neural::PhotoEnhancerTraining): the views of the crate
 // flights of crate_gbuffer_example are rendered again from their cameras (GBufferMeshRenderer) and prepared as the
-// photo enhancer's samples (neural::photoEnhancerInputs()), the Qwen-Image photos of the views are the targets, and
+// photo enhancer's samples (neural::photoEnhancerInputs()), the Qwen-Image photos of the views are the targets (those
+// that follow their rendering, neural::PhotoAlignment), and
 // the learnable surface texture, the local U-Net generator and the views' appearance codes are trained with the
 // photometric losses on random crops. Every --every steps the averaged parameters are saved and the held-out views
 // are rendered with the codes' mean (validation_NNNNNN.png: rendering | photo | enhanced, and the L1 in log.txt).
@@ -28,6 +29,7 @@
 #include "crate_scene.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/image_io.hpp"
+#include "klartraum/neural/photo_alignment.hpp"
 #include "klartraum/neural/photo_enhancer_training.hpp"
 
 using namespace klartraum;
@@ -62,30 +64,26 @@ std::vector<float> readPhoto(const std::filesystem::path& path) {
     return photo;
 }
 
-// {sample: score} of an alignment.json written by scripts/neural/check_photo_alignment.py.
-std::map<std::string, float> readAlignment(const std::filesystem::path& path) {
+// Scores by view id from a cache file of lines "<id> <score>" (missing: empty).
+std::map<std::string, float> readScores(const std::filesystem::path& path) {
     std::map<std::string, float> scores;
     std::ifstream file(path);
-    std::stringstream text;
-    text << file.rdbuf();
-    const std::string s = text.str();
-    for (size_t at = s.find('"'); at != std::string::npos; at = s.find('"', at)) {
-        const size_t end = s.find('"', at + 1);
-        const size_t colon = s.find(':', end);
-        if (end == std::string::npos || colon == std::string::npos)
-            break;
-        scores[s.substr(at + 1, end - at - 1)] = std::stof(s.substr(colon + 1));
-        at = s.find_first_of(",}", colon);
-    }
+    std::string id;
+    for (float score; file >> id >> score;)
+        scores[id] = score;
     return scores;
 }
 
-// The views of a flight (crate_gbuffer_example's cameras_classical.csv) that have a photo, are aligned well enough
-// and show mostly the scene (at most 60 % background, as train_photo_enhancer.usable()).
+// The views of a flight (crate_gbuffer_example's cameras_classical.csv) that have a photo, show mostly the scene (at
+// most 60 % background, as train_photo_enhancer.usable()) and whose photo follows the rendering well enough
+// (neural::PhotoAlignment; the scores are kept in <split>/alignment_klartraum.txt).
 std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, ComputeGraph& graph,
-                            OffscreenTarget& target, const std::filesystem::path& flight,
-                            const std::filesystem::path& split, float minAlignment) {
-    const auto alignment = readAlignment(split / "alignment.json");
+                            OffscreenTarget& target, neural::PhotoAlignment& alignment,
+                            const std::filesystem::path& flight, const std::filesystem::path& split,
+                            float minAlignment) {
+    const auto cache = split / "alignment_klartraum.txt";
+    auto scores = readScores(cache);
+    std::ofstream newScores(cache, std::ios::app);
     std::ifstream cameras(flight / "cameras_classical.csv");
     std::string line;
     std::getline(cameras, line);
@@ -102,8 +100,7 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
         View view;
         view.id = id;
         view.photo = readPhoto(split / "photo" / (view.id + ".ppm"));
-        const auto score = alignment.find(view.id);
-        if (view.photo.empty() || (score != alignment.end() && score->second < minAlignment))
+        if (view.photo.empty())
             continue;
         crate::setCamera(renderer.getCamera()->ubo, glm::vec3(v[1], v[2], v[3]), glm::vec3(v[4], v[5], v[6]));
         renderer.getCamera()->update(0);
@@ -111,6 +108,15 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
         view.inputs = neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{kSampleSize, kSampleSize, 1.0f});
         const auto background = std::count(view.inputs.classes.begin(), view.inputs.classes.end(), 0.0f);
         if (double(background) > 0.6 * double(view.inputs.classes.size()))
+            continue;
+        if (!scores.count(view.id)) {
+            const size_t pixels = size_t(kSampleSize) * kSampleSize;
+            const std::vector<float> depth(view.inputs.channels.begin() + 3 * pixels,
+                                           view.inputs.channels.begin() + 4 * pixels);
+            scores[view.id] = alignment.score(view.photo, depth, kSampleSize, kSampleSize);
+            newScores << view.id << " " << scores[view.id] << "\n";
+        }
+        if (scores[view.id] < minAlignment)
             continue;
         views.push_back(std::move(view));
     }
@@ -234,9 +240,10 @@ int main(int argc, char** argv) {
             GBufferMeshRenderer renderer(vc, crate::vertices(), target, extent);
             ComputeGraph graph(vc, 1);
             graph.compileFrom(renderer.getOutput());
-            training = loadViews(vc, renderer, graph, *target, crateDir / "flights/crate_a", crateDir / "data/train",
-                                 minAlignment);
-            validation = loadViews(vc, renderer, graph, *target, crateDir / "flights/crate_v",
+            neural::PhotoAlignment alignment(vc);
+            training = loadViews(vc, renderer, graph, *target, alignment, crateDir / "flights/crate_a",
+                                 crateDir / "data/train", minAlignment);
+            validation = loadViews(vc, renderer, graph, *target, alignment, crateDir / "flights/crate_v",
                                    crateDir / "data/validation", minAlignment);
         }
         std::cout << training.size() << " training views, " << validation.size() << " validation views" << std::endl;
