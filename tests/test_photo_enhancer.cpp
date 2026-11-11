@@ -16,6 +16,11 @@
  *   sampling takes
  * - inputsStretchTheInverseDepth: the covered pixels' inverse depth runs from 0 (2nd percentile) to 1 (depthHigh 1:
  *   the nearest pixel), the background stays 0
+ * - spearmanRanksCorrelation: the rank correlation of a series with a monotonic function of it is 1, with a falling
+ *   one -1
+ * - photoAlignmentMatchesPython: neural::PhotoAlignment scores the first crate photographs against their rendered
+ *   depth like scripts/neural/check_photo_alignment.py (alignment.json) within 0.05 (skips without the crate data or
+ *   the depth network)
  * - appearanceGeneratorMatchesPyTorch: a generator with per-image appearance codes (--appearance, an input
  *   "appearance" of the code) reproduces the PyTorch image of its reference input and code
  *
@@ -29,10 +34,12 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/neural/photo_alignment.hpp"
 #include "klartraum/neural/photo_enhancer.hpp"
 #include "klartraum/tree/tree_model.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
@@ -202,4 +209,64 @@ TEST(PhotoEnhancerTest, appearanceGeneratorMatchesPyTorch) {
     if (!std::filesystem::exists(stem + ".onnx") || !std::filesystem::exists(stem + "_appearance_input_f32.bin"))
         GTEST_SKIP() << "train scripts/neural/train_photo_enhancer.py --appearance first";
     EXPECT_LT(runAgainstReference(stem, 256, 256), 1e-3f);
+}
+
+TEST(PhotoEnhancerTest, spearmanRanksCorrelation) {
+    const std::vector<float> a{0.3f, 1.5f, -2.0f, 0.9f, 4.0f};
+    std::vector<float> rising, falling;
+    for (float v : a) {
+        rising.push_back(std::exp(v));
+        falling.push_back(-v * v * v);
+    }
+    EXPECT_NEAR(neural::spearman(a, rising), 1.0f, 1e-6f);
+    EXPECT_NEAR(neural::spearman(a, falling), -1.0f, 1e-6f);
+}
+
+TEST(PhotoEnhancerTest, photoAlignmentMatchesPython) {
+    const std::filesystem::path data = "build/TestingOutput/crate/data/train";
+    const std::string model = "build/models/depth/onnx/depth_anything_v2_metric_outdoor_small_518x924.onnx";
+    if (!std::filesystem::exists(data / "alignment.json") || !std::filesystem::exists(model))
+        GTEST_SKIP() << "needs the crate data (crate_gbuffer_example, Qwen photos, check_photo_alignment.py)";
+    // The scores of alignment.json: "id": score.
+    std::map<std::string, float> expected;
+    {
+        std::ifstream file(data / "alignment.json");
+        for (std::string line; std::getline(file, line);) {
+            const size_t a = line.find('"'), b = line.find('"', a + 1), colon = line.find(':', b);
+            if (a != std::string::npos && b != std::string::npos && colon != std::string::npos)
+                expected[line.substr(a + 1, b - a - 1)] = std::stof(line.substr(colon + 1));
+        }
+    }
+    // A binary PPM as planar [3][h][w] (or its first channel as [h][w]) in [0, 1].
+    const auto readPpm = [](const std::filesystem::path& path, bool grey) {
+        std::ifstream file(path, std::ios::binary);
+        std::string magic;
+        uint32_t w = 0, h = 0, maximum = 0;
+        file >> magic >> w >> h >> maximum;
+        file.get();
+        std::vector<uint8_t> bytes(size_t(w) * h * 3);
+        file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(bytes.size()));
+        const size_t pixels = size_t(w) * h;
+        std::vector<float> planar(grey ? pixels : 3 * pixels);
+        for (size_t p = 0; p < pixels; ++p)
+            for (size_t c = 0; c < (grey ? 1u : 3u); ++c)
+                planar[c * pixels + p] = bytes[3 * p + c] / 255.0f;
+        return planar;
+    };
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoAlignment alignment(vc, model);
+    int checked = 0;
+    float worst = 0.0f;
+    for (const auto& [id, score] : expected) {
+        if (checked == 10)
+            break;
+        const auto photo = readPpm(data / "photo" / (id + ".ppm"), false);
+        const auto depth = readPpm(data / "depth" / (id + ".ppm"), true);
+        const float actual = alignment.score(photo, depth, 256, 256);
+        std::cout << id << ": " << actual << " (Python " << score << ")" << std::endl;
+        worst = std::max(worst, std::abs(actual - score));
+        ++checked;
+    }
+    EXPECT_LT(worst, 0.05f);
 }
