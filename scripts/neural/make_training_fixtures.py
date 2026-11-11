@@ -116,6 +116,40 @@ def hash_texture_case(out: Path, seed: int) -> None:
                                "features": features, "dfeatures": gradient, "dtable": table_gradient})
 
 
+def photometric_case(out: Path, seed: int) -> None:
+    generator = torch.Generator().manual_seed(seed)
+    image = torch.rand(2, 3, 16, 20, generator=generator, requires_grad=True)
+    target = torch.rand(2, 3, 16, 20, generator=generator)
+    loss = 0.5 * F.l1_loss(image, target) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(target, 8))
+    loss.backward()
+    save(out, "photometric", {"image": image, "target": target, "dimage": image.grad, "loss": loss.reshape(1)})
+
+
+def linear_case(out: Path, seed: int) -> None:
+    generator = torch.Generator().manual_seed(seed)
+    layer = torch.nn.Linear(5, 7)
+    with torch.no_grad():
+        layer.weight.copy_(torch.randn(7, 5, generator=generator))
+        layer.bias.copy_(torch.randn(7, generator=generator))
+    x = torch.randn(3, 5, generator=generator, requires_grad=True)
+    y = layer(x)
+    dy = torch.randn(3, 7, generator=generator)
+    y.backward(dy)
+    save(out, "linear", {"x": x, "w": layer.weight, "b": layer.bias, "y": y, "dy": dy, "dx": x.grad,
+                         "dw": layer.weight.grad, "db": layer.bias.grad})
+
+
+def clip_case(out: Path, seed: int) -> None:
+    generator = torch.Generator().manual_seed(seed)
+    a = torch.nn.Parameter(torch.zeros(300))
+    b = torch.nn.Parameter(torch.zeros(70))
+    a.grad = torch.randn(300, generator=generator) * 0.2
+    b.grad = torch.randn(70, generator=generator) * 0.2
+    before = {"ga": a.grad.clone(), "gb": b.grad.clone()}
+    torch.nn.utils.clip_grad_norm_([a, b], 1.0)
+    save(out, "clip", {**before, "clipped_a": a.grad, "clipped_b": b.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -131,6 +165,9 @@ def main() -> None:
     upsample_case(args.out, 8)
     film_case(args.out, 9)
     hash_texture_case(args.out, 10)
+    photometric_case(args.out, 11)
+    linear_case(args.out, 12)
+    clip_case(args.out, 13)
     print(f"fixtures in {args.out}")
 
 

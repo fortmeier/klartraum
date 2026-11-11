@@ -148,6 +148,91 @@ ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::
  */
 ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float value = 0.0f);
 
+/**
+ * @brief The photo enhancer's photometric loss of an N x C x H x W image against its target: @p l1Weight x the mean
+ * absolute difference plus @p colourWeight x that of their 8 x 8 block means. Writes the image's gradient and each
+ * element's share of the loss (sum() of the shares is the loss).
+ *
+ * Slots: 0 image, 1 target, 2 gradient, 3 loss shares; all of @p shape.
+ */
+ComputeGraphElementPtr photometricLoss(VulkanContext& vulkanContext, const layers::Shape& shape, float l1Weight,
+                                       float colourWeight);
+
+/**
+ * @brief The sum of @p count floats, in a fixed order.
+ *
+ * Slots: 0 data, 1 result (one float).
+ */
+ComputeGraphElementPtr sum(VulkanContext& vulkanContext, uint32_t count);
+
+/** @brief The sizes of a linear layer (nn.Linear): a batch of input vectors to output vectors. */
+struct LinearShape {
+    uint32_t batch = 1;
+    uint32_t inputs = 0;
+    uint32_t outputs = 0;
+};
+
+/**
+ * @brief y = x W^T + bias + @p offset, W as [outputs][inputs] (nn.Linear's layout).
+ *
+ * Slots: 0 input (batch x inputs), 1 weights, 2 bias (outputs), 3 output (batch x outputs).
+ */
+ComputeGraphElementPtr linear(VulkanContext& vulkanContext, const LinearShape& shape, float offset = 0.0f);
+
+/**
+ * @brief The input gradient of linear(); with @p accumulate added to it (several layers reading one input).
+ *
+ * Slots: 0 output gradient, 1 weights, 2 input gradient.
+ */
+ComputeGraphElementPtr linearBackwardInput(VulkanContext& vulkanContext, const LinearShape& shape,
+                                           bool accumulate = false);
+
+/**
+ * @brief The weight and bias gradients of linear().
+ *
+ * Slots: 0 input, 1 output gradient, 2 weight gradients, 3 bias gradients.
+ */
+ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const LinearShape& shape);
+
+/**
+ * @brief The rows of a [rows][size] table picked by a batch of row indices (floats), e.g. appearance codes.
+ *
+ * Slots: 0 table, 1 row indices (batch), 2 picked rows (batch x size).
+ */
+ComputeGraphElementPtr embedding(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size);
+
+/**
+ * @brief The table gradient of embedding(), including an L2 penalty of @p decay x the batch's mean squared norm of
+ * the picked rows; rows nobody picked get zero.
+ *
+ * Slots: 0 table, 1 row indices, 2 picked rows' gradient, 3 table gradient.
+ */
+ComputeGraphElementPtr embeddingBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size,
+                                         float decay);
+
+/**
+ * @brief Adds the squared sum of @p count floats to a running total (zero it with fill() first), for clipGradient().
+ *
+ * Slots: 0 data, 1 total (one float).
+ */
+ComputeGraphElementPtr squaredNorm(VulkanContext& vulkanContext, uint32_t count);
+
+/**
+ * @brief Scales @p count gradients by min(1, @p maxNorm / (norm + 1e-6)), the norm the square root of the total of
+ * squaredNorm() over every clipped tensor (torch.nn.utils.clip_grad_norm_).
+ *
+ * Slots: 0 gradients, 1 total.
+ */
+ComputeGraphElementPtr clipGradient(VulkanContext& vulkanContext, uint32_t count, float maxNorm);
+
+/**
+ * @brief The exponential moving average of @p count parameters: ema += @p rate (parameters - ema), a copy for the
+ * first @p warmupSteps steps of the step counter.
+ *
+ * Slots: 0 average, 1 parameters, 2 step counter.
+ */
+ComputeGraphElementPtr ema(VulkanContext& vulkanContext, uint32_t count, float rate, uint32_t warmupSteps);
+
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {
     float learningRate = 1e-3f;

@@ -15,6 +15,14 @@
  * - channelCopyConcatsAndSplits: copying two tensors' channels to their offsets concatenates them, copying them back
  *   out recovers them, and accumulating adds
  * - filmMatchesPyTorch: FiLM's output and its input, scale and shift gradients equal PyTorch's
+ * - photometricLossMatchesPyTorch: the gradient of 0.5 L1 + 5 L1 of 8 x 8 block means equals PyTorch's, and the sum
+ *   of the loss shares is the loss
+ * - linearMatchesPyTorch: a linear layer's output (with an offset) and its input (also accumulating), weight and
+ *   bias gradients equal nn.Linear's
+ * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
+ *   the picked rows' gradients plus the L2 penalty's, and is zero for rows nobody picked
+ * - clipGradientMatchesPyTorch: clipping two tensors to a global norm of 1 equals clip_grad_norm_
+ * - emaCopiesThenAverages: during the warm-up the average copies the parameters, after it moves by the rate
  * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  *
@@ -334,4 +342,173 @@ TEST(PhotoEnhancerTraining, hashTextureBackwardMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_LT(relativeError(read(features), fixture.values("features")), 1e-5f);
     EXPECT_LT(relativeError(read(dtable), fixture.values("dtable")), 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, photometricLossMatchesPyTorch) {
+    const Fixture fixture("photometric");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("image");
+    auto image = tensor(vc, shape), target = tensor(vc, shape), gradient = tensor(vc, shape);
+    auto shares = tensor(vc, shape), total = tensor(vc, {1});
+    auto loss = training::photometricLoss(vc, shape, 0.5f, 5.0f);
+    loss->setInput(image, 0);
+    loss->setInput(target, 1);
+    loss->setInput(gradient, 2);
+    loss->setInput(shares, 3);
+    auto add = training::sum(vc, uint32_t(shares->getDataElementCount()));
+    add->setInput(shares, 0);
+    add->setInput(total, 1);
+    add->addDependency(loss);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(add);
+    image->getDataBuffer(0).memcopyFrom(fixture.values("image"));
+    target->getDataBuffer(0).memcopyFrom(fixture.values("target"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-5f);
+    EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, linearMatchesPyTorch) {
+    const Fixture fixture("linear");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const training::LinearShape shape{3, 5, 7};
+    checkElement(vc, fixture, training::linear(vc, shape), {{"x", {3, 5}}, {"w", {7, 5}}, {"b", {7}}, {"y", {3, 7}}},
+                 3);
+    checkElement(vc, fixture, training::linearBackwardInput(vc, shape), {{"dy", {3, 7}}, {"w", {7, 5}}, {"dx", {3, 5}}},
+                 2);
+    checkElement(vc, fixture, training::linearBackwardWeights(vc, shape),
+                 {{"x", {3, 5}}, {"dy", {3, 7}}, {"dw", {7, 5}}, {"db", {7}}}, 2);
+    // The offset adds to every output, and accumulate adds to the input gradient.
+    auto x = tensor(vc, {3, 5}), w = tensor(vc, {7, 5}), b = tensor(vc, {7}), y = tensor(vc, {3, 7});
+    auto dy = tensor(vc, {3, 7}), dx = tensor(vc, {3, 5});
+    auto forward = training::linear(vc, shape, 1.0f);
+    forward->setInput(x, 0);
+    forward->setInput(w, 1);
+    forward->setInput(b, 2);
+    forward->setInput(y, 3);
+    auto first = training::linearBackwardInput(vc, shape);
+    first->setInput(dy, 0);
+    first->setInput(w, 1);
+    first->setInput(dx, 2);
+    first->addDependency(forward);
+    auto second = training::linearBackwardInput(vc, shape, true);
+    second->setInput(dy, 0);
+    second->setInput(w, 1);
+    second->setInput(dx, 2);
+    second->addDependency(first);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(second);
+    x->getDataBuffer(0).memcopyFrom(fixture.values("x"));
+    w->getDataBuffer(0).memcopyFrom(fixture.values("w"));
+    b->getDataBuffer(0).memcopyFrom(fixture.values("b"));
+    dy->getDataBuffer(0).memcopyFrom(fixture.values("dy"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    auto expectedY = fixture.values("y"), expectedDx = fixture.values("dx");
+    for (auto& v : expectedY)
+        v += 1.0f;
+    for (auto& v : expectedDx)
+        v *= 2.0f;
+    EXPECT_LT(relativeError(read(y), expectedY), 1e-5f);
+    EXPECT_LT(relativeError(read(dx), expectedDx), 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, embeddingPicksAndScattersRows) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const uint32_t batch = 3, rows = 4, size = 2;
+    const float decay = 0.1f;
+    auto table = tensor(vc, {rows, size}), indices = tensor(vc, {batch}), picked = tensor(vc, {batch, size});
+    auto pickedGradient = tensor(vc, {batch, size}), tableGradient = tensor(vc, {rows, size});
+    auto pick = training::embedding(vc, batch, rows, size);
+    pick->setInput(table, 0);
+    pick->setInput(indices, 1);
+    pick->setInput(picked, 2);
+    auto scatter = training::embeddingBackward(vc, batch, rows, size, decay);
+    scatter->setInput(table, 0);
+    scatter->setInput(indices, 1);
+    scatter->setInput(pickedGradient, 2);
+    scatter->setInput(tableGradient, 3);
+    scatter->addDependency(pick);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(scatter);
+    const std::vector<float> values{1, 2, 3, 4, 5, 6, 7, 8}, rowsPicked{2, 0, 2}, gradients{0.5f, 1, 2, 3, 4, 5};
+    table->getDataBuffer(0).memcopyFrom(values);
+    indices->getDataBuffer(0).memcopyFrom(rowsPicked);
+    pickedGradient->getDataBuffer(0).memcopyFrom(gradients);
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_EQ(read(picked), (std::vector<float>{5, 6, 1, 2, 5, 6}));
+    const auto g = read(tableGradient);
+    const float p = 2.0f * decay / float(batch);
+    EXPECT_NEAR(g[0], 2.0f + p * 1.0f, 1e-6f);
+    EXPECT_NEAR(g[1], 3.0f + p * 2.0f, 1e-6f);
+    EXPECT_EQ(g[2], 0.0f);
+    EXPECT_EQ(g[3], 0.0f);
+    EXPECT_NEAR(g[4], 0.5f + 4.0f + 2.0f * p * 5.0f, 1e-6f);
+    EXPECT_NEAR(g[5], 1.0f + 5.0f + 2.0f * p * 6.0f, 1e-6f);
+    EXPECT_EQ(g[6], 0.0f);
+}
+
+TEST(PhotoEnhancerTraining, clipGradientMatchesPyTorch) {
+    const Fixture fixture("clip");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto a = tensor(vc, {300}), b = tensor(vc, {70}), total = tensor(vc, {1});
+    auto zero = training::fill(vc, 1);
+    zero->setInput(total, 0);
+    auto normA = training::squaredNorm(vc, 300);
+    normA->setInput(a, 0);
+    normA->setInput(total, 1);
+    normA->addDependency(zero);
+    auto normB = training::squaredNorm(vc, 70);
+    normB->setInput(b, 0);
+    normB->setInput(total, 1);
+    normB->addDependency(normA);
+    auto clipA = training::clipGradient(vc, 300, 1.0f);
+    clipA->setInput(a, 0);
+    clipA->setInput(total, 1);
+    clipA->addDependency(normB);
+    auto clipB = training::clipGradient(vc, 70, 1.0f);
+    clipB->setInput(b, 0);
+    clipB->setInput(total, 1);
+    clipB->addDependency(clipA);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(clipB);
+    a->getDataBuffer(0).memcopyFrom(fixture.values("ga"));
+    b->getDataBuffer(0).memcopyFrom(fixture.values("gb"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(a), fixture.values("clipped_a")), 1e-5f);
+    EXPECT_LT(relativeError(read(b), fixture.values("clipped_b")), 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, emaCopiesThenAverages) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto average = vc.create<TensorElement<float>>(std::vector<uint32_t>{2});
+    auto parameters = vc.create<TensorElement<float>>(std::vector<uint32_t>{2});
+    auto counter = vc.create<TensorElement<uint32_t>>(std::vector<uint32_t>{1});
+    auto step = training::stepCounter(vc);
+    step->setInput(counter, 0);
+    auto update = training::ema(vc, 2, 0.25f, 1);
+    update->setInput(average, 0);
+    update->setInput(parameters, 1);
+    update->setInput(counter, 2);
+    update->addDependency(step);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(update);
+    average->getDataBuffer(0).memcopyFrom(std::vector<float>{0.0f, 0.0f});
+    counter->getDataBuffer(0).memcopyFrom(std::vector<uint32_t>{0u});
+    parameters->getDataBuffer(0).memcopyFrom(std::vector<float>{4.0f, 8.0f});
+    graph.submitAndWait(vc.getGraphicsQueue(), 0); // step 1: copy
+    EXPECT_EQ(read(average), (std::vector<float>{4.0f, 8.0f}));
+    parameters->getDataBuffer(0).memcopyFrom(std::vector<float>{8.0f, 0.0f});
+    graph.submitAndWait(vc.getGraphicsQueue(), 0); // step 2: a quarter of the way
+    EXPECT_EQ(read(average), (std::vector<float>{5.0f, 6.0f}));
 }

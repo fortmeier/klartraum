@@ -53,6 +53,33 @@ struct FillPushConstants {
     float value;
 };
 
+struct LossPushConstants {
+    uint32_t planes, height, width;
+    float l1Weight, colourWeight;
+};
+
+struct LinearPushConstants {
+    uint32_t batch, inputs, outputs;
+    float offset;
+    uint32_t accumulate;
+};
+
+struct EmbeddingPushConstants {
+    uint32_t batch, rows, size;
+    float decay;
+};
+
+struct ClipPushConstants {
+    uint32_t count;
+    float maxNorm;
+};
+
+struct EmaPushConstants {
+    uint32_t count;
+    float rate;
+    uint32_t warmupSteps;
+};
+
 struct NormPushConstants {
     uint32_t batch, channels, pixels;
     float epsilon;
@@ -178,6 +205,86 @@ ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::
 ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float value) {
     auto operation = vulkanContext.create<GeneralComputation<FillPushConstants>>("shaders/training/fill.comp.spv");
     operation->setPushConstants({{count, value}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr photometricLoss(VulkanContext& vulkanContext, const layers::Shape& shape, float l1Weight,
+                                       float colourWeight) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation =
+        vulkanContext.create<GeneralComputation<LossPushConstants>>("shaders/training/photometric_loss.comp.spv");
+    operation->setPushConstants({{n * c, shape[2], shape[3], l1Weight, colourWeight}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr sum(VulkanContext& vulkanContext, uint32_t count) {
+    auto operation = vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/sum.comp.spv");
+    operation->setPushConstants({{count}});
+    operation->setGroupCountX(1);
+    return operation;
+}
+
+ComputeGraphElementPtr linear(VulkanContext& vulkanContext, const LinearShape& shape, float offset) {
+    auto operation = vulkanContext.create<GeneralComputation<LinearPushConstants>>("shaders/training/linear.comp.spv");
+    operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, offset, 0u}});
+    operation->setGroupCountX((shape.batch * shape.outputs + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr linearBackwardInput(VulkanContext& vulkanContext, const LinearShape& shape, bool accumulate) {
+    auto operation = vulkanContext.create<GeneralComputation<LinearPushConstants>>(
+        "shaders/training/linear_backward_input.comp.spv");
+    operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, 0.0f, accumulate ? 1u : 0u}});
+    operation->setGroupCountX((shape.batch * shape.inputs + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const LinearShape& shape) {
+    auto operation = vulkanContext.create<GeneralComputation<LinearPushConstants>>(
+        "shaders/training/linear_backward_weights.comp.spv");
+    operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, 0.0f, 0u}});
+    operation->setGroupCountX((shape.outputs * (shape.inputs + 1) + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr embedding(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<EmbeddingPushConstants>>("shaders/training/embedding.comp.spv");
+    operation->setPushConstants({{batch, rows, size, 0.0f}});
+    operation->setGroupCountX((batch * size + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr embeddingBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size,
+                                         float decay) {
+    auto operation = vulkanContext.create<GeneralComputation<EmbeddingPushConstants>>(
+        "shaders/training/embedding_backward.comp.spv");
+    operation->setPushConstants({{batch, rows, size, decay}});
+    operation->setGroupCountX((rows * size + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr squaredNorm(VulkanContext& vulkanContext, uint32_t count) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/squared_norm.comp.spv");
+    operation->setPushConstants({{count}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr clipGradient(VulkanContext& vulkanContext, uint32_t count, float maxNorm) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<ClipPushConstants>>("shaders/training/clip_gradient.comp.spv");
+    operation->setPushConstants({{count, maxNorm}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr ema(VulkanContext& vulkanContext, uint32_t count, float rate, uint32_t warmupSteps) {
+    auto operation = vulkanContext.create<GeneralComputation<EmaPushConstants>>("shaders/training/ema.comp.spv");
+    operation->setPushConstants({{count, rate, warmupSteps}});
     operation->setGroupCountX((count + 255) / 256);
     return operation;
 }
