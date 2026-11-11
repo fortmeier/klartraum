@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <functional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -43,6 +44,7 @@ struct Arguments {
     uint32_t height = 512, width = 512, steps = 8, seed = 0;
     std::string image, batch, control, out = "build/TestingOutput/qwen_image/image.ppm";
     float strength = 0.6f, controlScale = 1.0f;
+    bool noisePerImage = false;
     std::string transformer = kModels + "transformer/qwen-image-Q4_K_S.gguf";
     std::string text = kModels + "text/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
     std::string lora = kModels + "lightning/Qwen-Image-Lightning-8steps-V2.0.gguf";
@@ -71,6 +73,8 @@ Arguments parse(int argc, char** argv) {
             a.image = next();
         else if (arg == "--batch")
             a.batch = next();
+        else if (arg == "--noise-per-image")
+            a.noisePerImage = true;
         else if (arg == "--strength")
             a.strength = std::stof(next());
         else if (arg == "--control")
@@ -205,7 +209,7 @@ int main(int argc, char** argv) {
         std::cout << "prompt: " << textTokens << " tokens in " << seconds(start) << " s" << std::endl;
 
         // The jobs: one image, or with --batch every line's input ("-" for none), output and optional control image
-        // (the same noise for all of them).
+        // (the same noise for all of them, or with --noise-per-image each its own).
         struct Job {
             std::string input, output, control;
         };
@@ -231,11 +235,18 @@ int main(int argc, char** argv) {
         const bool controlled = std::any_of(jobs.begin(), jobs.end(), [](const Job& j) { return !j.control.empty(); });
 
         const auto sigmas = lightningSigmas(args.steps);
-        std::mt19937 rng(args.seed);
-        std::normal_distribution<float> normal;
-        std::vector<float> noise(size_t(16) * h * w);
-        for (auto& n : noise)
-            n = normal(rng);
+        // The initial noise: from --seed, with --noise-per-image also from the image's output path, so that every
+        // image of a batch gets its own noise and the same image always the same one.
+        const auto noiseFor = [&](const std::string& output) {
+            const uint64_t key = args.noisePerImage ? std::hash<std::string>{}(output) : 0u;
+            std::seed_seq seeds{args.seed, uint32_t(key), uint32_t(key >> 32u)};
+            std::mt19937 rng(seeds);
+            std::normal_distribution<float> normal;
+            std::vector<float> noise(size_t(16) * h * w);
+            for (auto& n : noise)
+                n = normal(rng);
+            return noise;
+        };
 
         // Three phases, so that the VAE graphs never share the GPU with the transformer: encode every input, denoise
         // every latent, then decode them all.
@@ -244,6 +255,7 @@ int main(int argc, char** argv) {
         std::vector<std::vector<float>> latents, controls;
         const std::string encoder = kModels + "onnx/vae_encoder_" + size + ".onnx";
         for (const auto& [input, output, control] : jobs) {
+            const std::vector<float> noise = noiseFor(output);
             std::vector<float> latent = noise;
             // The control image (e.g. a depth map) as the ControlNet takes it: its packed latent.
             controls.push_back(control.empty() ? std::vector<float>{}
