@@ -21,6 +21,9 @@ TESTS:
   and a training step's gradient reaches only the codes of the images in the batch
 - fitted_code_improves_the_fit: fit_code() finds a code under which the frozen model is closer to a target the model
   can reach with some code than the training codes' mean is
+- local_generator_ignores_far_pixels: a 3-level generator with the per-pixel norm does not change an output pixel
+  when an input pixel 120 pixels away changes, while the same generator with GroupNorm (whose statistics span the
+  image) does
 - export_has_appearance_input: the export of a model with appearance codes has the inputs "input" and "appearance"
   and writes the codes of the training images with their ids
 
@@ -157,6 +160,19 @@ def fitted_code_improves_the_fit() -> None:
     assert after < 0.5 * before, (float(before), float(after))
 
 
+def local_generator_ignores_far_pixels() -> None:
+    for norm, reaches in (("channel", False), ("group", True)):
+        torch.manual_seed(6)
+        model = TexturedModel(levels=3, norm=norm).eval()
+        torch.nn.init.normal_(model.generator.out.weight)
+        x = torch.rand(1, INPUT_CHANNELS, 128, 128)
+        changed = x.clone()
+        changed[:, :, 64, 127] += 5.0
+        with torch.no_grad():
+            difference = (model(x) - model(changed))[0, :, 64, 0:8].abs().max()
+        assert (difference > 0) == reaches, (norm, float(difference))
+
+
 def export_has_appearance_input() -> None:
     import onnx
 
@@ -174,6 +190,7 @@ def export_has_appearance_input() -> None:
 if __name__ == "__main__":
     for test in (season_code_is_cyclic, season_of_reads_labels, new_film_is_identity, film_follows_season,
                  discriminator_sees_season, export_has_season_input, new_appearance_film_is_identity,
-                 codes_steer_the_image, fitted_code_improves_the_fit, export_has_appearance_input):
+                 codes_steer_the_image, fitted_code_improves_the_fit, local_generator_ignores_far_pixels,
+                 export_has_appearance_input):
         test()
         print(f"ok  {test.__name__}")

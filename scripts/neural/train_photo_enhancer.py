@@ -142,13 +142,35 @@ class GroupNorm(nn.GroupNorm):
         return normed * self.weight.reshape(1, c, 1, 1) + self.bias.reshape(1, c, 1, 1)
 
 
-class Block(nn.Sequential):
-    """Two 3 x 3 convolutions, each followed by GroupNorm (which keeps the activations from growing from level to
-    level) and ELU."""
+class ChannelNorm(nn.Module):
+    """Normalizes every pixel over its channels (a layer norm per pixel), with a learnable scale and shift per channel:
+    unlike GroupNorm no statistics of the whole image, so each output depends on its receptive field alone."""
 
-    def __init__(self, inputs: int, outputs: int, stride: int = 1):
-        super().__init__(nn.Conv2d(inputs, outputs, 3, stride=stride, padding=1), GroupNorm(8, outputs), nn.ELU(),
-                         nn.Conv2d(outputs, outputs, 3, padding=1), GroupNorm(8, outputs), nn.ELU())
+    def __init__(self, channels: int, eps: float = 1e-5):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(channels))
+        self.bias = nn.Parameter(torch.zeros(channels))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        c = int(x.shape[1])
+        mean = x.mean(dim=1, keepdim=True)
+        centred = x - mean
+        variance = (centred * centred).mean(dim=1, keepdim=True)
+        normed = centred / torch.sqrt(variance + self.eps)
+        return normed * self.weight.reshape(1, c, 1, 1) + self.bias.reshape(1, c, 1, 1)
+
+
+class Block(nn.Sequential):
+    """Two 3 x 3 convolutions, each followed by a normalization (which keeps the activations from growing from level to
+    level; "group": GroupNorm, "channel": ChannelNorm) and ELU."""
+
+    def __init__(self, inputs: int, outputs: int, stride: int = 1, norm: str = "group"):
+        def normalization(channels: int) -> nn.Module:
+            return GroupNorm(8, channels) if norm == "group" else ChannelNorm(channels)
+
+        super().__init__(nn.Conv2d(inputs, outputs, 3, stride=stride, padding=1), normalization(outputs), nn.ELU(),
+                         nn.Conv2d(outputs, outputs, 3, padding=1), normalization(outputs), nn.ELU())
 
 
 class SeasonFilm(nn.Module):
@@ -180,14 +202,17 @@ class Generator(nn.Module):
     modulated by them (SeasonFilm)."""
 
     def __init__(self, widths=(32, 64, 128, 256, 256), extra: int = 0, blur_depth: bool = True, film: bool = False,
-                 appearance: int = 0):
+                 appearance: int = 0, norm: str = "group"):
         super().__init__()
+        self.widths = tuple(widths)
+        self.norm = norm
         self.blur_depth = blur_depth
         self.season = film
         self.appearance = appearance
-        self.down = nn.ModuleList([Block(INPUT_CHANNELS + extra, widths[0])] +
-                                  [Block(widths[i - 1], widths[i], stride=2) for i in range(1, len(widths))])
-        self.up = nn.ModuleList([Block(widths[i] + widths[i - 1], widths[i - 1]) for i in range(len(widths) - 1, 0, -1)])
+        self.down = nn.ModuleList([Block(INPUT_CHANNELS + extra, widths[0], norm=norm)] +
+                                  [Block(widths[i - 1], widths[i], stride=2, norm=norm) for i in range(1, len(widths))])
+        self.up = nn.ModuleList([Block(widths[i] + widths[i - 1], widths[i - 1], norm=norm)
+                                 for i in range(len(widths) - 1, 0, -1)])
         # The depth channel is smoothed first: its 8-bit steps would otherwise show as contour lines (rings on near
         # trunks). A fixed 9 x 9 Gaussian of sigma 2.5 px, not a parameter, so older checkpoints load.
         radius = torch.arange(-4, 5, dtype=torch.float32)
@@ -209,7 +234,9 @@ class Generator(nn.Module):
             depth = F.conv2d(x[:, 3:4], self.depth_blur, padding=4)
             x = torch.cat([x[:, :3], depth, x[:, 4:]], dim=1)
         condition = [c for c, used in ((season, self.season), (appearance, self.appearance > 0)) if used]
-        modulation = iter(self.film(torch.cat(condition, dim=1))) if self.film is not None else None
+        # A single condition goes in as it is (an ONNX Concat of one input is not imported).
+        joined = (condition[0] if len(condition) == 1 else torch.cat(condition, dim=1)) if condition else None
+        modulation = iter(self.film(joined)) if self.film is not None else None
 
         def modulated(y: torch.Tensor) -> torch.Tensor:
             if modulation is None:
@@ -237,15 +264,18 @@ class TexturedModel(nn.Module):
     `codes`' rows), as in NeRF in the Wild: what differs between the photographs (light, wear, the crate Qwen-Image
     painted) goes there, the texture stays shared."""
 
-    def __init__(self, texture: bool = False, film: bool = False, appearances: int = 0, appearance_size: int = 0):
+    def __init__(self, texture: bool = False, film: bool = False, appearances: int = 0, appearance_size: int = 0,
+                 levels: int = 5, norm: str = "group"):
         super().__init__()
         from hash_texture import SurfaceTexture
 
         self.texture = SurfaceTexture() if texture else None
         extra = self.texture.channels if texture else 0
-        # The precise depth of the coordinate G-buffers needs no smoothing.
-        self.generator = Generator(extra=extra, blur_depth=not texture, film=film,
-                                   appearance=appearance_size if appearances else 0)
+        # The precise depth of the coordinate G-buffers needs no smoothing. Fewer levels keep the generator local (3:
+        # about 40 pixels around each output pixel), so that it cannot recognise a whole view and has to render from
+        # the texture features and the geometry nearby (with norm "channel", which shares no statistics over the image).
+        self.generator = Generator(widths=(32, 64, 128, 256, 256)[:levels], extra=extra, blur_depth=not texture,
+                                   film=film, appearance=appearance_size if appearances else 0, norm=norm)
         self.codes = nn.Embedding(appearances, appearance_size) if appearances else None
         if self.codes is not None:
             nn.init.normal_(self.codes.weight, std=0.1)
@@ -420,7 +450,8 @@ def export(generator: nn.Module, path: Path, height: int, width: int, appearance
 
     textured = generator.texture is not None
     seasonal, size = generator.generator.season, generator.generator.appearance
-    model = Generator(extra=generator.texture.channels if textured else 0, blur_depth=not textured, film=seasonal,
+    model = Generator(widths=generator.generator.widths, extra=generator.texture.channels if textured else 0,
+                      blur_depth=not textured, film=seasonal, norm=generator.generator.norm,
                       appearance=size).eval()
     model.load_state_dict({k: v.cpu() for k, v in generator.generator.state_dict().items()})
     if textured:
@@ -519,6 +550,10 @@ def main() -> None:
     parser.add_argument("--appearance", type=int, default=0,
                         help="size of a learnable appearance code per training image (NeRF-W style, by FiLM); 0: none")
     parser.add_argument("--appearance-decay", type=float, default=1e-2, help="L2 penalty on the appearance codes")
+    parser.add_argument("--levels", type=int, default=5,
+                        help="U-Net levels of the generator (fewer: a smaller receptive field, a more local generator)")
+    parser.add_argument("--norm", choices=("group", "channel"), default="group",
+                        help="the generator's normalization; channel: per pixel, no statistics over the whole image")
     parser.add_argument("--season-film", action="store_true",
                         help="condition generator and discriminator on the sample's season (seasons.json, FiLM)")
     parser.add_argument("--reset-discriminator", action="store_true", help="with --resume: start a new discriminator")
@@ -538,7 +573,7 @@ def main() -> None:
         if args.resume and (args.out / "checkpoint.pt").exists():
             appearance_ids = torch.load(args.out / "checkpoint.pt", map_location="cpu")["appearance_ids"]
     rows = {sample: k for k, sample in enumerate(appearance_ids)}
-    generator = TexturedModel(args.texture, args.season_film, len(appearance_ids), args.appearance).to(device)
+    generator = TexturedModel(args.texture, args.season_film, len(appearance_ids), args.appearance, args.levels, args.norm).to(device)
     discriminator = MultiScaleDiscriminator(season=args.season_film).to(device)
     vgg = Vgg().to(device)
     if args.init_from:
@@ -569,7 +604,7 @@ def main() -> None:
         groups.append({"params": list(generator.codes.parameters()), "lr": 5e-3, "betas": (0.9, 0.99)})
     optimise_g = torch.optim.Adam(groups, lr=1e-4, betas=(0.5, 0.999))
     optimise_d = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
-    ema = TexturedModel(args.texture, args.season_film, len(appearance_ids), args.appearance).to(device)
+    ema = TexturedModel(args.texture, args.season_film, len(appearance_ids), args.appearance, args.levels, args.norm).to(device)
     ema.load_state_dict(generator.state_dict())
     ema.requires_grad_(False)
     step = 0

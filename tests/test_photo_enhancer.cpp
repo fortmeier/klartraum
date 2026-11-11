@@ -20,7 +20,7 @@
  *   "appearance" of the code) reproduces the PyTorch image of its reference input and code
  *
  * The graphs and their references are written by the training into build/TestingOutput/gan_runs/v6/ and v7/ and
- * build/TestingOutput/crate/runs/c1/ (not in the repository); the tests skip without them.
+ * build/TestingOutput/crate/runs/c2/ (not in the repository); the tests skip without them.
  **/
 
 #include <gtest/gtest.h>
@@ -198,7 +198,7 @@ TEST(PhotoEnhancerTest, inputsStretchTheInverseDepth) {
 }
 
 TEST(PhotoEnhancerTest, appearanceGeneratorMatchesPyTorch) {
-    const std::string stem = "./build/TestingOutput/crate/runs/c1/photo_enhancer";
+    const std::string stem = "./build/TestingOutput/crate/runs/c2/photo_enhancer";
     if (!std::filesystem::exists(stem + ".onnx") || !std::filesystem::exists(stem + "_appearance_input_f32.bin"))
         GTEST_SKIP() << "train scripts/neural/train_photo_enhancer.py --appearance first";
     EXPECT_LT(runAgainstReference(stem, 256, 256), 1e-3f);
