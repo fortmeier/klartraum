@@ -6,7 +6,9 @@
 #define KLARTRAUM_NEURAL_PHOTO_ENHANCER_TRAINING_HPP
 
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <random>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,7 +38,13 @@ struct PhotoEnhancerTrainingConfig {
     float colour = 5.0f;                             ///< weight of the L1 loss of 8 x 8 block means
     float perceptual = 0.0f;                         ///< weight of the VGG perceptual loss (VggLoss; 0: none)
     std::string vggDirectory = "build/models/vgg16"; ///< scripts/neural/export_vgg16.py's weights
-    float clip = 1.0f;                               ///< global norm the generator's gradients are clipped to
+    /// Weight of the adversarial loss of a 2-scale conditional PatchGAN (0: no discriminator); its step comes first
+    /// in every training step, on DiffAugment-ed pairs (no R1 penalty).
+    float adversarial = 0.0f;
+    float featureMatching = 2.0f; ///< weight of the discriminator's feature matching
+    training::AdamParameters discriminatorAdam{2e-4f, 0.5f, 0.999f};
+    uint32_t seed = 1; ///< of the augmentations' random numbers
+    float clip = 1.0f; ///< global norm the generator's gradients are clipped to
     training::AdamParameters networkAdam{1e-4f, 0.5f, 0.999f};
     training::AdamParameters textureAdam{1e-2f, 0.9f, 0.99f};
     training::AdamParameters codesAdam{5e-3f, 0.9f, 0.99f};
@@ -81,6 +89,13 @@ public:
     float loss() const;
     /// The perceptual loss of the last step (0 without).
     float perceptualLoss() const;
+    /// The discriminator's loss, the adversarial loss and the feature matching of the last step (0 without).
+    float discriminatorLoss() const;
+    float adversarialLoss() const;
+    float featureMatchingLoss() const;
+    /// The next step's augmentation numbers, [2 batch][6] (real pairs, then fake pairs; see training::augmentPair()),
+    /// instead of random ones.
+    void setAugmentation(const std::vector<float>& numbers);
     /// The generator's images of the last step, [batch][3][size][size].
     std::vector<float> image() const;
 
@@ -108,6 +123,7 @@ public:
 private:
     struct Parameter;
     struct Block;
+    struct Critic;
 
     std::shared_ptr<TensorElement<float>> tensor(const std::vector<uint32_t>& shape);
     Parameter& addParameter(const std::string& name, const std::vector<uint32_t>& shape, int group);
@@ -115,6 +131,14 @@ private:
     void add(ComputeGraphElementPtr element);
     void forwardBlock(Block& block);
     void backwardBlock(Block& block);
+    void buildDiscriminator();
+    void forwardCritic(Critic& critic, std::shared_ptr<TensorElement<float>> pairs);
+    /// The critic's backward pass from its logits' gradients: its parameters' gradients (withWeights), its input's
+    /// gradient into `inputGradient` (if given), `featureGradient(scale, layer)` called once each layer's output
+    /// gradient is written (to add to it).
+    void backwardCritic(Critic& critic, bool withWeights, std::shared_ptr<TensorElement<float>> inputGradient,
+                        const std::function<void(Critic&, size_t, size_t)>& featureGradient);
+    std::vector<float> randomAugmentation();
 
     VulkanContext& vulkanContext;
     PhotoEnhancerTrainingConfig config;
@@ -135,6 +159,13 @@ private:
         hidden2PreGradient;
     std::shared_ptr<TensorElement<uint32_t>> stepCounter;
     std::unique_ptr<VggLoss> vgg; ///< the perceptual loss, or none
+    /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.
+    std::vector<std::unique_ptr<Critic>> critics;
+    std::shared_ptr<TensorElement<float>> augmentation;
+    std::shared_ptr<TensorElement<uint32_t>> discriminatorCounter; ///< the discriminator's Adam steps
+    std::vector<std::shared_ptr<TensorElement<float>>> discriminatorTotals, adversarialTotals, matchingTotals;
+    bool augmentationGiven = false;
+    std::mt19937 random;
 };
 
 } // namespace klartraum::neural

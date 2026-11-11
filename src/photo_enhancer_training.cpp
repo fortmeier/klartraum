@@ -18,7 +18,12 @@ namespace {
 
 constexpr uint32_t kGBufferChannels = 11;
 
-enum Group { Network = 0, Texture = 1, Codes = 2 };
+enum Group { Network = 0, Texture = 1, Codes = 2, Discriminator = 3 };
+
+// The PatchGAN's layers: widths, strides (all 4 x 4, padding 1), then the logits.
+constexpr uint32_t kCriticWidths[4] = {64, 128, 256, 512};
+constexpr uint32_t kCriticStrides[4] = {2, 2, 2, 1};
+constexpr uint32_t kCriticScales = 2;
 
 layers::ConvAttributes convAttributes(uint32_t kernel, uint32_t stride) {
     layers::ConvAttributes attributes;
@@ -30,6 +35,19 @@ layers::ConvAttributes convAttributes(uint32_t kernel, uint32_t stride) {
 }
 
 } // namespace
+
+// One pass of the 2-scale PatchGAN over a batch of pairs: per scale its input (the pairs, or their 2 x 2 average), the
+// input times 2 minus 1, every layer's convolution and leaky ReLU, the logits; and their gradients.
+struct PhotoEnhancerTraining::Critic {
+    uint32_t batch = 0;
+    struct Scale {
+        uint32_t size = 0;
+        std::shared_ptr<TensorElement<float>> input, scaled, logits, logitGradient, scaledGradient, inputGradient;
+        std::vector<std::shared_ptr<TensorElement<float>>> pre, activated, preGradient, activatedGradient;
+        std::vector<uint32_t> sizes; ///< of each layer's output, then the logits'
+    };
+    std::vector<Scale> scales;
+};
 
 struct PhotoEnhancerTraining::Parameter {
     std::string name;
@@ -109,6 +127,19 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     addParameter("generator.out.bias", {3}, Network);
     if (film)
         addParameter("codes.weight", {config.appearances, config.appearanceSize}, Codes);
+    if (config.adversarial > 0.0f && !config.forwardOnly)
+        for (uint32_t scale = 0; scale < kCriticScales; ++scale) {
+            const std::string prefix = "discriminator.discriminators." + std::to_string(scale) + ".";
+            uint32_t previous = kGBufferChannels + 3;
+            for (uint32_t layer = 0; layer < 4; ++layer) {
+                const std::string name = prefix + "layers." + std::to_string(layer) + ".0.";
+                addParameter(name + "weight", {kCriticWidths[layer], previous, 4, 4}, Discriminator);
+                addParameter(name + "bias", {kCriticWidths[layer]}, Discriminator);
+                previous = kCriticWidths[layer];
+            }
+            addParameter(prefix + "logits.weight", {1, previous, 4, 4}, Discriminator);
+            addParameter(prefix + "logits.bias", {1}, Discriminator);
+        }
 
     // The batch and the generator's input.
     channels = tensor({b, kGBufferChannels, s, s});
@@ -260,6 +291,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
             for (const auto& element : vgg->elements())
                 add(element);
         }
+        if (config.adversarial > 0.0f)
+            buildDiscriminator();
     }
 
     // Backward: output layer, up blocks, down blocks, texture, FiLM.
@@ -419,6 +452,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         counter->setInput(stepCounter, 0);
         add(counter);
         for (const auto& parameter : parameters) {
+            if (parameter.group == Discriminator)
+                continue; // updated in the discriminator's step
             const auto& adam = parameter.group == Network   ? config.networkAdam
                                : parameter.group == Texture ? config.textureAdam
                                                             : config.codesAdam;
@@ -441,19 +476,339 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     if (config.profile)
         graph->enableProfiling();
     graph->compileFrom(sequence.back());
-    // The buffers exist once the graph is compiled: parameters, moments and averages start at zero.
+    // The buffers exist once the graph is compiled: parameters, moments and averages start at zero (the
+    // discriminator has no average).
     for (const auto& parameter : parameters) {
         const std::vector<float> zeros(parameter.value->getDataElementCount(), 0.0f);
-        for (const auto& t :
-             {parameter.value, parameter.gradient, parameter.firstMoment, parameter.secondMoment, parameter.average})
+        for (const auto& t : {parameter.value, parameter.gradient, parameter.firstMoment, parameter.secondMoment})
             t->getDataBuffer(0).memcopyFrom(zeros);
+        if (parameter.group != Discriminator)
+            parameter.average->getDataBuffer(0).memcopyFrom(zeros);
     }
     stepCounter->getDataBuffer(0).memcopyFrom(std::vector<uint32_t>{0u});
     if (vgg)
         vgg->upload();
+    if (discriminatorCounter)
+        discriminatorCounter->getDataBuffer(0).memcopyFrom(std::vector<uint32_t>{0u});
+    random.seed(config.seed);
 }
 
 PhotoEnhancerTraining::~PhotoEnhancerTraining() = default;
+
+void PhotoEnhancerTraining::buildDiscriminator() {
+    const uint32_t b = config.batch, s = config.size, c = kGBufferChannels + 3, pixels = s * s;
+    // The pairs (G-buffer channels and image) of the real photos and of the generator's images, and both together
+    // (real ones first) augmented for the discriminator's step.
+    auto realPairs = tensor({b, c, s, s}), fakePairs = tensor({b, c, s, s});
+    auto allPairs = tensor({2 * b, c, s, s}), augmented = tensor({2 * b, c, s, s});
+    augmentation = tensor({2 * b, 6});
+    for (const auto& [pairs, image] : {std::pair{realPairs, targets}, std::pair{fakePairs, output}}) {
+        auto gbuffers =
+            training::channelCopy(vulkanContext, b, pixels, {kGBufferChannels, 0}, {c, 0}, kGBufferChannels);
+        gbuffers->setInput(channels, 0);
+        gbuffers->setInput(pairs, 1);
+        add(gbuffers);
+        auto colour = training::channelCopy(vulkanContext, b, pixels, {3, 0}, {c, kGBufferChannels}, 3);
+        colour->setInput(image, 0);
+        colour->setInput(pairs, 1);
+        add(colour);
+    }
+    for (uint32_t half = 0; half < 2; ++half) {
+        // A contiguous block: one "channel" of b x c x pixels values.
+        auto copy = training::channelCopy(vulkanContext, 1, b * c * pixels, {1, 0}, {2, half}, 1);
+        copy->setInput(half == 0 ? realPairs : fakePairs, 0);
+        copy->setInput(allPairs, 1);
+        add(copy);
+    }
+    auto augment = training::augmentPair(vulkanContext, {2 * b, c, s, s});
+    augment->setInput(allPairs, 0);
+    augment->setInput(augmentation, 1);
+    augment->setInput(augmented, 2);
+    add(augment);
+
+    // The discriminator's step: softplus(-D(real)) + softplus(D(fake)) per scale, then Adam.
+    critics.push_back(std::make_unique<Critic>());
+    Critic& step = *critics.back();
+    step.batch = 2 * b;
+    forwardCritic(step, augmented);
+    for (auto& scale : step.scales) {
+        const uint32_t half = b * scale.sizes.back() * scale.sizes.back();
+        auto shares = tensor({2 * half});
+        scale.logitGradient = tensor({2 * b, 1, scale.sizes.back(), scale.sizes.back()});
+        for (const auto& [offset, sign] : {std::pair{0u, -1.0f}, std::pair{half, 1.0f}}) {
+            auto loss = training::softplusLoss(vulkanContext, offset, half, sign, 1.0f);
+            loss->setInput(scale.logits, 0);
+            loss->setInput(scale.logitGradient, 1);
+            loss->setInput(shares, 2);
+            add(loss);
+        }
+        discriminatorTotals.push_back(tensor({1}));
+        auto total = training::sum(vulkanContext, 2 * half);
+        total->setInput(shares, 0);
+        total->setInput(discriminatorTotals.back(), 1);
+        add(total);
+    }
+    backwardCritic(step, true, nullptr, nullptr);
+    discriminatorCounter = vulkanContext.create<TensorElement<uint32_t>>(std::vector<uint32_t>{1});
+    auto counter = training::stepCounter(vulkanContext);
+    counter->setInput(discriminatorCounter, 0);
+    add(counter);
+    for (const auto& parameter : parameters)
+        if (parameter.group == Discriminator) {
+            auto update = training::adamStep(vulkanContext, uint32_t(parameter.value->getDataElementCount()),
+                                             config.discriminatorAdam);
+            update->setInput(parameter.value, 0);
+            update->setInput(parameter.gradient, 1);
+            update->setInput(parameter.firstMoment, 2);
+            update->setInput(parameter.secondMoment, 3);
+            update->setInput(discriminatorCounter, 4);
+            add(update);
+        }
+
+    // The generator's adversarial loss and feature matching against the updated discriminator, on the pairs as they
+    // are: its gradient joins the image's.
+    critics.push_back(std::make_unique<Critic>());
+    Critic& real = *critics.back();
+    real.batch = b;
+    forwardCritic(real, realPairs);
+    critics.push_back(std::make_unique<Critic>());
+    Critic& fake = *critics.back();
+    fake.batch = b;
+    forwardCritic(fake, fakePairs);
+    for (auto& scale : fake.scales) {
+        const uint32_t count = b * scale.sizes.back() * scale.sizes.back();
+        auto shares = tensor({count});
+        scale.logitGradient = tensor({b, 1, scale.sizes.back(), scale.sizes.back()});
+        auto loss = training::softplusLoss(vulkanContext, 0, count, -1.0f, config.adversarial);
+        loss->setInput(scale.logits, 0);
+        loss->setInput(scale.logitGradient, 1);
+        loss->setInput(shares, 2);
+        add(loss);
+        adversarialTotals.push_back(tensor({1}));
+        auto total = training::sum(vulkanContext, count);
+        total->setInput(shares, 0);
+        total->setInput(adversarialTotals.back(), 1);
+        add(total);
+    }
+    auto pairGradient = tensor({b, c, s, s});
+    backwardCritic(fake, false, pairGradient, [&](Critic& critic, size_t scaleIndex, size_t layer) {
+        auto& scale = critic.scales[scaleIndex];
+        const uint32_t count = uint32_t(scale.activated[layer]->getDataElementCount());
+        auto shares = tensor({count});
+        auto distance = training::l1Distance(vulkanContext, count, config.featureMatching / 4.0f, true);
+        distance->setInput(scale.activated[layer], 0);
+        distance->setInput(real.scales[scaleIndex].activated[layer], 1);
+        distance->setInput(scale.activatedGradient[layer], 2);
+        distance->setInput(shares, 3);
+        add(distance);
+        matchingTotals.push_back(tensor({1}));
+        auto total = training::sum(vulkanContext, count);
+        total->setInput(shares, 0);
+        total->setInput(matchingTotals.back(), 1);
+        add(total);
+    });
+    auto colour = training::channelCopy(vulkanContext, b, pixels, {c, kGBufferChannels}, {3, 0}, 3, true);
+    colour->setInput(pairGradient, 0);
+    colour->setInput(outputGradient, 1);
+    add(colour);
+}
+
+void PhotoEnhancerTraining::forwardCritic(Critic& critic, std::shared_ptr<TensorElement<float>> pairs) {
+    const uint32_t n = critic.batch, c = kGBufferChannels + 3;
+    for (uint32_t scaleIndex = 0; scaleIndex < kCriticScales; ++scaleIndex) {
+        Critic::Scale scale;
+        scale.size = config.size >> scaleIndex;
+        if (scaleIndex == 0) {
+            scale.input = pairs;
+        } else {
+            scale.input = tensor({n, c, scale.size, scale.size});
+            auto pool = training::averagePool(vulkanContext, {n, c, config.size, config.size});
+            pool->setInput(pairs, 0);
+            pool->setInput(scale.input, 1);
+            add(pool);
+        }
+        scale.scaled = tensor({n, c, scale.size, scale.size});
+        auto affine = training::affine(vulkanContext, n * c * scale.size * scale.size, 2.0f, -1.0f);
+        affine->setInput(scale.input, 0);
+        affine->setInput(scale.scaled, 1);
+        add(affine);
+        const std::string prefix = "discriminator.discriminators." + std::to_string(scaleIndex) + ".";
+        auto x = scale.scaled;
+        uint32_t channels = c, size = scale.size;
+        for (uint32_t layer = 0; layer <= 4; ++layer) {
+            const bool logits = layer == 4;
+            const uint32_t width = logits ? 1 : kCriticWidths[layer], stride = logits ? 1 : kCriticStrides[layer];
+            const uint32_t next = stride == 2 ? size / 2 : size - 1;
+            layers::ConvAttributes attributes;
+            attributes.kernelShape = {4, 4};
+            attributes.strides = {stride, stride};
+            attributes.pads = {1, 1, 1, 1};
+            const std::string name = logits ? prefix + "logits." : prefix + "layers." + std::to_string(layer) + ".0.";
+            auto y = tensor({n, width, next, next});
+            auto conv = layers::conv(vulkanContext, attributes, {n, channels, size, size}, {width, channels, 4, 4},
+                                     {width}, {n, width, next, next});
+            conv->setInput(x, 0);
+            conv->setInput(find(name + "weight").value, 1);
+            conv->setInput(find(name + "bias").value, 2);
+            conv->setInput(y, 3);
+            add(conv);
+            scale.sizes.push_back(next);
+            if (logits) {
+                scale.logits = y;
+                break;
+            }
+            auto activated = tensor({n, width, next, next});
+            auto relu = training::leakyRelu(vulkanContext, {n, width, next, next});
+            relu->setInput(y, 0);
+            relu->setInput(activated, 1);
+            add(relu);
+            scale.pre.push_back(y);
+            scale.activated.push_back(activated);
+            x = activated;
+            channels = width;
+            size = next;
+        }
+        critic.scales.push_back(scale);
+    }
+}
+
+void PhotoEnhancerTraining::backwardCritic(Critic& critic, bool withWeights,
+                                           std::shared_ptr<TensorElement<float>> inputGradient,
+                                           const std::function<void(Critic&, size_t, size_t)>& featureGradient) {
+    const uint32_t n = critic.batch, c = kGBufferChannels + 3;
+    for (size_t scaleIndex = 0; scaleIndex < critic.scales.size(); ++scaleIndex) {
+        auto& scale = critic.scales[scaleIndex];
+        const std::string prefix = "discriminator.discriminators." + std::to_string(scaleIndex) + ".";
+        scale.preGradient.resize(4);
+        scale.activatedGradient.resize(4);
+        auto gradient = scale.logitGradient;
+        for (int layer = 4; layer >= 0; --layer) {
+            const bool logits = layer == 4;
+            const uint32_t width = logits ? 1 : kCriticWidths[layer];
+            const uint32_t channels = layer == 0 ? c : kCriticWidths[layer - 1];
+            const uint32_t size = layer == 0 ? scale.size : scale.sizes[size_t(layer) - 1];
+            const uint32_t next = scale.sizes[size_t(layer)];
+            const std::vector<uint32_t> outShape{n, width, next, next};
+            if (!logits) {
+                // The leaky ReLU's input gradient from its output's.
+                scale.preGradient[size_t(layer)] = tensor(outShape);
+                auto relu = training::activationBackward(vulkanContext, training::Activation::LeakyRelu, outShape);
+                relu->setInput(scale.pre[size_t(layer)], 0);
+                relu->setInput(scale.activatedGradient[size_t(layer)], 1);
+                relu->setInput(scale.preGradient[size_t(layer)], 2);
+                add(relu);
+                gradient = scale.preGradient[size_t(layer)];
+            }
+            layers::ConvAttributes attributes;
+            attributes.kernelShape = {4, 4};
+            attributes.strides = {logits ? 1u : kCriticStrides[layer], logits ? 1u : kCriticStrides[layer]};
+            attributes.pads = {1, 1, 1, 1};
+            const std::string name = logits ? prefix + "logits." : prefix + "layers." + std::to_string(layer) + ".0.";
+            const std::vector<uint32_t> inShape{n, channels, size, size}, weightShape{width, channels, 4, 4};
+            auto input = layer == 0 ? scale.scaled : scale.activated[size_t(layer) - 1];
+            if (withWeights) {
+                auto weights = training::convBackwardWeights(vulkanContext, attributes, inShape, weightShape, outShape);
+                weights->setInput(input, 0);
+                weights->setInput(gradient, 1);
+                weights->setInput(find(name + "weight").gradient, 2);
+                weights->setInput(find(name + "bias").gradient, 3);
+                add(weights);
+            }
+            if (layer == 0 && !inputGradient)
+                break;
+            auto result = tensor(inShape);
+            auto inputs = training::convBackwardInput(vulkanContext, attributes, inShape, weightShape, outShape);
+            inputs->setInput(gradient, 0);
+            inputs->setInput(find(name + "weight").value, 1);
+            inputs->setInput(result, 2);
+            add(inputs);
+            if (layer > 0) {
+                scale.activatedGradient[size_t(layer) - 1] = result;
+                if (featureGradient)
+                    featureGradient(critic, scaleIndex, size_t(layer) - 1);
+            } else {
+                scale.scaledGradient = result;
+            }
+        }
+        if (!inputGradient)
+            continue;
+        // Through the input's scaling (times 2) and, for the second scale, its average pool, into the pairs' gradient.
+        const uint32_t count = n * c * scale.size * scale.size;
+        if (scaleIndex == 0) {
+            auto affine = training::affine(vulkanContext, count, 2.0f, 0.0f, true);
+            affine->setInput(scale.scaledGradient, 0);
+            affine->setInput(inputGradient, 1);
+            add(affine);
+        } else {
+            scale.inputGradient = tensor({n, c, scale.size, scale.size});
+            auto affine = training::affine(vulkanContext, count, 2.0f, 0.0f, true);
+            affine->setInput(scale.scaledGradient, 0);
+            affine->setInput(scale.inputGradient, 1);
+            add(affine);
+            auto pool = training::averagePoolBackward(vulkanContext, {n, c, config.size, config.size}, true);
+            pool->setInput(scale.inputGradient, 0);
+            pool->setInput(inputGradient, 1);
+            add(pool);
+        }
+    }
+}
+
+std::vector<float> PhotoEnhancerTraining::randomAugmentation() {
+    // As train_photo_enhancer.augment_pair(), once for the real and once for the fake pairs: brightness and contrast
+    // per sample, one roll and one cutout per call.
+    const int s = int(config.size);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> numbers;
+    for (int half = 0; half < 2; ++half) {
+        std::uniform_int_distribution<int> shift(-s / 8, s / 8), position(0, s - 1);
+        const int shiftY = shift(random), shiftX = shift(random);
+        // Python's floor division of the first shift by two.
+        const int rollY = shiftY >= 0 ? shiftY / 2 : -((-shiftY + 1) / 2);
+        const int cy = position(random), cx = position(random);
+        for (uint32_t k = 0; k < config.batch; ++k) {
+            const float brightness = (uniform(random) - 0.5f) * 0.4f, contrast = uniform(random) + 0.5f;
+            numbers.insert(numbers.end(), {brightness, contrast, float(rollY), float(shiftX), float(cy), float(cx)});
+        }
+    }
+    return numbers;
+}
+
+void PhotoEnhancerTraining::setAugmentation(const std::vector<float>& numbers) {
+    if (!augmentation || numbers.size() != 12 * config.batch)
+        throw std::invalid_argument("PhotoEnhancerTraining: augmentation needs the discriminator and 2 x batch x 6");
+    augmentation->getDataBuffer(0).memcopyFrom(numbers);
+    augmentationGiven = true;
+}
+
+float PhotoEnhancerTraining::discriminatorLoss() const {
+    float sum = 0.0f;
+    for (const auto& total : discriminatorTotals) {
+        std::vector<float> value(1);
+        total->getDataBuffer(0).memcopyTo(value);
+        sum += value[0];
+    }
+    return sum;
+}
+
+float PhotoEnhancerTraining::adversarialLoss() const {
+    float sum = 0.0f;
+    for (const auto& total : adversarialTotals) {
+        std::vector<float> value(1);
+        total->getDataBuffer(0).memcopyTo(value);
+        sum += value[0];
+    }
+    return config.adversarial > 0.0f ? sum / config.adversarial : 0.0f;
+}
+
+float PhotoEnhancerTraining::featureMatchingLoss() const {
+    float sum = 0.0f;
+    for (const auto& total : matchingTotals) {
+        std::vector<float> value(1);
+        total->getDataBuffer(0).memcopyTo(value);
+        sum += value[0];
+    }
+    return config.featureMatching > 0.0f ? sum / config.featureMatching : 0.0f;
+}
 
 std::shared_ptr<TensorElement<float>> PhotoEnhancerTraining::tensor(const std::vector<uint32_t>& shape) {
     return vulkanContext.create<TensorElement<float>>(shape);
@@ -631,13 +986,19 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
         rows->getDataBuffer(0).memcopyFrom(rowValues);
 }
 
-void PhotoEnhancerTraining::step() { graph->submitAndWait(vulkanContext.getGraphicsQueue(), 0); }
+void PhotoEnhancerTraining::step() {
+    if (augmentation && !augmentationGiven)
+        augmentation->getDataBuffer(0).memcopyFrom(randomAugmentation());
+    augmentationGiven = false;
+    graph->submitAndWait(vulkanContext.getGraphicsQueue(), 0);
+}
 
 void PhotoEnhancerTraining::save(const std::string& directory, bool averages) const {
     std::filesystem::create_directories(directory);
     std::ofstream manifest(std::filesystem::path(directory) / "parameters.txt");
     for (const auto& parameter : parameters) {
-        const auto& source = averages && !config.forwardOnly ? parameter.average : parameter.value;
+        const auto& source =
+            averages && !config.forwardOnly && parameter.group != Discriminator ? parameter.average : parameter.value;
         std::vector<float> values(source->getDataElementCount());
         source->getDataBuffer(0).memcopyTo(values);
         std::ofstream(std::filesystem::path(directory) / (parameter.name + ".bin"), std::ios::binary)
@@ -730,7 +1091,7 @@ void PhotoEnhancerTraining::setParameter(const std::string& name, const std::vec
     if (values.size() != parameter.value->getDataElementCount())
         throw std::invalid_argument("PhotoEnhancerTraining: " + name + " has another size");
     parameter.value->getDataBuffer(0).memcopyFrom(values);
-    if (!config.forwardOnly)
+    if (!config.forwardOnly && parameter.group != Discriminator)
         parameter.average->getDataBuffer(0).memcopyFrom(values);
 }
 

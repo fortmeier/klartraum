@@ -243,6 +243,113 @@ def vgg_case(out: Path, seed: int) -> None:
     save(out, "max_pool", {"x": x, "y": y, "dy": dy, "dx": x.grad})
 
 
+def augment_with(pair: torch.Tensor, parameters: torch.Tensor) -> torch.Tensor:
+    """train_photo_enhancer.augment_pair() with its random numbers given, per sample: brightness, contrast, the roll
+    (y, x) and the cutout centre (y, x)."""
+    b, c, h, w = pair.shape
+    out = []
+    for k in range(b):
+        brightness, contrast, sy, sx, cy, cx = parameters[k].tolist()
+        image = pair[k:k + 1, -3:] + brightness
+        mean = image.mean(dim=1, keepdim=True)
+        image = (image - mean) * contrast + mean
+        sample = torch.cat([pair[k:k + 1, :-3], image], dim=1)
+        sample = torch.roll(sample, shifts=(int(sy), int(sx)), dims=(2, 3))
+        mask = torch.ones(1, 1, h, w)
+        cy, cx = int(cy), int(cx)
+        mask[:, :, max(0, cy - h // 4):cy + h // 4, max(0, cx - w // 4):cx + w // 4] = 0
+        out.append(sample * mask)
+    return torch.cat(out)
+
+
+def gan_step_case(out: Path, seed: int) -> None:
+    """One adversarial training step as train_photo_enhancer.py takes it, on 64 x 64 crops: the discriminator's step
+    on the augmented real and fake pairs (non-saturating loss, Adam lr 2e-4), then the generator's with the
+    photometric losses, the adversarial loss (0.3) and feature matching (2) against the updated discriminator (no R1).
+    The augmentations' random numbers are given (augment_with)."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from hash_texture import SurfaceTexture
+    from train_photo_enhancer import Generator, MultiScaleDiscriminator
+
+    torch.manual_seed(seed)
+    generator = torch.Generator().manual_seed(seed)
+    texture = SurfaceTexture(classes=(2, 3, 4), levels=4, features=2, log2_table=10, base=4, finest=64)
+    network = Generator(widths=(32, 64, 128), extra=texture.channels, blur_depth=False, appearance=8, norm="channel")
+    codes = torch.nn.Embedding(5, 8)
+    discriminator = MultiScaleDiscriminator()
+    with torch.no_grad():
+        for grid in texture.grids:
+            grid.embeddings.copy_(torch.rand(grid.embeddings.shape, generator=generator) * 0.2 - 0.1)
+        for head in list(network.film.gammas) + list(network.film.betas):
+            head.weight.copy_(torch.randn(head.weight.shape, generator=generator) * 0.1)
+            head.bias.copy_(torch.randn(head.bias.shape, generator=generator) * 0.1)
+        network.out.weight.copy_(torch.randn(network.out.weight.shape, generator=generator) * 0.2)
+        codes.weight.copy_(torch.randn(codes.weight.shape, generator=generator) * 0.1)
+    b, size = 2, 64
+    channels = torch.rand(b, 11, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.randint(0, 7, (b, size, size), generator=generator)
+    target = torch.rand(b, 3, size, size, generator=generator)
+    rows = torch.tensor([3, 1])
+    # Per sample of [real pairs; fake pairs]: brightness, contrast, roll y, roll x, cutout y, x (one roll and cutout per
+    # call of augment_pair, so per half).
+    augmentation = torch.tensor([[0.1, 1.2, 2, -5, 10, 40], [-0.15, 0.7, 2, -5, 10, 40],
+                                 [0.05, 0.9, -3, 7, 50, 3], [0.18, 1.4, -3, 7, 50, 3]], dtype=torch.float32)
+    generator_parameters = {"texture.table": None, **{f"generator.{k}": v for k, v in network.named_parameters()},
+                            "codes.weight": codes.weight}
+    discriminator_parameters = {f"discriminator.{k}": v for k, v in discriminator.named_parameters()}
+    tensors = {"channels": channels, "coordinates": coordinates, "classes": classes.float(), "target": target,
+               "rows": rows.float(), "augmentation": augmentation}
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in {**generator_parameters, **discriminator_parameters}.items():
+        tensors["before." + name] = (table if name == "texture.table" else value).detach().clone()
+
+    x = torch.cat([channels, texture(coordinates, classes)], dim=1)
+    fake = network(x, None, codes(rows))
+    tensors["image"] = fake
+    optimise_d = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
+    real_pair, fake_pair = torch.cat([channels, target], 1), torch.cat([channels, fake.detach()], 1)
+    augmented = augment_with(torch.cat([real_pair, fake_pair]), augmentation)
+    loss_d = 0.0
+    for (_, real_logits), (_, fake_logits) in zip(discriminator(augmented[:b]), discriminator(augmented[b:])):
+        loss_d = loss_d + F.softplus(-real_logits).mean() + F.softplus(fake_logits).mean()
+    optimise_d.zero_grad()
+    loss_d.backward()
+    optimise_d.step()
+    tensors["loss_d"] = loss_d.detach().reshape(1)
+
+    loss = 0.5 * F.l1_loss(fake, target) + 5.0 * F.l1_loss(F.avg_pool2d(fake, 8), F.avg_pool2d(target, 8))
+    fake_pair, real_pair = torch.cat([channels, fake], 1), torch.cat([channels, target], 1)
+    adversarial = feature_matching = 0.0
+    for (fake_features, fake_logits), (real_features, _) in zip(discriminator(fake_pair), discriminator(real_pair)):
+        adversarial = adversarial + F.softplus(-fake_logits).mean()
+        for f, r in zip(fake_features, real_features):
+            feature_matching = feature_matching + F.l1_loss(f, r.detach()) / len(fake_features)
+    loss = loss + 0.3 * adversarial + 2.0 * feature_matching + 1e-2 * codes(rows).pow(2).sum(1).mean()
+    tensors["loss_adversarial"] = adversarial.detach().reshape(1)
+    tensors["loss_feature_matching"] = feature_matching.detach().reshape(1)
+    network_parameters = list(network.parameters())
+    optimiser = torch.optim.Adam([{"params": network_parameters, "lr": 1e-4},
+                                  {"params": [g.embeddings for g in texture.grids], "lr": 1e-2, "betas": (0.9, 0.99)},
+                                  {"params": list(codes.parameters()), "lr": 5e-3, "betas": (0.9, 0.99)}],
+                                 lr=1e-4, betas=(0.5, 0.999))
+    optimiser.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network_parameters, 1.0)
+    optimiser.step()
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in {**generator_parameters, **discriminator_parameters}.items():
+        tensors["after." + name] = (table if name == "texture.table" else value).detach().clone()
+    save(out, "gan_step", tensors)
+    (out / "gan_step_parameters.txt").write_text("\n".join([*generator_parameters, *discriminator_parameters]) + "\n")
+    grid = texture.grids[0]
+    (out / "gan_step_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
+        "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 2 3 4\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -264,6 +371,7 @@ def main() -> None:
     generator_step_case(args.out, 14)
     vgg_case(args.out, 15)
     generator_step_case(args.out, 14, "generator_step_vgg", 1.0)
+    gan_step_case(args.out, 16)
     print(f"fixtures in {args.out}")
 
 

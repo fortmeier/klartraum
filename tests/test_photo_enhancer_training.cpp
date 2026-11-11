@@ -29,6 +29,10 @@
  *   rate of PyTorch's (Adam's first step moves each by about the learning rate, so a wrong gradient shows)
  * - generatorStepWithVggMatchesPyTorch: the same step with the VGG perceptual loss (weight 1) also gives PyTorch's
  *   perceptual loss and updated parameters (skips without the VGG weights)
+ * - ganStepMatchesPyTorch: one step with the 2-scale PatchGAN on 64 x 64 crops, the augmentations' numbers given:
+ *   the discriminator's loss, the adversarial loss and the feature matching equal PyTorch's, and after the
+ *   discriminator's and the generator's Adam steps all parameters of both are within a tenth of their learning rate
+ *   of PyTorch's
  * - forwardOnlyRendersTheSameImage: parameters saved from a training and loaded into a forward-only instance render
  *   PyTorch's image of the batch; with every row's code set to one code, the crops render as with that code
  * - maxPoolMatchesPyTorch: a 2 x 2 max-pool and its input gradient equal F.max_pool2d's
@@ -669,4 +673,52 @@ TEST(PhotoEnhancerTraining, vggLossMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_NEAR(loss.loss(), fixture.values("loss")[0], 1e-4f * fixture.values("loss")[0]);
     EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-3f);
+}
+
+TEST(PhotoEnhancerTraining, ganStepMatchesPyTorch) {
+    const Fixture fixture("gan_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoEnhancerTrainingConfig config;
+    config.batch = 2;
+    config.size = 64;
+    config.widths = {32, 64, 128};
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + "gan_step_texture.txt");
+    config.appearances = 5;
+    config.appearanceSize = 8;
+    config.adversarial = 0.3f;
+    config.featureMatching = 2.0f;
+    neural::PhotoEnhancerTraining trainer(vc, config);
+    std::vector<std::string> names;
+    {
+        std::ifstream file(kFixtures + "gan_step_parameters.txt");
+        for (std::string parameter; file >> parameter;)
+            names.push_back(parameter);
+    }
+    EXPECT_EQ(trainer.parameterNames(), names);
+    for (const auto& parameter : names)
+        trainer.setParameter(parameter, fixture.values("before." + parameter));
+    trainer.setBatch(fixture.values("channels"), fixture.values("coordinates"), fixture.values("classes"),
+                     fixture.values("target"), fixture.values("rows"));
+    trainer.setAugmentation(fixture.values("augmentation"));
+    trainer.step();
+    EXPECT_LT(relativeError(trainer.image(), fixture.values("image")), 1e-5f);
+    EXPECT_NEAR(trainer.discriminatorLoss(), fixture.values("loss_d")[0], 1e-4f);
+    EXPECT_NEAR(trainer.adversarialLoss(), fixture.values("loss_adversarial")[0], 1e-4f);
+    EXPECT_NEAR(trainer.featureMatchingLoss(), fixture.values("loss_feature_matching")[0], 1e-4f);
+    for (const auto& parameter : names) {
+        const auto after = fixture.values("after." + parameter);
+        std::vector<float> actual(after.size());
+        trainer.parameter(parameter)->getDataBuffer(0).memcopyTo(actual);
+        const float rate = parameter == "texture.table"                ? 1e-2f
+                           : parameter == "codes.weight"               ? 5e-3f
+                           : parameter.rfind("discriminator.", 0) == 0 ? 2e-4f
+                                                                       : 1e-4f;
+        float worst = 0.0f;
+        for (size_t i = 0; i < actual.size(); ++i)
+            worst = std::max(worst, std::abs(actual[i] - after[i]));
+        EXPECT_LT(worst, 0.1f * rate) << parameter;
+    }
 }

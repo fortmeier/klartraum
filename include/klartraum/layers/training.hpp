@@ -267,6 +267,48 @@ ComputeGraphElementPtr channelAffine(VulkanContext& vulkanContext, const layers:
                                      const std::vector<float>& scale, const std::vector<float>& shift,
                                      bool backward = false, bool accumulate = false);
 
+/**
+ * @brief DiffAugment of discriminator pairs (train_photo_enhancer.augment_pair()) with given random numbers per sample:
+ * brightness and contrast on the image (the last three channels), a roll of all channels and a cutout of a quarter of
+ * the height and width around a centre.
+ *
+ * Slots: 0 pairs (N x C x H x W), 1 numbers (N x 6: brightness, contrast, roll y, roll x, cutout y, x), 2 output.
+ */
+ComputeGraphElementPtr augmentPair(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief A 2 x 2 average pool with stride 2 of an N x C x H x W tensor.
+ *
+ * Slots: 0 input, 1 output (N x C x H/2 x W/2).
+ */
+ComputeGraphElementPtr averagePool(VulkanContext& vulkanContext, const layers::Shape& input);
+
+/**
+ * @brief The input gradient of averagePool(), written or, with @p accumulate, added.
+ *
+ * Slots: 0 output gradient, 1 input gradient (@p input).
+ */
+ComputeGraphElementPtr averagePoolBackward(VulkanContext& vulkanContext, const layers::Shape& input,
+                                           bool accumulate = false);
+
+/**
+ * @brief The non-saturating GAN loss @p weight x mean softplus(@p sign x) over @p count logits from @p offset (sign -1
+ * for real, +1 for fake samples): the logits' gradients and each one's share of the loss.
+ *
+ * Slots: 0 logits, 1 gradients, 2 shares (all of the logits' tensor; only the range is written).
+ */
+ComputeGraphElementPtr softplusLoss(VulkanContext& vulkanContext, uint32_t offset, uint32_t count, float sign,
+                                    float weight);
+
+/**
+ * @brief y = x * @p scale + @p shift for @p count elements; with @p backward the input gradient dy * @p scale.
+ * Written or, with @p accumulate, added.
+ *
+ * Slots: 0 input (backward: output gradient), 1 output (backward: input gradient).
+ */
+ComputeGraphElementPtr affine(VulkanContext& vulkanContext, uint32_t count, float scale, float shift,
+                              bool backward = false, bool accumulate = false);
+
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {
     float learningRate = 1e-3f;
