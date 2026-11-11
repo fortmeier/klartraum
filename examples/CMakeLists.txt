@@ -218,3 +218,13 @@ target_link_libraries(photo_enhancer_example
 )
 
 add_dependencies(photo_enhancer_example Shaders)
+
+add_executable(crate_gbuffer_example
+    crate_gbuffer_example.cpp
+)
+
+target_link_libraries(crate_gbuffer_example
+    klartraum_lib
+)
+
+add_dependencies(crate_gbuffer_example Shaders)

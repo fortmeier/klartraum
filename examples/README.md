@@ -36,6 +36,7 @@ relative to the working directory.
 | `qwen_image_example` | Text-to-image and image-to-image with the Qwen-Image diffusion model (GGUF transformer and text encoder, ONNX VAE) | no |
 | `landscape_gbuffer_example` | Metric depth and semantic classes of images, estimated by two networks (ONNX) | no |
 | `photo_enhancer_example` | The bonsai landscape's forest fly-in made photo-realistic: G-buffers, a learnable hash-grid surface texture and a GAN generator (ONNX) per frame | no |
+| `crate_gbuffer_example` | A toy scene for the photo enhancer: a crate on a floor from random cameras, with all G-buffers (`GBufferMeshRenderer`) | no |
 
 ### Camera controls
 
@@ -713,4 +714,26 @@ downsampled rendering), as PNG. A model trained with the season conditioning
 ```bash
 ./build/examples/photo_enhancer_example --out-dir build/TestingOutput/photo_enhancer
 ffmpeg -framerate 30 -i build/TestingOutput/photo_enhancer/frames/frame_%04d.png -pix_fmt yuv420p enhanced.mp4
+```
+
+### `crate_gbuffer_example`
+
+A toy scene for the photo enhancer pipeline: a crate (a box whose six faces each
+have their own surface coordinates and object id) standing on a floor, drawn by
+`GBufferMeshRenderer` from random cameras around it (any direction, 8 to 40
+degrees above, 2.2 to 3.8 away). Every view is written with all G-buffers like a
+frame of the `tree_bonsai_example` fly-ins (`frames/classical_*.png`, the class,
+depth, 16-bit depth and u and v images, and `cameras_classical.csv`), so that
+`scripts/neural/prepare_photo_pairs.py` and `add_surface_coordinates.py` (with
+their sample size option) turn the views into training pairs.
+
+| Option | Meaning |
+|---|---|
+| `--views N` | Number of views (default 180) |
+| `--size S` | Width and height of the images (default 512) |
+| `--seed N` | Seed of the cameras (default 1) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/crate/flights/crate_a`) |
+
+```bash
+./build/examples/crate_gbuffer_example --views 180 --seed 1 --out-dir build/TestingOutput/crate/flights/crate_a
 ```

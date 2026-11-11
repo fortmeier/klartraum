@@ -126,8 +126,9 @@ foreach(SLANG ${SLANG_SOURCE_FILES})
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
   set(SHADER_OPTIONS ${SLANGC_OPTIONS})
-  if(FILE_NAME MATCHES "^tree/")
-    # The tree shaders include the model they share with the C++ code (include/klartraum/tree/*.hpp) and are
+  if(FILE_NAME MATCHES "^(tree|gbuffer)/")
+    # The tree shaders (and the G-buffer mesh shaders, which use their encodings) include the model they share with
+    # the C++ code (include/klartraum/tree/*.hpp) and are
     # written with GLSL names (import glsl) and GLSL matrix semantics: m[i] is column i and m * v the matrix product.
     # Slang gives those semantics on GLM's column-major memory with its default (row-major) matrix layout.
     list(REMOVE_ITEM SHADER_OPTIONS -matrix-layout-column-major)
@@ -318,6 +319,7 @@ add_executable(
   tests/test_image_io.cpp
   tests/test_photo_enhancer.cpp
   tests/test_hash_texture.cpp
+  tests/test_gbuffer_mesh_renderer.cpp
   tests/test_gguf_qwen35.cpp
   tests/test_gguf_tokenizer.cpp
   tests/test_render_over_targets.cpp
@@ -401,6 +403,7 @@ set(KLARTRAUM_LIB_SRC
   src/qwen_image_transformer.cpp
   src/image_io.cpp
   src/hash_texture.cpp
+  src/gbuffer_mesh_renderer.cpp
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
