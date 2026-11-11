@@ -52,6 +52,26 @@ ComputeGraphElementPtr sigmoidMseLossBackward(VulkanContext& vulkanContext, cons
  */
 ComputeGraphElementPtr columnSum(VulkanContext& vulkanContext, uint32_t rows, uint32_t columns);
 
+/**
+ * @brief The input gradient of layers::conv() (NCHW input, OIHW weights, ungrouped, undilated): every input element
+ * gathers the weights times the output gradients of the outputs it reaches.
+ *
+ * Slots: 0 output gradient (@p output), 1 weights (@p weights), 2 input gradient (@p input).
+ */
+ComputeGraphElementPtr convBackwardInput(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
+                                         const layers::Shape& input, const layers::Shape& weights,
+                                         const layers::Shape& output);
+
+/**
+ * @brief The weight and bias gradients of layers::conv(): one workgroup per weight (and per bias) adds its products
+ * over the batch and the output positions, in a fixed order.
+ *
+ * Slots: 0 input (@p input), 1 output gradient (@p output), 2 weight gradients (@p weights), 3 bias gradients (O).
+ */
+ComputeGraphElementPtr convBackwardWeights(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
+                                           const layers::Shape& input, const layers::Shape& weights,
+                                           const layers::Shape& output);
+
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {
     float learningRate = 1e-3f;

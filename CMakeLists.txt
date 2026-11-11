@@ -320,6 +320,7 @@ add_executable(
   tests/test_photo_enhancer.cpp
   tests/test_hash_texture.cpp
   tests/test_gbuffer_mesh_renderer.cpp
+  tests/test_photo_enhancer_training.cpp
   tests/test_gguf_qwen35.cpp
   tests/test_gguf_tokenizer.cpp
   tests/test_render_over_targets.cpp
