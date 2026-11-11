@@ -309,6 +309,55 @@ ComputeGraphElementPtr softplusLoss(VulkanContext& vulkanContext, uint32_t offse
 ComputeGraphElementPtr affine(VulkanContext& vulkanContext, uint32_t count, float scale, float shift,
                               bool backward = false, bool accumulate = false);
 
+/**
+ * @brief Where per-object operations find a pixel's object: an object map (indices as floats, 0 for none) of
+ * objectsWidth x objectsHeight per sample, and for pixel (y, x) of the values its entry (y step + offset, x step +
+ * offset), e.g. step 8 and offset 4 for values at an eighth of the map's resolution.
+ */
+struct ObjectSampling {
+    uint32_t objectsWidth = 0;
+    uint32_t objectsHeight = 0;
+    uint32_t step = 1;
+    uint32_t offset = 0;
+};
+
+/**
+ * @brief The mean (or, with @p mean false, the sum) of an N x C x H x W tensor's values over each object's pixels,
+ * and the objects' pixel counts; objects without pixels get 0.
+ *
+ * Slots: 0 values, 1 object map, 2 means (N x objects x C), 3 counts (N x objects).
+ */
+ComputeGraphElementPtr objectMean(VulkanContext& vulkanContext, const layers::Shape& values, uint32_t objects,
+                                  const ObjectSampling& sampling, bool mean = true);
+
+/**
+ * @brief Every pixel of an N x C x H x W grid gets its object's C numbers (0 off the objects), with @p divide divided
+ * by the object's pixel count (the backward pass of objectMean()), written to (or, with @p accumulate, added to)
+ * channels @p targetOffset.. of an N x @p targetChannels x H x W tensor: e.g. a latent G-buffer.
+ *
+ * Slots: 0 vectors (N x objects x C), 1 object map, 2 counts (N x objects), 3 output.
+ */
+ComputeGraphElementPtr objectBroadcast(VulkanContext& vulkanContext, const layers::Shape& grid, uint32_t objects,
+                                       const ObjectSampling& sampling, uint32_t targetChannels, uint32_t targetOffset,
+                                       bool divide = false, bool accumulate = false);
+
+/**
+ * @brief A VAE's latents from per-object statistics (@p size means, then @p size log-variances): mu + exp(lv / 2) eps,
+ * and each object's share of @p weight x KL(N(mu, sigma) || N(0, 1)) / batch (0 for objects without pixels).
+ *
+ * Slots: 0 statistics (N x objects x 2 size), 1 noise (N x objects x size), 2 counts, 3 latents, 4 shares (N x
+ * objects).
+ */
+ComputeGraphElementPtr vae(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size, float weight);
+
+/**
+ * @brief The statistics' gradient of vae() from the latents' gradient and its KL term.
+ *
+ * Slots: 0 statistics, 1 noise, 2 counts, 3 latents' gradient, 4 statistics' gradient.
+ */
+ComputeGraphElementPtr vaeBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size,
+                                   float weight);
+
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {
     float learningRate = 1e-3f;

@@ -39,6 +39,10 @@
  * - vggLossMatchesPyTorch: the perceptual loss of an image against a target through VGG-16 up to relu4_3 and its
  *   gradient (added to a zeroed image gradient) equal train_photo_enhancer.Vgg's (skips without
  *   scripts/neural/export_vgg16.py's weights)
+ * - objectMeanMatchesPyTorch: the mean over each object's pixels (an object missing in one sample) and the pixel
+ *   counts, their backward pass (broadcast divided by the counts), the latent G-buffer (broadcast) and its backward
+ *   pass (sum over the object's pixels) equal latent_renderer.object_mean()'s and splat()'s
+ * - vaeMatchesPyTorch: the VAE's latents and KL divergence and the statistics' gradient equal PyTorch's
  * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  *
@@ -721,4 +725,120 @@ TEST(PhotoEnhancerTraining, ganStepMatchesPyTorch) {
             worst = std::max(worst, std::abs(actual[i] - after[i]));
         EXPECT_LT(worst, 0.1f * rate) << parameter;
     }
+}
+
+TEST(PhotoEnhancerTraining, objectMeanMatchesPyTorch) {
+    const Fixture fixture("object_mean");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("values");
+    const training::ObjectSampling sampling{shape[3], shape[2], 1, 0};
+    checkElement(vc, fixture, training::objectMean(vc, shape, 2, sampling),
+                 {{"values", shape}, {"objects", {2, 5, 7}}, {"means", {2, 2, 6}}, {"counts", {2, 2}}}, 2);
+    // The mean's backward pass: the gradient divided by the counts, at the object's pixels.
+    {
+        auto vectors = tensor(vc, {2, 2, 6}), objects = tensor(vc, {2, 5, 7}), counts = tensor(vc, {2, 2});
+        auto output = tensor(vc, shape);
+        auto broadcast = training::objectBroadcast(vc, shape, 2, sampling, 6, 0, true);
+        broadcast->setInput(vectors, 0);
+        broadcast->setInput(objects, 1);
+        broadcast->setInput(counts, 2);
+        broadcast->setInput(output, 3);
+        ComputeGraph graph(vc, 1);
+        graph.compileFrom(broadcast);
+        vectors->getDataBuffer(0).memcopyFrom(fixture.values("dmeans"));
+        objects->getDataBuffer(0).memcopyFrom(fixture.values("objects"));
+        counts->getDataBuffer(0).memcopyFrom(fixture.values("counts"));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        EXPECT_LT(relativeError(read(output), fixture.values("dvalues")), 1e-5f);
+    }
+    // The latent G-buffer (3 numbers per object into channels 1..3 of 5) and its backward pass.
+    {
+        const std::vector<uint32_t> grid{2, 3, 5, 7};
+        auto latents = tensor(vc, {2, 2, 3}), objects = tensor(vc, {2, 5, 7}), counts = tensor(vc, {2, 2});
+        auto gbuffer = tensor(vc, {2, 5, 5, 7}), gradient = tensor(vc, grid), latentGradient = tensor(vc, {2, 2, 3});
+        auto sums = tensor(vc, {2, 2});
+        auto broadcast = training::objectBroadcast(vc, grid, 2, sampling, 5, 1);
+        broadcast->setInput(latents, 0);
+        broadcast->setInput(objects, 1);
+        broadcast->setInput(counts, 2);
+        broadcast->setInput(gbuffer, 3);
+        auto back = training::objectMean(vc, grid, 2, sampling, false);
+        back->setInput(gradient, 0);
+        back->setInput(objects, 1);
+        back->setInput(latentGradient, 2);
+        back->setInput(sums, 3);
+        back->addDependency(broadcast);
+        ComputeGraph graph(vc, 1);
+        graph.compileFrom(back);
+        latents->getDataBuffer(0).memcopyFrom(fixture.values("latents"));
+        objects->getDataBuffer(0).memcopyFrom(fixture.values("objects"));
+        counts->getDataBuffer(0).memcopyFrom(fixture.values("counts"));
+        gbuffer->getDataBuffer(0).memcopyFrom(std::vector<float>(2 * 5 * 35, -1.0f));
+        gradient->getDataBuffer(0).memcopyFrom(fixture.values("dsplatted"));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        const auto written = read(gbuffer), expected = fixture.values("splatted");
+        for (uint32_t n = 0; n < 2; ++n)
+            for (uint32_t c = 0; c < 5; ++c)
+                for (uint32_t p = 0; p < 35; ++p) {
+                    const float value = written[(n * 5 + c) * 35 + p];
+                    if (c == 0 || c == 4)
+                        EXPECT_EQ(value, -1.0f);
+                    else
+                        EXPECT_NEAR(value, expected[(n * 3 + c - 1) * 35 + p], 1e-6f);
+                }
+        EXPECT_LT(relativeError(read(latentGradient), fixture.values("dlatents")), 1e-5f);
+    }
+}
+
+TEST(PhotoEnhancerTraining, vaeMatchesPyTorch) {
+    const Fixture fixture("vae");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    // The statistics as the encoder pools them: per object the means, then the log-variances.
+    const auto mu = fixture.values("mu"), lv = fixture.values("log_variance");
+    std::vector<float> statistics;
+    for (size_t object = 0; object < 4; ++object) {
+        statistics.insert(statistics.end(), mu.begin() + object * 3, mu.begin() + object * 3 + 3);
+        statistics.insert(statistics.end(), lv.begin() + object * 3, lv.begin() + object * 3 + 3);
+    }
+    auto stats = tensor(vc, {2, 2, 6}), epsilon = tensor(vc, {2, 2, 3}), counts = tensor(vc, {2, 2});
+    auto latents = tensor(vc, {2, 2, 3}), shares = tensor(vc, {2, 2}), dlatents = tensor(vc, {2, 2, 3});
+    auto dstats = tensor(vc, {2, 2, 6}), total = tensor(vc, {1});
+    auto forward = training::vae(vc, 2, 2, 3, 0.3f);
+    forward->setInput(stats, 0);
+    forward->setInput(epsilon, 1);
+    forward->setInput(counts, 2);
+    forward->setInput(latents, 3);
+    forward->setInput(shares, 4);
+    auto add = training::sum(vc, 4);
+    add->setInput(shares, 0);
+    add->setInput(total, 1);
+    add->addDependency(forward);
+    auto backward = training::vaeBackward(vc, 2, 2, 3, 0.3f);
+    backward->setInput(stats, 0);
+    backward->setInput(epsilon, 1);
+    backward->setInput(counts, 2);
+    backward->setInput(dlatents, 3);
+    backward->setInput(dstats, 4);
+    backward->addDependency(add);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    stats->getDataBuffer(0).memcopyFrom(statistics);
+    epsilon->getDataBuffer(0).memcopyFrom(fixture.values("epsilon"));
+    counts->getDataBuffer(0).memcopyFrom(fixture.values("counts"));
+    dlatents->getDataBuffer(0).memcopyFrom(fixture.values("dsample"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(latents), fixture.values("sample")), 1e-5f);
+    EXPECT_NEAR(read(total)[0], 0.3f * fixture.values("kl")[0], 1e-5f);
+    const auto gradient = read(dstats), dmu = fixture.values("dmu"), dlv = fixture.values("dlog_variance");
+    for (size_t object = 0; object < 4; ++object)
+        for (size_t d = 0; d < 3; ++d) {
+            EXPECT_NEAR(gradient[object * 6 + d], dmu[object * 3 + d], 1e-5f);
+            EXPECT_NEAR(gradient[object * 6 + 3 + d], dlv[object * 3 + d], 1e-5f);
+        }
 }

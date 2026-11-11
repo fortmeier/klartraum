@@ -350,6 +350,96 @@ def gan_step_case(out: Path, seed: int) -> None:
         "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 2 3 4\n")
 
 
+def latent_cases(out: Path, seed: int) -> None:
+    """The latent renderer's elements (latent_renderer.py): the mean over each object's pixels and its gradient, the
+    VAE's sample and KL with their gradients, and one training step of the whole renderer (texture, encoder, decoder;
+    L1, block-mean L1, VGG and KL; clipping and Adam) on a batch of two 32 x 32 crops with given noise."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from hash_texture import SurfaceTexture
+    from latent_renderer import LatentRenderer, kl_divergence, object_mean, splat
+    from train_photo_enhancer import Vgg
+
+    generator = torch.Generator().manual_seed(seed)
+    # Object means: 2 samples, 6 channels, 5 x 7 pixels, objects 0 (none), 1 and 2; object 2 missing in sample 1.
+    values = torch.randn(2, 6, 5, 7, generator=generator, requires_grad=True)
+    objects = torch.randint(0, 3, (2, 5, 7), generator=generator)
+    objects[1][objects[1] == 2] = 1
+    means, counts = object_mean(values, objects, 2)
+    weights = torch.randn(means.shape, generator=generator)
+    (means * weights).sum().backward()
+    latents = torch.randn(2, 2, 3, generator=generator, requires_grad=True)
+    splatted = splat(latents, objects)
+    splat_weights = torch.randn(splatted.shape, generator=generator)
+    (splatted * splat_weights).sum().backward()
+    save(out, "object_mean", {"values": values, "objects": objects.float(), "means": means, "counts": counts,
+                              "dmeans": weights, "dvalues": values.grad, "latents": latents, "splatted": splatted,
+                              "dsplatted": splat_weights, "dlatents": latents.grad})
+    # VAE: 2 samples, 2 objects (object 2 empty in sample 1), latent 3.
+    mu = torch.randn(2, 2, 3, generator=generator, requires_grad=True)
+    log_variance = (torch.randn(2, 2, 3, generator=generator) * 0.5).requires_grad_(True)
+    epsilon = torch.randn(2, 2, 3, generator=generator)
+    vae_counts = torch.tensor([[4.0, 3.0], [5.0, 0.0]])
+    sample = mu + (0.5 * log_variance).exp() * epsilon
+    dsample = torch.randn(sample.shape, generator=generator)
+    kl = kl_divergence(mu, log_variance, vae_counts)
+    ((sample * dsample).sum() + 0.3 * kl).backward()
+    save(out, "vae", {"mu": mu, "log_variance": log_variance, "epsilon": epsilon, "counts": vae_counts,
+                      "sample": sample, "kl": kl.reshape(1), "dsample": dsample, "dmu": mu.grad,
+                      "dlog_variance": log_variance.grad})
+
+    # One training step.
+    torch.manual_seed(seed)
+    texture = SurfaceTexture(classes=(3,), levels=4, features=2, log2_table=10, base=4, finest=64)
+    model = LatentRenderer(texture, geometry=4, latent=4, objects=1)
+    with torch.no_grad():
+        for grid in texture.grids:
+            grid.embeddings.copy_(torch.rand(grid.embeddings.shape, generator=generator) * 0.2 - 0.1)
+        model.generator.out.weight.copy_(torch.randn(model.generator.out.weight.shape, generator=generator) * 0.2)
+    b, size = 2, 32
+    geometry = torch.rand(b, 4, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.zeros(b, size, size, dtype=torch.long)
+    classes[:, 6:26, 8:28] = 3
+    objects = (classes == 3).long()
+    photos = torch.rand(b, 3, size, size, generator=generator)
+    epsilon = torch.randn(b, 1, 4, generator=generator)
+    parameters = {"texture.table": None, **{f"generator.{k}": v for k, v in model.generator.named_parameters()},
+                  **{f"encoder.{k}": v for k, v in model.encoder.named_parameters()}}
+    tensors = {"geometry": geometry, "coordinates": coordinates, "classes": classes.float(),
+               "objects": objects.float(), "photos": photos, "epsilon": epsilon}
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in parameters.items():
+        tensors["before." + name] = (table if name == "texture.table" else value).detach().clone()
+    mu, log_variance, latent_counts = model.encode(photos, objects)
+    latents = mu + (0.5 * log_variance).exp() * epsilon
+    image = model(geometry, coordinates, classes, objects, latents)
+    photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
+    perceptual = Vgg().eval().distance(image, photos)
+    kl = kl_divergence(mu, log_variance, latent_counts)
+    loss = photometric + perceptual + 1e-2 * kl
+    network = list(model.generator.parameters()) + list(model.encoder.parameters())
+    optimiser = torch.optim.Adam([{"params": network, "lr": 1e-4},
+                                  {"params": [g.embeddings for g in texture.grids], "lr": 1e-2, "betas": (0.9, 0.99)}],
+                                 lr=1e-4, betas=(0.5, 0.999))
+    optimiser.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network, 1.0)
+    optimiser.step()
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in parameters.items():
+        tensors["after." + name] = (table if name == "texture.table" else value).detach().clone()
+    tensors.update({"image": image, "photometric": photometric.reshape(1), "perceptual": perceptual.reshape(1),
+                    "kl": kl.reshape(1), "mu": mu, "log_variance": log_variance})
+    save(out, "latent_step", tensors)
+    (out / "latent_step_parameters.txt").write_text("\n".join(parameters) + "\n")
+    grid = texture.grids[0]
+    (out / "latent_step_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
+        "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 3\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -372,6 +462,7 @@ def main() -> None:
     vgg_case(args.out, 15)
     generator_step_case(args.out, 14, "generator_step_vgg", 1.0)
     gan_step_case(args.out, 16)
+    latent_cases(args.out, 17)
     print(f"fixtures in {args.out}")
 
 

@@ -121,6 +121,16 @@ struct ScalarAffinePushConstants {
     uint32_t backward, accumulate;
 };
 
+struct ObjectPushConstants {
+    uint32_t batch, channels, height, width, objects, objectsWidth, objectsHeight, step, offset, flag, targetChannels,
+        targetOffset, accumulate;
+};
+
+struct VaePushConstants {
+    uint32_t batch, objects, size;
+    float weight;
+};
+
 struct NormPushConstants {
     uint32_t batch, channels, pixels;
     float epsilon;
@@ -414,6 +424,49 @@ ComputeGraphElementPtr affine(VulkanContext& vulkanContext, uint32_t count, floa
         vulkanContext.create<GeneralComputation<ScalarAffinePushConstants>>("shaders/training/affine.comp.spv");
     operation->setPushConstants({{count, scale, shift, backward ? 1u : 0u, accumulate ? 1u : 0u}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr objectMean(VulkanContext& vulkanContext, const layers::Shape& values, uint32_t objects,
+                                  const ObjectSampling& sampling, bool mean) {
+    const auto [n, c, pixels] = planesOf(values);
+    auto operation =
+        vulkanContext.create<GeneralComputation<ObjectPushConstants>>("shaders/training/object_mean.comp.spv");
+    operation->setPushConstants({{n, c, values[2], values[3], objects, sampling.objectsWidth, sampling.objectsHeight,
+                                  sampling.step, sampling.offset, mean ? 1u : 0u, 0u, 0u, 0u}});
+    operation->setGroupCountX(n * objects * c);
+    return operation;
+}
+
+ComputeGraphElementPtr objectBroadcast(VulkanContext& vulkanContext, const layers::Shape& grid, uint32_t objects,
+                                       const ObjectSampling& sampling, uint32_t targetChannels, uint32_t targetOffset,
+                                       bool divide, bool accumulate) {
+    const auto [n, c, pixels] = planesOf(grid);
+    if (targetOffset + c > targetChannels)
+        throw std::invalid_argument("objectBroadcast: channels beyond the output");
+    auto operation =
+        vulkanContext.create<GeneralComputation<ObjectPushConstants>>("shaders/training/object_broadcast.comp.spv");
+    operation->setPushConstants(
+        {{n, c, grid[2], grid[3], objects, sampling.objectsWidth, sampling.objectsHeight, sampling.step,
+          sampling.offset, divide ? 1u : 0u, targetChannels, targetOffset, accumulate ? 1u : 0u}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr vae(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size,
+                           float weight) {
+    auto operation = vulkanContext.create<GeneralComputation<VaePushConstants>>("shaders/training/vae.comp.spv");
+    operation->setPushConstants({{batch, objects, size, weight}});
+    operation->setGroupCountX((batch * objects + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr vaeBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size,
+                                   float weight) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<VaePushConstants>>("shaders/training/vae_backward.comp.spv");
+    operation->setPushConstants({{batch, objects, size, weight}});
+    operation->setGroupCountX((batch * objects + 63) / 64);
     return operation;
 }
 
