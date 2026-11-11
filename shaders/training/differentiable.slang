@@ -25,6 +25,18 @@ public struct SigmoidActivation : IActivation {
     public static float apply(float x) { return 1.0 / (1.0 + exp(-x)); }
 }
 
+// layers::elu with alpha 1: x for x > 0, exp(x) - 1 otherwise.
+public struct EluActivation : IActivation {
+    [Differentiable]
+    public static float apply(float x) { return x > 0.0 ? x : exp(x) - 1.0; }
+}
+
+// A leaky ReLU with slope 0.2 below zero (the PatchGAN discriminator's).
+public struct LeakyReluActivation : IActivation {
+    [Differentiable]
+    public static float apply(float x) { return x > 0.0 ? x : 0.2 * x; }
+}
+
 // The squared error of a sigmoid output against its target.
 [Differentiable]
 public float sigmoidSquaredError(float logit, no_diff float target) {

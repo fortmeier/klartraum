@@ -48,6 +48,30 @@ ConvBackwardPushConstants convGeometry(const layers::ConvAttributes& attributes,
             attributes.pads[1]};
 }
 
+struct NormPushConstants {
+    uint32_t batch, channels, pixels;
+    float epsilon;
+};
+
+struct UpsamplePushConstants {
+    uint32_t planes, inputHeight, inputWidth;
+};
+
+struct ChannelCopyPushConstants {
+    uint32_t batch, pixels, sourceChannels, sourceOffset, targetChannels, targetOffset, count, accumulate;
+};
+
+struct FilmPushConstants {
+    uint32_t batch, channels, pixels;
+};
+
+// N, C and H x W of a rank-four shape.
+std::array<uint32_t, 3> planesOf(const layers::Shape& shape) {
+    if (shape.size() != 4)
+        throw std::invalid_argument("training: needs an N x C x H x W shape");
+    return {shape[0], shape[1], shape[2] * shape[3]};
+}
+
 struct AdamPushConstants {
     uint32_t elementCount;
     float learningRate, beta1, beta2, epsilon;
@@ -60,12 +84,89 @@ struct AdamPushConstants {
 
 ComputeGraphElementPtr activationBackward(VulkanContext& vulkanContext, Activation activation,
                                           const layers::Shape& shape) {
-    const char* shader = activation == Activation::Relu ? "shaders/training/relu_backward.comp.spv"
-                                                        : "shaders/training/sigmoid_backward.comp.spv";
+    const char* shader = activation == Activation::Relu      ? "shaders/training/relu_backward.comp.spv"
+                         : activation == Activation::Sigmoid ? "shaders/training/sigmoid_backward.comp.spv"
+                         : activation == Activation::Elu     ? "shaders/training/elu_backward.comp.spv"
+                                                             : "shaders/training/leaky_relu_backward.comp.spv";
     auto operation = vulkanContext.create<GeneralComputation<CountPushConstants>>(shader);
     const uint32_t count = layers::elementCount(shape);
     operation->setPushConstants({{count}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr leakyRelu(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/leaky_relu.comp.spv");
+    const uint32_t count = layers::elementCount(shape);
+    operation->setPushConstants({{count}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelNorm(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation =
+        vulkanContext.create<GeneralComputation<NormPushConstants>>("shaders/training/channel_norm.comp.spv");
+    operation->setPushConstants({{n, c, pixels, 1e-5f}});
+    operation->setGroupCountX((n * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelNormBackwardInput(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation = vulkanContext.create<GeneralComputation<NormPushConstants>>(
+        "shaders/training/channel_norm_backward_input.comp.spv");
+    operation->setPushConstants({{n, c, pixels, 1e-5f}});
+    operation->setGroupCountX((n * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelNormBackwardParameters(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation = vulkanContext.create<GeneralComputation<NormPushConstants>>(
+        "shaders/training/channel_norm_backward_parameters.comp.spv");
+    operation->setPushConstants({{n, c, pixels, 1e-5f}});
+    operation->setGroupCountX(c);
+    return operation;
+}
+
+ComputeGraphElementPtr upsample2xBackward(VulkanContext& vulkanContext, const layers::Shape& input) {
+    if (input.size() != 4)
+        throw std::invalid_argument("upsample2xBackward: needs an N x C x H x W shape");
+    auto operation = vulkanContext.create<GeneralComputation<UpsamplePushConstants>>(
+        "shaders/training/upsample2x_backward.comp.spv");
+    operation->setPushConstants({{input[0] * input[1], input[2], input[3]}});
+    operation->setGroupCountX((layers::elementCount(input) + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelCopy(VulkanContext& vulkanContext, uint32_t batch, uint32_t pixels, ChannelRange source,
+                                   ChannelRange target, uint32_t count, bool accumulate) {
+    if (source.offset + count > source.channels || target.offset + count > target.channels)
+        throw std::invalid_argument("channelCopy: channel range out of the tensor");
+    auto operation =
+        vulkanContext.create<GeneralComputation<ChannelCopyPushConstants>>("shaders/training/channel_copy.comp.spv");
+    operation->setPushConstants(
+        {{batch, pixels, source.channels, source.offset, target.channels, target.offset, count, accumulate ? 1u : 0u}});
+    operation->setGroupCountX((batch * count * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr film(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation = vulkanContext.create<GeneralComputation<FilmPushConstants>>("shaders/training/film.comp.spv");
+    operation->setPushConstants({{n, c, pixels}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation =
+        vulkanContext.create<GeneralComputation<FilmPushConstants>>("shaders/training/film_backward.comp.spv");
+    operation->setPushConstants({{n, c, pixels}});
+    operation->setGroupCountX(n * c);
     return operation;
 }
 

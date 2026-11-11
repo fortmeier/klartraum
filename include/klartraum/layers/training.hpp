@@ -25,9 +25,18 @@ namespace klartraum::training {
 
 /** @brief Element-wise activations with a backward element, matching the forward layers. */
 enum class Activation {
-    Relu,   ///< layers::relu()
-    Sigmoid ///< layers::unary(..., UnaryOp::Sigmoid, ...)
+    Relu,     ///< layers::relu()
+    Sigmoid,  ///< layers::unary(..., UnaryOp::Sigmoid, ...)
+    Elu,      ///< layers::elu() with alpha 1
+    LeakyRelu ///< leakyRelu(): slope 0.2 below zero
 };
+
+/**
+ * @brief The leaky ReLU with slope 0.2 below zero, element-wise over @p shape.
+ *
+ * Slots: 0 input, 1 output.
+ */
+ComputeGraphElementPtr leakyRelu(VulkanContext& vulkanContext, const layers::Shape& shape);
 
 /**
  * @brief The input gradient of @p activation: f'(x) * output gradient, element-wise over @p shape.
@@ -71,6 +80,66 @@ ComputeGraphElementPtr convBackwardInput(VulkanContext& vulkanContext, const lay
 ComputeGraphElementPtr convBackwardWeights(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
                                            const layers::Shape& input, const layers::Shape& weights,
                                            const layers::Shape& output);
+
+/**
+ * @brief ChannelNorm: every pixel of an N x C x H x W tensor normalized over its channels (eps 1e-5), then scaled and
+ * shifted per channel; keeps each pixel's mean and 1 / standard deviation for the backward pass.
+ *
+ * Slots: 0 input, 1 scale (C), 2 shift (C), 3 output, 4 statistics (N x 2 x H x W).
+ */
+ComputeGraphElementPtr channelNorm(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The input gradient of channelNorm().
+ *
+ * Slots: 0 input, 1 scale, 2 statistics, 3 output gradient, 4 input gradient.
+ */
+ComputeGraphElementPtr channelNormBackwardInput(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The scale and shift gradients of channelNorm(), reduced per channel in a fixed order.
+ *
+ * Slots: 0 input, 1 statistics, 2 output gradient, 3 scale gradient (C), 4 shift gradient (C).
+ */
+ComputeGraphElementPtr channelNormBackwardParameters(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The input gradient of a bilinear upsampling by two with half-pixel centres (layers::resizeLinear() of an
+ * N x C x H x W input to 2H x 2W, without alignCorners).
+ *
+ * Slots: 0 output gradient (N x C x 2H x 2W), 1 input gradient (@p input).
+ */
+ComputeGraphElementPtr upsample2xBackward(VulkanContext& vulkanContext, const layers::Shape& input);
+
+/** @brief Where channelCopy() reads and writes: channel ranges of two N x C x H x W tensors. */
+struct ChannelRange {
+    uint32_t channels = 0; ///< of the whole tensor
+    uint32_t offset = 0;   ///< of the first copied channel
+};
+
+/**
+ * @brief Copies @p count channels from @p source to @p target (or adds them to it, with @p accumulate): a concat
+ * along the channels, and its backward pass, adding where a tensor's gradient comes from several consumers.
+ *
+ * Slots: 0 source, 1 target.
+ */
+ComputeGraphElementPtr channelCopy(VulkanContext& vulkanContext, uint32_t batch, uint32_t pixels, ChannelRange source,
+                                   ChannelRange target, uint32_t count, bool accumulate = false);
+
+/**
+ * @brief FiLM: y = x * scale + shift with a scale and shift per sample and channel.
+ *
+ * Slots: 0 input (N x C x H x W), 1 scale (N x C), 2 shift (N x C), 3 output.
+ */
+ComputeGraphElementPtr film(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The backward pass of film(): the input gradient and the scale and shift gradients, one workgroup per sample
+ * and channel.
+ *
+ * Slots: 0 input, 1 scale, 2 output gradient, 3 input gradient, 4 scale gradient (N x C), 5 shift gradient (N x C).
+ */
+ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::Shape& shape);
 
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {
