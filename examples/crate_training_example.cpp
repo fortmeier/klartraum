@@ -36,7 +36,9 @@ using namespace klartraum;
 
 namespace {
 
-constexpr uint32_t kRenderSize = 512, kSampleSize = 256, kChannels = 11;
+constexpr uint32_t kChannels = 11;
+// The samples' size (--sample-size); the G-buffers are rendered at twice that and reduced as in training.
+uint32_t sampleSize = 256;
 
 // One view: its sample (G-buffer channels, coordinates, classes) and its photo [3][size][size] in [0, 1].
 struct View {
@@ -45,22 +47,25 @@ struct View {
     std::vector<float> photo;
 };
 
-// A binary PPM of the sample size as [3][height][width] in [0, 1]; empty if missing or of another size.
+// A binary PPM of the sample size, or a whole multiple of it averaged down (e.g. 256 x 256 photos for 128 x 128
+// samples), as [3][size][size] in [0, 1]; empty if missing or of another size.
 std::vector<float> readPhoto(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     std::string magic;
     uint32_t width = 0, height = 0, maximum = 0;
-    if (!(file >> magic >> width >> height >> maximum) || magic != "P6" || width != kSampleSize ||
-        height != kSampleSize)
+    if (!(file >> magic >> width >> height >> maximum) || magic != "P6" || width != height || width % sampleSize != 0)
         return {};
     file.get();
     std::vector<uint8_t> bytes(size_t(width) * height * 3);
     file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(bytes.size()));
-    const size_t pixels = size_t(width) * height;
-    std::vector<float> photo(3 * pixels);
-    for (size_t p = 0; p < pixels; ++p)
-        for (size_t c = 0; c < 3; ++c)
-            photo[c * pixels + p] = float(bytes[3 * p + c]) / 255.0f;
+    const uint32_t factor = width / sampleSize;
+    const size_t pixels = size_t(sampleSize) * sampleSize;
+    std::vector<float> photo(3 * pixels, 0.0f);
+    for (uint32_t y = 0; y < height; ++y)
+        for (uint32_t x = 0; x < width; ++x)
+            for (size_t c = 0; c < 3; ++c)
+                photo[c * pixels + size_t(y / factor) * sampleSize + x / factor] +=
+                    float(bytes[(size_t(y) * width + x) * 3 + c]) / (255.0f * float(factor * factor));
     return photo;
 }
 
@@ -104,16 +109,16 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
             continue;
         crate::setCamera(renderer.getCamera()->ubo, glm::vec3(v[1], v[2], v[3]), glm::vec3(v[4], v[5], v[6]));
         renderer.getCamera()->update(0);
-        const auto frame = crate::renderFrame(vc, renderer, graph, target, kRenderSize);
-        view.inputs = neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{kSampleSize, kSampleSize, 1.0f});
+        const auto frame = crate::renderFrame(vc, renderer, graph, target, 2 * sampleSize);
+        view.inputs = neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
         const auto background = std::count(view.inputs.classes.begin(), view.inputs.classes.end(), 0.0f);
         if (double(background) > 0.6 * double(view.inputs.classes.size()))
             continue;
         if (!scores.count(view.id)) {
-            const size_t pixels = size_t(kSampleSize) * kSampleSize;
+            const size_t pixels = size_t(sampleSize) * sampleSize;
             const std::vector<float> depth(view.inputs.channels.begin() + 3 * pixels,
                                            view.inputs.channels.begin() + 4 * pixels);
-            scores[view.id] = alignment.score(view.photo, depth, kSampleSize, kSampleSize);
+            scores[view.id] = alignment.score(view.photo, depth, sampleSize, sampleSize);
             newScores << view.id << " " << scores[view.id] << "\n";
         }
         if (scores[view.id] < minAlignment)
@@ -141,21 +146,21 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
         const uint32_t index = uint32_t(rng() % views.size());
         const View& view = views[index];
         batch.rows.push_back(float(index));
-        const bool half = uniform(rng) < 0.3f && kSampleSize / 2 >= crop;
-        const uint32_t size = half ? kSampleSize / 2 : kSampleSize, step = half ? 2 : 1;
+        const bool half = uniform(rng) < 0.3f && sampleSize / 2 >= crop;
+        const uint32_t size = half ? sampleSize / 2 : sampleSize, step = half ? 2 : 1;
         const uint32_t top = uint32_t(rng() % (size - crop + 1)), left = uint32_t(rng() % (size - crop + 1));
         const bool flip = uniform(rng) < 0.5f;
-        const size_t pixels = size_t(kSampleSize) * kSampleSize;
+        const size_t pixels = size_t(sampleSize) * sampleSize;
         // A value of a channel of the view at crop pixel (y, x): the mean of its step x step block for averaged
         // planes, its top-left pixel for sampled ones.
         const auto at = [&](const std::vector<float>& plane, size_t channel, uint32_t y, uint32_t x, bool average) {
             const uint32_t sy = (top + y) * step, sx = (left + (flip ? crop - 1 - x : x)) * step;
             if (!average || step == 1)
-                return plane[channel * pixels + size_t(sy) * kSampleSize + sx];
+                return plane[channel * pixels + size_t(sy) * sampleSize + sx];
             float sum = 0.0f;
             for (uint32_t dy = 0; dy < step; ++dy)
                 for (uint32_t dx = 0; dx < step; ++dx)
-                    sum += plane[channel * pixels + size_t(sy + dy) * kSampleSize + sx + dx];
+                    sum += plane[channel * pixels + size_t(sy + dy) * sampleSize + sx + dx];
             return sum / float(step * step);
         };
         for (uint32_t y = 0; y < crop; ++y)
@@ -194,6 +199,8 @@ int main(int argc, char** argv) {
             steps = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--batch" && hasValue)
             batchSize = uint32_t(std::stoul(argv[++i]));
+        else if (arg == "--sample-size" && hasValue)
+            sampleSize = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--crop" && hasValue)
             crop = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--appearance" && hasValue)
@@ -222,7 +229,7 @@ int main(int argc, char** argv) {
         VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
         std::vector<View> training, validation;
         {
-            const VkExtent2D extent{kRenderSize, kRenderSize};
+            const VkExtent2D extent{2 * sampleSize, 2 * sampleSize};
             auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
             GBufferMeshRenderer renderer(vc, crate::vertices(), target, extent);
             ComputeGraph graph(vc, 1);
@@ -310,7 +317,7 @@ int main(int argc, char** argv) {
         renderConfig.forwardOnly = true;
         constexpr uint32_t kRenderBatch = 4; // held-out views rendered at a time
         renderConfig.batch = kRenderBatch;
-        renderConfig.size = kSampleSize;
+        renderConfig.size = sampleSize;
         std::unique_ptr<neural::PhotoEnhancerTraining> renderer;
         if (!validation.empty())
             renderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, renderConfig);
@@ -370,10 +377,48 @@ int main(int argc, char** argv) {
                 if (!renderer)
                     continue;
                 renderer->load((outDir / "parameters").string());
-                if (config.appearances > 0)
+                const size_t pixels = size_t(sampleSize) * sampleSize;
+                if (config.appearances > 0) {
+                    // The first training views with their own codes (training_NNNNNN.png: photo | enhanced): how well
+                    // the codes and the texture reproduce the photos they were fitted to.
+                    Batch own;
+                    for (uint32_t k = 0; k < kRenderBatch; ++k) {
+                        const View& view = training[k % training.size()];
+                        own.channels.insert(own.channels.end(), view.inputs.channels.begin(),
+                                            view.inputs.channels.end());
+                        own.coordinates.insert(own.coordinates.end(), view.inputs.coordinates.begin(),
+                                               view.inputs.coordinates.end());
+                        own.classes.insert(own.classes.end(), view.inputs.classes.begin(), view.inputs.classes.end());
+                        own.rows.push_back(float(k % training.size()));
+                    }
+                    renderer->setBatch(own.channels, own.coordinates, own.classes, {}, own.rows);
+                    renderer->step();
+                    const auto reproduced = renderer->image();
+                    const uint32_t shown = std::min<uint32_t>(kRenderBatch, uint32_t(training.size()));
+                    const uint32_t width = 2 * sampleSize;
+                    std::vector<uint8_t> grid(size_t(width) * sampleSize * shown * 3);
+                    double l1 = 0.0;
+                    for (size_t v = 0; v < shown; ++v)
+                        for (size_t p = 0; p < pixels; ++p)
+                            for (size_t c = 0; c < 3; ++c) {
+                                const size_t y = v * sampleSize + p / sampleSize, x = p % sampleSize;
+                                const float photo = training[v].photo[c * pixels + p];
+                                const float enhanced = reproduced[(v * 3 + c) * pixels + p];
+                                l1 += std::abs(photo - enhanced);
+                                grid[(y * width + x) * 3 + c] = byte(photo);
+                                grid[(y * width + sampleSize + x) * 3 + c] = byte(enhanced);
+                            }
+                    std::ostringstream line;
+                    line << "training step " << step << ": L1 " << l1 / double(shown * 3 * pixels) << " over " << shown
+                         << " views (own codes)";
+                    std::cout << line.str() << std::endl;
+                    log << line.str() << "\n";
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "training_%06u.png", step);
+                    writeImage(outDir / name, grid.data(), width, sampleSize * shown, 3);
                     renderer->setAppearance(trainer.meanCode());
+                }
                 // In chunks of kRenderBatch views; the last chunk repeats the first views to fill it.
-                const size_t pixels = size_t(kSampleSize) * kSampleSize;
                 std::vector<float> image;
                 for (size_t first = 0; first < validation.size(); first += kRenderBatch) {
                     Batch chunk;
@@ -405,14 +450,14 @@ int main(int argc, char** argv) {
                 log.flush();
                 // The first six held-out views: rendering | photo | enhanced.
                 const size_t shown = std::min<size_t>(6, validation.size());
-                const uint32_t width = 3 * kSampleSize;
-                std::vector<uint8_t> grid(size_t(width) * kSampleSize * shown * 3);
+                const uint32_t width = 3 * sampleSize;
+                std::vector<uint8_t> grid(size_t(width) * sampleSize * shown * 3);
                 for (size_t v = 0; v < shown; ++v)
                     for (size_t p = 0; p < pixels; ++p)
                         for (size_t c = 0; c < 3; ++c) {
-                            const size_t y = v * kSampleSize + p / kSampleSize, x = p % kSampleSize;
+                            const size_t y = v * sampleSize + p / sampleSize, x = p % sampleSize;
                             const auto put = [&](size_t column, float value) {
-                                grid[(y * width + column * kSampleSize + x) * 3 + c] = byte(value);
+                                grid[(y * width + column * sampleSize + x) * 3 + c] = byte(value);
                             };
                             put(0, validation[v].inputs.channels[c * pixels + p]);
                             put(1, validation[v].photo[c * pixels + p]);
@@ -420,7 +465,7 @@ int main(int argc, char** argv) {
                         }
                 char name[64];
                 std::snprintf(name, sizeof(name), "validation_%06u.png", step);
-                writeImage(outDir / name, grid.data(), width, uint32_t(kSampleSize * shown), 3);
+                writeImage(outDir / name, grid.data(), width, uint32_t(sampleSize * shown), 3);
             }
         }
     } catch (const std::exception& e) {
