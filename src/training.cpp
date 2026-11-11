@@ -48,6 +48,11 @@ ConvBackwardPushConstants convGeometry(const layers::ConvAttributes& attributes,
             attributes.pads[1]};
 }
 
+struct FillPushConstants {
+    uint32_t count;
+    float value;
+};
+
 struct NormPushConstants {
     uint32_t batch, channels, pixels;
     float epsilon;
@@ -167,6 +172,13 @@ ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::
         vulkanContext.create<GeneralComputation<FilmPushConstants>>("shaders/training/film_backward.comp.spv");
     operation->setPushConstants({{n, c, pixels}});
     operation->setGroupCountX(n * c);
+    return operation;
+}
+
+ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float value) {
+    auto operation = vulkanContext.create<GeneralComputation<FillPushConstants>>("shaders/training/fill.comp.spv");
+    operation->setPushConstants({{count, value}});
+    operation->setGroupCountX((count + 255) / 256);
     return operation;
 }
 

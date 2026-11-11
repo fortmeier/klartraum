@@ -141,6 +141,13 @@ ComputeGraphElementPtr film(VulkanContext& vulkanContext, const layers::Shape& s
  */
 ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::Shape& shape);
 
+/**
+ * @brief Sets @p count floats to @p value, e.g. a gradient that elements add to.
+ *
+ * Slots: 0 buffer.
+ */
+ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float value = 0.0f);
+
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {
     float learningRate = 1e-3f;

@@ -27,6 +27,7 @@ struct HashTextureShape {
     std::vector<uint32_t> resolutions; ///< cells per axis of each level, at most 16 levels
     std::vector<uint32_t> classes;     ///< the surface class of each grid, at most 4 grids
     uint32_t outputOffset = 0;         ///< channels of the output before the features (e.g. a network's other inputs)
+    uint32_t batch = 1;                ///< images, each with its own coordinates, classes and output
 
     /**
      * @brief Reads the shape written next to an exported texture (train_photo_enhancer.py: `<stem>_texture.txt`, lines
@@ -42,11 +43,21 @@ struct HashTextureShape {
  * index where a level's grid fits the table, the spatial hash x * 1 xor y * 2654435761 xor z * 805459861 where it does
  * not), the levels' features side by side; pixels of other classes get zeros.
  *
- * Slots: 0 coordinates [3][height][width] (u, v, id in [0, 1]), 1 classes [height][width] (class indices as floats),
- * 2 table [grids][levels][tableSize][features], 3 output [outputOffset + levels * features][height][width] (the
- * first outputOffset channels are left as they are).
+ * Slots: 0 coordinates [batch][3][height][width] (u, v, id in [0, 1]), 1 classes [batch][height][width] (class
+ * indices as floats), 2 table [grids][levels][tableSize][features], 3 output
+ * [batch][outputOffset + levels * features][height][width] (the first outputOffset channels are left as they are).
  */
 ComputeGraphElementPtr hashTexture(VulkanContext& vulkanContext, const HashTextureShape& shape);
+
+/**
+ * @brief The table gradient of hashTexture(): every pixel adds its features' gradients, weighted as the lookup blended
+ * them, to the 8 corner entries of its cell on each level (atomic float additions, VK_EXT_shader_atomic_float), so
+ * the gradient tensor must be zeroed before.
+ *
+ * Slots: 0 coordinates, 1 classes, 2 output gradient (the output's layout; the features after outputOffset), 3 table
+ * gradient (the table's layout).
+ */
+ComputeGraphElementPtr hashTextureBackward(VulkanContext& vulkanContext, const HashTextureShape& shape);
 
 } // namespace klartraum::neural
 

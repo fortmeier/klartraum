@@ -90,6 +90,32 @@ def film_case(out: Path, seed: int) -> None:
                        "dscale": scale.grad, "dshift": shift.grad})
 
 
+def hash_texture_case(out: Path, seed: int) -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from hash_texture import SurfaceTexture
+
+    generator = torch.Generator().manual_seed(seed)
+    texture = SurfaceTexture(classes=(2, 3), levels=4, features=2, log2_table=10, base=4, finest=64)
+    with torch.no_grad():
+        for grid in texture.grids:
+            grid.embeddings.copy_(torch.rand(grid.embeddings.shape, generator=generator) * 2.0 - 1.0)
+    coordinates = torch.rand(2, 3, 5, 7, generator=generator)
+    classes = torch.randint(0, 5, (2, 5, 7), generator=generator)
+    features = texture(coordinates, classes)
+    gradient = torch.randn(features.shape, generator=generator)
+    features.backward(gradient)
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    table_gradient = torch.stack([grid.embeddings.grad for grid in texture.grids])
+    grid = texture.grids[0]
+    (out / "hash_texture_shape.txt").write_text(
+        f"width 7\nheight 5\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
+        "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 2 3\n")
+    save(out, "hash_texture", {"coordinates": coordinates, "classes": classes.float(), "table": table,
+                               "features": features, "dfeatures": gradient, "dtable": table_gradient})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -104,6 +130,7 @@ def main() -> None:
     channel_norm_case(args.out, 7)
     upsample_case(args.out, 8)
     film_case(args.out, 9)
+    hash_texture_case(args.out, 10)
     print(f"fixtures in {args.out}")
 
 

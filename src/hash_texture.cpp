@@ -15,7 +15,7 @@ namespace klartraum::neural {
 namespace {
 
 struct HashTexturePushConstants {
-    uint32_t width, height, levels, features, tableSize, grids, outputOffset;
+    uint32_t width, height, levels, features, tableSize, grids, outputOffset, batch;
     uint32_t classes[4];
     uint32_t resolutions[16];
 };
@@ -57,7 +57,9 @@ HashTextureShape HashTextureShape::fromFile(const std::string& path) {
     return shape;
 }
 
-ComputeGraphElementPtr hashTexture(VulkanContext& vulkanContext, const HashTextureShape& shape) {
+namespace {
+
+HashTexturePushConstants pushConstantsOf(const HashTextureShape& shape) {
     if (shape.width == 0 || shape.height == 0 || shape.levels == 0 || shape.levels > 16 ||
         shape.resolutions.size() != shape.levels || shape.features == 0 || shape.features > 4 ||
         shape.classes.empty() || shape.classes.size() > 4 || (shape.tableSize & (shape.tableSize - 1)) != 0)
@@ -72,16 +74,31 @@ ComputeGraphElementPtr hashTexture(VulkanContext& vulkanContext, const HashTextu
                                        shape.tableSize,
                                        uint32_t(shape.classes.size()),
                                        shape.outputOffset,
+                                       shape.batch,
                                        {},
                                        {}};
     for (size_t g = 0; g < shape.classes.size(); ++g)
         constants.classes[g] = shape.classes[g];
     for (size_t l = 0; l < shape.levels; ++l)
         constants.resolutions[l] = shape.resolutions[l];
+    return constants;
+}
+
+} // namespace
+
+ComputeGraphElementPtr hashTexture(VulkanContext& vulkanContext, const HashTextureShape& shape) {
     auto operation =
         vulkanContext.create<GeneralComputation<HashTexturePushConstants>>("shaders/neural/hash_texture.comp.spv");
-    operation->setPushConstants({constants});
-    operation->setGroupCount((shape.width + 15) / 16, (shape.height + 15) / 16, 1);
+    operation->setPushConstants({pushConstantsOf(shape)});
+    operation->setGroupCount((shape.width + 15) / 16, (shape.height + 15) / 16, shape.batch);
+    return operation;
+}
+
+ComputeGraphElementPtr hashTextureBackward(VulkanContext& vulkanContext, const HashTextureShape& shape) {
+    auto operation = vulkanContext.create<GeneralComputation<HashTexturePushConstants>>(
+        "shaders/neural/hash_texture_backward.comp.spv");
+    operation->setPushConstants({pushConstantsOf(shape)});
+    operation->setGroupCount((shape.width + 15) / 16, (shape.height + 15) / 16, shape.batch);
     return operation;
 }
 
