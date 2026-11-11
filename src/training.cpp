@@ -441,7 +441,8 @@ ComputeGraphElementPtr convBackwardInput(VulkanContext& vulkanContext, const lay
     auto operation = vulkanContext.create<GeneralComputation<ConvBackwardPushConstants>>(
         "shaders/training/conv_backward_input.comp.spv");
     operation->setPushConstants({constants});
-    operation->setGroupCountX((layers::elementCount(input) + 255) / 256);
+    // 64 x 64 tiles of input positions (x) and input channels (y).
+    operation->setGroupCount((input[0] * input[2] * input[3] + 63) / 64, (input[1] + 63) / 64, 1);
     return operation;
 }
 
@@ -450,11 +451,11 @@ ComputeGraphElementPtr convBackwardWeights(VulkanContext& vulkanContext, const l
                                            const layers::Shape& output) {
     const auto geometry = convGeometry(attributes, input, weights, output);
     // A matrix product of outputs x columns (weights per output channel and the bias) over k = batch x positions:
-    // 16 x 16 tiles, and k split into slices so that there are about 1024 workgroups.
+    // 64 x 64 tiles, and k split into slices so that there are about 512 workgroups.
     const uint32_t columns = weights[1] * weights[2] * weights[3] + 1;
-    const uint32_t tilesX = (columns + 15) / 16, tilesY = (weights[0] + 15) / 16;
+    const uint32_t tilesX = (columns + 63) / 64, tilesY = (weights[0] + 63) / 64;
     const uint32_t total = output[0] * output[2] * output[3];
-    const uint32_t wanted = std::max(1u, 1024u / (tilesX * tilesY));
+    const uint32_t wanted = std::max(1u, 512u / (tilesX * tilesY));
     const uint32_t sliceLength = std::max(16u, ((total + wanted - 1) / wanted + 15) / 16 * 16);
     const uint32_t splits = (total + sliceLength - 1) / sliceLength;
     auto operation = vulkanContext.create<GeneralComputation<ConvWeightsPushConstants>>(
