@@ -187,8 +187,9 @@ uint8_t byte(float v) { return uint8_t(std::lround(std::clamp(v, 0.0f, 1.0f) * 2
 int main(int argc, char** argv) {
     std::filesystem::path crateDir = "build/TestingOutput/crate", outDir = "build/TestingOutput/crate/runs/k1";
     uint32_t steps = 30000, batchSize = 16, crop = 128, appearance = 8, every = 1000;
-    float minAlignment = 0.7f;
+    float minAlignment = 0.7f, perceptual = 0.0f, adversarial = 0.0f, featureMatching = 2.0f;
     bool profile = false;
+    std::filesystem::path initFrom;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -210,6 +211,14 @@ int main(int argc, char** argv) {
             minAlignment = std::stof(argv[++i]);
         else if (arg == "--profile")
             profile = true;
+        else if (arg == "--perceptual" && hasValue)
+            perceptual = std::stof(argv[++i]);
+        else if (arg == "--adversarial" && hasValue)
+            adversarial = std::stof(argv[++i]);
+        else if (arg == "--feature-matching" && hasValue)
+            featureMatching = std::stof(argv[++i]);
+        else if (arg == "--init-from" && hasValue)
+            initFrom = argv[++i];
         else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
@@ -247,6 +256,9 @@ int main(int argc, char** argv) {
         config.appearances = appearance > 0 ? uint32_t(training.size()) : 0;
         config.appearanceSize = appearance;
         config.profile = profile;
+        config.perceptual = perceptual;
+        config.adversarial = adversarial;
+        config.featureMatching = featureMatching;
         neural::PhotoEnhancerTraining trainer(vc, config);
         // nn.Linear and nn.Conv2d's default initialisation (uniform within 1 / sqrt(fan in)), ChannelNorm's ones and
         // zeros, the texture's +-1e-4, the codes' N(0, 0.1); FiLM's heads and the output layer start at zero.
@@ -290,6 +302,12 @@ int main(int argc, char** argv) {
                 for (auto& v : values)
                     v = uniform(rng);
             }
+            // The generator, texture and codes from an earlier run (its saved averages), if given.
+            const auto saved = initFrom / (name + ".bin");
+            if (!initFrom.empty() && std::filesystem::exists(saved) && name.rfind("discriminator.", 0) != 0) {
+                std::ifstream file(saved, std::ios::binary);
+                file.read(reinterpret_cast<char*>(values.data()), std::streamsize(values.size() * sizeof(float)));
+            }
             trainer.setParameter(name, values);
         }
 
@@ -313,18 +331,29 @@ int main(int argc, char** argv) {
         }
 
         std::ofstream log(outDir / "log.txt", std::ios::app);
-        double lossSum = 0.0;
+        double lossSum = 0.0, perceptualSum = 0.0, discriminatorSum = 0.0, adversarialSum = 0.0, matchingSum = 0.0;
         auto started = std::chrono::steady_clock::now();
         for (uint32_t step = 1; step <= steps; ++step) {
             const Batch batch = sampleBatch(training, batchSize, crop, rng);
             trainer.setBatch(batch.channels, batch.coordinates, batch.classes, batch.photos, batch.rows);
             trainer.step();
             lossSum += trainer.loss();
+            perceptualSum += trainer.perceptualLoss();
+            discriminatorSum += trainer.discriminatorLoss();
+            adversarialSum += trainer.adversarialLoss();
+            matchingSum += trainer.featureMatchingLoss();
             if (step % 100 == 0) {
                 const double seconds =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() / 100.0;
                 std::ostringstream line;
-                line << "step " << step << " loss " << lossSum / 100.0 << " (" << seconds << " s/step)";
+                line << "step " << step << " loss " << lossSum / 100.0;
+                if (perceptual > 0.0f)
+                    line << " vgg " << perceptualSum / 100.0;
+                if (adversarial > 0.0f)
+                    line << " d " << discriminatorSum / 100.0 << " adv " << adversarialSum / 100.0 << " fm "
+                         << matchingSum / 100.0;
+                line << " (" << seconds << " s/step)";
+                perceptualSum = discriminatorSum = adversarialSum = matchingSum = 0.0;
                 std::cout << line.str() << std::endl;
                 log << line.str() << "\n";
                 log.flush();

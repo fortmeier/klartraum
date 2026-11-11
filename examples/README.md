@@ -756,7 +756,8 @@ samples (`neural::photoEnhancerInputs()`), their Qwen-Image photos
 (`<crate>/data/<split>/photo/<view>.ppm`) are the targets, and the learnable
 surface texture, the local U-Net generator (3 levels, ChannelNorm, ELU) and one
 appearance code per view are trained with the photometric losses (L1 and L1 of
-8 x 8 block means) on random crops, with Adam and an exponential moving average.
+8 x 8 block means), optionally the VGG perceptual loss and a PatchGAN, on random
+crops, with Adam and an exponential moving average.
 Views with an alignment score below the threshold (`alignment.json` of
 `scripts/neural/check_photo_alignment.py`) or more than 60 % background are left
 out. Every `--every` steps the averaged parameters go to `<out>/parameters/` and
@@ -774,6 +775,10 @@ the held-out views are rendered with the codes' mean
 | `--every N` | Steps between checkpoints and validations (default 1000) |
 | `--min-alignment A` | Leave out views aligned worse (default 0.7) |
 | `--profile` | Print the GPU time of a step per element kind every 100 steps |
+| `--perceptual W` | Weight of the VGG-16 perceptual loss (default 0; needs `scripts/neural/export_vgg16.py`) |
+| `--adversarial W` | Weight of the adversarial loss of a 2-scale PatchGAN with DiffAugment (default 0: no GAN) |
+| `--feature-matching W` | Weight of the discriminator's feature matching (default 2) |
+| `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/` |
 
 ```bash
 ./build/examples/crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1
