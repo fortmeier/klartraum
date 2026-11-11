@@ -85,7 +85,7 @@ void writeControlDepth(const std::filesystem::path& path, const std::vector<floa
 int main(int argc, char** argv) {
     std::filesystem::path outDir = "build/TestingOutput/crate/flights/crate_a";
     uint32_t views = 180, size = 512, seed = 1, sampleSize = 256;
-    bool orbit = false;
+    bool orbit = false, fixedView = false, floor = true;
     std::string model;
     std::filesystem::path parameters, qwenBatch;
     int appearanceRow = -1; // -1: the training codes' mean
@@ -102,6 +102,10 @@ int main(int argc, char** argv) {
             seed = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--orbit")
             orbit = true;
+        else if (arg == "--fixed-view")
+            fixedView = true;
+        else if (arg == "--no-floor")
+            floor = false;
         else if (arg == "--model" && hasValue)
             model = argv[++i];
         else if (arg == "--appearance" && hasValue)
@@ -120,7 +124,7 @@ int main(int argc, char** argv) {
     try {
         HeadlessFrontend frontend;
         VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
-        const auto vertices = crate::vertices();
+        const auto vertices = crate::vertices(floor);
         const VkExtent2D extent{size, size};
         auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         GBufferMeshRenderer renderer(vc, vertices, target, extent);
@@ -187,12 +191,15 @@ int main(int argc, char** argv) {
             {"u_", GBufferOutput::CoordinatesU}, {"v_", GBufferOutput::CoordinatesV}};
         for (uint32_t view = 0; view < views; ++view) {
             // Any azimuth, 8 to 40 degrees above the crate, 2.2 to 3.8 away, looking near its centre; on the orbit
-            // once around at 22 degrees, 3 away.
-            const float azimuth = orbit ? 6.2831853f * float(view) / float(views) : uniform(rng) * 6.2831853f;
-            const float elevation = glm::radians(orbit ? 22.0f : 8.0f + 32.0f * uniform(rng));
-            const float distance = orbit ? 3.0f : 2.2f + 1.6f * uniform(rng);
+            // once around at 22 degrees, 3 away; with a fixed view always from azimuth 0.6 at 22 degrees, 3 away.
+            const bool steady = orbit || fixedView;
+            const float azimuth = fixedView ? 0.6f
+                                  : orbit   ? 6.2831853f * float(view) / float(views)
+                                            : uniform(rng) * 6.2831853f;
+            const float elevation = glm::radians(steady ? 22.0f : 8.0f + 32.0f * uniform(rng));
+            const float distance = steady ? 3.0f : 2.2f + 1.6f * uniform(rng);
             const glm::vec3 look = glm::vec3(0.0f, 0.5f, 0.0f) +
-                                   (orbit ? glm::vec3(0.0f) : glm::vec3(jitter(rng), jitter(rng), jitter(rng)));
+                                   (steady ? glm::vec3(0.0f) : glm::vec3(jitter(rng), jitter(rng), jitter(rng)));
             glm::vec3 eye = look + distance * glm::vec3(std::sin(azimuth) * std::cos(elevation), std::sin(elevation),
                                                         std::cos(azimuth) * std::cos(elevation));
             eye.y = std::max(eye.y, 0.15f);

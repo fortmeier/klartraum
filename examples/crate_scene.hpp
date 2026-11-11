@@ -27,17 +27,19 @@ namespace crate {
 constexpr float kFovDegrees = 40.0f;
 constexpr float kDepthFar = 60.0f; // the depth window, beyond the floor's far corners
 
-// The crate and the floor. The crate's faces get ids spread over the 16 bits, (face + 0.5) / 6 of the range, so that
-// the texture's id axis holds six well separated slices; the floor sits in between at 1/2.
-inline std::vector<klartraum::GBufferVertex> vertices() {
+// The crate and (unless not wanted) the floor. The crate's faces get ids spread over the 16 bits, (face + 0.5) / 6 of
+// the range, so that the texture's id axis holds six well separated slices; the floor sits in between at 1/2.
+inline std::vector<klartraum::GBufferVertex> vertices(bool floor = true) {
     std::array<uint32_t, 6> faceIds{};
     for (uint32_t face = 0; face < 6; ++face)
         faceIds[face] = uint32_t(std::lround((float(face) + 0.5f) / 6.0f * 65535.0f));
     auto mesh = klartraum::gbufferBox(glm::vec3(-0.5f, 0.0f, -0.5f), glm::vec3(0.5f, 1.0f, 0.5f),
                                       klartraum::tree::TREE_CLASS_STEM, glm::vec3(0.62f, 0.45f, 0.28f), faceIds);
-    const auto floor = klartraum::gbufferFloor(40.0f, 0.0f, 4.0f, klartraum::tree::TREE_CLASS_SOIL,
+    if (!floor)
+        return mesh;
+    const auto plane = klartraum::gbufferFloor(40.0f, 0.0f, 4.0f, klartraum::tree::TREE_CLASS_SOIL,
                                                glm::vec3(0.5f, 0.5f, 0.48f), 32768u);
-    mesh.insert(mesh.end(), floor.begin(), floor.end());
+    mesh.insert(mesh.end(), plane.begin(), plane.end());
     return mesh;
 }
 

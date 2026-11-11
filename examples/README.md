@@ -737,6 +737,8 @@ trained photo enhancer renders every view, entirely in Klartraum.
 | `--seed N` | Seed of the cameras (default 1) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/crate/flights/crate_a`) |
 | `--orbit` | Circle the crate once instead (22 degrees above, 3 away) |
+| `--fixed-view` | Every view from the same camera (azimuth 0.6, 22 degrees above, 3 away) |
+| `--no-floor` | The crate alone, on the background |
 | `--model STEM` | Also enhance every view with the photo enhancer `STEM` (`neural::PhotoEnhancer`) into `frames/enhanced_NNNN.png` |
 | `--appearance K` | The appearance code of training image K (default: the codes' mean) |
 | `--sample-size S` | The enhancer's sample size (default 256) |
