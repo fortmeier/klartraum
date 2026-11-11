@@ -150,6 +150,73 @@ def clip_case(out: Path, seed: int) -> None:
     save(out, "clip", {**before, "clipped_a": a.grad, "clipped_b": b.grad})
 
 
+def generator_step_case(out: Path, seed: int) -> None:
+    """One photometric training step of the local photo enhancer (3 levels, ChannelNorm, FiLM by appearance codes,
+    hash-grid texture) on a batch of two 32 x 32 crops, as train_photo_enhancer.py takes it: the parameters before
+    (named as in the state dict), the batch, the image, the loss, every parameter's gradient and the parameters after
+    clipping and the Adam step of the three parameter groups. The zero-initialised FiLM heads, output convolution and
+    tiny texture are randomised so that every gradient is non-zero."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from hash_texture import SurfaceTexture
+    from train_photo_enhancer import Generator
+
+    torch.manual_seed(seed)
+    generator = torch.Generator().manual_seed(seed)
+    texture = SurfaceTexture(classes=(2, 3, 4), levels=4, features=2, log2_table=10, base=4, finest=64)
+    network = Generator(widths=(32, 64, 128), extra=texture.channels, blur_depth=False, appearance=8, norm="channel")
+    codes = torch.nn.Embedding(5, 8)
+    with torch.no_grad():
+        for grid in texture.grids:
+            grid.embeddings.copy_(torch.rand(grid.embeddings.shape, generator=generator) * 0.2 - 0.1)
+        for head in list(network.film.gammas) + list(network.film.betas):
+            head.weight.copy_(torch.randn(head.weight.shape, generator=generator) * 0.1)
+            head.bias.copy_(torch.randn(head.bias.shape, generator=generator) * 0.1)
+        network.out.weight.copy_(torch.randn(network.out.weight.shape, generator=generator) * 0.2)
+        codes.weight.copy_(torch.randn(codes.weight.shape, generator=generator) * 0.1)
+    parameters = {"texture.table": None, **{f"generator.{k}": v for k, v in network.named_parameters()},
+                  "codes.weight": codes.weight}
+    b, size = 2, 32
+    channels = torch.rand(b, 11, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.randint(0, 7, (b, size, size), generator=generator)
+    target = torch.rand(b, 3, size, size, generator=generator)
+    rows = torch.tensor([3, 1])
+    x = torch.cat([channels, texture(coordinates, classes)], dim=1)
+    image = network(x, None, codes(rows))
+    loss = 0.5 * F.l1_loss(image, target) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(target, 8))
+    loss = loss + 1e-2 * codes(rows).pow(2).sum(1).mean()
+    loss.backward()
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    table_gradient = torch.stack([grid.embeddings.grad for grid in texture.grids])
+    tensors = {"channels": channels, "coordinates": coordinates, "classes": classes.float(), "target": target,
+               "rows": rows.float(), "image": image, "loss": loss.reshape(1)}
+    names = []
+    for name, value in parameters.items():
+        value = table if name == "texture.table" else value
+        gradient = table_gradient if name == "texture.table" else value.grad
+        tensors["before." + name] = value.detach().clone()
+        tensors["grad." + name] = gradient
+        names.append(name)
+    network_parameters = list(network.parameters())
+    optimiser = torch.optim.Adam([{"params": network_parameters, "lr": 1e-4},
+                                  {"params": [g.embeddings for g in texture.grids], "lr": 1e-2, "betas": (0.9, 0.99)},
+                                  {"params": list(codes.parameters()), "lr": 5e-3, "betas": (0.9, 0.99)}],
+                                 lr=1e-4, betas=(0.5, 0.999))
+    torch.nn.utils.clip_grad_norm_(network_parameters, 1.0)
+    optimiser.step()
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in parameters.items():
+        tensors["after." + name] = (table if name == "texture.table" else value).detach().clone()
+    save(out, "generator_step", tensors)
+    (out / "generator_step_parameters.txt").write_text("\n".join(names) + "\n")
+    grid = texture.grids[0]
+    (out / "generator_step_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
+        "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 2 3 4\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -168,6 +235,7 @@ def main() -> None:
     photometric_case(args.out, 11)
     linear_case(args.out, 12)
     clip_case(args.out, 13)
+    generator_step_case(args.out, 14)
     print(f"fixtures in {args.out}")
 
 

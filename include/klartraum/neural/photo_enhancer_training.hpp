@@ -1,0 +1,118 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#ifndef KLARTRAUM_NEURAL_PHOTO_ENHANCER_TRAINING_HPP
+#define KLARTRAUM_NEURAL_PHOTO_ENHANCER_TRAINING_HPP
+
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/tensorelement.hpp"
+#include "klartraum/layers/training.hpp"
+#include "klartraum/neural/hash_texture.hpp"
+#include "klartraum/vulkan_context.hpp"
+
+namespace klartraum::neural {
+
+/// The photo enhancer that PhotoEnhancerTraining trains, and how.
+struct PhotoEnhancerTrainingConfig {
+    uint32_t batch = 16; ///< crops per step
+    uint32_t size = 128; ///< crop width and height, a multiple of 2^(levels - 1)
+    /// The U-Net's channels per level (3 levels: the local generator of train_photo_enhancer.py --levels 3).
+    std::vector<uint32_t> widths{32, 64, 128};
+    /// The surface texture's grids; width, height, batch and outputOffset are set by the training.
+    HashTextureShape texture;
+    uint32_t appearances = 0;    ///< training images with an appearance code (0: none, no FiLM)
+    uint32_t appearanceSize = 8; ///< numbers per code
+    uint32_t filmHidden = 64;    ///< width of the FiLM MLP
+    float appearanceDecay = 1e-2f;
+    float l1 = 0.5f;     ///< weight of the L1 loss
+    float colour = 5.0f; ///< weight of the L1 loss of 8 x 8 block means
+    float clip = 1.0f;   ///< global norm the generator's gradients are clipped to
+    training::AdamParameters networkAdam{1e-4f, 0.5f, 0.999f};
+    training::AdamParameters textureAdam{1e-2f, 0.9f, 0.99f};
+    training::AdamParameters codesAdam{5e-3f, 0.9f, 0.99f};
+    float emaRate = 1e-3f;
+    uint32_t emaWarmup = 1001; ///< steps during which the average copies the parameters
+};
+
+/**
+ * @brief Trains the photo enhancer of scripts/neural/train_photo_enhancer.py (--texture --levels L --norm channel
+ * --appearance D) with its photometric losses, entirely in Klartraum: the learnable surface texture (hashTexture()),
+ * the U-Net generator (3 x 3 convolutions, ChannelNorm, ELU, bilinear upsampling, skips), FiLM by per-image appearance
+ * codes, the L1 and block-mean L1 losses with the codes' L2 penalty, the backward pass of all of it, gradient clipping,
+ * Adam in three parameter groups (network, texture, codes) and an exponential moving average of every parameter.
+ *
+ * One step is one pre-recorded graph, submitted unchanged: upload a batch with setBatch(), then step(). Parameters are
+ * named as in the PyTorch state dict ("generator.down.0.0.weight", "codes.weight"; the texture's grids together as
+ * "texture.table" [grids][levels][table][features]), so checkpoints can move between both.
+ */
+class PhotoEnhancerTraining {
+public:
+    PhotoEnhancerTraining(VulkanContext& vulkanContext, const PhotoEnhancerTrainingConfig& config);
+    ~PhotoEnhancerTraining();
+
+    const PhotoEnhancerTrainingConfig& getConfig() const { return config; }
+
+    /**
+     * @brief The next step's batch: the G-buffer channels [batch][11][size][size], the surface coordinates
+     * [batch][3][size][size], class indices [batch][size][size], target photos [batch][3][size][size] in [0, 1] and
+     * the crops' appearance code rows [batch] (ignored without codes).
+     */
+    void setBatch(const std::vector<float>& channels, const std::vector<float>& coordinates,
+                  const std::vector<float>& classes, const std::vector<float>& targets, const std::vector<float>& rows);
+    /// One training step on the batch.
+    void step();
+    /// The photometric loss of the last step (without the codes' penalty).
+    float loss() const;
+    /// The generator's images of the last step, [batch][3][size][size].
+    std::vector<float> image() const;
+
+    /// The parameters' names, in the order of the PyTorch state dict (texture first, codes last).
+    std::vector<std::string> parameterNames() const;
+    std::shared_ptr<TensorElement<float>> parameter(const std::string& name) const;
+    std::shared_ptr<TensorElement<float>> gradient(const std::string& name) const;
+    /// The exponential moving average of a parameter.
+    std::shared_ptr<TensorElement<float>> average(const std::string& name) const;
+    /// Sets a parameter and its average, e.g. from a checkpoint.
+    void setParameter(const std::string& name, const std::vector<float>& values);
+
+private:
+    struct Parameter;
+    struct Block;
+
+    std::shared_ptr<TensorElement<float>> tensor(const std::vector<uint32_t>& shape);
+    Parameter& addParameter(const std::string& name, const std::vector<uint32_t>& shape, int group);
+    const Parameter& find(const std::string& name) const;
+    void add(ComputeGraphElementPtr element);
+    void forwardBlock(Block& block);
+    void backwardBlock(Block& block);
+
+    VulkanContext& vulkanContext;
+    PhotoEnhancerTrainingConfig config;
+    std::vector<Parameter> parameters;
+    std::map<std::string, size_t> parameterIndex;
+    std::vector<Block> blocks; ///< the down blocks, then the up blocks
+    /// The step's elements in submission order; each depends on the previous one.
+    std::vector<ComputeGraphElementPtr> sequence;
+    std::unique_ptr<ComputeGraph> graph;
+
+    std::shared_ptr<TensorElement<float>> channels, coordinates, classes, targets, rows;
+    std::shared_ptr<TensorElement<float>> input; ///< the generator's input: G-buffer channels, texture features
+    std::shared_ptr<TensorElement<float>> logits, output, outputGradient, logitGradient;
+    std::shared_ptr<TensorElement<float>> lossShares, lossTotal, normTotal, scalesDummy;
+    /// FiLM: the picked codes, the MLP's pre-activations and activations, and their gradients.
+    std::shared_ptr<TensorElement<float>> code, hidden1, hidden1Pre, hidden2, hidden2Pre;
+    std::shared_ptr<TensorElement<float>> codeGradient, hidden1Gradient, hidden1PreGradient, hidden2Gradient,
+        hidden2PreGradient;
+    std::shared_ptr<TensorElement<uint32_t>> stepCounter;
+};
+
+} // namespace klartraum::neural
+
+#endif // KLARTRAUM_NEURAL_PHOTO_ENHANCER_TRAINING_HPP

@@ -23,6 +23,10 @@
  *   the picked rows' gradients plus the L2 penalty's, and is zero for rows nobody picked
  * - clipGradientMatchesPyTorch: clipping two tensors to a global norm of 1 equals clip_grad_norm_
  * - emaCopiesThenAverages: during the warm-up the average copies the parameters, after it moves by the rate
+ * - generatorStepMatchesPyTorch: one PhotoEnhancerTraining step of a 3-level generator with texture and FiLM
+ *   appearance codes, from PyTorch's parameters on PyTorch's batch: the image and the photometric loss equal
+ *   PyTorch's, and after the backward pass, clipping and Adam every parameter is within a tenth of its learning
+ *   rate of PyTorch's (Adam's first step moves each by about the learning rate, so a wrong gradient shows)
  * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  *
@@ -46,6 +50,7 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/layers/training.hpp"
 #include "klartraum/neural/hash_texture.hpp"
+#include "klartraum/neural/photo_enhancer_training.hpp"
 
 using namespace klartraum;
 
@@ -511,4 +516,50 @@ TEST(PhotoEnhancerTraining, emaCopiesThenAverages) {
     parameters->getDataBuffer(0).memcopyFrom(std::vector<float>{8.0f, 0.0f});
     graph.submitAndWait(vc.getGraphicsQueue(), 0); // step 2: a quarter of the way
     EXPECT_EQ(read(average), (std::vector<float>{5.0f, 6.0f}));
+}
+
+TEST(PhotoEnhancerTraining, generatorStepMatchesPyTorch) {
+    const Fixture fixture("generator_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoEnhancerTrainingConfig config;
+    config.batch = 2;
+    config.size = 32;
+    config.widths = {32, 64, 128};
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + "generator_step_texture.txt");
+    config.appearances = 5;
+    config.appearanceSize = 8;
+    neural::PhotoEnhancerTraining trainer(vc, config);
+    std::vector<std::string> names;
+    {
+        std::ifstream file(kFixtures + "generator_step_parameters.txt");
+        for (std::string name; file >> name;)
+            names.push_back(name);
+    }
+    EXPECT_EQ(trainer.parameterNames(), names);
+    for (const auto& name : names)
+        trainer.setParameter(name, fixture.values("before." + name));
+    trainer.setBatch(fixture.values("channels"), fixture.values("coordinates"), fixture.values("classes"),
+                     fixture.values("target"), fixture.values("rows"));
+    trainer.step();
+    EXPECT_LT(relativeError(trainer.image(), fixture.values("image")), 1e-5f);
+    // PyTorch's loss includes the codes' penalty 1e-2 x mean |code|^2 of rows 3 and 1.
+    const auto codes = fixture.values("before.codes.weight");
+    float penalty = 0.0f;
+    for (int row : {3, 1})
+        for (int k = 0; k < 8; ++k)
+            penalty += codes[row * 8 + k] * codes[row * 8 + k];
+    EXPECT_NEAR(trainer.loss(), fixture.values("loss")[0] - 1e-2f * penalty / 2.0f, 1e-5f);
+    for (const auto& name : names) {
+        const auto before = fixture.values("before." + name), after = fixture.values("after." + name);
+        std::vector<float> actual(before.size());
+        trainer.parameter(name)->getDataBuffer(0).memcopyTo(actual);
+        const float rate = name == "texture.table" ? 1e-2f : name == "codes.weight" ? 5e-3f : 1e-4f;
+        float worst = 0.0f;
+        for (size_t i = 0; i < actual.size(); ++i)
+            worst = std::max(worst, std::abs(actual[i] - after[i]));
+        EXPECT_LT(worst, 0.1f * rate) << name;
+    }
 }

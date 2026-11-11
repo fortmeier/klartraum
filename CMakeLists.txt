@@ -406,6 +406,7 @@ set(KLARTRAUM_LIB_SRC
   src/hash_texture.cpp
   src/gbuffer_mesh_renderer.cpp
   src/photo_enhancer.cpp
+  src/photo_enhancer_training.cpp
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
