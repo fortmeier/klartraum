@@ -234,8 +234,19 @@ int main(int argc, char** argv) {
         auto network = vc.create<OnnxNetwork>(model.string() + ".onnx");
         network->retainTensor("image");
         network->setInputTensor("input", input, -1);
+        // A generator conditioned on the season (train_photo_enhancer.py --season-film, which writes the reference
+        // <stem>_season_f32.bin) takes the season's code (sin, cos) of its angle on the year as a second input.
+        std::shared_ptr<TensorElement<float>> seasonCode;
+        if (std::filesystem::exists(model.string() + "_season_f32.bin")) {
+            seasonCode = vc.create<TensorElement<float>>(std::vector<uint32_t>{1, 2});
+            network->setInputTensor("season", seasonCode, -1);
+        }
         ComputeGraph networkGraph(vc, 1);
         networkGraph.compileFrom(network);
+        if (seasonCode) {
+            const float angle = season * 3.14159265f / 2.0f;
+            seasonCode->getDataBuffer(0).memcopyFrom(std::vector<float>{std::sin(angle), std::cos(angle)});
+        }
         {
             std::vector<float> values(table->getDataElementCount());
             std::ifstream(model.string() + "_texture_f32.bin", std::ios::binary)

@@ -699,7 +699,8 @@ G-buffers and texture features into the image. Train the model with
 the flights, which also writes the texture next to the ONNX graph
 (`<stem>.onnx`, `<stem>_texture.txt`, `<stem>_texture_f32.bin`). Frames go to
 `<out-dir>/frames/frame_NNNN.png` (enhanced) and `render_NNNN.png` (the
-downsampled rendering), as PNG.
+downsampled rendering), as PNG. A model trained with the season conditioning
+(`<stem>_season_f32.bin` next to the graph) also gets the season of `--season`.
 
 | Option | Meaning |
 |---|---|

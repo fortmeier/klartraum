@@ -37,6 +37,8 @@ def main() -> None:
     parser.add_argument("out", type=Path)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--every", type=int, default=1, help="use every n-th frame")
+    parser.add_argument("--season", type=float, default=2.0,
+                        help="the season S in [0, 4) for checkpoints conditioned on it (--season-film)")
     parser.add_argument("--uv-flight", type=Path,
                         help="the flight re-rendered with the coordinate G-buffers (for checkpoints with a texture)")
     args = parser.parse_args()
@@ -44,7 +46,8 @@ def main() -> None:
     state = torch.load(args.checkpoint, map_location=device)["ema"]
     textured = any(key.startswith("texture.") for key in state)
     if any(key.startswith("generator.") for key in state):
-        model = TexturedModel(textured).to(device).eval()
+        film = any(key.startswith("generator.film.") for key in state)
+        model = TexturedModel(textured, film).to(device).eval()
     else:
         model = Generator().to(device).eval()  # checkpoints from before the texture
     model.load_state_dict(state)
@@ -71,7 +74,8 @@ def main() -> None:
                 uvid, precise = surface_coordinates(args.uv_flight, frame, uv_cameras[frame])
                 coords = torch.from_numpy(np.concatenate([uvid, precise[None]]))[None]
                 x = network_input(raw, coords).to(device)
-                y = model(x, coords[:, :3].to(device), raw[:, 4].long().to(device))
+                y = model(x, coords[:, :3].to(device), raw[:, 4].long().to(device),
+                          torch.tensor([args.season], device=device))
             else:
                 y = model(network_input(raw).to(device))
             y = y[0].clamp(0, 1).permute(1, 2, 0).cpu().numpy()

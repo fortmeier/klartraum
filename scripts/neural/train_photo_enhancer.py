@@ -50,13 +50,34 @@ def usable(classes: np.ndarray) -> bool:
 
 
 MIN_ALIGNMENT = 0.0  # set from --min-alignment
+SUMMER = 2.0  # the season of flights without a known one
+
+
+def season_of(sample: str, seasons: dict[str, float]) -> float:
+    """The season S in [0, 4) (0 winter, 1 spring, 2 summer, 3 autumn, as tree::treeSeasonWrap()) of a sample
+    <flight>_<frame>: from the data's seasons.json ({flight: S}), else from a flight named c<S>_..., else summer."""
+    flight = sample.rsplit("_", 1)[0]
+    if flight in seasons:
+        return float(seasons[flight])
+    if flight.startswith("c"):
+        try:
+            return float(flight[1:].split("_", 1)[0])
+        except ValueError:
+            pass
+    return SUMMER
+
+
+def season_code(season: torch.Tensor) -> torch.Tensor:
+    """[N] seasons -> [N, 2] (sin, cos) of the season's angle on the year, so winter follows autumn."""
+    angle = season.float() * (torch.pi / 2.0)
+    return torch.stack([torch.sin(angle), torch.cos(angle)], dim=1)
 TEXTURE = False  # set from --texture: samples need <split>/coords/<sample>.npz (add_surface_coordinates.py)
 
 
 def load_split(directory: Path):
-    """The usable samples with a photo: their ids, inputs [N, 5, H, W] (uint8 RGB, depth, class index), photos and,
-    with TEXTURE, their surface coordinates [N, 4, H, W] float32 (u, v, object id, precise inverse depth; samples
-    without them are left out), else None.
+    """The usable samples with a photo: their ids, inputs [N, 5, H, W] (uint8 RGB, depth, class index), photos,
+    with TEXTURE their surface coordinates [N, 4, H, W] float32 (u, v, object id, precise inverse depth; samples
+    without them are left out) else None, and their seasons [N] (season_of() with <data>/seasons.json).
     With MIN_ALIGNMENT, samples whose photo follows its rendering's depth worse than that (check_photo_alignment.py's
     alignment.json; samples not scored yet count as aligned) are left out."""
     alignment_path = directory / "alignment.json"
@@ -64,7 +85,9 @@ def load_split(directory: Path):
     # Samples found faulty by eye (e.g. a symbol painted where the 8-bit depth shows contour lines).
     reject_path = directory / "reject.txt"
     rejected = set(reject_path.read_text().split()) if reject_path.exists() else set()
-    ids, inputs, photos, coords = [], [], [], []
+    seasons_path = directory.parent / "seasons.json"
+    season_table = json.loads(seasons_path.read_text()) if seasons_path.exists() else {}
+    ids, inputs, photos, coords, seasons = [], [], [], [], []
     for photo in sorted((directory / "photo").glob("*.ppm")):
         sample = photo.stem
         if alignment.get(sample, 1.0) < MIN_ALIGNMENT or sample in rejected:
@@ -84,14 +107,15 @@ def load_split(directory: Path):
         inputs.append(np.concatenate([render, depth[..., None], classes[..., None]], axis=2))
         photos.append(target)
         ids.append(sample)
+        seasons.append(season_of(sample, season_table))
         if TEXTURE:
             stored = np.load(coords_path)
             coords.append(np.concatenate([stored["uvid"], stored["depth"][None]]).astype(np.float32))
     if not ids:
-        return ids, torch.empty(0), torch.empty(0), None
+        return ids, torch.empty(0), torch.empty(0), None, torch.empty(0)
     return (ids, torch.from_numpy(np.stack(inputs)).permute(0, 3, 1, 2).contiguous(),
             torch.from_numpy(np.stack(photos)).permute(0, 3, 1, 2).contiguous(),
-            torch.from_numpy(np.stack(coords)) if TEXTURE else None)
+            torch.from_numpy(np.stack(coords)) if TEXTURE else None, torch.tensor(seasons, dtype=torch.float32))
 
 
 def network_input(raw: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
@@ -127,10 +151,33 @@ class Block(nn.Sequential):
                          nn.Conv2d(outputs, outputs, 3, padding=1), GroupNorm(8, outputs), nn.ELU())
 
 
-class Generator(nn.Module):
-    """U-Net: 5 levels (1, 1/2, ..., 1/16), bilinear upsampling (no transposed convolutions, which leave grids)."""
+class SeasonFilm(nn.Module):
+    """FiLM by the season: from its code (season_code()), a scale 1 + gamma and a shift beta per channel of every
+    block's output. The heads start at zero, so a new FiLM leaves the network as it was."""
 
-    def __init__(self, widths=(32, 64, 128, 256, 256), extra: int = 0, blur_depth: bool = True):
+    def __init__(self, widths: list[int], hidden: int = 64):
+        super().__init__()
+        self.widths = list(widths)
+        self.mlp = nn.Sequential(nn.Linear(2, hidden), nn.ELU(), nn.Linear(hidden, hidden), nn.ELU())
+        self.gammas = nn.ModuleList([nn.Linear(hidden, w) for w in widths])
+        self.betas = nn.ModuleList([nn.Linear(hidden, w) for w in widths])
+        for head in list(self.gammas) + list(self.betas):
+            nn.init.zeros_(head.weight)
+            nn.init.zeros_(head.bias)
+
+    def forward(self, code: torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        """[N, 2] -> per block (scale, shift), each [N, width, 1, 1]."""
+        h = self.mlp(code)
+        n = int(code.shape[0])
+        return [((1.0 + g(h)).reshape(n, w, 1, 1), b(h).reshape(n, w, 1, 1))
+                for g, b, w in zip(self.gammas, self.betas, self.widths)]
+
+
+class Generator(nn.Module):
+    """U-Net: 5 levels (1, 1/2, ..., 1/16), bilinear upsampling (no transposed convolutions, which leave grids); with
+    `film`, every block's output is modulated by the season (SeasonFilm)."""
+
+    def __init__(self, widths=(32, 64, 128, 256, 256), extra: int = 0, blur_depth: bool = True, film: bool = False):
         super().__init__()
         self.blur_depth = blur_depth
         self.down = nn.ModuleList([Block(INPUT_CHANNELS + extra, widths[0])] +
@@ -142,25 +189,35 @@ class Generator(nn.Module):
         gauss = torch.exp(-radius**2 / (2 * 2.5**2))
         kernel = torch.outer(gauss, gauss)
         self.register_buffer("depth_blur", (kernel / kernel.sum()).view(1, 1, 9, 9), persistent=False)
+        self.film = SeasonFilm(list(widths) + list(widths[-2::-1])) if film else None
         self.out = nn.Conv2d(widths[0], 3, 1)
         # Starts as a neutral grey, away from the sigmoid's flat ends.
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, season: torch.Tensor | None = None) -> torch.Tensor:
+        """x [N, channels, H, W]; season [N, 2] the season's code (season_code()), needed with FiLM."""
         if self.blur_depth:
             depth = F.conv2d(x[:, 3:4], self.depth_blur, padding=4)
             x = torch.cat([x[:, :3], depth, x[:, 4:]], dim=1)
+        modulation = iter(self.film(season)) if self.film is not None else None
+
+        def modulated(y: torch.Tensor) -> torch.Tensor:
+            if modulation is None:
+                return y
+            scale, shift = next(modulation)
+            return y * scale + shift
+
         skips = []
         for block in self.down:
-            x = block(x)
+            x = modulated(block(x))
             skips.append(x)
         x = skips.pop()
         for block in self.up:
             skip = skips.pop()
             # Sizes that are multiples of 16 halve exactly at every level, so each level doubles the previous one.
             x = F.interpolate(x, scale_factor=2.0, mode="bilinear", align_corners=False)
-            x = block(torch.cat([x, skip], dim=1))
+            x = modulated(block(torch.cat([x, skip], dim=1)))
         return torch.sigmoid(self.out(x))
 
 
@@ -168,19 +225,21 @@ class TexturedModel(nn.Module):
     """The generator, with a learnable surface texture (hash_texture.SurfaceTexture) whose features at each pixel's
     surface coordinates join its input (deferred neural rendering); without texture just the generator."""
 
-    def __init__(self, texture: bool = False):
+    def __init__(self, texture: bool = False, film: bool = False):
         super().__init__()
         from hash_texture import SurfaceTexture
 
         self.texture = SurfaceTexture() if texture else None
         extra = self.texture.channels if texture else 0
         # The precise depth of the coordinate G-buffers needs no smoothing.
-        self.generator = Generator(extra=extra, blur_depth=not texture)
+        self.generator = Generator(extra=extra, blur_depth=not texture, film=film)
 
-    def forward(self, x: torch.Tensor, uvid: torch.Tensor | None = None, classes: torch.Tensor | None = None):
+    def forward(self, x: torch.Tensor, uvid: torch.Tensor | None = None, classes: torch.Tensor | None = None,
+                season: torch.Tensor | None = None):
+        """season: [N] seasons S, for a generator with FiLM."""
         if self.texture is not None:
             x = torch.cat([x, self.texture(uvid, classes)], dim=1)
-        return self.generator(x)
+        return self.generator(x, season_code(season) if self.generator.film is not None else None)
 
 
 class PatchDiscriminator(nn.Module):
@@ -208,11 +267,19 @@ class PatchDiscriminator(nn.Module):
 
 
 class MultiScaleDiscriminator(nn.Module):
-    def __init__(self, scales: int = 2):
-        super().__init__()
-        self.discriminators = nn.ModuleList([PatchDiscriminator() for _ in range(scales)])
+    """PatchGANs at full and half resolution; with `season`, the season's code joins the pair as two constant
+    planes, so that the discriminator judges whether the image fits its season."""
 
-    def forward(self, x: torch.Tensor):
+    def __init__(self, scales: int = 2, season: bool = False):
+        super().__init__()
+        self.season = season
+        channels = INPUT_CHANNELS + 3 + (2 if season else 0)
+        self.discriminators = nn.ModuleList([PatchDiscriminator(channels) for _ in range(scales)])
+
+    def forward(self, x: torch.Tensor, season: torch.Tensor | None = None):
+        if self.season:
+            planes = season_code(season).to(x.device)[:, :, None, None].expand(-1, -1, x.shape[2], x.shape[3])
+            x = torch.cat([planes, x], dim=1)
         results = []
         for k, d in enumerate(self.discriminators):
             results.append(d(x if k == 0 else F.avg_pool2d(x, 2 ** k)))
@@ -259,13 +326,15 @@ def augment_pair(pair: torch.Tensor) -> torch.Tensor:
 
 
 def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng: np.random.Generator,
-          coords: torch.Tensor | None = None):
-    """Random crops (at scale 1 or 1/2 of the sample, flipped half the time): network inputs, photos and, with coords,
-    the surface coordinates (u, v, id) and class indices for the texture (subsampled, never blended), else None."""
-    xs, ys, uvids, classes = [], [], [], []
+          coords: torch.Tensor | None = None, seasons: torch.Tensor | None = None):
+    """Random crops (at scale 1 or 1/2 of the sample, flipped half the time): network inputs, photos, with coords
+    the surface coordinates (u, v, id) else None, class indices for the texture (subsampled, never blended) and the
+    samples' seasons [count]."""
+    xs, ys, uvids, classes, picked = [], [], [], [], []
     n, _, h, w = inputs.shape
     for _ in range(count):
         k = int(rng.integers(n))
+        picked.append(k)
         c = coords[k:k + 1] if coords is not None else None
         x, y = network_input(inputs[k:k + 1], c), photos[k:k + 1].float() / 255.0
         uvid = c[:, :3] if c is not None else None
@@ -291,14 +360,15 @@ def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng
         classes.append(cls)
         if uvid is not None:
             uvids.append(uvid)
-    return torch.cat(xs), torch.cat(ys), (torch.cat(uvids) if uvids else None), torch.cat(classes)
+    season = seasons[picked] if seasons is not None else torch.full((count,), SUMMER)
+    return torch.cat(xs), torch.cat(ys), (torch.cat(uvids) if uvids else None), torch.cat(classes), season
 
 
-def r1_penalty(discriminator: nn.Module, real_pair: torch.Tensor) -> torch.Tensor:
+def r1_penalty(discriminator: nn.Module, real_pair: torch.Tensor, season: torch.Tensor) -> torch.Tensor:
     """R1: the squared gradient of the discriminator's score per sample (the mean of its patch logits) with respect
     to the real pairs, averaged over the batch."""
     real_pair = real_pair.detach().requires_grad_(True)
-    total = sum(logits.mean(dim=(1, 2, 3)).sum() for _, logits in discriminator(real_pair))
+    total = sum(logits.mean(dim=(1, 2, 3)).sum() for _, logits in discriminator(real_pair, season))
     (gradient,) = torch.autograd.grad(total, real_pair, create_graph=True)
     return gradient.pow(2).flatten(1).sum(1).mean()
 
@@ -313,7 +383,9 @@ def write_grid(path: Path, inputs: torch.Tensor, photos: torch.Tensor, outputs: 
 
 def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     """The generator as a fixed-shape ONNX graph Klartraum imports (shapes static, constants as initializers), with a
-    reference input and output (`<path stem>_input_f32.bin`, `_output_f32.bin`) for the parity test."""
+    reference input and output (`<path stem>_input_f32.bin`, `_output_f32.bin`) for the parity test. With FiLM, the
+    graph has a second input "season" [1, 2], the season's code (season_code()), and its reference value goes to
+    `_season_f32.bin`."""
     import sys
 
     import onnx
@@ -324,7 +396,8 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     from export_vae import add_initializer_value_info, remove_dead_nodes, require_concrete_shapes
 
     textured = generator.texture is not None
-    model = Generator(extra=generator.texture.channels if textured else 0, blur_depth=not textured).eval()
+    film = generator.generator.film is not None
+    model = Generator(extra=generator.texture.channels if textured else 0, blur_depth=not textured, film=film).eval()
     model.load_state_dict({k: v.cpu() for k, v in generator.generator.state_dict().items()})
     if textured:
         # The texture's tables, [classes][levels][table][features], for the Klartraum lookup.
@@ -349,10 +422,12 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
         features.numpy().tofile(path.with_name(path.stem + "_texture_features_f32.bin"))
     channels = INPUT_CHANNELS + (generator.texture.channels if textured else 0)
     example = torch.rand(1, channels, height, width, generator=torch.Generator().manual_seed(0))
+    season = season_code(torch.tensor([3.3]))
+    arguments, names = ((example, season), ["input", "season"]) if film else ((example,), ["input"])
     with torch.no_grad():
-        torch.onnx.export(model, (example,), str(path), input_names=["input"], output_names=["image"],
+        torch.onnx.export(model, arguments, str(path), input_names=names, output_names=["image"],
                           opset_version=17, dynamo=False, do_constant_folding=True)
-        expected = model(example)
+        expected = model(*arguments)
     graph = onnx.shape_inference.infer_shapes(onnx.load(path), strict_mode=True)
     constants_to_initializers(graph)
     remove_dead_nodes(graph)
@@ -360,6 +435,8 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     require_concrete_shapes(graph)
     onnx.save(graph, str(path))
     example.numpy().tofile(path.with_name(path.stem + "_input_f32.bin"))
+    if film:
+        season.numpy().tofile(path.with_name(path.stem + "_season_f32.bin"))
     expected.numpy().tofile(path.with_name(path.stem + "_output_f32.bin"))
 
 
@@ -387,22 +464,32 @@ def main() -> None:
     parser.add_argument("--init-from", type=Path,
                         help="start the generator from this checkpoint's (new input channels start at zero)")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--device", help="torch device (default: mps where available, else cpu)")
+    parser.add_argument("--season-film", action="store_true",
+                        help="condition generator and discriminator on the sample's season (seasons.json, FiLM)")
     parser.add_argument("--reset-discriminator", action="store_true", help="with --resume: start a new discriminator")
     args = parser.parse_args()
     global MIN_ALIGNMENT, TEXTURE
     MIN_ALIGNMENT = args.min_alignment
     TEXTURE = args.texture
     args.out.mkdir(parents=True, exist_ok=True)
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = torch.device(args.device or ("mps" if torch.backends.mps.is_available() else "cpu"))
     rng = np.random.default_rng(1)
     torch.manual_seed(1)
 
-    generator = TexturedModel(args.texture).to(device)
-    discriminator, vgg = MultiScaleDiscriminator().to(device), Vgg().to(device)
+    generator = TexturedModel(args.texture, args.season_film).to(device)
+    discriminator = MultiScaleDiscriminator(season=args.season_film).to(device)
+    vgg = Vgg().to(device)
     if args.init_from:
         start = torch.load(args.init_from, map_location=device)["ema"]
+        # A textured checkpoint's texture carries over to a textured model.
+        if generator.texture is not None and any(k.startswith("texture.") for k in start):
+            generator.texture.load_state_dict({k.removeprefix("texture."): v for k, v in start.items()
+                                               if k.startswith("texture.")})
         own = generator.generator.state_dict()
         for key, value in start.items():
+            if key.startswith("texture."):
+                continue
             key = key.removeprefix("generator.")
             if key in own and own[key].shape != value.shape:
                 # The first convolution's new input channels (the texture features) start at zero.
@@ -419,7 +506,7 @@ def main() -> None:
         groups.append({"params": texture_params, "lr": 1e-2, "betas": (0.9, 0.99)})
     optimise_g = torch.optim.Adam(groups, lr=1e-4, betas=(0.5, 0.999))
     optimise_d = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
-    ema = TexturedModel(args.texture).to(device)
+    ema = TexturedModel(args.texture, args.season_film).to(device)
     ema.load_state_dict(generator.state_dict())
     ema.requires_grad_(False)
     step = 0
@@ -437,32 +524,33 @@ def main() -> None:
     best = state.get("best", float("inf")) if args.resume and checkpoint.exists() else float("inf")
     (args.out / "args.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=1))
 
-    ids, inputs, photos, coords = [], None, None, None
+    ids, inputs, photos, coords, seasons = [], None, None, None, None
     validation = load_split(args.data / "validation")
     log = open(args.out / "log.txt", "a")
     started = time.time()
     while step < args.steps:
         if inputs is None or step % args.reload == 0:
-            ids, inputs, photos, coords = load_split(args.data / "train")
+            ids, inputs, photos, coords, seasons = load_split(args.data / "train")
             print(f"step {step}: {len(ids)} training pairs, {len(validation[0])} validation pairs", flush=True)
             if len(ids) < 4:
                 time.sleep(120)
                 inputs = None
                 continue
-        x, y, uvid, cls = crops(inputs, photos, args.batch, args.crop, rng, coords)
+        x, y, uvid, cls, season = crops(inputs, photos, args.batch, args.crop, rng, coords, seasons)
+        season = season.to(device)
         x, y, cls = x.to(device), y.to(device), cls.to(device)
         uvid = uvid.to(device) if uvid is not None else None
         adversarial = step >= args.adversarial_start
 
-        fake = generator(x, uvid, cls)
+        fake = generator(x, uvid, cls, season)
         if adversarial:
             real_pair, fake_pair = torch.cat([x, y], 1), torch.cat([x, fake.detach()], 1)
             loss_d = 0.0
-            for (_, real_logits), (_, fake_logits) in zip(discriminator(augment_pair(real_pair)),
-                                                          discriminator(augment_pair(fake_pair))):
+            for (_, real_logits), (_, fake_logits) in zip(discriminator(augment_pair(real_pair), season),
+                                                          discriminator(augment_pair(fake_pair), season)):
                 loss_d = loss_d + F.softplus(-real_logits).mean() + F.softplus(fake_logits).mean()
             if step % 16 == 0:
-                loss_d = loss_d + args.r1 * 8 * r1_penalty(discriminator, augment_pair(real_pair))
+                loss_d = loss_d + args.r1 * 8 * r1_penalty(discriminator, augment_pair(real_pair), season)
             optimise_d.zero_grad(set_to_none=True)
             loss_d.backward()
             optimise_d.step()
@@ -477,7 +565,7 @@ def main() -> None:
             loss_d = torch.zeros((), device=device)
         if adversarial:
             fake_pair, real_pair = torch.cat([x, fake], 1), torch.cat([x, y], 1)
-            fake_results, real_results = discriminator(fake_pair), discriminator(real_pair)
+            fake_results, real_results = discriminator(fake_pair, season), discriminator(real_pair, season)
             for (fake_features, fake_logits), (real_features, _) in zip(fake_results, real_results):
                 loss_adv = loss_adv + F.softplus(-fake_logits).mean()
                 for f, r in zip(fake_features, real_features):
@@ -505,7 +593,7 @@ def main() -> None:
                 validation = load_split(args.data / "validation")
             # Until held-out pairs exist, the grid shows training pairs (marked in the file name).
             shown = validation if validation[0] else (ids[:6], inputs[:6], photos[:6],
-                                                      coords[:6] if coords is not None else None)
+                                                      coords[:6] if coords is not None else None, seasons[:6])
             score = evaluate(ema, vgg, shown, args.out, step, device, log, "validation" if validation[0] else "train")
             if validation[0] and score < best:
                 best = score
@@ -523,7 +611,7 @@ def main() -> None:
 @torch.no_grad()
 def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: str = "validation") -> float:
     """Logs the mean L1 and VGG distance of the pairs and writes a grid of the first six; returns L1 + VGG."""
-    ids, inputs, photos, coords = validation
+    ids, inputs, photos, coords, seasons = validation
     if not ids:
         return float("inf")
     l1 = perceptual = 0.0
@@ -532,7 +620,8 @@ def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: s
         c = coords[k:k + 1] if coords is not None else None
         x = network_input(inputs[k:k + 1], c).to(device)
         y = photos[k:k + 1].float().to(device) / 255.0
-        z = model(x, c[:, :3].to(device) if c is not None else None, inputs[k:k + 1, 4].long().to(device))
+        z = model(x, c[:, :3].to(device) if c is not None else None, inputs[k:k + 1, 4].long().to(device),
+                  seasons[k:k + 1].to(device))
         l1 += F.l1_loss(z, y).item()
         perceptual += vgg.distance(z, y).item()
         if k < 6:
