@@ -25,6 +25,10 @@ public:
     GeneralComputation(VulkanContext& vulkanContext, const std::string& shaderPath)
         : shaderPaths({shaderPath}) {
         this->vulkanContext = &vulkanContext;
+        // The shader's name until a caller names the element, e.g. for profiles.
+        const size_t slash = shaderPath.find_last_of('/');
+        const std::string file = slash == std::string::npos ? shaderPath : shaderPath.substr(slash + 1);
+        setName(file.substr(0, file.find('.')));
     }
 
     GeneralComputation(VulkanContext& vulkanContext, const std::vector<std::string>& shaderPaths)

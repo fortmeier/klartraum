@@ -42,6 +42,7 @@ struct PhotoEnhancerTrainingConfig {
     /// Only the forward pass (no loss, gradients or optimizer), e.g. to render with trained parameters; step() then
     /// computes image() from the batch's G-buffers, coordinates, classes and rows.
     bool forwardOnly = false;
+    bool profile = false; ///< time every element of a step on the GPU (profile())
 };
 
 /**
@@ -71,6 +72,8 @@ public:
                   const std::vector<float>& classes, const std::vector<float>& targets, const std::vector<float>& rows);
     /// One training step on the batch.
     void step();
+    /// With PhotoEnhancerTrainingConfig::profile: the mean GPU time of a step per element kind, in milliseconds.
+    std::vector<std::pair<std::string, double>> profile() const;
     /// The photometric loss of the last step (without the codes' penalty).
     float loss() const;
     /// The generator's images of the last step, [batch][3][size][size].

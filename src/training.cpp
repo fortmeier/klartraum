@@ -4,9 +4,11 @@
 
 #include "klartraum/layers/training.hpp"
 
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 
+#include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 
 namespace klartraum::training {
@@ -26,6 +28,11 @@ struct ConvBackwardPushConstants {
     uint32_t batch, inputChannels, inputHeight, inputWidth;
     uint32_t outputChannels, outputHeight, outputWidth;
     uint32_t kernelHeight, kernelWidth, strideY, strideX, padTop, padLeft;
+};
+
+struct ConvWeightsPushConstants {
+    ConvBackwardPushConstants geometry;
+    uint32_t splits, sliceLength, phase;
 };
 
 ConvBackwardPushConstants convGeometry(const layers::ConvAttributes& attributes, const layers::Shape& input,
@@ -320,12 +327,23 @@ ComputeGraphElementPtr convBackwardInput(VulkanContext& vulkanContext, const lay
 ComputeGraphElementPtr convBackwardWeights(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
                                            const layers::Shape& input, const layers::Shape& weights,
                                            const layers::Shape& output) {
-    const auto constants = convGeometry(attributes, input, weights, output);
-    auto operation = vulkanContext.create<GeneralComputation<ConvBackwardPushConstants>>(
+    const auto geometry = convGeometry(attributes, input, weights, output);
+    // A matrix product of outputs x columns (weights per output channel and the bias) over k = batch x positions:
+    // 16 x 16 tiles, and k split into slices so that there are about 1024 workgroups.
+    const uint32_t columns = weights[1] * weights[2] * weights[3] + 1;
+    const uint32_t tilesX = (columns + 15) / 16, tilesY = (weights[0] + 15) / 16;
+    const uint32_t total = output[0] * output[2] * output[3];
+    const uint32_t wanted = std::max(1u, 1024u / (tilesX * tilesY));
+    const uint32_t sliceLength = std::max(16u, ((total + wanted - 1) / wanted + 15) / 16 * 16);
+    const uint32_t splits = (total + sliceLength - 1) / sliceLength;
+    auto operation = vulkanContext.create<GeneralComputation<ConvWeightsPushConstants>>(
         "shaders/training/conv_backward_weights.comp.spv");
-    operation->setPushConstants({constants});
-    // One workgroup per weight, then one per bias.
-    operation->setGroupCountX(layers::elementCount(weights) + weights[0]);
+    // Phase 0 then phase 1 over the same grid, which covers every result of phase 1 too.
+    operation->setPushConstants({{geometry, splits, sliceLength, 0u}, {geometry, splits, sliceLength, 1u}});
+    operation->setGroupCount(tilesX, tilesY, splits);
+    auto partial =
+        std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, splits * weights[0] * columns);
+    operation->addScratchBufferElement(partial, false);
     return operation;
 }
 

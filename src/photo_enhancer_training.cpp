@@ -4,6 +4,7 @@
 
 #include "klartraum/neural/photo_enhancer_training.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -226,6 +227,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
 
     if (config.forwardOnly) {
         graph = std::make_unique<ComputeGraph>(vulkanContext, 1);
+        if (config.profile)
+            graph->enableProfiling();
         graph->compileFrom(sequence.back());
         for (const auto& parameter : parameters) {
             const std::vector<float> zeros(parameter.value->getDataElementCount(), 0.0f);
@@ -428,6 +431,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         }
     }
     graph = std::make_unique<ComputeGraph>(vulkanContext, 1);
+    if (config.profile)
+        graph->enableProfiling();
     graph->compileFrom(sequence.back());
     // The buffers exist once the graph is compiled: parameters, moments and averages start at zero.
     for (const auto& parameter : parameters) {
@@ -667,6 +672,15 @@ void PhotoEnhancerTraining::setAppearance(const std::vector<float>& code) {
     for (uint32_t row = 0; row < config.appearances; ++row)
         table.insert(table.end(), code.begin(), code.end());
     find("codes.weight").value->getDataBuffer(0).memcopyFrom(table);
+}
+
+std::vector<std::pair<std::string, double>> PhotoEnhancerTraining::profile() const {
+    std::map<std::string, double> kinds;
+    for (const auto& [name, milliseconds] : graph->getProfilingResults())
+        kinds[name] += milliseconds;
+    std::vector<std::pair<std::string, double>> sorted(kinds.begin(), kinds.end());
+    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    return sorted;
 }
 
 float PhotoEnhancerTraining::loss() const {

@@ -72,8 +72,9 @@ ComputeGraphElementPtr convBackwardInput(VulkanContext& vulkanContext, const lay
                                          const layers::Shape& output);
 
 /**
- * @brief The weight and bias gradients of layers::conv(): one workgroup per weight (and per bias) adds its products
- * over the batch and the output positions, in a fixed order.
+ * @brief The weight and bias gradients of layers::conv(): a tiled matrix product of the output gradients with the
+ * inputs each weight met (and ones for the bias) over the batch and the output positions, split into slices whose
+ * partial sums are then added in a fixed order.
  *
  * Slots: 0 input (@p input), 1 output gradient (@p output), 2 weight gradients (@p weights), 3 bias gradients (O).
  */
