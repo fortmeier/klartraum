@@ -9,9 +9,18 @@
  *   surface texture its features after them)
  * - seasonGeneratorMatchesPyTorch: a generator conditioned on the season (--season-film, a second input "season" of
  *   the season's code) reproduces the PyTorch image of its reference input and season
+ * - inputsKeepAConstantColour: neural::photoEnhancerInputs() of a frame of one colour gives that colour in the RGB
+ *   channels of every sample pixel, at a sample of another size and aspect (scaled, then cropped)
+ * - inputsDecodeClassesAndCoordinates: classes become one-hot channels and class indices (the nearest class colour),
+ *   u, v and the object id are decoded from their 16-bit encodings, each from the frame pixel nearest-neighbour
+ *   sampling takes
+ * - inputsStretchTheInverseDepth: the covered pixels' inverse depth runs from 0 (2nd percentile) to 1 (depthHigh 1:
+ *   the nearest pixel), the background stays 0
+ * - appearanceGeneratorMatchesPyTorch: a generator with per-image appearance codes (--appearance, an input
+ *   "appearance" of the code) reproduces the PyTorch image of its reference input and code
  *
- * The graphs and their references are written by the training into build/TestingOutput/gan_runs/v6/ and v7/ (not in
- * the repository); the tests skip without them.
+ * The graphs and their references are written by the training into build/TestingOutput/gan_runs/v6/ and v7/ and
+ * build/TestingOutput/crate/runs/c1/ (not in the repository); the tests skip without them.
  **/
 
 #include <gtest/gtest.h>
@@ -24,6 +33,8 @@
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
+#include "klartraum/neural/photo_enhancer.hpp"
+#include "klartraum/tree/tree_model.hpp"
 #include "klartraum/onnx/onnx_network.hpp"
 
 using namespace klartraum;
@@ -38,16 +49,16 @@ std::vector<float> readFloats(const std::string& path) {
     return data;
 }
 
-// Runs the generator `stem`.onnx on its reference input (and season, where it has that input) and returns the largest
-// difference to the PyTorch image.
-float runAgainstReference(const std::string& stem) {
+// Runs the generator `stem`.onnx on its reference input (and season and appearance code, where it has those inputs)
+// and returns the largest difference to the PyTorch image.
+float runAgainstReference(const std::string& stem, uint32_t height = 464, uint32_t width = 832) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     auto network = vc.create<OnnxNetwork>(stem + ".onnx");
     network->retainTensor("image");
     const auto reference = readFloats(stem + "_input_f32.bin");
-    const auto channels = uint32_t(reference.size() / (464 * 832));
-    auto input = vc.create<TensorElement<float>>(std::vector<uint32_t>{1, channels, 464, 832});
+    const auto channels = uint32_t(reference.size() / (height * width));
+    auto input = vc.create<TensorElement<float>>(std::vector<uint32_t>{1, channels, height, width});
     network->setInputTensor("input", input, -1);
     std::shared_ptr<TensorElement<float>> season;
     const bool seasonal = std::filesystem::exists(stem + "_season_f32.bin");
@@ -55,11 +66,20 @@ float runAgainstReference(const std::string& stem) {
         season = vc.create<TensorElement<float>>(std::vector<uint32_t>{1, 2});
         network->setInputTensor("season", season, -1);
     }
+    std::shared_ptr<TensorElement<float>> appearance;
+    const bool coded = std::filesystem::exists(stem + "_appearance_input_f32.bin");
+    const auto code = coded ? readFloats(stem + "_appearance_input_f32.bin") : std::vector<float>{};
+    if (coded) {
+        appearance = vc.create<TensorElement<float>>(std::vector<uint32_t>{1, uint32_t(code.size())});
+        network->setInputTensor("appearance", appearance, -1);
+    }
     ComputeGraph graph(vc, 1);
     graph.compileFrom(network);
     input->getDataBuffer(0).memcopyFrom(reference);
     if (seasonal)
         season->getDataBuffer(0).memcopyFrom(readFloats(stem + "_season_f32.bin"));
+    if (coded)
+        appearance->getDataBuffer(0).memcopyFrom(code);
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     auto output = std::dynamic_pointer_cast<TensorElement<float>>(network->getOutputElement("image"));
     EXPECT_NE(output, nullptr);
@@ -90,4 +110,96 @@ TEST(PhotoEnhancerTest, seasonGeneratorMatchesPyTorch) {
     if (!std::filesystem::exists(stem + ".onnx") || !std::filesystem::exists(stem + "_season_f32.bin"))
         GTEST_SKIP() << "train scripts/neural/train_photo_enhancer.py --season-film first";
     EXPECT_LT(runAgainstReference(stem), 1e-3f);
+}
+
+namespace {
+
+// A frame of w x h pixels: every G-buffer black, the depth window 0..10.
+neural::GBufferFrame blankFrame(uint32_t w, uint32_t h) {
+    neural::GBufferFrame frame;
+    frame.width = w;
+    frame.height = h;
+    const std::vector<uint8_t> black(size_t(w) * h * 4, 0);
+    frame.colour = frame.classes = frame.depth16 = frame.u = frame.v = black;
+    frame.depthFar = 10.0f;
+    return frame;
+}
+
+void setPixel(std::vector<uint8_t>& bgra, size_t p, glm::vec3 rgb) {
+    bgra[4 * p + 2] = uint8_t(std::lround(rgb.r * 255.0f));
+    bgra[4 * p + 1] = uint8_t(std::lround(rgb.g * 255.0f));
+    bgra[4 * p] = uint8_t(std::lround(rgb.b * 255.0f));
+}
+
+void set16(std::vector<uint8_t>& bgra, size_t p, float value, uint8_t blue) {
+    const uint32_t q = uint32_t(std::lround(value * 65535.0f));
+    bgra[4 * p + 2] = uint8_t(q >> 8u);
+    bgra[4 * p + 1] = uint8_t(q & 255u);
+    bgra[4 * p] = blue;
+}
+
+} // namespace
+
+TEST(PhotoEnhancerTest, inputsKeepAConstantColour) {
+    auto frame = blankFrame(64, 36);
+    for (size_t p = 0; p < 64 * 36; ++p)
+        setPixel(frame.colour, p, glm::vec3(0.2f, 0.4f, 0.8f));
+    const auto inputs = neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{32, 16});
+    ASSERT_EQ(inputs.channels.size(), 11u * 32 * 16);
+    for (size_t p = 0; p < 32 * 16; ++p) {
+        EXPECT_NEAR(inputs.channels[p], 51.0f / 255.0f, 1e-6f);
+        EXPECT_NEAR(inputs.channels[32 * 16 + p], 102.0f / 255.0f, 1e-6f);
+        EXPECT_NEAR(inputs.channels[2 * 32 * 16 + p], 204.0f / 255.0f, 1e-6f);
+    }
+}
+
+TEST(PhotoEnhancerTest, inputsDecodeClassesAndCoordinates) {
+    // The left half stem, the right half soil; u = x / w, v = y / h, the object id 0x1234.
+    auto frame = blankFrame(64, 64);
+    for (uint32_t y = 0; y < 64; ++y)
+        for (uint32_t x = 0; x < 64; ++x) {
+            const size_t p = size_t(y) * 64 + x;
+            setPixel(frame.classes, p, tree::treeClassColor(x < 32 ? tree::TREE_CLASS_STEM : tree::TREE_CLASS_SOIL));
+            set16(frame.u, p, float(x) / 64.0f, 0x12);
+            set16(frame.v, p, float(y) / 64.0f, 0x34);
+        }
+    const auto inputs = neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{32, 32});
+    const size_t pixels = 32 * 32;
+    for (uint32_t y = 0; y < 32; ++y)
+        for (uint32_t x = 0; x < 32; ++x) {
+            const size_t p = size_t(y) * 32 + x;
+            const uint32_t expected = x < 16 ? tree::TREE_CLASS_STEM : tree::TREE_CLASS_SOIL;
+            EXPECT_EQ(inputs.classes[p], float(expected));
+            for (uint32_t c = 0; c < 7; ++c)
+                EXPECT_EQ(inputs.channels[(4 + c) * pixels + p], c == expected ? 1.0f : 0.0f);
+            // Nearest sampling takes frame pixel 2 x + 1.
+            EXPECT_NEAR(inputs.coordinates[p], float(2 * x + 1) / 64.0f, 1e-4f);
+            EXPECT_NEAR(inputs.coordinates[pixels + p], float(2 * y + 1) / 64.0f, 1e-4f);
+            EXPECT_NEAR(inputs.coordinates[2 * pixels + p], float(0x1234) / 65535.0f, 1e-7f);
+        }
+}
+
+TEST(PhotoEnhancerTest, inputsStretchTheInverseDepth) {
+    // A covered square in the middle at distances 2 (top rows) to 6 (bottom rows); the rest background.
+    auto frame = blankFrame(32, 32);
+    for (uint32_t y = 8; y < 24; ++y)
+        for (uint32_t x = 8; x < 24; ++x) {
+            const size_t p = size_t(y) * 32 + x;
+            setPixel(frame.classes, p, tree::treeClassColor(tree::TREE_CLASS_STEM));
+            set16(frame.depth16, p, (2.0f + 4.0f * float(y - 8) / 15.0f) / frame.depthFar, 0);
+        }
+    neural::PhotoEnhancerSample sample{32, 32, 1.0f};
+    const auto inputs = neural::photoEnhancerInputs(frame, sample);
+    const float* depth = inputs.channels.data() + 3 * 32 * 32;
+    EXPECT_NEAR(depth[8 * 32 + 16], 1.0f, 1e-3f); // the nearest row
+    EXPECT_NEAR(depth[23 * 32 + 16], 0.0f, 1e-3f);
+    EXPECT_GT(depth[12 * 32 + 16], depth[16 * 32 + 16]);
+    EXPECT_EQ(depth[2 * 32 + 2], 0.0f);
+}
+
+TEST(PhotoEnhancerTest, appearanceGeneratorMatchesPyTorch) {
+    const std::string stem = "./build/TestingOutput/crate/runs/c1/photo_enhancer";
+    if (!std::filesystem::exists(stem + ".onnx") || !std::filesystem::exists(stem + "_appearance_input_f32.bin"))
+        GTEST_SKIP() << "train scripts/neural/train_photo_enhancer.py --appearance first";
+    EXPECT_LT(runAgainstReference(stem, 256, 256), 1e-3f);
 }

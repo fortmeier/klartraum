@@ -152,13 +152,14 @@ class Block(nn.Sequential):
 
 
 class SeasonFilm(nn.Module):
-    """FiLM by the season: from its code (season_code()), a scale 1 + gamma and a shift beta per channel of every
-    block's output. The heads start at zero, so a new FiLM leaves the network as it was."""
+    """FiLM by a condition vector (the season's code season_code() and/or a per-image appearance code): a scale
+    1 + gamma and a shift beta per channel of every block's output. The heads start at zero, so a new FiLM leaves the
+    network as it was."""
 
-    def __init__(self, widths: list[int], hidden: int = 64):
+    def __init__(self, widths: list[int], hidden: int = 64, inputs: int = 2):
         super().__init__()
         self.widths = list(widths)
-        self.mlp = nn.Sequential(nn.Linear(2, hidden), nn.ELU(), nn.Linear(hidden, hidden), nn.ELU())
+        self.mlp = nn.Sequential(nn.Linear(inputs, hidden), nn.ELU(), nn.Linear(hidden, hidden), nn.ELU())
         self.gammas = nn.ModuleList([nn.Linear(hidden, w) for w in widths])
         self.betas = nn.ModuleList([nn.Linear(hidden, w) for w in widths])
         for head in list(self.gammas) + list(self.betas):
@@ -166,7 +167,7 @@ class SeasonFilm(nn.Module):
             nn.init.zeros_(head.bias)
 
     def forward(self, code: torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
-        """[N, 2] -> per block (scale, shift), each [N, width, 1, 1]."""
+        """[N, inputs] -> per block (scale, shift), each [N, width, 1, 1]."""
         h = self.mlp(code)
         n = int(code.shape[0])
         return [((1.0 + g(h)).reshape(n, w, 1, 1), b(h).reshape(n, w, 1, 1))
@@ -175,11 +176,15 @@ class SeasonFilm(nn.Module):
 
 class Generator(nn.Module):
     """U-Net: 5 levels (1, 1/2, ..., 1/16), bilinear upsampling (no transposed convolutions, which leave grids); with
-    `film`, every block's output is modulated by the season (SeasonFilm)."""
+    `film` (the season) and/or `appearance` (the size of a per-image appearance code), every block's output is
+    modulated by them (SeasonFilm)."""
 
-    def __init__(self, widths=(32, 64, 128, 256, 256), extra: int = 0, blur_depth: bool = True, film: bool = False):
+    def __init__(self, widths=(32, 64, 128, 256, 256), extra: int = 0, blur_depth: bool = True, film: bool = False,
+                 appearance: int = 0):
         super().__init__()
         self.blur_depth = blur_depth
+        self.season = film
+        self.appearance = appearance
         self.down = nn.ModuleList([Block(INPUT_CHANNELS + extra, widths[0])] +
                                   [Block(widths[i - 1], widths[i], stride=2) for i in range(1, len(widths))])
         self.up = nn.ModuleList([Block(widths[i] + widths[i - 1], widths[i - 1]) for i in range(len(widths) - 1, 0, -1)])
@@ -189,18 +194,22 @@ class Generator(nn.Module):
         gauss = torch.exp(-radius**2 / (2 * 2.5**2))
         kernel = torch.outer(gauss, gauss)
         self.register_buffer("depth_blur", (kernel / kernel.sum()).view(1, 1, 9, 9), persistent=False)
-        self.film = SeasonFilm(list(widths) + list(widths[-2::-1])) if film else None
+        inputs = (2 if film else 0) + appearance
+        self.film = SeasonFilm(list(widths) + list(widths[-2::-1]), inputs=inputs) if inputs else None
         self.out = nn.Conv2d(widths[0], 3, 1)
         # Starts as a neutral grey, away from the sigmoid's flat ends.
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
 
-    def forward(self, x: torch.Tensor, season: torch.Tensor | None = None) -> torch.Tensor:
-        """x [N, channels, H, W]; season [N, 2] the season's code (season_code()), needed with FiLM."""
+    def forward(self, x: torch.Tensor, season: torch.Tensor | None = None,
+                appearance: torch.Tensor | None = None) -> torch.Tensor:
+        """x [N, channels, H, W]; season [N, 2] the season's code (season_code()), needed with the season's FiLM;
+        appearance [N, D] the appearance code, needed with an appearance FiLM."""
         if self.blur_depth:
             depth = F.conv2d(x[:, 3:4], self.depth_blur, padding=4)
             x = torch.cat([x[:, :3], depth, x[:, 4:]], dim=1)
-        modulation = iter(self.film(season)) if self.film is not None else None
+        condition = [c for c, used in ((season, self.season), (appearance, self.appearance > 0)) if used]
+        modulation = iter(self.film(torch.cat(condition, dim=1))) if self.film is not None else None
 
         def modulated(y: torch.Tensor) -> torch.Tensor:
             if modulation is None:
@@ -223,23 +232,34 @@ class Generator(nn.Module):
 
 class TexturedModel(nn.Module):
     """The generator, with a learnable surface texture (hash_texture.SurfaceTexture) whose features at each pixel's
-    surface coordinates join its input (deferred neural rendering); without texture just the generator."""
+    surface coordinates join its input (deferred neural rendering); without texture just the generator. With
+    `appearances` > 0, a learnable appearance code of `appearance_size` per training image (in the order of
+    `codes`' rows), as in NeRF in the Wild: what differs between the photographs (light, wear, the crate Qwen-Image
+    painted) goes there, the texture stays shared."""
 
-    def __init__(self, texture: bool = False, film: bool = False):
+    def __init__(self, texture: bool = False, film: bool = False, appearances: int = 0, appearance_size: int = 0):
         super().__init__()
         from hash_texture import SurfaceTexture
 
         self.texture = SurfaceTexture() if texture else None
         extra = self.texture.channels if texture else 0
         # The precise depth of the coordinate G-buffers needs no smoothing.
-        self.generator = Generator(extra=extra, blur_depth=not texture, film=film)
+        self.generator = Generator(extra=extra, blur_depth=not texture, film=film,
+                                   appearance=appearance_size if appearances else 0)
+        self.codes = nn.Embedding(appearances, appearance_size) if appearances else None
+        if self.codes is not None:
+            nn.init.normal_(self.codes.weight, std=0.1)
 
     def forward(self, x: torch.Tensor, uvid: torch.Tensor | None = None, classes: torch.Tensor | None = None,
-                season: torch.Tensor | None = None):
-        """season: [N] seasons S, for a generator with FiLM."""
+                season: torch.Tensor | None = None, appearance: torch.Tensor | None = None):
+        """season: [N] seasons S, for a generator with the season's FiLM; appearance: [N] rows of the training
+        images' codes (integers), or [N, appearance_size] codes themselves (e.g. fitted to a new image)."""
         if self.texture is not None:
             x = torch.cat([x, self.texture(uvid, classes)], dim=1)
-        return self.generator(x, season_code(season) if self.generator.film is not None else None)
+        code = None
+        if self.codes is not None:
+            code = self.codes(appearance) if appearance.dtype in (torch.int32, torch.int64) else appearance
+        return self.generator(x, season_code(season) if self.generator.season else None, code)
 
 
 class PatchDiscriminator(nn.Module):
@@ -328,8 +348,8 @@ def augment_pair(pair: torch.Tensor) -> torch.Tensor:
 def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng: np.random.Generator,
           coords: torch.Tensor | None = None, seasons: torch.Tensor | None = None):
     """Random crops (at scale 1 or 1/2 of the sample, flipped half the time): network inputs, photos, with coords
-    the surface coordinates (u, v, id) else None, class indices for the texture (subsampled, never blended) and the
-    samples' seasons [count]."""
+    the surface coordinates (u, v, id) else None, class indices for the texture (subsampled, never blended), the
+    samples' seasons [count] and the samples' indices [count]."""
     xs, ys, uvids, classes, picked = [], [], [], [], []
     n, _, h, w = inputs.shape
     for _ in range(count):
@@ -361,7 +381,8 @@ def crops(inputs: torch.Tensor, photos: torch.Tensor, count: int, size: int, rng
         if uvid is not None:
             uvids.append(uvid)
     season = seasons[picked] if seasons is not None else torch.full((count,), SUMMER)
-    return torch.cat(xs), torch.cat(ys), (torch.cat(uvids) if uvids else None), torch.cat(classes), season
+    return (torch.cat(xs), torch.cat(ys), (torch.cat(uvids) if uvids else None), torch.cat(classes), season,
+            torch.tensor(picked))
 
 
 def r1_penalty(discriminator: nn.Module, real_pair: torch.Tensor, season: torch.Tensor) -> torch.Tensor:
@@ -381,11 +402,13 @@ def write_grid(path: Path, inputs: torch.Tensor, photos: torch.Tensor, outputs: 
     Image.fromarray((grid * 255).round().astype(np.uint8)).save(path)
 
 
-def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
+def export(generator: nn.Module, path: Path, height: int, width: int, appearance_ids: list[str] = ()) -> None:
     """The generator as a fixed-shape ONNX graph Klartraum imports (shapes static, constants as initializers), with a
     reference input and output (`<path stem>_input_f32.bin`, `_output_f32.bin`) for the parity test. With FiLM, the
     graph has a second input "season" [1, 2], the season's code (season_code()), and its reference value goes to
-    `_season_f32.bin`."""
+    `_season_f32.bin`. With appearance codes, an input "appearance" [1, D] (reference `_appearance_input_f32.bin`),
+    and the training images' codes go to `_appearance_codes_f32.bin` [images][D] with their ids, one per line, in
+    `_appearance_ids.txt`."""
     import sys
 
     import onnx
@@ -396,8 +419,9 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     from export_vae import add_initializer_value_info, remove_dead_nodes, require_concrete_shapes
 
     textured = generator.texture is not None
-    film = generator.generator.film is not None
-    model = Generator(extra=generator.texture.channels if textured else 0, blur_depth=not textured, film=film).eval()
+    seasonal, size = generator.generator.season, generator.generator.appearance
+    model = Generator(extra=generator.texture.channels if textured else 0, blur_depth=not textured, film=seasonal,
+                      appearance=size).eval()
     model.load_state_dict({k: v.cpu() for k, v in generator.generator.state_dict().items()})
     if textured:
         # The texture's tables, [classes][levels][table][features], for the Klartraum lookup.
@@ -423,11 +447,33 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     channels = INPUT_CHANNELS + (generator.texture.channels if textured else 0)
     example = torch.rand(1, channels, height, width, generator=torch.Generator().manual_seed(0))
     season = season_code(torch.tensor([3.3]))
-    arguments, names = ((example, season), ["input", "season"]) if film else ((example,), ["input"])
+    code = (generator.codes.weight[:1].detach().cpu() if generator.codes is not None
+            else torch.zeros(1, size)) + 0.05
+    arguments, names = [example], ["input"]
+    if seasonal:
+        arguments.append(season)
+        names.append("season")
+    if size:
+        arguments.append(code)
+        names.append("appearance")
+
+    class Inputs(nn.Module):
+        """The generator with its graph inputs as positional arguments: input, then season and appearance where it
+        has them."""
+
+        def __init__(self, generator: nn.Module):
+            super().__init__()
+            self.generator = generator
+
+        def forward(self, x: torch.Tensor, *rest: torch.Tensor) -> torch.Tensor:
+            rest = list(rest)
+            return self.generator(x, rest.pop(0) if seasonal else None, rest.pop(0) if size else None)
+
+    wrapped = Inputs(model).eval()
     with torch.no_grad():
-        torch.onnx.export(model, arguments, str(path), input_names=names, output_names=["image"],
+        torch.onnx.export(wrapped, tuple(arguments), str(path), input_names=names, output_names=["image"],
                           opset_version=17, dynamo=False, do_constant_folding=True)
-        expected = model(*arguments)
+        expected = wrapped(*arguments)
     graph = onnx.shape_inference.infer_shapes(onnx.load(path), strict_mode=True)
     constants_to_initializers(graph)
     remove_dead_nodes(graph)
@@ -435,8 +481,13 @@ def export(generator: nn.Module, path: Path, height: int, width: int) -> None:
     require_concrete_shapes(graph)
     onnx.save(graph, str(path))
     example.numpy().tofile(path.with_name(path.stem + "_input_f32.bin"))
-    if film:
+    if seasonal:
         season.numpy().tofile(path.with_name(path.stem + "_season_f32.bin"))
+    if size:
+        code.numpy().tofile(path.with_name(path.stem + "_appearance_input_f32.bin"))
+        generator.codes.weight.detach().cpu().numpy().astype(np.float32).tofile(
+            path.with_name(path.stem + "_appearance_codes_f32.bin"))
+        path.with_name(path.stem + "_appearance_ids.txt").write_text("\n".join(appearance_ids) + "\n")
     expected.numpy().tofile(path.with_name(path.stem + "_output_f32.bin"))
 
 
@@ -465,6 +516,9 @@ def main() -> None:
                         help="start the generator from this checkpoint's (new input channels start at zero)")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--device", help="torch device (default: mps where available, else cpu)")
+    parser.add_argument("--appearance", type=int, default=0,
+                        help="size of a learnable appearance code per training image (NeRF-W style, by FiLM); 0: none")
+    parser.add_argument("--appearance-decay", type=float, default=1e-2, help="L2 penalty on the appearance codes")
     parser.add_argument("--season-film", action="store_true",
                         help="condition generator and discriminator on the sample's season (seasons.json, FiLM)")
     parser.add_argument("--reset-discriminator", action="store_true", help="with --resume: start a new discriminator")
@@ -477,7 +531,14 @@ def main() -> None:
     rng = np.random.default_rng(1)
     torch.manual_seed(1)
 
-    generator = TexturedModel(args.texture, args.season_film).to(device)
+    # With appearance codes, one row per training image; the rows' order is kept in the checkpoint.
+    appearance_ids: list[str] = []
+    if args.appearance:
+        appearance_ids = list(load_split(args.data / "train")[0])
+        if args.resume and (args.out / "checkpoint.pt").exists():
+            appearance_ids = torch.load(args.out / "checkpoint.pt", map_location="cpu")["appearance_ids"]
+    rows = {sample: k for k, sample in enumerate(appearance_ids)}
+    generator = TexturedModel(args.texture, args.season_film, len(appearance_ids), args.appearance).to(device)
     discriminator = MultiScaleDiscriminator(season=args.season_film).to(device)
     vgg = Vgg().to(device)
     if args.init_from:
@@ -504,9 +565,11 @@ def main() -> None:
     groups = [{"params": network_params, "lr": 1e-4}]
     if texture_params:
         groups.append({"params": texture_params, "lr": 1e-2, "betas": (0.9, 0.99)})
+    if generator.codes is not None:
+        groups.append({"params": list(generator.codes.parameters()), "lr": 5e-3, "betas": (0.9, 0.99)})
     optimise_g = torch.optim.Adam(groups, lr=1e-4, betas=(0.5, 0.999))
     optimise_d = torch.optim.Adam(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
-    ema = TexturedModel(args.texture, args.season_film).to(device)
+    ema = TexturedModel(args.texture, args.season_film, len(appearance_ids), args.appearance).to(device)
     ema.load_state_dict(generator.state_dict())
     ema.requires_grad_(False)
     step = 0
@@ -536,13 +599,15 @@ def main() -> None:
                 time.sleep(120)
                 inputs = None
                 continue
-        x, y, uvid, cls, season = crops(inputs, photos, args.batch, args.crop, rng, coords, seasons)
+        x, y, uvid, cls, season, picked = crops(inputs, photos, args.batch, args.crop, rng, coords, seasons)
         season = season.to(device)
+        # The appearance codes' rows of the crops' images (images added after the start have none and are skipped).
+        row = torch.tensor([rows.get(ids[int(k)], 0) for k in picked], device=device) if rows else None
         x, y, cls = x.to(device), y.to(device), cls.to(device)
         uvid = uvid.to(device) if uvid is not None else None
         adversarial = step >= args.adversarial_start
 
-        fake = generator(x, uvid, cls, season)
+        fake = generator(x, uvid, cls, season, row)
         if adversarial:
             real_pair, fake_pair = torch.cat([x, y], 1), torch.cat([x, fake.detach()], 1)
             loss_d = 0.0
@@ -560,6 +625,8 @@ def main() -> None:
         loss_g = args.l1 * loss_l1 + args.perceptual * loss_vgg
         if args.colour > 0:
             loss_g = loss_g + args.colour * F.l1_loss(F.avg_pool2d(fake, 8), F.avg_pool2d(y, 8))
+        if generator.codes is not None:
+            loss_g = loss_g + args.appearance_decay * generator.codes(row).pow(2).sum(1).mean()
         loss_adv = loss_fm = torch.zeros((), device=device)
         if not adversarial:
             loss_d = torch.zeros((), device=device)
@@ -594,46 +661,83 @@ def main() -> None:
             # Until held-out pairs exist, the grid shows training pairs (marked in the file name).
             shown = validation if validation[0] else (ids[:6], inputs[:6], photos[:6],
                                                       coords[:6] if coords is not None else None, seasons[:6])
-            score = evaluate(ema, vgg, shown, args.out, step, device, log, "validation" if validation[0] else "train")
+            shown_rows = None if validation[0] or not rows else torch.tensor([rows[i] for i in ids[:6]])
+            score = evaluate(ema, vgg, shown, args.out, step, device, log, "validation" if validation[0] else "train",
+                             shown_rows)
             if validation[0] and score < best:
                 best = score
-                torch.save({"ema": ema.state_dict(), "step": step, "score": score}, args.out / "best_checkpoint.pt")
-                export(ema, args.out / "photo_enhancer_best.onnx", inputs.shape[2], inputs.shape[3])
+                torch.save({"ema": ema.state_dict(), "step": step, "score": score, "appearance_ids": appearance_ids},
+                           args.out / "best_checkpoint.pt")
+                export(ema, args.out / "photo_enhancer_best.onnx", inputs.shape[2], inputs.shape[3], appearance_ids)
                 line = f"best validation so far at step {step}: {score:.4f}"
                 print(line, flush=True)
                 log.write(line + "\n")
             torch.save({"generator": generator.state_dict(), "discriminator": discriminator.state_dict(),
                         "ema": ema.state_dict(), "optimise_g": optimise_g.state_dict(),
-                        "optimise_d": optimise_d.state_dict(), "step": step, "best": best}, checkpoint)
-            export(ema, args.out / "photo_enhancer.onnx", inputs.shape[2], inputs.shape[3])
+                        "optimise_d": optimise_d.state_dict(), "step": step, "best": best,
+                        "appearance_ids": appearance_ids}, checkpoint)
+            export(ema, args.out / "photo_enhancer.onnx", inputs.shape[2], inputs.shape[3], appearance_ids)
+
+
+def fit_code(model, vgg, x, uvid, classes, season, target, steps: int = 40) -> torch.Tensor:
+    """The appearance code under which the frozen model renders `target` best (L1 + VGG), as for a new image of NeRF
+    in the Wild: from the training codes' mean, `steps` Adam steps on the code alone."""
+    code = model.codes.weight.mean(dim=0, keepdim=True).detach().clone().requires_grad_(True)
+    optimiser = torch.optim.Adam([code], lr=5e-2)
+    with torch.enable_grad():
+        for _ in range(steps):
+            z = model(x, uvid, classes, season, code)
+            loss = F.l1_loss(z, target) + vgg.distance(z, target)
+            optimiser.zero_grad(set_to_none=True)
+            loss.backward()
+            optimiser.step()
+    return code.detach()
 
 
 @torch.no_grad()
-def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: str = "validation") -> float:
-    """Logs the mean L1 and VGG distance of the pairs and writes a grid of the first six; returns L1 + VGG."""
+def evaluate(model, vgg, validation, out: Path, step: int, device, log, split: str = "validation",
+             rows: torch.Tensor | None = None) -> float:
+    """Logs the mean L1 and VGG distance of the pairs and writes a grid of the first six; returns L1 + VGG. With
+    appearance codes, training pairs use their own (`rows`); held-out pairs get one fitted (fit_code()), and the
+    scores with the training codes' mean are logged as well."""
     ids, inputs, photos, coords, seasons = validation
     if not ids:
         return float("inf")
-    l1 = perceptual = 0.0
+    l1 = perceptual = mean_l1 = mean_perceptual = 0.0
     shown_x, shown_y, shown_z = [], [], []
     for k in range(len(ids)):
         c = coords[k:k + 1] if coords is not None else None
         x = network_input(inputs[k:k + 1], c).to(device)
         y = photos[k:k + 1].float().to(device) / 255.0
-        z = model(x, c[:, :3].to(device) if c is not None else None, inputs[k:k + 1, 4].long().to(device),
-                  seasons[k:k + 1].to(device))
+        uvid = c[:, :3].to(device) if c is not None else None
+        classes = inputs[k:k + 1, 4].long().to(device)
+        season = seasons[k:k + 1].to(device)
+        code = None
+        if model.codes is not None:
+            if rows is not None:
+                code = model.codes(rows[k:k + 1].to(device))
+            else:
+                mean = model.codes.weight.mean(dim=0, keepdim=True)
+                z = model(x, uvid, classes, season, mean)
+                mean_l1 += F.l1_loss(z, y).item()
+                mean_perceptual += vgg.distance(z, y).item()
+                code = fit_code(model, vgg, x, uvid, classes, season, y)
+        z = model(x, uvid, classes, season, code)
         l1 += F.l1_loss(z, y).item()
         perceptual += vgg.distance(z, y).item()
         if k < 6:
             shown_x.append(F.interpolate(x, scale_factor=0.5, mode="area")[0])
             shown_y.append(F.interpolate(y, scale_factor=0.5, mode="area")[0])
             shown_z.append(F.interpolate(z, scale_factor=0.5, mode="area")[0])
-    line = f"{split} step {step}: L1 {l1 / len(ids):.4f}, VGG {perceptual / len(ids):.4f} over {len(ids)} pairs"
+    n = len(ids)
+    line = f"{split} step {step}: L1 {l1 / n:.4f}, VGG {perceptual / n:.4f} over {n} pairs"
+    if model.codes is not None and rows is None:
+        line += f" (fitted codes; mean code: L1 {mean_l1 / n:.4f}, VGG {mean_perceptual / n:.4f})"
     print(line, flush=True)
     log.write(line + "\n")
     log.flush()
     write_grid(out / f"{split}_{step:06d}.png", shown_x, shown_y, shown_z)
-    return (l1 + perceptual) / len(ids)
+    return (l1 + perceptual) / n
 
 
 if __name__ == "__main__":

@@ -651,7 +651,8 @@ it is repainted. Images are binary PPM files.
 | `--steps N` | Denoising steps (default 8, the Lightning LoRA's) |
 | `--seed N` | Seed of the initial noise (default 0) |
 | `--image FILE` | Input image (PPM of the image size) for image-to-image |
-| `--batch FILE` | Many images with one prompt: every line of FILE names an input (`-` for none), an output and optionally a control PPM; the models load once and every image starts from the same noise |
+| `--batch FILE` | Many images with one prompt: every line of FILE names an input (`-` for none), an output and optionally a control PPM; the models load once and every image starts from the same noise (see `--noise-per-image`) |
+| `--noise-per-image` | With `--batch`, every image gets its own noise, from `--seed` and its output path |
 | `--control FILE` | Control image for the ControlNet (a depth map: near white, far black), PPM of the image size |
 | `--control-scale S` | The ControlNet's conditioning scale (default 1) |
 | `--controlnet FILE` | The ControlNet (default: the converted ControlNet Union in `build/models/qwen-image/controlnet/`) |
@@ -725,7 +726,8 @@ degrees above, 2.2 to 3.8 away). Every view is written with all G-buffers like a
 frame of the `tree_bonsai_example` fly-ins (`frames/classical_*.png`, the class,
 depth, 16-bit depth and u and v images, and `cameras_classical.csv`), so that
 `scripts/neural/prepare_photo_pairs.py` and `add_surface_coordinates.py` (with
-their sample size option) turn the views into training pairs.
+their sample size option) turn the views into training pairs. With `--model`, a
+trained photo enhancer renders every view, entirely in Klartraum.
 
 | Option | Meaning |
 |---|---|
@@ -733,7 +735,13 @@ their sample size option) turn the views into training pairs.
 | `--size S` | Width and height of the images (default 512) |
 | `--seed N` | Seed of the cameras (default 1) |
 | `--out-dir DIR` | Output directory (default `build/TestingOutput/crate/flights/crate_a`) |
+| `--orbit` | Circle the crate once instead (22 degrees above, 3 away) |
+| `--model STEM` | Also enhance every view with the photo enhancer `STEM` (`neural::PhotoEnhancer`) into `frames/enhanced_NNNN.png` |
+| `--appearance K` | The appearance code of training image K (default: the codes' mean) |
+| `--sample-size S` | The enhancer's sample size (default 256) |
 
 ```bash
 ./build/examples/crate_gbuffer_example --views 180 --seed 1 --out-dir build/TestingOutput/crate/flights/crate_a
+./build/examples/crate_gbuffer_example --orbit --views 240 --out-dir build/TestingOutput/crate/orbit \
+    --model build/TestingOutput/crate/runs/c1/photo_enhancer_best --appearance 3
 ```

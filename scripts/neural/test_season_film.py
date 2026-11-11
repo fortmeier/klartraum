@@ -15,6 +15,14 @@ TESTS:
 - discriminator_sees_season: the season-conditioned discriminator's logits change with the season
 - export_has_season_input: the ONNX export of a FiLM generator has the inputs "input" and "season" and writes the
   season's reference value
+- new_appearance_film_is_identity: a model with fresh appearance codes gives the image of the same generator without
+  them, whatever the code
+- codes_steer_the_image: once the FiLM heads are trained (set at random), two images' codes give different images,
+  and a training step's gradient reaches only the codes of the images in the batch
+- fitted_code_improves_the_fit: fit_code() finds a code under which the frozen model is closer to a target the model
+  can reach with some code than the training codes' mean is
+- export_has_appearance_input: the export of a model with appearance codes has the inputs "input" and "appearance"
+  and writes the codes of the training images with their ids
 
     uv run --project scripts/qwen_image python scripts/neural/test_season_film.py
 """
@@ -26,8 +34,8 @@ from pathlib import Path
 
 import torch
 
-from train_photo_enhancer import (INPUT_CHANNELS, Generator, MultiScaleDiscriminator, TexturedModel, export,
-                                  season_code, season_of)
+from train_photo_enhancer import (INPUT_CHANNELS, Generator, MultiScaleDiscriminator, TexturedModel, Vgg, export,
+                                  fit_code, season_code, season_of)
 
 WIDTHS = (8, 8, 8, 8, 8)
 
@@ -98,8 +106,74 @@ def export_has_season_input() -> None:
         assert path.with_name("enhancer_season_f32.bin").stat().st_size == 2 * 4
 
 
+def randomised_heads(model: TexturedModel) -> None:
+    torch.nn.init.normal_(model.generator.out.weight)
+    for head in list(model.generator.film.gammas) + list(model.generator.film.betas):
+        torch.nn.init.normal_(head.weight, std=0.3)
+
+
+def new_appearance_film_is_identity() -> None:
+    torch.manual_seed(3)
+    plain = TexturedModel().eval()
+    coded = TexturedModel(appearances=5, appearance_size=8).eval()
+    coded.load_state_dict(plain.state_dict(), strict=False)
+    torch.nn.init.normal_(plain.generator.out.weight)
+    coded.generator.out.load_state_dict(plain.generator.out.state_dict())
+    x = torch.rand(2, INPUT_CHANNELS, 32, 48)
+    with torch.no_grad():
+        expected = plain(x)
+        assert torch.allclose(coded(x, appearance=torch.tensor([0, 4])), expected, atol=1e-6)
+        assert torch.allclose(coded(x, appearance=torch.randn(2, 8)), expected, atol=1e-6)
+
+
+def codes_steer_the_image() -> None:
+    torch.manual_seed(4)
+    model = TexturedModel(appearances=5, appearance_size=8)
+    randomised_heads(model)
+    x = torch.rand(1, INPUT_CHANNELS, 32, 48).repeat(2, 1, 1, 1)
+    with torch.no_grad():
+        images = model(x, appearance=torch.tensor([1, 3]))
+    assert (images[0] - images[1]).abs().mean() > 1e-3
+    model(x, appearance=torch.tensor([1, 3])).mean().backward()
+    used = model.codes.weight.grad.abs().sum(dim=1)
+    assert used[1] > 0 and used[3] > 0
+    assert used[0] == 0 and used[2] == 0 and used[4] == 0
+
+
+def fitted_code_improves_the_fit() -> None:
+    torch.manual_seed(5)
+    model = TexturedModel(appearances=4, appearance_size=8).eval()
+    randomised_heads(model)
+    model.requires_grad_(False)
+    vgg = Vgg().eval()
+    x = torch.rand(1, INPUT_CHANNELS, 32, 32)
+    with torch.no_grad():
+        target = model(x, appearance=torch.tensor([2]))
+        mean = model.codes.weight.mean(dim=0, keepdim=True)
+        before = (model(x, appearance=mean) - target).abs().mean()
+    code = fit_code(model, vgg, x, None, None, None, target, steps=60)
+    with torch.no_grad():
+        after = (model(x, appearance=code) - target).abs().mean()
+    assert after < 0.5 * before, (float(before), float(after))
+
+
+def export_has_appearance_input() -> None:
+    import onnx
+
+    model = TexturedModel(appearances=3, appearance_size=8)
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "enhancer.onnx"
+        export(model, path, 32, 48, ["a_0001", "a_0002", "a_0003"])
+        names = [i.name for i in onnx.load(path).graph.input]
+        assert names[:2] == ["input", "appearance"], names
+        assert path.with_name("enhancer_appearance_codes_f32.bin").stat().st_size == 3 * 8 * 4
+        assert path.with_name("enhancer_appearance_ids.txt").read_text().split() == ["a_0001", "a_0002", "a_0003"]
+        assert path.with_name("enhancer_appearance_input_f32.bin").stat().st_size == 8 * 4
+
+
 if __name__ == "__main__":
     for test in (season_code_is_cyclic, season_of_reads_labels, new_film_is_identity, film_follows_season,
-                 discriminator_sees_season, export_has_season_input):
+                 discriminator_sees_season, export_has_season_input, new_appearance_film_is_identity,
+                 codes_steer_the_image, fitted_code_improves_the_fit, export_has_appearance_input):
         test()
         print(f"ok  {test.__name__}")
