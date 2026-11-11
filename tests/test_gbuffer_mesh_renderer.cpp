@@ -12,6 +12,8 @@
  *   front face
  * - coordinatesFollowTheFace: at the image centre the coordinates are those of the middle of the front face (u and v
  *   near 0.5) with its object id, and they grow to the right and upwards
+ * - normalsShowTheFaces: the normals G-buffer of the box's front face (seen from +z) decodes to (0, 0, 1), of the
+ *   floor to (0, 1, 0)
  * - colourIsLitFromTheLight: the face turned towards the light is brighter than the one turned away
  **/
 
@@ -141,4 +143,12 @@ TEST(GBufferMeshRenderer, colourIsLitFromTheLight) {
     scene.renderer->setLight(glm::vec3(-1.0f, 0.0f, 0.0f), 0.2f);
     const auto unlit = scene.draw(GBufferOutput::Colour, glm::vec3(2.2f, 0.5f, 2.2f));
     EXPECT_GT(glm::length(rgb(lit, 40, 32)), 2.0f * glm::length(rgb(unlit, 40, 32)));
+}
+
+TEST(GBufferMeshRenderer, normalsShowTheFaces) {
+    BoxScene scene;
+    const auto normals = scene.draw(GBufferOutput::Normals, glm::vec3(0.0f, 0.5f, 3.0f));
+    const glm::vec3 front = rgb(normals, 32, 32) * 2.0f - 1.0f, floor = rgb(normals, 32, 62) * 2.0f - 1.0f;
+    EXPECT_LT(glm::length(front - glm::vec3(0.0f, 0.0f, 1.0f)), 0.02f);
+    EXPECT_LT(glm::length(floor - glm::vec3(0.0f, 1.0f, 0.0f)), 0.02f);
 }

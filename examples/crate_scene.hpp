@@ -144,11 +144,10 @@ inline klartraum::neural::GBufferFrame renderFrame(klartraum::VulkanContext& vc,
     klartraum::neural::GBufferFrame frame;
     frame.width = frame.height = size;
     frame.depthFar = kDepthFar;
-    const std::pair<std::vector<uint8_t>*, GBufferOutput> outputs[] = {{&frame.colour, GBufferOutput::Colour},
-                                                                       {&frame.classes, GBufferOutput::Classes},
-                                                                       {&frame.depth16, GBufferOutput::Depth16},
-                                                                       {&frame.u, GBufferOutput::CoordinatesU},
-                                                                       {&frame.v, GBufferOutput::CoordinatesV}};
+    const std::pair<std::vector<uint8_t>*, GBufferOutput> outputs[] = {
+        {&frame.colour, GBufferOutput::Colour},   {&frame.classes, GBufferOutput::Classes},
+        {&frame.depth16, GBufferOutput::Depth16}, {&frame.u, GBufferOutput::CoordinatesU},
+        {&frame.v, GBufferOutput::CoordinatesV},  {&frame.normals, GBufferOutput::Normals}};
     for (const auto& [buffer, output] : outputs) {
         renderer.setOutput(output, 0.0f, kDepthFar);
         graph.submitAndWait(vc.getGraphicsQueue(), 0);

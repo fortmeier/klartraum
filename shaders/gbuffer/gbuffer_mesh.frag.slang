@@ -5,7 +5,8 @@
 import glsl;
 
 // GBufferMeshRenderer: the lit albedo, or a G-buffer in the encodings of the tree renderers (treeClassColor(),
-// treeEncode16(), the depth of treeGBufferColor() and the coordinates of treeCoordinateColor()).
+// treeEncode16(), the depth of treeGBufferColor() and the coordinates of treeCoordinateColor()), or the world-space
+// normal.
 
 #define TREE_CAMERA_SET 0
 #define TREE_CAMERA_BINDING 0
@@ -41,6 +42,10 @@ void main() {
         } else {
             outColor = vec4(d, d + 1.0f / 765.0f, d + 2.0f / 765.0f, 1.0f);
         }
+        return;
+    }
+    if (output == 9u) {
+        outColor = vec4(0.5f * normalize(inNormal.xyz) + 0.5f, 1.0f);
         return;
     }
     if (output == 6u || output == 7u) {

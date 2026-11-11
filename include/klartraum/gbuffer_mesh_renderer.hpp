@@ -36,6 +36,7 @@ enum class GBufferOutput : uint32_t {
     CoordinatesU = 6, ///< u as 16 bits (red high byte, green low byte), blue the object id's high byte
     CoordinatesV = 7, ///< v as CoordinatesU, blue the object id's low byte
     Depth16 = 8,      ///< the distance from near to far as 16 bits (red high byte, green low byte)
+    Normals = 9,      ///< the world-space normal n as (n + 1) / 2 in red, green and blue
 };
 
 /// The values the shaders of a GBufferMeshRenderer read; std430 and C++ share the layout.

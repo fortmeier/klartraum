@@ -29,6 +29,7 @@ struct GBufferFrame {
     std::vector<uint8_t> depth16; ///< 16-bit depth from 0 to depthFar
     std::vector<uint8_t> u;       ///< coordinate u, blue the object id's high byte
     std::vector<uint8_t> v;       ///< coordinate v, blue the object id's low byte
+    std::vector<uint8_t> normals; ///< (n + 1) / 2 of the world-space normal, optional
     float depthFar = 1.0f;        ///< the far end of the depth window of depth16
 };
 
@@ -44,6 +45,7 @@ struct PhotoEnhancerInputs {
     std::vector<float> channels;    ///< [11][height][width]: RGB, stretched inverse depth, 7 one-hot classes
     std::vector<float> coordinates; ///< [3][height][width]: u, v, object id in [0, 1]
     std::vector<float> classes;     ///< [height][width]: class indices as floats
+    std::vector<float> normals;     ///< [3][height][width] in [-1, 1] (0 on the background), if the frame has them
 };
 
 /**
@@ -51,7 +53,7 @@ struct PhotoEnhancerInputs {
  * add_surface_coordinates.py make them from the frames of a flight: the frame scaled to the sample width (PIL's
  * resampling) and cropped to its height around the middle; RGB bicubically (in 8-bit steps), the inverse depth of the
  * covered pixels stretched between its 2nd percentile and `depthHigh` and resampled bilinearly, classes (the nearest
- * class colour) and surface coordinates sampled nearest, so that they never blend between surfaces.
+ * class colour), surface coordinates and normals sampled nearest, so that they never blend between surfaces.
  */
 PhotoEnhancerInputs photoEnhancerInputs(const GBufferFrame& frame, const PhotoEnhancerSample& sample);
 

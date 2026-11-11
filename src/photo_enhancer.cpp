@@ -191,6 +191,16 @@ PhotoEnhancerInputs photoEnhancerInputs(const GBufferFrame& frame, const PhotoEn
         inputs.coordinates[pixels + p] = value16(frame.v, q);
         inputs.coordinates[2 * pixels + p] = float(frame.u[4 * q] * 256u + frame.v[4 * q]) / 65535.0f;
     }
+    if (!frame.normals.empty()) {
+        inputs.normals.assign(3 * pixels, 0.0f);
+        for (size_t p = 0; p < pixels; ++p) {
+            const size_t q = resampling.nearest(p);
+            if (classes[q] == 0)
+                continue;
+            for (int c = 0; c < 3; ++c)
+                inputs.normals[c * pixels + p] = float(frame.normals[4 * q + 2 - c]) / 127.5f - 1.0f;
+        }
+    }
     return inputs;
 }
 
