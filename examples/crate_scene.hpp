@@ -54,16 +54,18 @@ inline void setCamera(klartraum::CameraMVP& ubo, glm::vec3 eye, glm::vec3 look) 
     ubo.cameraWorldPos = glm::vec4(eye, 1.0f);
 }
 
-// The surface texture of train_photo_enhancer.py: hash_texture.SurfaceTexture's defaults.
-inline klartraum::neural::HashTextureShape textureShape() {
+// A surface texture as hash_texture.SurfaceTexture makes it: `levels` resolutions growing geometrically from `base` to
+// `finest` cells per axis (the defaults are its own: 12 levels, 16 to 2048).
+inline klartraum::neural::HashTextureShape textureShape(uint32_t levels = 12, uint32_t base = 16,
+                                                        uint32_t finest = 2048) {
     klartraum::neural::HashTextureShape shape;
-    shape.levels = 12;
+    shape.levels = levels;
     shape.features = 2;
     shape.tableSize = 1u << 17;
     shape.classes = {2, 3, 4};
-    const double growth = std::exp((std::log(2048.0) - std::log(16.0)) / 11.0);
+    const double growth = std::exp((std::log(double(finest)) - std::log(double(base))) / std::max(1.0, levels - 1.0));
     for (uint32_t level = 0; level < shape.levels; ++level)
-        shape.resolutions.push_back(uint32_t(std::floor(16.0 * std::pow(growth, double(level)))));
+        shape.resolutions.push_back(uint32_t(std::floor(double(base) * std::pow(growth, double(level)))));
     return shape;
 }
 

@@ -187,6 +187,7 @@ int main(int argc, char** argv) {
     uint32_t steps = 30000, batchSize = 16, crop = 128, appearance = 8, every = 1000;
     float minAlignment = 0.7f, perceptual = 0.0f, adversarial = 0.0f, featureMatching = 2.0f;
     bool profile = false;
+    uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -211,7 +212,11 @@ int main(int argc, char** argv) {
             minAlignment = std::stof(argv[++i]);
         else if (arg == "--profile")
             profile = true;
-        else if (arg == "--perceptual" && hasValue)
+        else if (arg == "--texture" && i + 3 < argc) {
+            textureLevels = uint32_t(std::stoul(argv[++i]));
+            textureBase = uint32_t(std::stoul(argv[++i]));
+            textureFinest = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--perceptual" && hasValue)
             perceptual = std::stof(argv[++i]);
         else if (arg == "--adversarial" && hasValue)
             adversarial = std::stof(argv[++i]);
@@ -253,7 +258,7 @@ int main(int argc, char** argv) {
         neural::PhotoEnhancerTrainingConfig config;
         config.batch = batchSize;
         config.size = crop;
-        config.texture = crate::textureShape();
+        config.texture = crate::textureShape(textureLevels, textureBase, textureFinest);
         config.appearances = appearance > 0 ? uint32_t(training.size()) : 0;
         config.appearanceSize = appearance;
         config.profile = profile;

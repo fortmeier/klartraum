@@ -995,6 +995,19 @@ void PhotoEnhancerTraining::step() {
 
 void PhotoEnhancerTraining::save(const std::string& directory, bool averages) const {
     std::filesystem::create_directories(directory);
+    // The texture's shape (HashTextureShape::fromFile()), so that the parameters can be loaded without knowing it.
+    {
+        const auto& shape = config.texture;
+        std::ofstream texture(std::filesystem::path(directory) / "texture.txt");
+        texture << "width " << shape.width << "\nheight " << shape.height << "\nlevels " << shape.levels
+                << "\nfeatures " << shape.features << "\ntable " << shape.tableSize << "\nresolutions";
+        for (uint32_t r : shape.resolutions)
+            texture << " " << r;
+        texture << "\nclasses";
+        for (uint32_t c : shape.classes)
+            texture << " " << c;
+        texture << "\n";
+    }
     std::ofstream manifest(std::filesystem::path(directory) / "parameters.txt");
     for (const auto& parameter : parameters) {
         const auto& source =

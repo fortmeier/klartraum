@@ -111,8 +111,8 @@ public:
     void setParameter(const std::string& name, const std::vector<float>& values);
 
     /**
-     * @brief Writes every parameter (or its average) to `<directory>/<name>.bin` (float32) and their names and shapes,
-     * one per line, to `<directory>/parameters.txt`.
+     * @brief Writes every parameter (or its average) to `<directory>/<name>.bin` (float32), their names and shapes, one
+     * per line, to `<directory>/parameters.txt` and the texture's shape to `<directory>/texture.txt`.
      */
     void save(const std::string& directory, bool averages = true) const;
     /// Reads parameters written by save() (into parameter and average); every parameter must be there.

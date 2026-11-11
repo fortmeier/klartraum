@@ -779,6 +779,7 @@ the held-out views are rendered with the codes' mean
 | `--steps N` | Training steps (default 30000) |
 | `--batch N`, `--crop S` | Crops per step and their size (default 16 and 128) |
 | `--sample-size S` | Size of the samples (default 256; the photos are averaged down to it) |
+| `--texture L B F` | The surface texture's levels and their coarsest and finest cells per axis (default 12 16 2048) |
 | `--appearance D` | Size of the appearance codes (default 8, 0 for none) |
 | `--every N` | Steps between checkpoints and validations (default 1000) |
 | `--min-alignment A` | Leave out views aligned worse (default 0.7) |
