@@ -4,6 +4,9 @@
 
 #include "klartraum/neural/photo_enhancer_training.hpp"
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 
 #include "klartraum/layers/layers.hpp"
@@ -219,6 +222,16 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         sigmoid->setInput(logits, 0);
         sigmoid->setInput(output, 1);
         add(sigmoid);
+    }
+
+    if (config.forwardOnly) {
+        graph = std::make_unique<ComputeGraph>(vulkanContext, 1);
+        graph->compileFrom(sequence.back());
+        for (const auto& parameter : parameters) {
+            const std::vector<float> zeros(parameter.value->getDataElementCount(), 0.0f);
+            parameter.value->getDataBuffer(0).memcopyFrom(zeros);
+        }
+        return;
     }
 
     // The loss.
@@ -597,12 +610,64 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
     channels->getDataBuffer(0).memcopyFrom(channelValues);
     coordinates->getDataBuffer(0).memcopyFrom(coordinateValues);
     classes->getDataBuffer(0).memcopyFrom(classValues);
-    targets->getDataBuffer(0).memcopyFrom(targetValues);
+    // Forward only, the targets are not part of the graph.
+    if (!config.forwardOnly)
+        targets->getDataBuffer(0).memcopyFrom(targetValues);
     if (config.appearances > 0)
         rows->getDataBuffer(0).memcopyFrom(rowValues);
 }
 
 void PhotoEnhancerTraining::step() { graph->submitAndWait(vulkanContext.getGraphicsQueue(), 0); }
+
+void PhotoEnhancerTraining::save(const std::string& directory, bool averages) const {
+    std::filesystem::create_directories(directory);
+    std::ofstream manifest(std::filesystem::path(directory) / "parameters.txt");
+    for (const auto& parameter : parameters) {
+        const auto& source = averages && !config.forwardOnly ? parameter.average : parameter.value;
+        std::vector<float> values(source->getDataElementCount());
+        source->getDataBuffer(0).memcopyTo(values);
+        std::ofstream(std::filesystem::path(directory) / (parameter.name + ".bin"), std::ios::binary)
+            .write(reinterpret_cast<const char*>(values.data()), std::streamsize(values.size() * sizeof(float)));
+        manifest << parameter.name;
+        for (uint32_t d : parameter.value->getDimensions())
+            manifest << " " << d;
+        manifest << "\n";
+    }
+}
+
+void PhotoEnhancerTraining::load(const std::string& directory) {
+    for (const auto& parameter : parameters) {
+        const auto path = std::filesystem::path(directory) / (parameter.name + ".bin");
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file)
+            throw std::runtime_error("PhotoEnhancerTraining: cannot read " + path.string());
+        std::vector<float> values(size_t(file.tellg()) / sizeof(float));
+        file.seekg(0);
+        file.read(reinterpret_cast<char*>(values.data()), std::streamsize(values.size() * sizeof(float)));
+        setParameter(parameter.name, values);
+    }
+}
+
+std::vector<float> PhotoEnhancerTraining::meanCode() const {
+    if (config.appearances == 0)
+        return {};
+    const auto& codes = find("codes.weight");
+    std::vector<float> values(codes.value->getDataElementCount());
+    (config.forwardOnly ? codes.value : codes.average)->getDataBuffer(0).memcopyTo(values);
+    std::vector<float> mean(config.appearanceSize, 0.0f);
+    for (size_t i = 0; i < values.size(); ++i)
+        mean[i % config.appearanceSize] += values[i] / float(config.appearances);
+    return mean;
+}
+
+void PhotoEnhancerTraining::setAppearance(const std::vector<float>& code) {
+    if (!config.forwardOnly || code.size() != config.appearanceSize)
+        throw std::invalid_argument("PhotoEnhancerTraining: setAppearance needs forward only and a code of its size");
+    std::vector<float> table;
+    for (uint32_t row = 0; row < config.appearances; ++row)
+        table.insert(table.end(), code.begin(), code.end());
+    find("codes.weight").value->getDataBuffer(0).memcopyFrom(table);
+}
 
 float PhotoEnhancerTraining::loss() const {
     std::vector<float> value(1);
@@ -640,7 +705,8 @@ void PhotoEnhancerTraining::setParameter(const std::string& name, const std::vec
     if (values.size() != parameter.value->getDataElementCount())
         throw std::invalid_argument("PhotoEnhancerTraining: " + name + " has another size");
     parameter.value->getDataBuffer(0).memcopyFrom(values);
-    parameter.average->getDataBuffer(0).memcopyFrom(values);
+    if (!config.forwardOnly)
+        parameter.average->getDataBuffer(0).memcopyFrom(values);
 }
 
 } // namespace klartraum::neural

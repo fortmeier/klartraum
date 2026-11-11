@@ -39,6 +39,9 @@ struct PhotoEnhancerTrainingConfig {
     training::AdamParameters codesAdam{5e-3f, 0.9f, 0.99f};
     float emaRate = 1e-3f;
     uint32_t emaWarmup = 1001; ///< steps during which the average copies the parameters
+    /// Only the forward pass (no loss, gradients or optimizer), e.g. to render with trained parameters; step() then
+    /// computes image() from the batch's G-buffers, coordinates, classes and rows.
+    bool forwardOnly = false;
 };
 
 /**
@@ -81,6 +84,18 @@ public:
     std::shared_ptr<TensorElement<float>> average(const std::string& name) const;
     /// Sets a parameter and its average, e.g. from a checkpoint.
     void setParameter(const std::string& name, const std::vector<float>& values);
+
+    /**
+     * @brief Writes every parameter (or its average) to `<directory>/<name>.bin` (float32) and their names and shapes,
+     * one per line, to `<directory>/parameters.txt`.
+     */
+    void save(const std::string& directory, bool averages = true) const;
+    /// Reads parameters written by save() (into parameter and average); every parameter must be there.
+    void load(const std::string& directory);
+    /// The mean of the training images' appearance codes (of the averages), e.g. for a new view.
+    std::vector<float> meanCode() const;
+    /// Forward only: renders every crop of the batch with this appearance code (whatever its rows).
+    void setAppearance(const std::vector<float>& code);
 
 private:
     struct Parameter;

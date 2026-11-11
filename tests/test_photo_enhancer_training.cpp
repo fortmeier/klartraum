@@ -27,6 +27,8 @@
  *   appearance codes, from PyTorch's parameters on PyTorch's batch: the image and the photometric loss equal
  *   PyTorch's, and after the backward pass, clipping and Adam every parameter is within a tenth of its learning
  *   rate of PyTorch's (Adam's first step moves each by about the learning rate, so a wrong gradient shows)
+ * - forwardOnlyRendersTheSameImage: parameters saved from a training and loaded into a forward-only instance render
+ *   PyTorch's image of the batch; with every row's code set to one code, the crops render as with that code
  * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  *
@@ -562,4 +564,40 @@ TEST(PhotoEnhancerTraining, generatorStepMatchesPyTorch) {
             worst = std::max(worst, std::abs(actual[i] - after[i]));
         EXPECT_LT(worst, 0.1f * rate) << name;
     }
+}
+
+TEST(PhotoEnhancerTraining, forwardOnlyRendersTheSameImage) {
+    const Fixture fixture("generator_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoEnhancerTrainingConfig config;
+    config.batch = 2;
+    config.size = 32;
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + "generator_step_texture.txt");
+    config.appearances = 5;
+    config.appearanceSize = 8;
+    const std::string directory = "build/TestingOutput/training_fixtures/saved_generator";
+    {
+        neural::PhotoEnhancerTraining trainer(vc, config);
+        for (const auto& name : trainer.parameterNames())
+            trainer.setParameter(name, fixture.values("before." + name));
+        trainer.save(directory, false);
+    }
+    config.forwardOnly = true;
+    neural::PhotoEnhancerTraining renderer(vc, config);
+    renderer.load(directory);
+    renderer.setBatch(fixture.values("channels"), fixture.values("coordinates"), fixture.values("classes"),
+                      fixture.values("target"), fixture.values("rows"));
+    renderer.step();
+    EXPECT_LT(relativeError(renderer.image(), fixture.values("image")), 1e-5f);
+    // Row 3's code for every crop: the first crop (row 3) stays, the second (row 1) changes.
+    const auto codes = fixture.values("before.codes.weight");
+    renderer.setAppearance(std::vector<float>(codes.begin() + 3 * 8, codes.begin() + 4 * 8));
+    renderer.step();
+    const auto image = renderer.image(), expected = fixture.values("image");
+    const size_t half = image.size() / 2;
+    EXPECT_LT(relativeError({image.begin(), image.begin() + half}, {expected.begin(), expected.begin() + half}), 1e-5f);
+    EXPECT_GT(relativeError({image.begin() + half, image.end()}, {expected.begin() + half, expected.end()}), 1e-3f);
 }
