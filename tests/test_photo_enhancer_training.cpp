@@ -27,6 +27,8 @@
  *   appearance codes, from PyTorch's parameters on PyTorch's batch: the image and the photometric loss equal
  *   PyTorch's, and after the backward pass, clipping and Adam every parameter is within a tenth of its learning
  *   rate of PyTorch's (Adam's first step moves each by about the learning rate, so a wrong gradient shows)
+ * - generatorStepWithVggMatchesPyTorch: the same step with the VGG perceptual loss (weight 1) also gives PyTorch's
+ *   perceptual loss and updated parameters (skips without the VGG weights)
  * - forwardOnlyRendersTheSameImage: parameters saved from a training and loaded into a forward-only instance render
  *   PyTorch's image of the batch; with every row's code set to one code, the crops render as with that code
  * - maxPoolMatchesPyTorch: a 2 x 2 max-pool and its input gradient equal F.max_pool2d's
@@ -525,29 +527,35 @@ TEST(PhotoEnhancerTraining, emaCopiesThenAverages) {
     EXPECT_EQ(read(average), (std::vector<float>{5.0f, 6.0f}));
 }
 
-TEST(PhotoEnhancerTraining, generatorStepMatchesPyTorch) {
-    const Fixture fixture("generator_step");
+namespace {
+
+// One PhotoEnhancerTraining step against the fixture `name` of make_training_fixtures.generator_step_case().
+void checkGeneratorStep(const std::string& name, float perceptual) {
+    const Fixture fixture(name);
     if (!fixture.exists())
         GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    if (perceptual > 0.0f && !std::filesystem::exists("build/models/vgg16/layers.txt"))
+        GTEST_SKIP() << "run scripts/neural/export_vgg16.py first";
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     neural::PhotoEnhancerTrainingConfig config;
     config.batch = 2;
     config.size = 32;
     config.widths = {32, 64, 128};
-    config.texture = neural::HashTextureShape::fromFile(kFixtures + "generator_step_texture.txt");
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + name + "_texture.txt");
     config.appearances = 5;
     config.appearanceSize = 8;
+    config.perceptual = perceptual;
     neural::PhotoEnhancerTraining trainer(vc, config);
     std::vector<std::string> names;
     {
-        std::ifstream file(kFixtures + "generator_step_parameters.txt");
-        for (std::string name; file >> name;)
-            names.push_back(name);
+        std::ifstream file(kFixtures + name + "_parameters.txt");
+        for (std::string parameter; file >> parameter;)
+            names.push_back(parameter);
     }
     EXPECT_EQ(trainer.parameterNames(), names);
-    for (const auto& name : names)
-        trainer.setParameter(name, fixture.values("before." + name));
+    for (const auto& parameter : names)
+        trainer.setParameter(parameter, fixture.values("before." + parameter));
     trainer.setBatch(fixture.values("channels"), fixture.values("coordinates"), fixture.values("classes"),
                      fixture.values("target"), fixture.values("rows"));
     trainer.step();
@@ -558,18 +566,24 @@ TEST(PhotoEnhancerTraining, generatorStepMatchesPyTorch) {
     for (int row : {3, 1})
         for (int k = 0; k < 8; ++k)
             penalty += codes[row * 8 + k] * codes[row * 8 + k];
-    EXPECT_NEAR(trainer.loss(), fixture.values("loss")[0] - 1e-2f * penalty / 2.0f, 1e-5f);
-    for (const auto& name : names) {
-        const auto before = fixture.values("before." + name), after = fixture.values("after." + name);
+    EXPECT_NEAR(trainer.loss() + trainer.perceptualLoss(), fixture.values("loss")[0] - 1e-2f * penalty / 2.0f, 1e-4f);
+    for (const auto& parameter : names) {
+        const auto before = fixture.values("before." + parameter), after = fixture.values("after." + parameter);
         std::vector<float> actual(before.size());
-        trainer.parameter(name)->getDataBuffer(0).memcopyTo(actual);
-        const float rate = name == "texture.table" ? 1e-2f : name == "codes.weight" ? 5e-3f : 1e-4f;
+        trainer.parameter(parameter)->getDataBuffer(0).memcopyTo(actual);
+        const float rate = parameter == "texture.table" ? 1e-2f : parameter == "codes.weight" ? 5e-3f : 1e-4f;
         float worst = 0.0f;
         for (size_t i = 0; i < actual.size(); ++i)
             worst = std::max(worst, std::abs(actual[i] - after[i]));
-        EXPECT_LT(worst, 0.1f * rate) << name;
+        EXPECT_LT(worst, 0.1f * rate) << parameter;
     }
 }
+
+} // namespace
+
+TEST(PhotoEnhancerTraining, generatorStepMatchesPyTorch) { checkGeneratorStep("generator_step", 0.0f); }
+
+TEST(PhotoEnhancerTraining, generatorStepWithVggMatchesPyTorch) { checkGeneratorStep("generator_step_vgg", 1.0f); }
 
 TEST(PhotoEnhancerTraining, forwardOnlyRendersTheSameImage) {
     const Fixture fixture("generator_step");

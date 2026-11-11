@@ -253,6 +253,13 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         total->setInput(lossShares, 0);
         total->setInput(lossTotal, 1);
         add(total);
+        // The perceptual loss adds its gradient to the photometric one.
+        if (config.perceptual > 0.0f) {
+            vgg = std::make_unique<VggLoss>(vulkanContext, config.vggDirectory, b, s, s, config.perceptual, output,
+                                            targets, outputGradient);
+            for (const auto& element : vgg->elements())
+                add(element);
+        }
     }
 
     // Backward: output layer, up blocks, down blocks, texture, FiLM.
@@ -442,6 +449,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
             t->getDataBuffer(0).memcopyFrom(zeros);
     }
     stepCounter->getDataBuffer(0).memcopyFrom(std::vector<uint32_t>{0u});
+    if (vgg)
+        vgg->upload();
 }
 
 PhotoEnhancerTraining::~PhotoEnhancerTraining() = default;
@@ -682,6 +691,8 @@ std::vector<std::pair<std::string, double>> PhotoEnhancerTraining::profile() con
     std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
     return sorted;
 }
+
+float PhotoEnhancerTraining::perceptualLoss() const { return vgg ? vgg->loss() : 0.0f; }
 
 float PhotoEnhancerTraining::loss() const {
     std::vector<float> value(1);

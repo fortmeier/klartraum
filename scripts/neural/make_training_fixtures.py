@@ -150,12 +150,13 @@ def clip_case(out: Path, seed: int) -> None:
     save(out, "clip", {**before, "clipped_a": a.grad, "clipped_b": b.grad})
 
 
-def generator_step_case(out: Path, seed: int) -> None:
+def generator_step_case(out: Path, seed: int, case: str = "generator_step", perceptual: float = 0.0) -> None:
     """One photometric training step of the local photo enhancer (3 levels, ChannelNorm, FiLM by appearance codes,
     hash-grid texture) on a batch of two 32 x 32 crops, as train_photo_enhancer.py takes it: the parameters before
     (named as in the state dict), the batch, the image, the loss, every parameter's gradient and the parameters after
     clipping and the Adam step of the three parameter groups. The zero-initialised FiLM heads, output convolution and
-    tiny texture are randomised so that every gradient is non-zero."""
+    tiny texture are randomised so that every gradient is non-zero. With `perceptual`, the VGG loss joins with that
+    weight."""
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -186,6 +187,10 @@ def generator_step_case(out: Path, seed: int) -> None:
     x = torch.cat([channels, texture(coordinates, classes)], dim=1)
     image = network(x, None, codes(rows))
     loss = 0.5 * F.l1_loss(image, target) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(target, 8))
+    if perceptual > 0:
+        from train_photo_enhancer import Vgg
+
+        loss = loss + perceptual * Vgg().eval().distance(image, target)
     loss = loss + 1e-2 * codes(rows).pow(2).sum(1).mean()
     loss.backward()
     table = torch.stack([grid.embeddings for grid in texture.grids])
@@ -209,10 +214,10 @@ def generator_step_case(out: Path, seed: int) -> None:
     table = torch.stack([grid.embeddings for grid in texture.grids])
     for name, value in parameters.items():
         tensors["after." + name] = (table if name == "texture.table" else value).detach().clone()
-    save(out, "generator_step", tensors)
-    (out / "generator_step_parameters.txt").write_text("\n".join(names) + "\n")
+    save(out, case, tensors)
+    (out / f"{case}_parameters.txt").write_text("\n".join(names) + "\n")
     grid = texture.grids[0]
-    (out / "generator_step_texture.txt").write_text(
+    (out / f"{case}_texture.txt").write_text(
         f"width {size}\nheight {size}\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
         "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 2 3 4\n")
 
@@ -258,6 +263,7 @@ def main() -> None:
     clip_case(args.out, 13)
     generator_step_case(args.out, 14)
     vgg_case(args.out, 15)
+    generator_step_case(args.out, 14, "generator_step_vgg", 1.0)
     print(f"fixtures in {args.out}")
 
 

@@ -15,6 +15,7 @@
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/layers/training.hpp"
 #include "klartraum/neural/hash_texture.hpp"
+#include "klartraum/neural/vgg_loss.hpp"
 #include "klartraum/vulkan_context.hpp"
 
 namespace klartraum::neural {
@@ -31,9 +32,11 @@ struct PhotoEnhancerTrainingConfig {
     uint32_t appearanceSize = 8; ///< numbers per code
     uint32_t filmHidden = 64;    ///< width of the FiLM MLP
     float appearanceDecay = 1e-2f;
-    float l1 = 0.5f;     ///< weight of the L1 loss
-    float colour = 5.0f; ///< weight of the L1 loss of 8 x 8 block means
-    float clip = 1.0f;   ///< global norm the generator's gradients are clipped to
+    float l1 = 0.5f;                                 ///< weight of the L1 loss
+    float colour = 5.0f;                             ///< weight of the L1 loss of 8 x 8 block means
+    float perceptual = 0.0f;                         ///< weight of the VGG perceptual loss (VggLoss; 0: none)
+    std::string vggDirectory = "build/models/vgg16"; ///< scripts/neural/export_vgg16.py's weights
+    float clip = 1.0f;                               ///< global norm the generator's gradients are clipped to
     training::AdamParameters networkAdam{1e-4f, 0.5f, 0.999f};
     training::AdamParameters textureAdam{1e-2f, 0.9f, 0.99f};
     training::AdamParameters codesAdam{5e-3f, 0.9f, 0.99f};
@@ -74,8 +77,10 @@ public:
     void step();
     /// With PhotoEnhancerTrainingConfig::profile: the mean GPU time of a step per element kind, in milliseconds.
     std::vector<std::pair<std::string, double>> profile() const;
-    /// The photometric loss of the last step (without the codes' penalty).
+    /// The photometric loss of the last step (without the codes' penalty and the perceptual loss).
     float loss() const;
+    /// The perceptual loss of the last step (0 without).
+    float perceptualLoss() const;
     /// The generator's images of the last step, [batch][3][size][size].
     std::vector<float> image() const;
 
@@ -129,6 +134,7 @@ private:
     std::shared_ptr<TensorElement<float>> codeGradient, hidden1Gradient, hidden1PreGradient, hidden2Gradient,
         hidden2PreGradient;
     std::shared_ptr<TensorElement<uint32_t>> stepCounter;
+    std::unique_ptr<VggLoss> vgg; ///< the perceptual loss, or none
 };
 
 } // namespace klartraum::neural
