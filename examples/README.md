@@ -743,6 +743,8 @@ trained photo enhancer renders every view, entirely in Klartraum.
 | `--appearance K` | The appearance code of training image K (default: the codes' mean) |
 | `--sample-size S` | The enhancer's sample size (default 256) |
 | `--parameters DIR` | Enhance every view with a photo enhancer trained in Klartraum (`crate_training_example`'s `parameters/`) instead |
+| `--untrained S` | Enhance every view with an untrained photo enhancer (initialised as for training, its texture to +-1e-4 x S) |
+| `--features` | With `--parameters` or `--untrained`, also write the texture's features of every view (`frames/features_NNNN.png`) |
 | `--qwen-batch DIR` | Write Qwen-Image's control depths (`DIR/depth_smooth/`) and batch lists (`DIR/batches/NN.txt`, photos to `DIR/photo/`) for the batch mode of `qwen_image_example` |
 
 ```bash

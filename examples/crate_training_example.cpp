@@ -261,48 +261,9 @@ int main(int argc, char** argv) {
         config.adversarial = adversarial;
         config.featureMatching = featureMatching;
         neural::PhotoEnhancerTraining trainer(vc, config);
-        // nn.Linear and nn.Conv2d's default initialisation (uniform within 1 / sqrt(fan in)), ChannelNorm's ones and
-        // zeros, the texture's +-1e-4, the codes' N(0, 0.1); FiLM's heads and the output layer start at zero.
         std::mt19937 rng(1);
         for (const auto& name : trainer.parameterNames()) {
-            const auto dims = trainer.parameter(name)->getDimensions();
-            size_t count = 1;
-            for (uint32_t d : dims)
-                count *= d;
-            std::vector<float> values(count, 0.0f);
-            const bool bias = name.size() > 5 && name.substr(name.size() - 5) == ".bias";
-            // A block's layers 1 and 4 are its ChannelNorms ("generator.down.1.4.weight": block 1, layer 4).
-            const std::string stem = name.substr(0, name.find_last_of('.'));
-            const std::string layer = stem.substr(stem.find_last_of('.') + 1);
-            const bool inBlock = name.rfind("generator.down.", 0) == 0 || name.rfind("generator.up.", 0) == 0;
-            const bool norm = inBlock && (layer == "1" || layer == "4");
-            const bool zeroStart = name.find("film.gammas") != std::string::npos ||
-                                   name.find("film.betas") != std::string::npos ||
-                                   name.find(".out.") != std::string::npos;
-            if (name == "texture.table") {
-                std::uniform_real_distribution<float> tiny(-1e-4f, 1e-4f);
-                for (auto& v : values)
-                    v = tiny(rng);
-            } else if (name == "codes.weight") {
-                std::normal_distribution<float> normal(0.0f, 0.1f);
-                for (auto& v : values)
-                    v = normal(rng);
-            } else if (zeroStart) {
-            } else if (norm) {
-                if (!bias)
-                    std::fill(values.begin(), values.end(), 1.0f);
-            } else {
-                // The fan in of the layer the parameter belongs to (the weight's dimensions after the first).
-                const auto weightDims =
-                    trainer.parameter(bias ? name.substr(0, name.size() - 5) + ".weight" : name)->getDimensions();
-                uint32_t fanIn = 1;
-                for (size_t k = 1; k < weightDims.size(); ++k)
-                    fanIn *= weightDims[k];
-                std::uniform_real_distribution<float> uniform(-1.0f / std::sqrt(float(fanIn)),
-                                                              1.0f / std::sqrt(float(fanIn)));
-                for (auto& v : values)
-                    v = uniform(rng);
-            }
+            auto values = crate::initialValue(trainer, name, rng);
             // The generator, texture and codes from an earlier run (its saved averages), if given.
             const auto saved = initFrom / (name + ".bin");
             if (!initFrom.empty() && std::filesystem::exists(saved) && name.rfind("discriminator.", 0) != 0) {

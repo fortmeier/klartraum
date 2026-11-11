@@ -98,6 +98,8 @@ public:
     void setAugmentation(const std::vector<float>& numbers);
     /// The generator's images of the last step, [batch][3][size][size].
     std::vector<float> image() const;
+    /// The generator's input of the last step, [batch][11 G-buffer channels + texture features][size][size].
+    std::vector<float> generatorInput() const;
 
     /// The parameters' names, in the order of the PyTorch state dict (texture first, codes last).
     std::vector<std::string> parameterNames() const;

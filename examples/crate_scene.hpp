@@ -11,6 +11,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <random>
+#include <string>
 #include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -19,6 +21,7 @@
 #include "klartraum/gbuffer_mesh_renderer.hpp"
 #include "klartraum/neural/hash_texture.hpp"
 #include "klartraum/neural/photo_enhancer.hpp"
+#include "klartraum/neural/photo_enhancer_training.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/tree/tree_model.hpp"
 
@@ -62,6 +65,50 @@ inline klartraum::neural::HashTextureShape textureShape() {
     for (uint32_t level = 0; level < shape.levels; ++level)
         shape.resolutions.push_back(uint32_t(std::floor(16.0 * std::pow(growth, double(level)))));
     return shape;
+}
+
+// The initial value of a photo enhancer parameter as train_photo_enhancer.py starts it: nn.Linear and nn.Conv2d's
+// default initialisation (uniform within 1 / sqrt(fan in)), ChannelNorm's ones and zeros, the texture's +-1e-4 (times
+// textureScale), the codes' N(0, 0.1); FiLM's heads and the output layer start at zero.
+inline std::vector<float> initialValue(const klartraum::neural::PhotoEnhancerTraining& trainer, const std::string& name,
+                                       std::mt19937& rng, float textureScale = 1.0f) {
+    const auto dims = trainer.parameter(name)->getDimensions();
+    size_t count = 1;
+    for (uint32_t d : dims)
+        count *= d;
+    std::vector<float> values(count, 0.0f);
+    const bool bias = name.size() > 5 && name.substr(name.size() - 5) == ".bias";
+    // A block's layers 1 and 4 are its ChannelNorms ("generator.down.1.4.weight": block 1, layer 4).
+    const std::string stem = name.substr(0, name.find_last_of('.'));
+    const std::string layer = stem.substr(stem.find_last_of('.') + 1);
+    const bool inBlock = name.rfind("generator.down.", 0) == 0 || name.rfind("generator.up.", 0) == 0;
+    const bool norm = inBlock && (layer == "1" || layer == "4");
+    const bool zeroStart = name.find("film.gammas") != std::string::npos ||
+                           name.find("film.betas") != std::string::npos || name.find(".out.") != std::string::npos;
+    if (name == "texture.table") {
+        std::uniform_real_distribution<float> tiny(-1e-4f * textureScale, 1e-4f * textureScale);
+        for (auto& v : values)
+            v = tiny(rng);
+    } else if (name == "codes.weight") {
+        std::normal_distribution<float> normal(0.0f, 0.1f);
+        for (auto& v : values)
+            v = normal(rng);
+    } else if (zeroStart) {
+    } else if (norm) {
+        if (!bias)
+            std::fill(values.begin(), values.end(), 1.0f);
+    } else {
+        // The fan in of the layer the parameter belongs to (the weight's dimensions after the first).
+        const auto weightDims =
+            trainer.parameter(bias ? name.substr(0, name.size() - 5) + ".weight" : name)->getDimensions();
+        uint32_t fanIn = 1;
+        for (size_t k = 1; k < weightDims.size(); ++k)
+            fanIn *= weightDims[k];
+        std::uniform_real_distribution<float> uniform(-1.0f / std::sqrt(float(fanIn)), 1.0f / std::sqrt(float(fanIn)));
+        for (auto& v : values)
+            v = uniform(rng);
+    }
+    return values;
 }
 
 // Reads an OffscreenTarget image back as tightly packed BGRA bytes; the render pass leaves it in TRANSFER_SRC_OPTIMAL.

@@ -1067,6 +1067,12 @@ std::vector<float> PhotoEnhancerTraining::image() const {
     return values;
 }
 
+std::vector<float> PhotoEnhancerTraining::generatorInput() const {
+    std::vector<float> values(input->getDataElementCount());
+    input->getDataBuffer(0).memcopyTo(values);
+    return values;
+}
+
 std::vector<std::string> PhotoEnhancerTraining::parameterNames() const {
     std::vector<std::string> names;
     for (const auto& parameter : parameters)

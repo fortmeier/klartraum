@@ -80,6 +80,35 @@ void writeControlDepth(const std::filesystem::path& path, const std::vector<floa
     file.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
 }
 
+// The texture's features of a view (the generator's input after its 11 G-buffer channels: 12 levels of 2): each
+// level as an image, its two features as red and green, scaled to the level's largest magnitude (grey: 0), in a
+// grid of 4 x 3 levels from coarse to fine.
+void writeFeatures(const std::filesystem::path& directory, uint32_t view, const std::vector<float>& input,
+                   uint32_t size) {
+    const size_t pixels = size_t(size) * size;
+    const uint32_t levels = uint32_t(input.size() / pixels - 11) / 2, columns = 4, rows = (levels + 3) / 4;
+    std::vector<uint8_t> grid(size_t(columns) * size * rows * size * 3, 0);
+    for (uint32_t level = 0; level < levels; ++level) {
+        const float* f0 = input.data() + (11 + 2 * level) * pixels;
+        const float* f1 = f0 + pixels;
+        float largest = 1e-12f;
+        for (size_t p = 0; p < pixels; ++p)
+            largest = std::max({largest, std::abs(f0[p]), std::abs(f1[p])});
+        const uint32_t gx = (level % columns) * size, gy = (level / columns) * size;
+        for (uint32_t y = 0; y < size; ++y)
+            for (uint32_t x = 0; x < size; ++x) {
+                const size_t p = size_t(y) * size + x;
+                uint8_t* rgb = &grid[((size_t(gy + y) * columns * size) + gx + x) * 3];
+                rgb[0] = uint8_t(std::lround(127.5f + 127.5f * f0[p] / largest));
+                rgb[1] = uint8_t(std::lround(127.5f + 127.5f * f1[p] / largest));
+                rgb[2] = 128;
+            }
+    }
+    char name[64];
+    std::snprintf(name, sizeof(name), "features_%04u.png", view);
+    writeImage(directory / name, grid.data(), columns * size, rows * size, 3);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -88,6 +117,8 @@ int main(int argc, char** argv) {
     bool orbit = false, fixedView = false, floor = true;
     std::string model;
     std::filesystem::path parameters, qwenBatch;
+    float untrained = 0.0f; // > 0: an untrained enhancer, its texture initialised to +-1e-4 x this
+    bool features = false;
     int appearanceRow = -1; // -1: the training codes' mean
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -116,6 +147,10 @@ int main(int argc, char** argv) {
             parameters = argv[++i];
         else if (arg == "--qwen-batch" && hasValue)
             qwenBatch = argv[++i];
+        else if (arg == "--untrained" && hasValue)
+            untrained = std::stof(argv[++i]);
+        else if (arg == "--features")
+            features = true;
         else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
@@ -132,7 +167,7 @@ int main(int argc, char** argv) {
         graph.compileFrom(renderer.getOutput());
         // A photo enhancer trained in Klartraum (crate_training_example's saved parameters), run forward only.
         std::unique_ptr<neural::PhotoEnhancerTraining> trained;
-        if (!parameters.empty()) {
+        if (!parameters.empty() || untrained > 0.0f) {
             neural::PhotoEnhancerTrainingConfig config;
             config.forwardOnly = true;
             config.batch = 1;
@@ -142,8 +177,16 @@ int main(int argc, char** argv) {
             config.appearances =
                 std::filesystem::exists(codes) ? uint32_t(std::filesystem::file_size(codes) / sizeof(float) / 8) : 0;
             config.appearanceSize = 8;
+            if (untrained > 0.0f)
+                config.appearances = 0;
             trained = std::make_unique<neural::PhotoEnhancerTraining>(vc, config);
-            trained->load(parameters.string());
+            if (untrained > 0.0f) {
+                std::mt19937 rng(1);
+                for (const auto& name : trained->parameterNames())
+                    trained->setParameter(name, crate::initialValue(*trained, name, rng, untrained));
+            } else {
+                trained->load(parameters.string());
+            }
             if (config.appearances > 0) {
                 std::vector<float> table(config.appearances * 8);
                 std::ifstream(codes, std::ios::binary)
@@ -243,6 +286,8 @@ int main(int argc, char** argv) {
                     trained->setBatch(inputs.channels, inputs.coordinates, inputs.classes, {}, {0.0f});
                     trained->step();
                     image = trained->image();
+                    if (features)
+                        writeFeatures(outDir / "frames", view, trained->generatorInput(), sampleSize);
                 } else {
                     image = enhancer->run(inputs);
                 }
