@@ -16,8 +16,6 @@ namespace klartraum::neural {
 
 namespace {
 
-constexpr uint32_t kGBufferChannels = 11;
-
 enum Group { Network = 0, Texture = 1, Codes = 2, Discriminator = 3 };
 
 // The PatchGAN's layers: widths, strides (all 4 x 4, padding 1), then the logits.
@@ -74,9 +72,12 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         throw std::invalid_argument("PhotoEnhancerTraining: the crop size must halve exactly at every level");
     this->config.texture.width = this->config.texture.height = s;
     this->config.texture.batch = b;
+    const uint32_t kGBufferChannels = config.gbufferChannels;
     this->config.texture.outputOffset = kGBufferChannels;
     const HashTextureShape& shape = this->config.texture;
-    const uint32_t features = shape.levels * shape.features, channelsIn = kGBufferChannels + features;
+    const uint32_t features = shape.levels * shape.features;
+    const uint32_t channelsIn = kGBufferChannels + features + config.latentSize;
+    this->config.texture.outputChannels = channelsIn;
     const bool film = config.appearances > 0;
     const auto& w = config.widths;
 
@@ -125,6 +126,20 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     // PyTorch registers the output convolution after FiLM, the codes after the generator.
     addParameter("generator.out.weight", {3, w[0], 1, 1}, Network);
     addParameter("generator.out.bias", {3}, Network);
+    if (config.latentSize > 0) {
+        uint32_t previous = 3;
+        for (size_t i = 0; i < config.encoderWidths.size(); ++i) {
+            const std::string conv = "encoder.body." + std::to_string(3 * i) + ".";
+            const std::string norm = "encoder.body." + std::to_string(3 * i + 1) + ".";
+            addParameter(conv + "weight", {config.encoderWidths[i], previous, 3, 3}, Network);
+            addParameter(conv + "bias", {config.encoderWidths[i]}, Network);
+            addParameter(norm + "weight", {config.encoderWidths[i]}, Network);
+            addParameter(norm + "bias", {config.encoderWidths[i]}, Network);
+            previous = config.encoderWidths[i];
+        }
+        addParameter("encoder.head.weight", {2 * config.latentSize, previous, 1, 1}, Network);
+        addParameter("encoder.head.bias", {2 * config.latentSize}, Network);
+    }
     if (film)
         addParameter("codes.weight", {config.appearances, config.appearanceSize}, Codes);
     if (config.adversarial > 0.0f && !config.forwardOnly)
@@ -164,6 +179,23 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         texture->setInput(find("texture.table").value, 2);
         texture->setInput(input, 3);
         add(texture);
+    }
+    // The latent G-buffer after the texture features: every object's latent at its pixels, from the encoder of the
+    // photos (or, forward only, given).
+    if (config.latentSize > 0) {
+        const uint32_t k = config.latentObjects, d = config.latentSize;
+        objects = tensor({b, s, s});
+        counts = tensor({b, k});
+        latentValues = tensor({b, k, d});
+        if (!config.forwardOnly || config.encodeLatents)
+            buildEncoder();
+        auto splat = training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn,
+                                               kGBufferChannels + features);
+        splat->setInput(latentValues, 0);
+        splat->setInput(objects, 1);
+        splat->setInput(counts, 2);
+        splat->setInput(input, 3);
+        add(splat);
     }
     // FiLM: the codes through the MLP.
     const uint32_t d = config.appearanceSize, hiddenSize = config.filmHidden;
@@ -369,6 +401,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         texture->setInput(table.gradient, 3);
         add(texture);
     }
+    if (config.latentSize > 0)
+        buildEncoderBackward();
     if (film) {
         bool first = true;
         for (const auto& block : blocks)
@@ -495,7 +529,181 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
 
 PhotoEnhancerTraining::~PhotoEnhancerTraining() = default;
 
+void PhotoEnhancerTraining::buildEncoder() {
+    const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
+    auto x = targets;
+    uint32_t channels = 3, size = s;
+    for (size_t i = 0; i < config.encoderWidths.size(); ++i) {
+        EncoderLayer layer;
+        layer.inputChannels = channels;
+        layer.outputChannels = config.encoderWidths[i];
+        layer.inputSize = size;
+        layer.in = x;
+        const uint32_t next = size / 2;
+        const std::vector<uint32_t> shape{b, layer.outputChannels, next, next};
+        layer.a = tensor(shape);
+        layer.n = tensor(shape);
+        layer.stats = tensor({b, 2, next, next});
+        layer.e = tensor(shape);
+        const std::string conv = "encoder.body." + std::to_string(3 * i) + ".";
+        const std::string norm = "encoder.body." + std::to_string(3 * i + 1) + ".";
+        auto convolution = layers::conv(vulkanContext, convAttributes(3, 2), {b, channels, size, size},
+                                        {layer.outputChannels, channels, 3, 3}, {layer.outputChannels}, shape);
+        convolution->setInput(x, 0);
+        convolution->setInput(find(conv + "weight").value, 1);
+        convolution->setInput(find(conv + "bias").value, 2);
+        convolution->setInput(layer.a, 3);
+        add(convolution);
+        auto normalize = training::channelNorm(vulkanContext, shape);
+        normalize->setInput(layer.a, 0);
+        normalize->setInput(find(norm + "weight").value, 1);
+        normalize->setInput(find(norm + "bias").value, 2);
+        normalize->setInput(layer.n, 3);
+        normalize->setInput(layer.stats, 4);
+        add(normalize);
+        auto elu = layers::elu(vulkanContext, shape, 1.0f);
+        elu->setInput(layer.n, 0);
+        elu->setInput(layer.e, 1);
+        add(elu);
+        encoderLayers.push_back(layer);
+        x = layer.e;
+        channels = layer.outputChannels;
+        size = next;
+    }
+    // The head: means and log-variances per pixel, then per object (the object map sampled at the pixels' centres).
+    encoderStatistics = tensor({b, 2 * d, size, size});
+    auto head = layers::conv(vulkanContext, convAttributes(1, 1), {b, channels, size, size}, {2 * d, channels, 1, 1},
+                             {2 * d}, {b, 2 * d, size, size});
+    head->setInput(x, 0);
+    head->setInput(find("encoder.head.weight").value, 1);
+    head->setInput(find("encoder.head.bias").value, 2);
+    head->setInput(encoderStatistics, 3);
+    add(head);
+    const uint32_t step = s / size;
+    pooled = tensor({b, k, 2 * d});
+    auto pool = training::objectMean(vulkanContext, {b, 2 * d, size, size}, k, {s, s, step, step / 2});
+    pool->setInput(encoderStatistics, 0);
+    pool->setInput(objects, 1);
+    pool->setInput(pooled, 2);
+    pool->setInput(counts, 3);
+    add(pool);
+    latentNoise = tensor({b, k, d});
+    klShares = tensor({b, k});
+    klTotal = tensor({1});
+    auto sample = training::vae(vulkanContext, b, k, d, config.klWeight);
+    sample->setInput(pooled, 0);
+    sample->setInput(latentNoise, 1);
+    sample->setInput(counts, 2);
+    sample->setInput(latentValues, 3);
+    sample->setInput(klShares, 4);
+    add(sample);
+    auto total = training::sum(vulkanContext, b * k);
+    total->setInput(klShares, 0);
+    total->setInput(klTotal, 1);
+    add(total);
+}
+
+void PhotoEnhancerTraining::buildEncoderBackward() {
+    const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
+    const uint32_t gbuffer = config.gbufferChannels, features = config.texture.levels * config.texture.features;
+    const uint32_t channelsIn = gbuffer + features + d;
+    // The latent G-buffer's gradient, summed per object, through the VAE to the per-object statistics, spread evenly
+    // over each object's pixels of the head's output.
+    latentGBufferGradient = tensor({b, d, s, s});
+    auto slice = training::channelCopy(vulkanContext, b, s * s, {channelsIn, gbuffer + features}, {d, 0}, d);
+    slice->setInput(blocks[0].dIn, 0);
+    slice->setInput(latentGBufferGradient, 1);
+    add(slice);
+    latentGradient = tensor({b, k, d});
+    latentSums = tensor({b, k});
+    auto gather = training::objectMean(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, false);
+    gather->setInput(latentGBufferGradient, 0);
+    gather->setInput(objects, 1);
+    gather->setInput(latentGradient, 2);
+    gather->setInput(latentSums, 3);
+    add(gather);
+    pooledGradient = tensor({b, k, 2 * d});
+    auto vae = training::vaeBackward(vulkanContext, b, k, d, config.klWeight);
+    vae->setInput(pooled, 0);
+    vae->setInput(latentNoise, 1);
+    vae->setInput(counts, 2);
+    vae->setInput(latentGradient, 3);
+    vae->setInput(pooledGradient, 4);
+    add(vae);
+    const uint32_t size = s >> encoderLayers.size(), step = s / size;
+    statisticsGradient = tensor({b, 2 * d, size, size});
+    auto spread =
+        training::objectBroadcast(vulkanContext, {b, 2 * d, size, size}, k, {s, s, step, step / 2}, 2 * d, 0, true);
+    spread->setInput(pooledGradient, 0);
+    spread->setInput(objects, 1);
+    spread->setInput(counts, 2);
+    spread->setInput(statisticsGradient, 3);
+    add(spread);
+    // The head and the layers, down to the first convolution's parameters.
+    const auto backwardConv = [&](const std::string& name, std::shared_ptr<TensorElement<float>> x, uint32_t channelsIn,
+                                  uint32_t sizeIn, uint32_t channelsOut, uint32_t kernel, uint32_t stride,
+                                  std::shared_ptr<TensorElement<float>> gradient,
+                                  std::shared_ptr<TensorElement<float>> result) {
+        const auto attributes = convAttributes(kernel, stride);
+        const uint32_t sizeOut = sizeIn / stride;
+        const std::vector<uint32_t> inShape{b, channelsIn, sizeIn, sizeIn},
+            weightShape{channelsOut, channelsIn, kernel, kernel}, outShape{b, channelsOut, sizeOut, sizeOut};
+        auto weights = training::convBackwardWeights(vulkanContext, attributes, inShape, weightShape, outShape);
+        weights->setInput(x, 0);
+        weights->setInput(gradient, 1);
+        weights->setInput(find(name + "weight").gradient, 2);
+        weights->setInput(find(name + "bias").gradient, 3);
+        add(weights);
+        if (!result)
+            return;
+        auto inputs = training::convBackwardInput(vulkanContext, attributes, inShape, weightShape, outShape);
+        inputs->setInput(gradient, 0);
+        inputs->setInput(find(name + "weight").value, 1);
+        inputs->setInput(result, 2);
+        add(inputs);
+    };
+    auto& last = encoderLayers.back();
+    last.de = tensor({b, last.outputChannels, size, size});
+    backwardConv("encoder.head.", last.e, last.outputChannels, size, 2 * d, 1, 1, statisticsGradient, last.de);
+    for (int i = int(encoderLayers.size()) - 1; i >= 0; --i) {
+        auto& layer = encoderLayers[size_t(i)];
+        const uint32_t next = layer.inputSize / 2;
+        const std::vector<uint32_t> shape{b, layer.outputChannels, next, next};
+        layer.dn = tensor(shape);
+        layer.da = tensor(shape);
+        auto elu = training::activationBackward(vulkanContext, training::Activation::Elu, shape);
+        elu->setInput(layer.n, 0);
+        elu->setInput(layer.de, 1);
+        elu->setInput(layer.dn, 2);
+        add(elu);
+        const std::string norm = "encoder.body." + std::to_string(3 * i + 1) + ".";
+        auto inputs = training::channelNormBackwardInput(vulkanContext, shape);
+        inputs->setInput(layer.a, 0);
+        inputs->setInput(find(norm + "weight").value, 1);
+        inputs->setInput(layer.stats, 2);
+        inputs->setInput(layer.dn, 3);
+        inputs->setInput(layer.da, 4);
+        add(inputs);
+        auto params = training::channelNormBackwardParameters(vulkanContext, shape);
+        params->setInput(layer.a, 0);
+        params->setInput(layer.stats, 1);
+        params->setInput(layer.dn, 2);
+        params->setInput(find(norm + "weight").gradient, 3);
+        params->setInput(find(norm + "bias").gradient, 4);
+        add(params);
+        std::shared_ptr<TensorElement<float>> previous;
+        if (i > 0) {
+            auto& before = encoderLayers[size_t(i) - 1];
+            before.de = tensor({b, before.outputChannels, layer.inputSize, layer.inputSize});
+            previous = before.de;
+        }
+        backwardConv("encoder.body." + std::to_string(3 * i) + ".", layer.in, layer.inputChannels, layer.inputSize,
+                     layer.outputChannels, 3, 2, layer.da, previous);
+    }
+}
+
 void PhotoEnhancerTraining::buildDiscriminator() {
+    const uint32_t kGBufferChannels = config.gbufferChannels;
     const uint32_t b = config.batch, s = config.size, c = kGBufferChannels + 3, pixels = s * s;
     // The pairs (G-buffer channels and image) of the real photos and of the generator's images, and both together
     // (real ones first) augmented for the discriminator's step.
@@ -614,7 +822,7 @@ void PhotoEnhancerTraining::buildDiscriminator() {
 }
 
 void PhotoEnhancerTraining::forwardCritic(Critic& critic, std::shared_ptr<TensorElement<float>> pairs) {
-    const uint32_t n = critic.batch, c = kGBufferChannels + 3;
+    const uint32_t n = critic.batch, c = config.gbufferChannels + 3;
     for (uint32_t scaleIndex = 0; scaleIndex < kCriticScales; ++scaleIndex) {
         Critic::Scale scale;
         scale.size = config.size >> scaleIndex;
@@ -675,7 +883,7 @@ void PhotoEnhancerTraining::forwardCritic(Critic& critic, std::shared_ptr<Tensor
 void PhotoEnhancerTraining::backwardCritic(Critic& critic, bool withWeights,
                                            std::shared_ptr<TensorElement<float>> inputGradient,
                                            const std::function<void(Critic&, size_t, size_t)>& featureGradient) {
-    const uint32_t n = critic.batch, c = kGBufferChannels + 3;
+    const uint32_t n = critic.batch, c = config.gbufferChannels + 3;
     for (size_t scaleIndex = 0; scaleIndex < critic.scales.size(); ++scaleIndex) {
         auto& scale = critic.scales[scaleIndex];
         const std::string prefix = "discriminator.discriminators." + std::to_string(scaleIndex) + ".";
@@ -771,6 +979,40 @@ std::vector<float> PhotoEnhancerTraining::randomAugmentation() {
         }
     }
     return numbers;
+}
+
+void PhotoEnhancerTraining::setObjects(const std::vector<float>& values) {
+    if (!objects)
+        throw std::logic_error("PhotoEnhancerTraining: objects need latentSize > 0");
+    objects->getDataBuffer(0).memcopyFrom(values);
+}
+
+void PhotoEnhancerTraining::setLatents(const std::vector<float>& values) {
+    if (!latentValues || latentNoise)
+        throw std::logic_error("PhotoEnhancerTraining: latents are given only forward only without the encoder");
+    latentValues->getDataBuffer(0).memcopyFrom(values);
+}
+
+void PhotoEnhancerTraining::setLatentNoise(const std::vector<float>& noise) {
+    if (!latentNoise)
+        throw std::logic_error("PhotoEnhancerTraining: latent noise needs the encoder");
+    latentNoise->getDataBuffer(0).memcopyFrom(noise);
+    latentNoiseGiven = true;
+}
+
+std::vector<float> PhotoEnhancerTraining::latents() const {
+    std::vector<float> values(latentValues ? latentValues->getDataElementCount() : 0);
+    if (latentValues)
+        latentValues->getDataBuffer(0).memcopyTo(values);
+    return values;
+}
+
+float PhotoEnhancerTraining::klLoss() const {
+    if (!klTotal || config.klWeight <= 0.0f)
+        return 0.0f;
+    std::vector<float> value(1);
+    klTotal->getDataBuffer(0).memcopyTo(value);
+    return value[0] / config.klWeight;
 }
 
 void PhotoEnhancerTraining::setAugmentation(const std::vector<float>& numbers) {
@@ -980,13 +1222,24 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
     coordinates->getDataBuffer(0).memcopyFrom(coordinateValues);
     classes->getDataBuffer(0).memcopyFrom(classValues);
     // Forward only, the targets are not part of the graph.
-    if (!config.forwardOnly)
+    if (!config.forwardOnly || (config.latentSize > 0 && config.encodeLatents))
         targets->getDataBuffer(0).memcopyFrom(targetValues);
     if (config.appearances > 0)
         rows->getDataBuffer(0).memcopyFrom(rowValues);
 }
 
 void PhotoEnhancerTraining::step() {
+    // The VAE's noise: random while training, none (the latents' means) when rendering from the encoder.
+    if (latentNoise && !latentNoiseGiven) {
+        std::vector<float> noise(latentNoise->getDataElementCount(), 0.0f);
+        if (!config.forwardOnly) {
+            std::normal_distribution<float> normal(0.0f, 1.0f);
+            for (auto& v : noise)
+                v = normal(random);
+        }
+        latentNoise->getDataBuffer(0).memcopyFrom(noise);
+    }
+    latentNoiseGiven = false;
     if (augmentation && !augmentationGiven)
         augmentation->getDataBuffer(0).memcopyFrom(randomAugmentation());
     augmentationGiven = false;

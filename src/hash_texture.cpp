@@ -15,7 +15,7 @@ namespace klartraum::neural {
 namespace {
 
 struct HashTexturePushConstants {
-    uint32_t width, height, levels, features, tableSize, grids, outputOffset, batch;
+    uint32_t width, height, levels, features, tableSize, grids, outputOffset, batch, outputChannels;
     uint32_t classes[4];
     uint32_t resolutions[16];
 };
@@ -62,7 +62,8 @@ namespace {
 HashTexturePushConstants pushConstantsOf(const HashTextureShape& shape) {
     if (shape.width == 0 || shape.height == 0 || shape.levels == 0 || shape.levels > 16 ||
         shape.resolutions.size() != shape.levels || shape.features == 0 || shape.features > 4 ||
-        shape.classes.empty() || shape.classes.size() > 4 || (shape.tableSize & (shape.tableSize - 1)) != 0)
+        shape.classes.empty() || shape.classes.size() > 4 || (shape.tableSize & (shape.tableSize - 1)) != 0 ||
+        (shape.outputChannels > 0 && shape.outputChannels < shape.outputOffset + shape.levels * shape.features))
         throw std::invalid_argument("hashTexture: unsupported shape");
     for (uint32_t resolution : shape.resolutions)
         if (resolution == 0 || resolution > (1u << 20))
@@ -75,6 +76,8 @@ HashTexturePushConstants pushConstantsOf(const HashTextureShape& shape) {
                                        uint32_t(shape.classes.size()),
                                        shape.outputOffset,
                                        shape.batch,
+                                       shape.outputChannels > 0 ? shape.outputChannels
+                                                                : shape.outputOffset + shape.levels * shape.features,
                                        {},
                                        {}};
     for (size_t g = 0; g < shape.classes.size(); ++g)

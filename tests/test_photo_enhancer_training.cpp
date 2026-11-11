@@ -33,6 +33,9 @@
  *   the discriminator's loss, the adversarial loss and the feature matching equal PyTorch's, and after the
  *   discriminator's and the generator's Adam steps all parameters of both are within a tenth of their learning rate
  *   of PyTorch's
+ * - latentStepMatchesPyTorch: one step of the latent-conditioned renderer (4 geometry channels, texture, encoder,
+ *   VAE with given noise, latent G-buffer, decoder; L1, block-mean L1, VGG and KL) from latent_renderer.py's
+ *   parameters on its batch: image, losses and every parameter after clipping and Adam equal PyTorch's
  * - forwardOnlyRendersTheSameImage: parameters saved from a training and loaded into a forward-only instance render
  *   PyTorch's image of the batch; with every row's code set to one code, the crops render as with that code
  * - maxPoolMatchesPyTorch: a 2 x 2 max-pool and its input gradient equal F.max_pool2d's
@@ -841,4 +844,51 @@ TEST(PhotoEnhancerTraining, vaeMatchesPyTorch) {
             EXPECT_NEAR(gradient[object * 6 + d], dmu[object * 3 + d], 1e-5f);
             EXPECT_NEAR(gradient[object * 6 + 3 + d], dlv[object * 3 + d], 1e-5f);
         }
+}
+
+TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
+    const Fixture fixture("latent_step");
+    if (!fixture.exists() || !std::filesystem::exists("build/models/vgg16/layers.txt"))
+        GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoEnhancerTrainingConfig config;
+    config.batch = 2;
+    config.size = 32;
+    config.widths = {32, 64, 128};
+    config.gbufferChannels = 4;
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + "latent_step_texture.txt");
+    config.latentSize = 4;
+    config.latentObjects = 1;
+    config.klWeight = 1e-2f;
+    config.perceptual = 1.0f;
+    neural::PhotoEnhancerTraining trainer(vc, config);
+    std::vector<std::string> names;
+    {
+        std::ifstream file(kFixtures + "latent_step_parameters.txt");
+        for (std::string parameter; file >> parameter;)
+            names.push_back(parameter);
+    }
+    EXPECT_EQ(trainer.parameterNames(), names);
+    for (const auto& parameter : names)
+        trainer.setParameter(parameter, fixture.values("before." + parameter));
+    trainer.setBatch(fixture.values("geometry"), fixture.values("coordinates"), fixture.values("classes"),
+                     fixture.values("photos"), {});
+    trainer.setObjects(fixture.values("objects"));
+    trainer.setLatentNoise(fixture.values("epsilon"));
+    trainer.step();
+    EXPECT_LT(relativeError(trainer.image(), fixture.values("image")), 1e-5f);
+    EXPECT_NEAR(trainer.loss(), fixture.values("photometric")[0], 1e-5f);
+    EXPECT_NEAR(trainer.perceptualLoss(), fixture.values("perceptual")[0], 1e-4f);
+    EXPECT_NEAR(trainer.klLoss(), fixture.values("kl")[0], 1e-4f);
+    for (const auto& parameter : names) {
+        const auto after = fixture.values("after." + parameter);
+        std::vector<float> actual(after.size());
+        trainer.parameter(parameter)->getDataBuffer(0).memcopyTo(actual);
+        const float rate = parameter == "texture.table" ? 1e-2f : 1e-4f;
+        float worst = 0.0f;
+        for (size_t i = 0; i < actual.size(); ++i)
+            worst = std::max(worst, std::abs(actual[i] - after[i]));
+        EXPECT_LT(worst, 0.1f * rate) << parameter;
+    }
 }

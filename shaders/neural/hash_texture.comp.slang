@@ -12,7 +12,7 @@ import hash_texture;
 [[vk::binding(0, 0)]] StructuredBuffer<float> coordinates; // [batch][3][height][width]
 [[vk::binding(1, 0)]] StructuredBuffer<float> classes;     // [batch][height][width]
 [[vk::binding(2, 0)]] StructuredBuffer<float> table;       // [grids][levels][tableSize][features]
-[[vk::binding(3, 0)]] RWStructuredBuffer<float> output;    // [batch][outputOffset + levels * features][height][width]
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> output;    // [batch][outputChannels][height][width]
 
 [shader("compute")]
 [numthreads(16, 16, 1)]
@@ -24,7 +24,7 @@ void main(uint3 id: SV_DispatchThreadID) {
     const uint grid = gridOf(pc, classes[image * pixels + p]);
     const uint c0 = image * 3u * pixels;
     const float3 point = float3(coordinates[c0 + p], coordinates[c0 + pixels + p], coordinates[c0 + 2u * pixels + p]);
-    const uint outputBase = image * (pc.outputOffset + pc.levels * pc.features) * pixels;
+    const uint outputBase = image * pc.outputChannels * pixels;
     for (uint level = 0u; level < pc.levels; ++level) {
         float sums[4] = { 0.0, 0.0, 0.0, 0.0 };
         if (grid != 0xffffffffu) {

@@ -54,6 +54,17 @@ struct PhotoEnhancerTrainingConfig {
     /// computes image() from the batch's G-buffers, coordinates, classes and rows.
     bool forwardOnly = false;
     bool profile = false; ///< time every element of a step on the GPU (profile())
+    /// Geometry channels the batch uploads (setBatch()); 11 for the photo enhancer's RGB, depth and one-hot classes,
+    /// e.g. 4 for inverse depth and normals.
+    uint32_t gbufferChannels = 11;
+    /// The latent-conditioned renderer (scripts/neural/latent_renderer.py): numbers per object of a latent G-buffer
+    /// that joins the generator's input after the texture features, from a VAE encoder of the target photo (0: none).
+    uint32_t latentSize = 0;
+    uint32_t latentObjects = 1; ///< objects 1..latentObjects of the object map (setObjects())
+    float klWeight = 1e-3f;     ///< weight of the latents' KL divergence (summed over objects, mean over batch)
+    std::vector<uint32_t> encoderWidths{32, 64, 128}; ///< stride-2 layers down to an eighth
+    /// Forward only: the latents from the encoder of the batch's photos (their means), else given (setLatents()).
+    bool encodeLatents = false;
 };
 
 /**
@@ -93,6 +104,15 @@ public:
     float discriminatorLoss() const;
     float adversarialLoss() const;
     float featureMatchingLoss() const;
+    /// The objects of the batch's pixels, [batch][size][size] (indices as floats; 0: none), for the latents.
+    void setObjects(const std::vector<float>& objects);
+    /// Forward only without encoder: every object's latent, [batch][latentObjects][latentSize].
+    void setLatents(const std::vector<float>& latents);
+    /// The next step's VAE noise, [batch][latentObjects][latentSize], instead of random numbers.
+    void setLatentNoise(const std::vector<float>& noise);
+    /// The latents of the last step, [batch][latentObjects][latentSize], and their KL divergence (unweighted).
+    std::vector<float> latents() const;
+    float klLoss() const;
     /// The next step's augmentation numbers, [2 batch][6] (real pairs, then fake pairs; see training::augmentPair()),
     /// instead of random ones.
     void setAugmentation(const std::vector<float>& numbers);
@@ -134,6 +154,8 @@ private:
     void forwardBlock(Block& block);
     void backwardBlock(Block& block);
     void buildDiscriminator();
+    void buildEncoder();
+    void buildEncoderBackward();
     void forwardCritic(Critic& critic, std::shared_ptr<TensorElement<float>> pairs);
     /// The critic's backward pass from its logits' gradients: its parameters' gradients (withWeights), its input's
     /// gradient into `inputGradient` (if given), `featureGradient(scale, layer)` called once each layer's output
@@ -161,6 +183,16 @@ private:
         hidden2PreGradient;
     std::shared_ptr<TensorElement<uint32_t>> stepCounter;
     std::unique_ptr<VggLoss> vgg; ///< the perceptual loss, or none
+    /// The latent renderer: the object map, the encoder's layers (convolution, ChannelNorm with statistics, ELU) and
+    /// head, the per-object statistics, noise, latents and KL shares, and their gradients.
+    std::shared_ptr<TensorElement<float>> objects, encoderStatistics, pooled, counts, latentNoise, latentValues,
+        klShares, klTotal, latentGBufferGradient, latentGradient, pooledGradient, statisticsGradient, latentSums;
+    struct EncoderLayer {
+        uint32_t inputChannels, outputChannels, inputSize;
+        std::shared_ptr<TensorElement<float>> in, a, n, stats, e, da, dn, de;
+    };
+    std::vector<EncoderLayer> encoderLayers;
+    bool latentNoiseGiven = false;
     /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.
     std::vector<std::unique_ptr<Critic>> critics;
     std::shared_ptr<TensorElement<float>> augmentation;

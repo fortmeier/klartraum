@@ -18,6 +18,7 @@ public struct HashTextureConstants {
     public uint grids;
     public uint outputOffset; // channels of the output before the features
     public uint batch;
+    public uint outputChannels; // of each image's output
     public uint classes[4];
     public uint resolutions[16];
 };

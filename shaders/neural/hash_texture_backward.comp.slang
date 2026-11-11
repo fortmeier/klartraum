@@ -25,7 +25,7 @@ void main(uint3 id: SV_DispatchThreadID) {
     if (grid == 0xffffffffu) return;
     const uint c0 = image * 3u * pixels;
     const float3 point = float3(coordinates[c0 + p], coordinates[c0 + pixels + p], coordinates[c0 + 2u * pixels + p]);
-    const uint gradientBase = image * (pc.outputOffset + pc.levels * pc.features) * pixels;
+    const uint gradientBase = image * pc.outputChannels * pixels;
     for (uint level = 0u; level < pc.levels; ++level) {
         float gradient[4];
         for (uint f = 0u; f < pc.features; ++f)
