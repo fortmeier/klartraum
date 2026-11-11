@@ -37,6 +37,7 @@ relative to the working directory.
 | `landscape_gbuffer_example` | Metric depth and semantic classes of images, estimated by two networks (ONNX) | no |
 | `photo_enhancer_example` | The bonsai landscape's forest fly-in made photo-realistic: G-buffers, a learnable hash-grid surface texture and a GAN generator (ONNX) per frame | no |
 | `crate_gbuffer_example` | A toy scene for the photo enhancer: a crate on a floor from random cameras, with all G-buffers (`GBufferMeshRenderer`) | no |
+| `crate_training_example` | Trains the crate's photo enhancer (texture, generator, appearance codes) entirely in Klartraum | no |
 
 ### Camera controls
 
@@ -744,4 +745,36 @@ trained photo enhancer renders every view, entirely in Klartraum.
 ./build/examples/crate_gbuffer_example --views 180 --seed 1 --out-dir build/TestingOutput/crate/flights/crate_a
 ./build/examples/crate_gbuffer_example --orbit --views 240 --out-dir build/TestingOutput/crate/orbit \
     --model build/TestingOutput/crate/runs/c1/photo_enhancer_best --appearance 3
+```
+
+### `crate_training_example`
+
+Trains the photo enhancer of the crate toy scene entirely in Klartraum with
+`neural::PhotoEnhancerTraining`: the views of the crate flights of
+`crate_gbuffer_example` are rendered again from their cameras and prepared as
+samples (`neural::photoEnhancerInputs()`), their Qwen-Image photos
+(`<crate>/data/<split>/photo/<view>.ppm`) are the targets, and the learnable
+surface texture, the local U-Net generator (3 levels, ChannelNorm, ELU) and one
+appearance code per view are trained with the photometric losses (L1 and L1 of
+8 x 8 block means) on random crops, with Adam and an exponential moving average.
+Views with an alignment score below the threshold (`alignment.json` of
+`scripts/neural/check_photo_alignment.py`) or more than 60 % background are left
+out. Every `--every` steps the averaged parameters go to `<out>/parameters/` and
+the held-out views are rendered with the codes' mean
+(`<out>/validation_NNNNNN.png`: rendering, photo, enhanced; the L1 in
+`<out>/log.txt`).
+
+| Option | Meaning |
+|---|---|
+| `--crate DIR` | The crate data (default `build/TestingOutput/crate`: `flights/crate_a`, `flights/crate_v`, `data/train`, `data/validation`) |
+| `--out DIR` | Output directory (default `build/TestingOutput/crate/runs/k1`) |
+| `--steps N` | Training steps (default 30000) |
+| `--batch N`, `--crop S` | Crops per step and their size (default 16 and 128) |
+| `--appearance D` | Size of the appearance codes (default 8, 0 for none) |
+| `--every N` | Steps between checkpoints and validations (default 1000) |
+| `--min-alignment A` | Leave out views aligned worse (default 0.7) |
+| `--profile` | Print the GPU time of a step per element kind every 100 steps |
+
+```bash
+./build/examples/crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1
 ```

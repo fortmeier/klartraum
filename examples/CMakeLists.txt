@@ -228,3 +228,13 @@ target_link_libraries(crate_gbuffer_example
 )
 
 add_dependencies(crate_gbuffer_example Shaders)
+
+add_executable(crate_training_example
+    crate_training_example.cpp
+)
+
+target_link_libraries(crate_training_example
+    klartraum_lib
+)
+
+add_dependencies(crate_training_example Shaders)

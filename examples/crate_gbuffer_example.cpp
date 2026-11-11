@@ -29,6 +29,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "crate_scene.hpp"
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/gbuffer_mesh_renderer.hpp"
 #include "klartraum/headless_frontend.hpp"
@@ -38,35 +39,6 @@
 #include "klartraum/tree/tree_model.hpp"
 
 using namespace klartraum;
-
-namespace {
-
-constexpr float kFovDegrees = 40.0f;
-constexpr float kDepthFar = 60.0f; // the depth window, beyond the floor's far corners
-
-// Reads an OffscreenTarget image back as tightly packed BGRA bytes; the render pass leaves it in TRANSFER_SRC_OPTIMAL.
-std::vector<uint8_t> readImage(VulkanContext& vc, VkImage image, VkExtent2D extent) {
-    const VkDeviceSize bytes = VkDeviceSize(extent.width) * extent.height * 4;
-    VkBuffer buffer;
-    VkDeviceMemory memory;
-    vc.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, memory);
-    vc.submitImmediate([&](VkCommandBuffer commandBuffer) {
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {extent.width, extent.height, 1};
-        vkCmdCopyImageToBuffer(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
-    });
-    void* data;
-    vkMapMemory(vc.getDevice(), memory, 0, bytes, 0, &data);
-    std::vector<uint8_t> pixels(static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + bytes);
-    vkUnmapMemory(vc.getDevice(), memory);
-    vkDestroyBuffer(vc.getDevice(), buffer, nullptr);
-    vkFreeMemory(vc.getDevice(), memory, nullptr);
-    return pixels;
-}
-
-} // namespace
 
 int main(int argc, char** argv) {
     std::filesystem::path outDir = "build/TestingOutput/crate/flights/crate_a";
@@ -101,15 +73,7 @@ int main(int argc, char** argv) {
     try {
         HeadlessFrontend frontend;
         VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
-        // The crate's faces get ids spread over the 16 bits, (face + 0.5) / 6 of the range, so that the texture's id
-        // axis holds six well separated slices; the floor sits in between at 1/2.
-        std::array<uint32_t, 6> faceIds{};
-        for (uint32_t face = 0; face < 6; ++face)
-            faceIds[face] = uint32_t(std::lround((float(face) + 0.5f) / 6.0f * 65535.0f));
-        auto vertices = gbufferBox(glm::vec3(-0.5f, 0.0f, -0.5f), glm::vec3(0.5f, 1.0f, 0.5f), tree::TREE_CLASS_STEM,
-                                   glm::vec3(0.62f, 0.45f, 0.28f), faceIds);
-        const auto floor = gbufferFloor(40.0f, 0.0f, 4.0f, tree::TREE_CLASS_SOIL, glm::vec3(0.5f, 0.5f, 0.48f), 32768u);
-        vertices.insert(vertices.end(), floor.begin(), floor.end());
+        const auto vertices = crate::vertices();
         const VkExtent2D extent{size, size};
         auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
         GBufferMeshRenderer renderer(vc, vertices, target, extent);
@@ -153,20 +117,20 @@ int main(int argc, char** argv) {
             CameraMVP& ubo = renderer.getCamera()->ubo;
             ubo.model = glm::mat4(1.0f);
             ubo.view = glm::lookAt(eye, look, glm::vec3(0.0f, 1.0f, 0.0f));
-            ubo.proj = glm::perspective(glm::radians(kFovDegrees), 1.0f, 0.05f, 100.0f);
+            ubo.proj = glm::perspective(glm::radians(crate::kFovDegrees), 1.0f, 0.05f, 100.0f);
             ubo.proj[1][1] *= -1.0f;
             ubo.cameraWorldPos = glm::vec4(eye, 1.0f);
             renderer.getCamera()->update(0);
             neural::GBufferFrame frame;
             frame.width = frame.height = size;
-            frame.depthFar = kDepthFar;
+            frame.depthFar = crate::kDepthFar;
             std::vector<uint8_t>* buffers[] = {&frame.colour,  &frame.classes, nullptr,
                                                &frame.depth16, &frame.u,       &frame.v};
             for (size_t k = 0; k < std::size(outputs); ++k) {
                 const auto& [kind, output] = outputs[k];
-                renderer.setOutput(output, 0.0f, kDepthFar);
+                renderer.setOutput(output, 0.0f, crate::kDepthFar);
                 graph.submitAndWait(vc.getGraphicsQueue(), 0);
-                const auto pixels = readImage(vc, target->getImage(0), extent);
+                const auto pixels = crate::readImage(vc, target->getImage(0), extent);
                 char name[64];
                 std::snprintf(name, sizeof(name), "classical_%s%04u.png", kind, view);
                 writeImageBgra(outDir / "frames" / name, pixels, size, size);
@@ -188,7 +152,7 @@ int main(int argc, char** argv) {
                 writeImage(outDir / "frames" / name, rgb.data(), sampleSize, sampleSize, 3);
             }
             cameras << view << "," << eye.x << "," << eye.y << "," << eye.z << "," << look.x << "," << look.y << ","
-                    << look.z << ",0.05," << kFovDegrees << ",0," << kDepthFar << "\n";
+                    << look.z << ",0.05," << crate::kFovDegrees << ",0," << crate::kDepthFar << "\n";
         }
         std::cout << views << " views in " << outDir << std::endl;
     } catch (const std::exception& e) {
