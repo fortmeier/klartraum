@@ -740,6 +740,8 @@ trained photo enhancer renders every view, entirely in Klartraum.
 | `--model STEM` | Also enhance every view with the photo enhancer `STEM` (`neural::PhotoEnhancer`) into `frames/enhanced_NNNN.png` |
 | `--appearance K` | The appearance code of training image K (default: the codes' mean) |
 | `--sample-size S` | The enhancer's sample size (default 256) |
+| `--parameters DIR` | Enhance every view with a photo enhancer trained in Klartraum (`crate_training_example`'s `parameters/`) instead |
+| `--qwen-batch DIR` | Write Qwen-Image's control depths (`DIR/depth_smooth/`) and batch lists (`DIR/batches/NN.txt`, photos to `DIR/photo/`) for the batch mode of `qwen_image_example` |
 
 ```bash
 ./build/examples/crate_gbuffer_example --views 180 --seed 1 --out-dir build/TestingOutput/crate/flights/crate_a

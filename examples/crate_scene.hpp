@@ -17,6 +17,7 @@
 
 #include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/gbuffer_mesh_renderer.hpp"
+#include "klartraum/neural/hash_texture.hpp"
 #include "klartraum/neural/photo_enhancer.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/tree/tree_model.hpp"
@@ -46,6 +47,19 @@ inline void setCamera(klartraum::CameraMVP& ubo, glm::vec3 eye, glm::vec3 look) 
     ubo.proj = glm::perspective(glm::radians(kFovDegrees), 1.0f, 0.05f, 100.0f);
     ubo.proj[1][1] *= -1.0f;
     ubo.cameraWorldPos = glm::vec4(eye, 1.0f);
+}
+
+// The surface texture of train_photo_enhancer.py: hash_texture.SurfaceTexture's defaults.
+inline klartraum::neural::HashTextureShape textureShape() {
+    klartraum::neural::HashTextureShape shape;
+    shape.levels = 12;
+    shape.features = 2;
+    shape.tableSize = 1u << 17;
+    shape.classes = {2, 3, 4};
+    const double growth = std::exp((std::log(2048.0) - std::log(16.0)) / 11.0);
+    for (uint32_t level = 0; level < shape.levels; ++level)
+        shape.resolutions.push_back(uint32_t(std::floor(16.0 * std::pow(growth, double(level)))));
+    return shape;
 }
 
 // Reads an OffscreenTarget image back as tightly packed BGRA bytes; the render pass leaves it in TRANSFER_SRC_OPTIMAL.

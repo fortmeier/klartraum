@@ -35,16 +35,59 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/image_io.hpp"
 #include "klartraum/neural/photo_enhancer.hpp"
+#include "klartraum/neural/photo_enhancer_training.hpp"
 #include "klartraum/offscreen_target.hpp"
 #include "klartraum/tree/tree_model.hpp"
 
 using namespace klartraum;
+
+namespace {
+
+// The ControlNet's depth of a sample (scripts/neural/prepare_photo_pairs.py --smooth-control 1): its stretched inverse
+// depth (channel 3 of the photo enhancer's inputs) in whole 8-bit steps, blurred by a Gaussian of 1 pixel, as a grey
+// binary PPM.
+void writeControlDepth(const std::filesystem::path& path, const std::vector<float>& channels, uint32_t size) {
+    const size_t pixels = size_t(size) * size;
+    std::vector<float> grey(pixels), blurred(pixels), result(pixels);
+    for (size_t p = 0; p < pixels; ++p)
+        grey[p] = std::round(std::clamp(channels[3 * pixels + p], 0.0f, 1.0f) * 255.0f);
+    float weights[7], sum = 0.0f;
+    for (int k = -3; k <= 3; ++k)
+        sum += weights[k + 3] = std::exp(-0.5f * float(k * k));
+    for (float& w : weights)
+        w /= sum;
+    // Separable, with the border pixels repeated.
+    const auto clampIndex = [size](int v) { return uint32_t(std::clamp(v, 0, int(size) - 1)); };
+    for (uint32_t y = 0; y < size; ++y)
+        for (uint32_t x = 0; x < size; ++x) {
+            float v = 0.0f;
+            for (int k = -3; k <= 3; ++k)
+                v += weights[k + 3] * grey[size_t(y) * size + clampIndex(int(x) + k)];
+            blurred[size_t(y) * size + x] = v;
+        }
+    std::vector<uint8_t> bytes(3 * pixels);
+    for (uint32_t y = 0; y < size; ++y)
+        for (uint32_t x = 0; x < size; ++x) {
+            float v = 0.0f;
+            for (int k = -3; k <= 3; ++k)
+                v += weights[k + 3] * blurred[size_t(clampIndex(int(y) + k)) * size + x];
+            const uint8_t byte = uint8_t(std::lround(std::clamp(v, 0.0f, 255.0f)));
+            bytes[3 * (size_t(y) * size + x)] = bytes[3 * (size_t(y) * size + x) + 1] =
+                bytes[3 * (size_t(y) * size + x) + 2] = byte;
+        }
+    std::ofstream file(path, std::ios::binary);
+    file << "P6\n" << size << " " << size << "\n255\n";
+    file.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     std::filesystem::path outDir = "build/TestingOutput/crate/flights/crate_a";
     uint32_t views = 180, size = 512, seed = 1, sampleSize = 256;
     bool orbit = false;
     std::string model;
+    std::filesystem::path parameters, qwenBatch;
     int appearanceRow = -1; // -1: the training codes' mean
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -65,6 +108,10 @@ int main(int argc, char** argv) {
             appearanceRow = std::stoi(argv[++i]);
         else if (arg == "--sample-size" && hasValue)
             sampleSize = uint32_t(std::stoul(argv[++i]));
+        else if (arg == "--parameters" && hasValue)
+            parameters = argv[++i];
+        else if (arg == "--qwen-batch" && hasValue)
+            qwenBatch = argv[++i];
         else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
@@ -79,6 +126,41 @@ int main(int argc, char** argv) {
         GBufferMeshRenderer renderer(vc, vertices, target, extent);
         ComputeGraph graph(vc, 1);
         graph.compileFrom(renderer.getOutput());
+        // A photo enhancer trained in Klartraum (crate_training_example's saved parameters), run forward only.
+        std::unique_ptr<neural::PhotoEnhancerTraining> trained;
+        if (!parameters.empty()) {
+            neural::PhotoEnhancerTrainingConfig config;
+            config.forwardOnly = true;
+            config.batch = 1;
+            config.size = sampleSize;
+            config.texture = crate::textureShape();
+            const auto codes = parameters / "codes.weight.bin";
+            config.appearances =
+                std::filesystem::exists(codes) ? uint32_t(std::filesystem::file_size(codes) / sizeof(float) / 8) : 0;
+            config.appearanceSize = 8;
+            trained = std::make_unique<neural::PhotoEnhancerTraining>(vc, config);
+            trained->load(parameters.string());
+            if (config.appearances > 0) {
+                std::vector<float> table(config.appearances * 8);
+                std::ifstream(codes, std::ios::binary)
+                    .read(reinterpret_cast<char*>(table.data()), std::streamsize(table.size() * sizeof(float)));
+                std::vector<float> code(8, 0.0f);
+                for (size_t i = 0; i < table.size(); ++i)
+                    if (appearanceRow < 0)
+                        code[i % 8] += table[i] / float(config.appearances);
+                    else if (i / 8 == size_t(appearanceRow))
+                        code[i % 8] = table[i];
+                trained->setAppearance(code);
+            }
+        }
+        // Qwen-Image's control depths and batch lists: <qwen-batch>/depth_smooth/<view>.ppm and
+        // <qwen-batch>/batches/NN.txt, whose photos go to <qwen-batch>/photo/<view>.ppm.
+        std::vector<std::string> batchLines;
+        if (!qwenBatch.empty()) {
+            std::filesystem::create_directories(qwenBatch / "depth_smooth");
+            std::filesystem::create_directories(qwenBatch / "photo");
+            std::filesystem::create_directories(qwenBatch / "batches");
+        }
         std::unique_ptr<neural::PhotoEnhancer> enhancer;
         if (!model.empty()) {
             enhancer = std::make_unique<neural::PhotoEnhancer>(vc, model, sampleSize, sampleSize);
@@ -137,11 +219,26 @@ int main(int argc, char** argv) {
                 if (buffers[k])
                     *buffers[k] = pixels;
             }
-            if (enhancer) {
-                // The sample as the training saw it: the inverse depth stretched up to the nearest point.
-                const auto inputs =
-                    neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
-                const auto image = enhancer->run(inputs);
+            // The sample as the training saw it: the inverse depth stretched up to the nearest point.
+            const auto inputs =
+                neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
+            if (!qwenBatch.empty()) {
+                char id[128];
+                std::snprintf(id, sizeof(id), "%s_%04u", outDir.filename().string().c_str(), view);
+                const auto control = qwenBatch / "depth_smooth" / (std::string(id) + ".ppm");
+                writeControlDepth(control, inputs.channels, sampleSize);
+                batchLines.push_back("- " + (qwenBatch / "photo" / (std::string(id) + ".ppm")).string() + " " +
+                                     control.string());
+            }
+            if (enhancer || trained) {
+                std::vector<float> image;
+                if (trained) {
+                    trained->setBatch(inputs.channels, inputs.coordinates, inputs.classes, {}, {0.0f});
+                    trained->step();
+                    image = trained->image();
+                } else {
+                    image = enhancer->run(inputs);
+                }
                 const size_t pixels = size_t(sampleSize) * sampleSize;
                 std::vector<uint8_t> rgb(3 * pixels);
                 for (size_t p = 0; p < pixels; ++p)
@@ -153,6 +250,14 @@ int main(int argc, char** argv) {
             }
             cameras << view << "," << eye.x << "," << eye.y << "," << eye.z << "," << look.x << "," << look.y << ","
                     << look.z << ",0.05," << crate::kFovDegrees << ",0," << crate::kDepthFar << "\n";
+        }
+        // Batches of 20 views for qwen_image_example --batch.
+        for (size_t first = 0; first < batchLines.size(); first += 20) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "%02zu.txt", first / 20);
+            std::ofstream batch(qwenBatch / "batches" / name);
+            for (size_t k = first; k < std::min(first + 20, batchLines.size()); ++k)
+                batch << batchLines[k] << "\n";
         }
         std::cout << views << " views in " << outDir << std::endl;
     } catch (const std::exception& e) {

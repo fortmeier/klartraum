@@ -123,19 +123,6 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
     return views;
 }
 
-// The surface texture of train_photo_enhancer.py: hash_texture.SurfaceTexture's defaults.
-neural::HashTextureShape textureShape() {
-    neural::HashTextureShape shape;
-    shape.levels = 12;
-    shape.features = 2;
-    shape.tableSize = 1u << 17;
-    shape.classes = {2, 3, 4};
-    const double growth = std::exp((std::log(2048.0) - std::log(16.0)) / 11.0);
-    for (uint32_t level = 0; level < shape.levels; ++level)
-        shape.resolutions.push_back(uint32_t(std::floor(16.0 * std::pow(growth, double(level)))));
-    return shape;
-}
-
 // The batch of random crops (as train_photo_enhancer.crops()): a view, at full or (30 %) half scale (area mean of
 // channels and photo, every second coordinate and class), a random window, flipped half the time.
 struct Batch {
@@ -259,7 +246,7 @@ int main(int argc, char** argv) {
         neural::PhotoEnhancerTrainingConfig config;
         config.batch = batchSize;
         config.size = crop;
-        config.texture = textureShape();
+        config.texture = crate::textureShape();
         config.appearances = appearance > 0 ? uint32_t(training.size()) : 0;
         config.appearanceSize = appearance;
         config.profile = profile;
