@@ -87,6 +87,21 @@ struct EmaPushConstants {
     uint32_t warmupSteps;
 };
 
+struct PoolPushConstants {
+    uint32_t planes, inputHeight, inputWidth;
+};
+
+struct DistancePushConstants {
+    uint32_t count;
+    float weight;
+    uint32_t accumulate;
+};
+
+struct AffinePushConstants {
+    uint32_t planes, channels, pixels, backward, accumulate;
+    float scale[4], shift[4];
+};
+
 struct NormPushConstants {
     uint32_t batch, channels, pixels;
     float epsilon;
@@ -293,6 +308,47 @@ ComputeGraphElementPtr ema(VulkanContext& vulkanContext, uint32_t count, float r
     auto operation = vulkanContext.create<GeneralComputation<EmaPushConstants>>("shaders/training/ema.comp.spv");
     operation->setPushConstants({{count, rate, warmupSteps}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr maxPool(VulkanContext& vulkanContext, const layers::Shape& input) {
+    const auto [n, c, pixels] = planesOf(input);
+    auto operation = vulkanContext.create<GeneralComputation<PoolPushConstants>>("shaders/training/max_pool.comp.spv");
+    operation->setPushConstants({{n * c, input[2], input[3]}});
+    operation->setGroupCountX((n * c * (input[2] / 2) * (input[3] / 2) + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layers::Shape& input) {
+    const auto [n, c, pixels] = planesOf(input);
+    auto operation =
+        vulkanContext.create<GeneralComputation<PoolPushConstants>>("shaders/training/max_pool_backward.comp.spv");
+    operation->setPushConstants({{n * c, input[2], input[3]}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, float weight, bool accumulate) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<DistancePushConstants>>("shaders/training/l1_distance.comp.spv");
+    operation->setPushConstants({{count, weight, accumulate ? 1u : 0u}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelAffine(VulkanContext& vulkanContext, const layers::Shape& shape,
+                                     const std::vector<float>& scale, const std::vector<float>& shift, bool backward,
+                                     bool accumulate) {
+    const auto [n, c, pixels] = planesOf(shape);
+    if (c > 4 || scale.size() != c || shift.size() != c)
+        throw std::invalid_argument("channelAffine: needs a scale and shift for each of at most four channels");
+    AffinePushConstants constants{n * c, c, pixels, backward ? 1u : 0u, accumulate ? 1u : 0u, {}, {}};
+    std::copy(scale.begin(), scale.end(), constants.scale);
+    std::copy(shift.begin(), shift.end(), constants.shift);
+    auto operation =
+        vulkanContext.create<GeneralComputation<AffinePushConstants>>("shaders/training/channel_affine.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
     return operation;
 }
 

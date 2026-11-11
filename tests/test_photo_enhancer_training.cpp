@@ -29,6 +29,10 @@
  *   rate of PyTorch's (Adam's first step moves each by about the learning rate, so a wrong gradient shows)
  * - forwardOnlyRendersTheSameImage: parameters saved from a training and loaded into a forward-only instance render
  *   PyTorch's image of the batch; with every row's code set to one code, the crops render as with that code
+ * - maxPoolMatchesPyTorch: a 2 x 2 max-pool and its input gradient equal F.max_pool2d's
+ * - vggLossMatchesPyTorch: the perceptual loss of an image against a target through VGG-16 up to relu4_3 and its
+ *   gradient (added to a zeroed image gradient) equal train_photo_enhancer.Vgg's (skips without
+ *   scripts/neural/export_vgg16.py's weights)
  * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  *
@@ -53,6 +57,7 @@
 #include "klartraum/layers/training.hpp"
 #include "klartraum/neural/hash_texture.hpp"
 #include "klartraum/neural/photo_enhancer_training.hpp"
+#include "klartraum/neural/vgg_loss.hpp"
 
 using namespace klartraum;
 
@@ -600,4 +605,54 @@ TEST(PhotoEnhancerTraining, forwardOnlyRendersTheSameImage) {
     const size_t half = image.size() / 2;
     EXPECT_LT(relativeError({image.begin(), image.begin() + half}, {expected.begin(), expected.begin() + half}), 1e-5f);
     EXPECT_GT(relativeError({image.begin() + half, image.end()}, {expected.begin() + half, expected.end()}), 1e-3f);
+}
+
+TEST(PhotoEnhancerTraining, maxPoolMatchesPyTorch) {
+    const Fixture fixture("max_pool");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("x"), pooled = fixture.shapes.at("y");
+    auto x = tensor(vc, shape), y = tensor(vc, pooled), taken = tensor(vc, pooled), dy = tensor(vc, pooled);
+    auto dx = tensor(vc, shape);
+    auto forward = training::maxPool(vc, shape);
+    forward->setInput(x, 0);
+    forward->setInput(y, 1);
+    forward->setInput(taken, 2);
+    auto backward = training::maxPoolBackward(vc, shape);
+    backward->setInput(dy, 0);
+    backward->setInput(taken, 1);
+    backward->setInput(dx, 2);
+    backward->addDependency(forward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    x->getDataBuffer(0).memcopyFrom(fixture.values("x"));
+    dy->getDataBuffer(0).memcopyFrom(fixture.values("dy"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_EQ(read(y), fixture.values("y"));
+    EXPECT_EQ(read(dx), fixture.values("dx"));
+}
+
+TEST(PhotoEnhancerTraining, vggLossMatchesPyTorch) {
+    const Fixture fixture("vgg");
+    const std::string weights = "build/models/vgg16";
+    if (!fixture.exists() || !std::filesystem::exists(weights + "/layers.txt"))
+        GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("image");
+    auto images = tensor(vc, shape), targets = tensor(vc, shape), gradient = tensor(vc, shape);
+    auto zero = training::fill(vc, uint32_t(gradient->getDataElementCount()));
+    zero->setInput(gradient, 0);
+    neural::VggLoss loss(vc, weights, shape[0], shape[2], shape[3], 1.0f, images, targets, gradient);
+    loss.elements().front()->addDependency(zero);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(loss.elements().back());
+    loss.upload();
+    images->getDataBuffer(0).memcopyFrom(fixture.values("image"));
+    targets->getDataBuffer(0).memcopyFrom(fixture.values("target"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_NEAR(loss.loss(), fixture.values("loss")[0], 1e-4f * fixture.values("loss")[0]);
+    EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-3f);
 }

@@ -217,6 +217,27 @@ def generator_step_case(out: Path, seed: int) -> None:
         "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 2 3 4\n")
 
 
+def vgg_case(out: Path, seed: int) -> None:
+    """train_photo_enhancer.Vgg's distance of an image to a target and its gradient, and a 2 x 2 max-pool's."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from train_photo_enhancer import Vgg
+
+    generator = torch.Generator().manual_seed(seed)
+    vgg = Vgg().eval()
+    image = torch.rand(2, 3, 32, 32, generator=generator, requires_grad=True)
+    target = torch.rand(2, 3, 32, 32, generator=generator)
+    distance = vgg.distance(image, target)
+    distance.backward()
+    save(out, "vgg", {"image": image, "target": target, "dimage": image.grad, "loss": distance.reshape(1)})
+    x = torch.randn(2, 3, 6, 8, generator=generator, requires_grad=True)
+    y = F.max_pool2d(x, 2)
+    dy = torch.randn(y.shape, generator=generator)
+    y.backward(dy)
+    save(out, "max_pool", {"x": x, "y": y, "dy": dy, "dx": x.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -236,6 +257,7 @@ def main() -> None:
     linear_case(args.out, 12)
     clip_case(args.out, 13)
     generator_step_case(args.out, 14)
+    vgg_case(args.out, 15)
     print(f"fixtures in {args.out}")
 
 
