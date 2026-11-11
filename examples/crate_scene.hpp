@@ -84,7 +84,9 @@ inline std::vector<float> initialValue(const klartraum::neural::PhotoEnhancerTra
     const std::string stem = name.substr(0, name.find_last_of('.'));
     const std::string layer = stem.substr(stem.find_last_of('.') + 1);
     const bool inBlock = name.rfind("generator.down.", 0) == 0 || name.rfind("generator.up.", 0) == 0;
-    const bool norm = inBlock && (layer == "1" || layer == "4");
+    // The encoder's ChannelNorms are its layers 1, 4, 7 ("encoder.body.4.weight").
+    const bool encoderNorm = name.rfind("encoder.body.", 0) == 0 && (std::stoi(layer) % 3) == 1;
+    const bool norm = (inBlock && (layer == "1" || layer == "4")) || encoderNorm;
     const bool zeroStart = name.find("film.gammas") != std::string::npos ||
                            name.find("film.betas") != std::string::npos || name.find(".out.") != std::string::npos;
     if (name == "texture.table") {

@@ -126,7 +126,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     // PyTorch registers the output convolution after FiLM, the codes after the generator.
     addParameter("generator.out.weight", {3, w[0], 1, 1}, Network);
     addParameter("generator.out.bias", {3}, Network);
-    if (config.latentSize > 0) {
+    // The encoder, unless the latents are given.
+    if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents)) {
         uint32_t previous = 3;
         for (size_t i = 0; i < config.encoderWidths.size(); ++i) {
             const std::string conv = "encoder.body." + std::to_string(3 * i) + ".";

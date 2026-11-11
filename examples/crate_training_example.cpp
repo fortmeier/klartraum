@@ -36,7 +36,11 @@ using namespace klartraum;
 
 namespace {
 
-constexpr uint32_t kChannels = 11;
+// The geometry channels each sample uploads: the photo enhancer's 11 (RGB, depth, classes), or for the latent
+// renderer 4 (inverse depth and normals).
+uint32_t kChannels = 11;
+// Whether crops are flipped (not for the latent renderer, whose normals would not flip with them).
+bool flips = true;
 // The samples' size (--sample-size); the G-buffers are rendered at twice that and reduced as in training.
 uint32_t sampleSize = 256;
 
@@ -45,6 +49,7 @@ struct View {
     std::string id;
     neural::PhotoEnhancerInputs inputs;
     std::vector<float> photo;
+    std::vector<float> objects; ///< for the latent renderer: 1 on the crate, 0 elsewhere
 };
 
 // A binary PPM of the sample size, or a whole multiple of it averaged down (e.g. 256 x 256 photos for 128 x 128
@@ -80,12 +85,12 @@ std::map<std::string, float> readScores(const std::filesystem::path& path) {
 }
 
 // The views of a flight (crate_gbuffer_example's cameras_classical.csv) that have a photo, show mostly the scene (at
-// most 60 % background, as train_photo_enhancer.usable()) and whose photo follows the rendering well enough
+// most `maxBackground`, e.g. 60 % as train_photo_enhancer.usable()) and whose photo follows the rendering well enough
 // (neural::PhotoAlignment; the scores are kept in <split>/alignment_klartraum.txt).
 std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, ComputeGraph& graph,
                             OffscreenTarget& target, neural::PhotoAlignment& alignment,
-                            const std::filesystem::path& flight, const std::filesystem::path& split,
-                            float minAlignment) {
+                            const std::filesystem::path& flight, const std::filesystem::path& split, float minAlignment,
+                            float maxBackground) {
     const auto cache = split / "alignment_klartraum.txt";
     auto scores = readScores(cache);
     std::ofstream newScores(cache, std::ios::app);
@@ -112,7 +117,7 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
         const auto frame = crate::renderFrame(vc, renderer, graph, target, 2 * sampleSize);
         view.inputs = neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
         const auto background = std::count(view.inputs.classes.begin(), view.inputs.classes.end(), 0.0f);
-        if (double(background) > 0.6 * double(view.inputs.classes.size()))
+        if (double(background) > double(maxBackground) * double(view.inputs.classes.size()))
             continue;
         if (!scores.count(view.id)) {
             const size_t pixels = size_t(sampleSize) * sampleSize;
@@ -131,7 +136,7 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
 // The batch of random crops (as train_photo_enhancer.crops()): a view, at full or (30 %) half scale (area mean of
 // channels and photo, every second coordinate and class), a random window, flipped half the time.
 struct Batch {
-    std::vector<float> channels, coordinates, classes, photos, rows;
+    std::vector<float> channels, coordinates, classes, photos, rows, objects;
 };
 
 Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop, std::mt19937& rng) {
@@ -141,6 +146,8 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
     batch.coordinates.resize(count * 3 * cropPixels);
     batch.classes.resize(count * cropPixels);
     batch.photos.resize(count * 3 * cropPixels);
+    if (!views.front().objects.empty())
+        batch.objects.resize(count * cropPixels);
     std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
     for (uint32_t k = 0; k < count; ++k) {
         const uint32_t index = uint32_t(rng() % views.size());
@@ -149,7 +156,7 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
         const bool half = uniform(rng) < 0.3f && sampleSize / 2 >= crop;
         const uint32_t size = half ? sampleSize / 2 : sampleSize, step = half ? 2 : 1;
         const uint32_t top = uint32_t(rng() % (size - crop + 1)), left = uint32_t(rng() % (size - crop + 1));
-        const bool flip = uniform(rng) < 0.5f;
+        const bool flip = flips && uniform(rng) < 0.5f;
         const size_t pixels = size_t(sampleSize) * sampleSize;
         // A value of a channel of the view at crop pixel (y, x): the mean of its step x step block for averaged
         // planes, its top-left pixel for sampled ones.
@@ -173,6 +180,8 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
                     batch.photos[(k * 3 + c) * cropPixels + p] = at(view.photo, c, y, x, true);
                 }
                 batch.classes[k * cropPixels + p] = at(view.inputs.classes, 0, y, x, false);
+                if (!batch.objects.empty())
+                    batch.objects[k * cropPixels + p] = at(view.objects, 0, y, x, false);
             }
     }
     return batch;
@@ -186,7 +195,9 @@ int main(int argc, char** argv) {
     std::filesystem::path crateDir = "build/TestingOutput/crate", outDir = "build/TestingOutput/crate/runs/k1";
     uint32_t steps = 30000, batchSize = 16, crop = 128, appearance = 8, every = 1000;
     float minAlignment = 0.7f, perceptual = 0.0f, adversarial = 0.0f, featureMatching = 2.0f;
-    bool profile = false;
+    bool profile = false, floor = true;
+    uint32_t latent = 0;
+    float klWeight = 1e-3f;
     uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
     for (int i = 1; i < argc; ++i) {
@@ -224,6 +235,12 @@ int main(int argc, char** argv) {
             featureMatching = std::stof(argv[++i]);
         else if (arg == "--init-from" && hasValue)
             initFrom = argv[++i];
+        else if (arg == "--no-floor")
+            floor = false;
+        else if (arg == "--latent" && hasValue)
+            latent = uint32_t(std::stoul(argv[++i]));
+        else if (arg == "--kl" && hasValue)
+            klWeight = std::stof(argv[++i]);
         else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
@@ -236,14 +253,30 @@ int main(int argc, char** argv) {
         {
             const VkExtent2D extent{2 * sampleSize, 2 * sampleSize};
             auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
-            GBufferMeshRenderer renderer(vc, crate::vertices(), target, extent);
+            GBufferMeshRenderer renderer(vc, crate::vertices(floor), target, extent);
             ComputeGraph graph(vc, 1);
             graph.compileFrom(renderer.getOutput());
             neural::PhotoAlignment alignment(vc);
             training = loadViews(vc, renderer, graph, *target, alignment, crateDir / "flights/crate_a",
-                                 crateDir / "data/train", minAlignment);
+                                 crateDir / "data/train", minAlignment, floor ? 0.6f : 1.0f);
             validation = loadViews(vc, renderer, graph, *target, alignment, crateDir / "flights/crate_v",
-                                   crateDir / "data/validation", minAlignment);
+                                   crateDir / "data/validation", minAlignment, floor ? 0.6f : 1.0f);
+        }
+        // The latent renderer's geometry: inverse depth and normals; its one object, the crate.
+        if (latent > 0) {
+            kChannels = 4;
+            flips = false;
+            const size_t pixels = size_t(sampleSize) * sampleSize;
+            for (auto* views : {&training, &validation})
+                for (auto& view : *views) {
+                    std::vector<float> geometry(view.inputs.channels.begin() + 3 * pixels,
+                                                view.inputs.channels.begin() + 4 * pixels);
+                    geometry.insert(geometry.end(), view.inputs.normals.begin(), view.inputs.normals.end());
+                    view.inputs.channels = geometry;
+                    view.objects.resize(pixels);
+                    for (size_t q = 0; q < pixels; ++q)
+                        view.objects[q] = view.inputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
+                }
         }
         std::cout << training.size() << " training views, " << validation.size() << " validation views" << std::endl;
         if (training.empty())
@@ -259,7 +292,13 @@ int main(int argc, char** argv) {
         config.batch = batchSize;
         config.size = crop;
         config.texture = crate::textureShape(textureLevels, textureBase, textureFinest);
-        config.appearances = appearance > 0 ? uint32_t(training.size()) : 0;
+        config.appearances = appearance > 0 && latent == 0 ? uint32_t(training.size()) : 0;
+        if (latent > 0) {
+            config.gbufferChannels = kChannels;
+            config.latentSize = latent;
+            config.latentObjects = 1;
+            config.klWeight = klWeight;
+        }
         config.appearanceSize = appearance;
         config.profile = profile;
         config.perceptual = perceptual;
@@ -278,6 +317,80 @@ int main(int argc, char** argv) {
             trainer.setParameter(name, values);
         }
 
+        // The latent renderer's validation: renders of the held-out views with the latents their photos encode to, with
+        // latents 0, and of one view with latents drawn from N(0, 1).
+        constexpr uint32_t kLatentBatch = 4;
+        std::unique_ptr<neural::PhotoEnhancerTraining> encodeRenderer, givenRenderer;
+        if (latent > 0) {
+            auto encodeConfig = config;
+            encodeConfig.forwardOnly = true;
+            encodeConfig.encodeLatents = true;
+            encodeConfig.batch = kLatentBatch;
+            encodeConfig.size = sampleSize;
+            encodeConfig.perceptual = encodeConfig.adversarial = 0.0f;
+            encodeRenderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, encodeConfig);
+            auto givenConfig = encodeConfig;
+            givenConfig.encodeLatents = false;
+            givenRenderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, givenConfig);
+        }
+        // Renders `views` in chunks (the last filled up with the first views) with latents encoded from the photos or,
+        // given `latents` ([views][latent]), with those; the images [views][3][size][size].
+        const auto renderLatent = [&](const std::vector<const View*>& views, const std::vector<float>* latents) {
+            const size_t pixels = size_t(sampleSize) * sampleSize;
+            auto& renderer = latents ? *givenRenderer : *encodeRenderer;
+            std::vector<float> images;
+            for (size_t first = 0; first < views.size(); first += kLatentBatch) {
+                Batch chunk;
+                std::vector<float> chunkLatents;
+                for (uint32_t k = 0; k < kLatentBatch; ++k) {
+                    const size_t v = (first + k) % views.size();
+                    const View& view = *views[v];
+                    chunk.channels.insert(chunk.channels.end(), view.inputs.channels.begin(),
+                                          view.inputs.channels.end());
+                    chunk.coordinates.insert(chunk.coordinates.end(), view.inputs.coordinates.begin(),
+                                             view.inputs.coordinates.end());
+                    chunk.classes.insert(chunk.classes.end(), view.inputs.classes.begin(), view.inputs.classes.end());
+                    chunk.photos.insert(chunk.photos.end(), view.photo.begin(), view.photo.end());
+                    chunk.objects.insert(chunk.objects.end(), view.objects.begin(), view.objects.end());
+                    if (latents)
+                        chunkLatents.insert(chunkLatents.end(), latents->begin() + v * latent,
+                                            latents->begin() + (v + 1) * latent);
+                }
+                renderer.setBatch(chunk.channels, chunk.coordinates, chunk.classes, chunk.photos, {});
+                renderer.setObjects(chunk.objects);
+                if (latents)
+                    renderer.setLatents(chunkLatents);
+                renderer.step();
+                const auto part = renderer.image();
+                const size_t count = std::min<size_t>(kLatentBatch, views.size() - first);
+                images.insert(images.end(), part.begin(), part.begin() + count * 3 * pixels);
+            }
+            return images;
+        };
+        const auto meanL1 = [&](const std::vector<float>& images, const std::vector<const View*>& views) {
+            const size_t pixels = size_t(sampleSize) * sampleSize;
+            double sum = 0.0;
+            for (size_t v = 0; v < views.size(); ++v)
+                for (size_t i = 0; i < 3 * pixels; ++i)
+                    sum += std::abs(images[v * 3 * pixels + i] - views[v]->photo[i]);
+            return sum / double(views.size() * 3 * pixels);
+        };
+        // Columns of 3-channel images, side by side, rows one after the other.
+        const auto writeGrid = [&](const std::filesystem::path& path, const std::vector<std::vector<float>>& columns,
+                                   size_t rows) {
+            const size_t pixels = size_t(sampleSize) * sampleSize;
+            const uint32_t width = uint32_t(columns.size()) * sampleSize;
+            std::vector<uint8_t> grid(size_t(width) * sampleSize * rows * 3);
+            for (size_t r = 0; r < rows; ++r)
+                for (size_t column = 0; column < columns.size(); ++column)
+                    for (size_t p = 0; p < pixels; ++p)
+                        for (size_t c = 0; c < 3; ++c) {
+                            const size_t y = r * sampleSize + p / sampleSize, x = column * sampleSize + p % sampleSize;
+                            grid[(y * width + x) * 3 + c] = byte(columns[column][(r * 3 + c) * pixels + p]);
+                        }
+            writeImage(path, grid.data(), width, uint32_t(sampleSize * rows), 3);
+        };
+
         // Validation: the held-out views at the full sample size, with the codes' mean.
         auto renderConfig = config;
         renderConfig.forwardOnly = true;
@@ -285,7 +398,7 @@ int main(int argc, char** argv) {
         renderConfig.batch = kRenderBatch;
         renderConfig.size = sampleSize;
         std::unique_ptr<neural::PhotoEnhancerTraining> renderer;
-        if (!validation.empty())
+        if (!validation.empty() && latent == 0)
             renderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, renderConfig);
         Batch held;
         for (const auto& view : validation) {
@@ -298,17 +411,21 @@ int main(int argc, char** argv) {
         }
 
         std::ofstream log(outDir / "log.txt", std::ios::app);
-        double lossSum = 0.0, perceptualSum = 0.0, discriminatorSum = 0.0, adversarialSum = 0.0, matchingSum = 0.0;
+        double lossSum = 0.0, perceptualSum = 0.0, discriminatorSum = 0.0, adversarialSum = 0.0, matchingSum = 0.0,
+               klSum = 0.0;
         auto started = std::chrono::steady_clock::now();
         for (uint32_t step = 1; step <= steps; ++step) {
             const Batch batch = sampleBatch(training, batchSize, crop, rng);
             trainer.setBatch(batch.channels, batch.coordinates, batch.classes, batch.photos, batch.rows);
+            if (latent > 0)
+                trainer.setObjects(batch.objects);
             trainer.step();
             lossSum += trainer.loss();
             perceptualSum += trainer.perceptualLoss();
             discriminatorSum += trainer.discriminatorLoss();
             adversarialSum += trainer.adversarialLoss();
             matchingSum += trainer.featureMatchingLoss();
+            klSum += trainer.klLoss();
             if (step % 100 == 0) {
                 const double seconds =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() / 100.0;
@@ -316,11 +433,13 @@ int main(int argc, char** argv) {
                 line << "step " << step << " loss " << lossSum / 100.0;
                 if (perceptual > 0.0f)
                     line << " vgg " << perceptualSum / 100.0;
+                if (latent > 0)
+                    line << " kl " << klSum / 100.0;
                 if (adversarial > 0.0f)
                     line << " d " << discriminatorSum / 100.0 << " adv " << adversarialSum / 100.0 << " fm "
                          << matchingSum / 100.0;
                 line << " (" << seconds << " s/step)";
-                perceptualSum = discriminatorSum = adversarialSum = matchingSum = 0.0;
+                perceptualSum = discriminatorSum = adversarialSum = matchingSum = klSum = 0.0;
                 std::cout << line.str() << std::endl;
                 log << line.str() << "\n";
                 log.flush();
@@ -340,6 +459,60 @@ int main(int argc, char** argv) {
             }
             if (step % every == 0 || step == steps) {
                 trainer.save((outDir / "parameters").string());
+                if (latent > 0 && !validation.empty()) {
+                    encodeRenderer->load((outDir / "parameters").string());
+                    givenRenderer->load((outDir / "parameters").string());
+                    std::vector<const View*> held, fitted;
+                    for (const auto& view : validation)
+                        held.push_back(&view);
+                    for (size_t v = 0; v < std::min<size_t>(8, training.size()); ++v)
+                        fitted.push_back(&training[v]);
+                    const auto encoded = renderLatent(held, nullptr);
+                    const std::vector<float> zeros(held.size() * latent, 0.0f);
+                    const auto plain = renderLatent(held, &zeros);
+                    const auto trainingImages = renderLatent(fitted, nullptr);
+                    // Eight crates from N(0, 1) on the first held-out view.
+                    std::mt19937 sampler(42);
+                    std::normal_distribution<float> normal(0.0f, 1.0f);
+                    std::vector<float> drawn(8 * latent);
+                    for (auto& v : drawn)
+                        v = normal(sampler);
+                    const std::vector<const View*> same(8, held.front());
+                    const auto samples = renderLatent(same, &drawn);
+                    double spread = 0.0; // mean L1 between consecutive samples
+                    const size_t pixels = size_t(sampleSize) * sampleSize;
+                    for (size_t v = 0; v + 1 < 8; ++v)
+                        for (size_t i = 0; i < 3 * pixels; ++i)
+                            spread += std::abs(samples[v * 3 * pixels + i] - samples[(v + 1) * 3 * pixels + i]);
+                    spread /= double(7 * 3 * pixels);
+                    std::ostringstream line;
+                    line << "validation step " << step << ": L1 encoded " << meanL1(encoded, held) << ", latents 0 "
+                         << meanL1(plain, held) << ", training encoded " << meanL1(trainingImages, fitted)
+                         << ", samples' spread " << spread;
+                    std::cout << line.str() << std::endl;
+                    log << line.str() << "\n";
+                    log.flush();
+                    // validation_*.png: photo | encoded | latents 0 for the first six held-out views; samples_*.png:
+                    // the eight drawn crates in two rows.
+                    std::vector<float> photos;
+                    for (const auto* view : held)
+                        photos.insert(photos.end(), view->photo.begin(), view->photo.end());
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "validation_%06u.png", step);
+                    writeGrid(outDir / name, {photos, encoded, plain}, std::min<size_t>(6, held.size()));
+                    std::vector<float> top(samples.begin(), samples.begin() + 4 * 3 * pixels),
+                        bottom(samples.begin() + 4 * 3 * pixels, samples.end());
+                    std::vector<std::vector<float>> columns;
+                    for (size_t v = 0; v < 4; ++v) {
+                        std::vector<float> column(top.begin() + v * 3 * pixels, top.begin() + (v + 1) * 3 * pixels);
+                        column.insert(column.end(), bottom.begin() + v * 3 * pixels,
+                                      bottom.begin() + (v + 1) * 3 * pixels);
+                        columns.push_back(column);
+                    }
+                    std::snprintf(name, sizeof(name), "samples_%06u.png", step);
+                    writeGrid(outDir / name, columns, 2);
+                    continue;
+                }
                 if (!renderer)
                     continue;
                 renderer->load((outDir / "parameters").string());

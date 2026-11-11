@@ -788,6 +788,9 @@ the held-out views are rendered with the codes' mean
 | `--adversarial W` | Weight of the adversarial loss of a 2-scale PatchGAN with DiffAugment (default 0: no GAN) |
 | `--feature-matching W` | Weight of the discriminator's feature matching (default 2) |
 | `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/` |
+| `--no-floor` | The crate without a floor (as `crate_gbuffer_example --no-floor`) |
+| `--latent D` | The latent-conditioned renderer instead: inverse depth, normals, texture and a latent G-buffer of D numbers per object from a VAE encoder of the photo; validation renders encoded, zero and drawn latents |
+| `--kl W` | Weight of the latents' KL divergence (default 0.001) |
 
 ```bash
 ./build/examples/crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1
