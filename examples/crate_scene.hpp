@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,28 @@ inline klartraum::neural::HashTextureShape textureShape(uint32_t levels = 12, ui
     const double growth = std::exp((std::log(double(finest)) - std::log(double(base))) / std::max(1.0, levels - 1.0));
     for (uint32_t level = 0; level < shape.levels; ++level)
         shape.resolutions.push_back(uint32_t(std::floor(double(base) * std::pow(growth, double(level)))));
+    return shape;
+}
+
+// A plain dense texture of `components` numbers per point instead of a multiresolution hash texture: every level at
+// the same `resolution`, each holding up to 4 of the components, its table large enough for the (resolution + 1)^3
+// corners to be indexed directly (no hash collisions); a grid for the crate's class only. 0 components: no texture.
+inline klartraum::neural::HashTextureShape denseTextureShape(uint32_t components, uint32_t resolution) {
+    klartraum::neural::HashTextureShape shape;
+    shape.classes = {klartraum::tree::TREE_CLASS_STEM};
+    if (components == 0) {
+        shape.levels = 0;
+        return shape;
+    }
+    if (components > 64 || (components > 4 && components % 4 != 0))
+        throw std::invalid_argument("denseTextureShape: 1 to 4 components, or a multiple of 4 up to 64");
+    shape.features = std::min(components, 4u);
+    shape.levels = components <= 4 ? 1u : components / 4u;
+    const uint64_t corners = uint64_t(resolution + 1) * (resolution + 1) * (resolution + 1);
+    shape.tableSize = 1;
+    while (shape.tableSize < corners)
+        shape.tableSize <<= 1;
+    shape.resolutions.assign(shape.levels, resolution);
     return shape;
 }
 

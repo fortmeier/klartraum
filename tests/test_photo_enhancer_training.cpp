@@ -45,6 +45,8 @@
  * - temporalStepMatchesPyTorch: the same step with the temporal consistency loss (weight 0.5): a second view of each
  *   sample rendered with the same latents, the first render warped onto it by a given flow and mask; the temporal
  *   loss, the image and every parameter after the step equal latent_renderer.flow_warp_loss()'s
+ * - untexturedLatentStepTrains: the latent-conditioned renderer without a texture (no levels) has no texture parameter,
+ *   takes the G-buffer channels and the latents only, and lowers its photometric loss over 30 steps on one batch
  * - latentGanStepTrains: the latent-conditioned renderer with free bits and the 2-scale PatchGAN, from PyTorch's
  *   renderer and a fresh discriminator on its batch upsampled to 64 x 64, starts at the untrained discriminator's loss
  * (about 4 ln 2), keeps all losses finite over 30 steps on one batch, lowers the photometric loss and counts the KL at
@@ -1064,6 +1066,52 @@ void expectLatentGanTrains(const Fixture& fixture, bool conditional, uint32_t sc
 }
 
 } // namespace
+
+TEST(PhotoEnhancerTraining, untexturedLatentStepTrains) {
+    const Fixture fixture("latent_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoEnhancerTrainingConfig config;
+    config.batch = 2;
+    config.size = 32;
+    config.widths = {32, 64, 128};
+    config.gbufferChannels = 4;
+    config.texture.levels = 0;
+    config.texture.resolutions.clear();
+    config.texture.classes = {3};
+    config.latentSize = 4;
+    config.latentObjects = 1;
+    neural::PhotoEnhancerTraining trainer(vc, config);
+    const auto names = trainer.parameterNames();
+    EXPECT_EQ(std::count(names.begin(), names.end(), "texture.table"), 0);
+    // The generator's input: the 4 G-buffer channels and the 4 latents, no texture features.
+    EXPECT_EQ(trainer.parameter("generator.down.0.0.weight")->getDataElementCount(), 32u * (4u + 4u) * 9u);
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<float> uniform(-0.05f, 0.05f);
+    for (const auto& name : names) {
+        std::vector<float> values(trainer.parameter(name)->getDataElementCount());
+        for (auto& v : values)
+            v = uniform(rng);
+        // The ChannelNorms' scales (layers 1 and 4 of a generator block, 1, 4, 7 of the encoder) start at one.
+        const bool norm = (name.find(".1.weight") != std::string::npos || name.find(".4.weight") != std::string::npos ||
+                           name.find(".7.weight") != std::string::npos) &&
+                          name.rfind("generator.out", 0) != 0;
+        if (norm)
+            std::fill(values.begin(), values.end(), 1.0f);
+        trainer.setParameter(name, values);
+    }
+    trainer.setBatch(fixture.values("geometry"), fixture.values("coordinates"), fixture.values("classes"),
+                     fixture.values("photos"), {});
+    trainer.setObjects(fixture.values("objects"));
+    trainer.step();
+    const float first = trainer.loss();
+    for (int step = 0; step < 30; ++step)
+        trainer.step();
+    EXPECT_TRUE(std::isfinite(trainer.loss()));
+    EXPECT_LT(trainer.loss(), first);
+}
 
 TEST(PhotoEnhancerTraining, latentGanStepTrains) {
     const Fixture fixture("latent_step");

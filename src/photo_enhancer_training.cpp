@@ -94,8 +94,11 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     const auto& w = config.widths;
 
     // Parameters, in the order of the PyTorch state dict.
-    addParameter("texture.table", {uint32_t(shape.classes.size()), shape.levels, shape.tableSize, shape.features},
-                 Texture);
+    // A texture of no levels: the generator sees the G-buffer channels (and the latents) only.
+    const bool textured = shape.levels > 0;
+    if (textured)
+        addParameter("texture.table", {uint32_t(shape.classes.size()), shape.levels, shape.tableSize, shape.features},
+                     Texture);
     const auto addBlock = [&](const std::string& prefix, uint32_t cin, uint32_t cout, uint32_t sizeIn,
                               uint32_t stride) {
         addParameter(prefix + "0.weight", {cout, cin, 3, 3}, Network);
@@ -186,12 +189,14 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         copy->setInput(channels, 0);
         copy->setInput(input, 1);
         add(copy);
-        auto texture = hashTexture(vulkanContext, shape);
-        texture->setInput(coordinates, 0);
-        texture->setInput(classes, 1);
-        texture->setInput(find("texture.table").value, 2);
-        texture->setInput(input, 3);
-        add(texture);
+        if (textured) {
+            auto texture = hashTexture(vulkanContext, shape);
+            texture->setInput(coordinates, 0);
+            texture->setInput(classes, 1);
+            texture->setInput(find("texture.table").value, 2);
+            texture->setInput(input, 3);
+            add(texture);
+        }
     }
     // The latent G-buffer after the texture features: every object's latent at its pixels, from the encoder of the
     // photos (or, forward only, given).
@@ -300,7 +305,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
 
     // Backward: output layer, up blocks, down blocks, texture, FiLM.
     backwardGenerator(blocks, x, logits, outputGradient, logitGradient);
-    {
+    if (textured) {
         const auto& table = find("texture.table");
         auto zero = training::fill(vulkanContext, uint32_t(table.gradient->getDataElementCount()));
         zero->setInput(table.gradient, 0);
@@ -667,12 +672,14 @@ void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, s
         }
     backwardGenerator(passBlocks, x, passLogits, passOutputGradient, tensor({b, 3, s, s}));
     // The texture's gradient adds atomically to the first pass's.
-    auto texture = hashTextureBackward(vulkanContext, config.texture);
-    texture->setInput(passCoordinates, 0);
-    texture->setInput(passClasses, 1);
-    texture->setInput(passBlocks[0].dIn, 2);
-    texture->setInput(find("texture.table").gradient, 3);
-    add(texture);
+    if (config.texture.levels > 0) {
+        auto texture = hashTextureBackward(vulkanContext, config.texture);
+        texture->setInput(passCoordinates, 0);
+        texture->setInput(passClasses, 1);
+        texture->setInput(passBlocks[0].dIn, 2);
+        texture->setInput(find("texture.table").gradient, 3);
+        add(texture);
+    }
     for (const auto& name : redirected) {
         const uint32_t count = uint32_t(find(name).gradient->getDataElementCount());
         auto accumulate = training::channelCopy(vulkanContext, 1, count, {1, 0}, {1, 0}, 1, true);
@@ -699,12 +706,14 @@ void PhotoEnhancerTraining::buildTemporal() {
     copy->setInput(channels2, 0);
     copy->setInput(input2, 1);
     add(copy);
-    auto texture = hashTexture(vulkanContext, config.texture);
-    texture->setInput(coordinates2, 0);
-    texture->setInput(classes2, 1);
-    texture->setInput(find("texture.table").value, 2);
-    texture->setInput(input2, 3);
-    add(texture);
+    if (config.texture.levels > 0) {
+        auto texture = hashTexture(vulkanContext, config.texture);
+        texture->setInput(coordinates2, 0);
+        texture->setInput(classes2, 1);
+        texture->setInput(find("texture.table").value, 2);
+        texture->setInput(input2, 3);
+        add(texture);
+    }
     auto splat =
         training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn, gbuffer + features);
     splat->setInput(latentValues, 0);
@@ -1155,8 +1164,10 @@ void PhotoEnhancerTraining::setSecondView(const std::vector<float>& channelValue
     if (!flow)
         throw std::logic_error("PhotoEnhancerTraining: second views need the temporal loss");
     channels2->getDataBuffer(0).memcopyFrom(channelValues);
-    coordinates2->getDataBuffer(0).memcopyFrom(coordinateValues);
-    classes2->getDataBuffer(0).memcopyFrom(classValues);
+    if (config.texture.levels > 0) {
+        coordinates2->getDataBuffer(0).memcopyFrom(coordinateValues);
+        classes2->getDataBuffer(0).memcopyFrom(classValues);
+    }
     objects2->getDataBuffer(0).memcopyFrom(objectValues);
     flow->getDataBuffer(0).memcopyFrom(flowValues);
     flowValid->getDataBuffer(0).memcopyFrom(validValues);
@@ -1522,8 +1533,11 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
                                      const std::vector<float>& coordinateValues, const std::vector<float>& classValues,
                                      const std::vector<float>& targetValues, const std::vector<float>& rowValues) {
     channels->getDataBuffer(0).memcopyFrom(channelValues);
-    coordinates->getDataBuffer(0).memcopyFrom(coordinateValues);
-    classes->getDataBuffer(0).memcopyFrom(classValues);
+    // The coordinates and classes only feed the texture.
+    if (config.texture.levels > 0) {
+        coordinates->getDataBuffer(0).memcopyFrom(coordinateValues);
+        classes->getDataBuffer(0).memcopyFrom(classValues);
+    }
     // Forward only, the targets are not part of the graph.
     if (!config.forwardOnly || (config.latentSize > 0 && config.encodeLatents))
         targets->getDataBuffer(0).memcopyFrom(targetValues);
