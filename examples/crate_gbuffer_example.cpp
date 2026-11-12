@@ -109,6 +109,20 @@ void writeFeatures(const std::filesystem::path& directory, uint32_t view, const 
     writeImage(directory / name, grid.data(), columns * size, rows * size, 3);
 }
 
+// The sample's rendering (its RGB channels) with the background (class 0) white, as a binary PPM.
+void writeOnWhite(const std::filesystem::path& path, const neural::PhotoEnhancerInputs& inputs, uint32_t size) {
+    const size_t pixels = size_t(size) * size;
+    std::vector<uint8_t> bytes(3 * pixels);
+    for (size_t p = 0; p < pixels; ++p)
+        for (size_t c = 0; c < 3; ++c) {
+            const float v = inputs.classes[p] == 0.0f ? 1.0f : inputs.channels[c * pixels + p];
+            bytes[3 * p + c] = uint8_t(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+        }
+    std::ofstream file(path, std::ios::binary);
+    file << "P6\n" << size << " " << size << "\n255\n";
+    file.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -117,6 +131,7 @@ int main(int argc, char** argv) {
     bool orbit = false, fixedView = false, floor = true;
     std::string model;
     std::filesystem::path parameters, qwenBatch;
+    bool qwenImageToImage = false;
     float untrained = 0.0f; // > 0: an untrained enhancer, its texture initialised to +-1e-4 x this
     bool features = false;
     int appearanceRow = -1; // -1: the training codes' mean
@@ -147,6 +162,8 @@ int main(int argc, char** argv) {
             parameters = argv[++i];
         else if (arg == "--qwen-batch" && hasValue)
             qwenBatch = argv[++i];
+        else if (arg == "--qwen-image-to-image")
+            qwenImageToImage = true;
         else if (arg == "--untrained" && hasValue)
             untrained = std::stof(argv[++i]);
         else if (arg == "--features")
@@ -210,6 +227,8 @@ int main(int argc, char** argv) {
             std::filesystem::create_directories(qwenBatch / "depth_smooth");
             std::filesystem::create_directories(qwenBatch / "photo");
             std::filesystem::create_directories(qwenBatch / "batches");
+            if (qwenImageToImage)
+                std::filesystem::create_directories(qwenBatch / "input");
         }
         std::unique_ptr<neural::PhotoEnhancer> enhancer;
         if (!model.empty()) {
@@ -280,7 +299,14 @@ int main(int argc, char** argv) {
                 std::snprintf(id, sizeof(id), "%s_%04u", outDir.filename().string().c_str(), view);
                 const auto control = qwenBatch / "depth_smooth" / (std::string(id) + ".ppm");
                 writeControlDepth(control, inputs.channels, sampleSize);
-                batchLines.push_back("- " + (qwenBatch / "photo" / (std::string(id) + ".ppm")).string() + " " +
+                // For image to image the rendering, its background white, as Qwen-Image's starting image.
+                std::string start = "-";
+                if (qwenImageToImage) {
+                    const auto path = qwenBatch / "input" / (std::string(id) + ".ppm");
+                    writeOnWhite(path, inputs, sampleSize);
+                    start = path.string();
+                }
+                batchLines.push_back(start + " " + (qwenBatch / "photo" / (std::string(id) + ".ppm")).string() + " " +
                                      control.string());
             }
             if (enhancer || trained) {
