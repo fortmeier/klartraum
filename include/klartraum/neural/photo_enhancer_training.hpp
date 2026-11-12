@@ -102,6 +102,12 @@ public:
     void step();
     /// With PhotoEnhancerTrainingConfig::profile: the mean GPU time of a step per element kind, in milliseconds.
     std::vector<std::pair<std::string, double>> profile() const;
+    /// With PhotoEnhancerTrainingConfig::profile: the mean GPU time of every element of a step in execution order,
+    /// in milliseconds, and (gpuSpan()) of the whole step including the barriers between elements.
+    std::vector<std::pair<std::string, double>> profileElements() const;
+    double gpuSpan() const;
+    /// Starts the profiling means anew, e.g. after warm-up steps.
+    void resetProfile();
     /// The photometric loss of the last step (without the codes' penalty and the perceptual loss).
     float loss() const;
     /// The perceptual loss of the last step (0 without).

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -142,6 +143,8 @@ int main(int argc, char** argv) {
     int appearanceRow = -1;            // -1: the training codes' mean
     std::vector<float> latentCode;     // the crate's latent for a latent-conditioned model (empty: zeros)
     std::filesystem::path latentCodes; // a file of one latent per line (comma-separated), for view after view
+    bool profile = false;              // time the trained model's every element on the GPU
+    bool timeSteps = false;            // time the trained model's steps on the CPU (submission to finish)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -175,6 +178,10 @@ int main(int argc, char** argv) {
             untrained = std::stof(argv[++i]);
         else if (arg == "--features")
             features = true;
+        else if (arg == "--profile")
+            profile = true;
+        else if (arg == "--time")
+            timeSteps = true;
         else if (arg == "--latent-codes" && hasValue)
             latentCodes = argv[++i];
         else if (arg == "--latent-code" && hasValue) {
@@ -229,6 +236,7 @@ int main(int argc, char** argv) {
         if (!parameters.empty() || untrained > 0.0f) {
             neural::PhotoEnhancerTrainingConfig config;
             config.forwardOnly = true;
+            config.profile = profile;
             config.batch = 1;
             config.size = sampleSize;
             // The trained model's texture shape (saved with its parameters), else hash_texture.py's.
@@ -313,7 +321,11 @@ int main(int argc, char** argv) {
             {"depth_", GBufferOutput::Depth},    {"depth16_", GBufferOutput::Depth16},
             {"u_", GBufferOutput::CoordinatesU}, {"v_", GBufferOutput::CoordinatesV},
             {"normals_", GBufferOutput::Normals}};
+        constexpr uint32_t kWarmUp = 5; // views before --profile and --time start timing
+        double stepSeconds = 0.0;       // the latent model's steps after the warm-up
         for (uint32_t view = 0; view < views; ++view) {
+            if (profile && trained && view == kWarmUp)
+                trained->resetProfile();
             // Any azimuth, 8 to 40 degrees above the crate, 2.2 to 3.8 away, looking near its centre; on the orbit
             // once around at 22 degrees, 3 away; with a fixed view always from azimuth 0.6 at 22 degrees, 3 away.
             const bool steady = orbit || fixedView;
@@ -383,7 +395,11 @@ int main(int argc, char** argv) {
                     trained->setBatch(geometry, inputs.coordinates, inputs.classes, {}, {});
                     trained->setObjects(objects);
                     trained->setLatents(viewLatents.empty() ? latentCode : viewLatents[view % viewLatents.size()]);
+                    const auto started = std::chrono::steady_clock::now();
                     trained->step();
+                    if (view >= kWarmUp)
+                        stepSeconds +=
+                            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
                     image = trained->image();
                 } else if (trained) {
                     trained->setBatch(inputs.channels, inputs.coordinates, inputs.classes, {}, {0.0f});
@@ -413,6 +429,22 @@ int main(int argc, char** argv) {
             std::ofstream batch(qwenBatch / "batches" / name);
             for (size_t k = first; k < std::min(first + 20, batchLines.size()); ++k)
                 batch << batchLines[k] << "\n";
+        }
+        if (timeSteps && trained && views > kWarmUp)
+            std::printf("model step %.3f ms per view (wall clock, upload to finish, %u views)\n",
+                        1e3 * stepSeconds / double(views - kWarmUp), views - kWarmUp);
+        // The trained model's GPU time per view: every element in execution order, then per kind.
+        if (profile && trained && views > kWarmUp) {
+            const auto elements = trained->profileElements();
+            double total = 0.0;
+            std::cout << "GPU time per view over " << views - kWarmUp << " views:" << std::endl;
+            for (size_t i = 0; i < elements.size(); ++i) {
+                std::printf("  %3zu %-28s %8.4f ms\n", i, elements[i].first.c_str(), elements[i].second);
+                total += elements[i].second;
+            }
+            std::printf("elements %.3f ms, GPU span %.3f ms\n", total, trained->gpuSpan());
+            for (const auto& [kind, milliseconds] : trained->profile())
+                std::printf("  %-28s %8.4f ms\n", kind.c_str(), milliseconds);
         }
         std::cout << views << " views in " << outDir << std::endl;
     } catch (const std::exception& e) {

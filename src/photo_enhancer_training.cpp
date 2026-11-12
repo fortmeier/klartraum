@@ -1339,6 +1339,17 @@ std::vector<std::pair<std::string, double>> PhotoEnhancerTraining::profile() con
     return sorted;
 }
 
+std::vector<std::pair<std::string, double>> PhotoEnhancerTraining::profileElements() const {
+    std::vector<std::pair<std::string, double>> elements;
+    for (const auto& [name, milliseconds] : graph->getProfilingResults())
+        elements.emplace_back(name, milliseconds);
+    return elements;
+}
+
+double PhotoEnhancerTraining::gpuSpan() const { return graph->getGpuSpanMs(); }
+
+void PhotoEnhancerTraining::resetProfile() { graph->resetProfiling(); }
+
 float PhotoEnhancerTraining::perceptualLoss() const { return vgg ? vgg->loss() : 0.0f; }
 
 float PhotoEnhancerTraining::loss() const {
