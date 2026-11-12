@@ -69,6 +69,9 @@ struct PhotoEnhancerTrainingConfig {
     float klWeight = 1e-3f;     ///< weight of the latents' KL divergence (summed over objects, mean over batch)
     /// Nats of KL per latent number that cost nothing (free bits), so the encoder can use the latents freely.
     float freeBits = 0.0f;
+    /// Weight of the latent check (latent_renderer.latent_check()): every view rendered again with another view's
+    /// latents (setLatentPermutation()), encoded by the encoder held fixed, L1 to those latents (0: none).
+    float latentCheck = 0.0f;
     std::vector<uint32_t> encoderWidths{32, 64, 128}; ///< stride-2 layers down to an eighth
     /// Forward only: the latents from the encoder of the batch's photos (their means), else given (setLatents()).
     bool encodeLatents = false;
@@ -126,6 +129,11 @@ public:
     /// The latents of the last step, [batch][latentObjects][latentSize], and their KL divergence (unweighted).
     std::vector<float> latents() const;
     float klLoss() const;
+    /// The next step's latent check permutation, [batch] (indices as floats: view k is rendered again with the
+    /// latents of view permutation[k]), instead of a random cyclic shift.
+    void setLatentPermutation(const std::vector<float>& permutation);
+    /// The latent check's mean absolute difference of the last step (unweighted).
+    float latentCheckLoss() const;
     /// The next step's augmentation numbers, [2 batch][6] (real pairs, then fake pairs; see training::augmentPair()),
     /// instead of random ones.
     void setAugmentation(const std::vector<float>& numbers);
@@ -177,6 +185,14 @@ private:
                            std::shared_ptr<TensorElement<float>> logitGradient);
     /// Where the backward pass writes a parameter's gradient: its gradient, or a tensor of gradientRedirect.
     std::shared_ptr<TensorElement<float>> gradientOf(const std::string& name) const;
+    struct EncoderLayer;
+    /// The encoder's layers on `image` and its head into `statistics` ([batch][2 latentSize][size / 8][size / 8]).
+    std::vector<EncoderLayer> forwardEncoder(std::shared_ptr<TensorElement<float>> image,
+                                             std::shared_ptr<TensorElement<float>> statistics);
+    /// The input gradient of forwardEncoder() from its statistics' gradient, without the parameters' gradients.
+    std::shared_ptr<TensorElement<float>>
+    backwardEncoderInput(std::vector<EncoderLayer>& layers, std::shared_ptr<TensorElement<float>> statisticsGradient);
+    void buildLatentCheck();
     void forwardBlock(Block& block);
     void backwardBlock(Block& block);
     void buildDiscriminator();
@@ -221,6 +237,11 @@ private:
     };
     std::vector<EncoderLayer> encoderLayers;
     bool latentNoiseGiven = false;
+    /// The latent check's second generator pass and encoder pass, the views' permutation and its loss.
+    std::vector<Block> checkBlocks;
+    std::vector<EncoderLayer> checkEncoderLayers;
+    std::shared_ptr<TensorElement<float>> latentPermutation, checkTotal;
+    bool latentPermutationGiven = false;
     /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.
     std::vector<std::unique_ptr<Critic>> critics;
     std::shared_ptr<TensorElement<float>> augmentation;

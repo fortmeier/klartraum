@@ -447,6 +447,70 @@ def latent_cases(out: Path, seed: int) -> None:
         "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 3\n")
 
 
+def latent_check_case(out: Path, seed: int) -> None:
+    """One latent renderer step as latent_cases()' with the latent check (weight 0.5): each view rendered again with
+    the other view's latents and encoded by the fixed encoder."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from hash_texture import SurfaceTexture
+    from latent_renderer import LatentRenderer, kl_divergence, latent_check
+    from train_photo_enhancer import Vgg
+
+    generator = torch.Generator().manual_seed(seed)
+    torch.manual_seed(seed)
+    texture = SurfaceTexture(classes=(3,), levels=4, features=2, log2_table=10, base=4, finest=64)
+    model = LatentRenderer(texture, geometry=4, latent=4, objects=1)
+    with torch.no_grad():
+        for grid in texture.grids:
+            grid.embeddings.copy_(torch.rand(grid.embeddings.shape, generator=generator) * 0.2 - 0.1)
+        model.generator.out.weight.copy_(torch.randn(model.generator.out.weight.shape, generator=generator) * 0.2)
+    b, size = 2, 32
+    geometry = torch.rand(b, 4, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.zeros(b, size, size, dtype=torch.long)
+    classes[:, 6:26, 8:28] = 3
+    objects = (classes == 3).long()
+    photos = torch.rand(b, 3, size, size, generator=generator)
+    epsilon = torch.randn(b, 1, 4, generator=generator)
+    permutation = torch.tensor([1, 0])
+    parameters = {"texture.table": None, **{f"generator.{k}": v for k, v in model.generator.named_parameters()},
+                  **{f"encoder.{k}": v for k, v in model.encoder.named_parameters()}}
+    tensors = {"geometry": geometry, "coordinates": coordinates, "classes": classes.float(),
+               "objects": objects.float(), "photos": photos, "epsilon": epsilon}
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in parameters.items():
+        tensors["before." + name] = (table if name == "texture.table" else value).detach().clone()
+    mu, log_variance, latent_counts = model.encode(photos, objects)
+    latents = mu + (0.5 * log_variance).exp() * epsilon
+    image = model(geometry, coordinates, classes, objects, latents)
+    photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
+    perceptual = Vgg().eval().distance(image, photos)
+    kl = kl_divergence(mu, log_variance, latent_counts)
+    check, _ = latent_check(model, geometry, coordinates, classes, objects, latents, permutation)
+    loss = photometric + perceptual + 1e-2 * kl + 0.5 * check
+    network = list(model.generator.parameters()) + list(model.encoder.parameters())
+    optimiser = torch.optim.Adam([{"params": network, "lr": 1e-4},
+                                  {"params": [g.embeddings for g in texture.grids], "lr": 1e-2, "betas": (0.9, 0.99)}],
+                                 lr=1e-4, betas=(0.5, 0.999))
+    optimiser.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network, 1.0)
+    optimiser.step()
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in parameters.items():
+        tensors["after." + name] = (table if name == "texture.table" else value).detach().clone()
+    tensors.update({"image": image, "photometric": photometric.reshape(1), "perceptual": perceptual.reshape(1),
+                    "kl": kl.reshape(1), "mu": mu, "log_variance": log_variance, "check": check.reshape(1),
+                    "permutation": permutation.float()})
+    save(out, "latent_check_step", tensors)
+    (out / "latent_check_step_parameters.txt").write_text("\n".join(parameters) + "\n")
+    grid = texture.grids[0]
+    (out / "latent_check_step_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
+        "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 3\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -470,6 +534,7 @@ def main() -> None:
     generator_step_case(args.out, 14, "generator_step_vgg", 1.0)
     gan_step_case(args.out, 16)
     latent_cases(args.out, 17)
+    latent_check_case(args.out, 18)
     print(f"fixtures in {args.out}")
 
 

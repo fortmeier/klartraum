@@ -75,6 +75,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
     if (levels < 2 || s % (1u << (levels - 1)) != 0 || s < 8u)
         throw std::invalid_argument("PhotoEnhancerTraining: the crop size must halve exactly at every level");
+    if (config.latentCheck > 0.0f && (config.latentSize == 0 || config.appearances > 0))
+        throw std::invalid_argument("PhotoEnhancerTraining: the latent check needs latents and no appearance codes");
     // The PatchGAN's coarsest scale needs 24 x 24 pixels: three halvings and two 4 x 4 convolutions leave 1 x 1 logits.
     if (config.adversarial > 0.0f && !config.forwardOnly &&
         (config.criticScales == 0 || (s >> (config.criticScales - 1)) < 24u))
@@ -311,6 +313,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     }
     if (config.latentSize > 0)
         buildEncoderBackward();
+    if (config.latentCheck > 0.0f)
+        buildLatentCheck();
     if (film) {
         bool first = true;
         for (const auto& block : blocks)
@@ -439,7 +443,40 @@ PhotoEnhancerTraining::~PhotoEnhancerTraining() = default;
 
 void PhotoEnhancerTraining::buildEncoder() {
     const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
-    auto x = targets;
+    const uint32_t size = s >> config.encoderWidths.size();
+    // The means and log-variances per pixel, then per object (the object map sampled at the pixels' centres).
+    encoderStatistics = tensor({b, 2 * d, size, size});
+    encoderLayers = forwardEncoder(targets, encoderStatistics);
+    const uint32_t step = s / size;
+    pooled = tensor({b, k, 2 * d});
+    auto pool = training::objectMean(vulkanContext, {b, 2 * d, size, size}, k, {s, s, step, step / 2});
+    pool->setInput(encoderStatistics, 0);
+    pool->setInput(objects, 1);
+    pool->setInput(pooled, 2);
+    pool->setInput(counts, 3);
+    add(pool);
+    latentNoise = tensor({b, k, d});
+    klShares = tensor({b, k});
+    klTotal = tensor({1});
+    auto sample = training::vae(vulkanContext, b, k, d, config.klWeight, config.freeBits);
+    sample->setInput(pooled, 0);
+    sample->setInput(latentNoise, 1);
+    sample->setInput(counts, 2);
+    sample->setInput(latentValues, 3);
+    sample->setInput(klShares, 4);
+    add(sample);
+    auto total = training::sum(vulkanContext, b * k);
+    total->setInput(klShares, 0);
+    total->setInput(klTotal, 1);
+    add(total);
+}
+
+std::vector<PhotoEnhancerTraining::EncoderLayer>
+PhotoEnhancerTraining::forwardEncoder(std::shared_ptr<TensorElement<float>> image,
+                                      std::shared_ptr<TensorElement<float>> statistics) {
+    const uint32_t b = config.batch, s = config.size, d = config.latentSize;
+    std::vector<EncoderLayer> layers;
+    auto x = image;
     uint32_t channels = 3, size = s;
     for (size_t i = 0; i < config.encoderWidths.size(); ++i) {
         EncoderLayer layer;
@@ -473,42 +510,165 @@ void PhotoEnhancerTraining::buildEncoder() {
         elu->setInput(layer.n, 0);
         elu->setInput(layer.e, 1);
         add(elu);
-        encoderLayers.push_back(layer);
+        layers.push_back(layer);
         x = layer.e;
         channels = layer.outputChannels;
         size = next;
     }
-    // The head: means and log-variances per pixel, then per object (the object map sampled at the pixels' centres).
-    encoderStatistics = tensor({b, 2 * d, size, size});
     auto head = layers::conv(vulkanContext, convAttributes(1, 1), {b, channels, size, size}, {2 * d, channels, 1, 1},
                              {2 * d}, {b, 2 * d, size, size});
     head->setInput(x, 0);
     head->setInput(find("encoder.head.weight").value, 1);
     head->setInput(find("encoder.head.bias").value, 2);
-    head->setInput(encoderStatistics, 3);
+    head->setInput(statistics, 3);
     add(head);
-    const uint32_t step = s / size;
-    pooled = tensor({b, k, 2 * d});
+    return layers;
+}
+
+std::shared_ptr<TensorElement<float>>
+PhotoEnhancerTraining::backwardEncoderInput(std::vector<EncoderLayer>& layers,
+                                            std::shared_ptr<TensorElement<float>> statisticsGradient) {
+    const uint32_t b = config.batch, d = config.latentSize;
+    const uint32_t size = config.size >> layers.size();
+    const auto backwardConv = [&](const std::string& name, uint32_t channelsIn, uint32_t sizeIn, uint32_t channelsOut,
+                                  uint32_t kernel, uint32_t stride, std::shared_ptr<TensorElement<float>> gradient,
+                                  std::shared_ptr<TensorElement<float>> result) {
+        const uint32_t sizeOut = sizeIn / stride;
+        auto inputs =
+            training::convBackwardInput(vulkanContext, convAttributes(kernel, stride), {b, channelsIn, sizeIn, sizeIn},
+                                        {channelsOut, channelsIn, kernel, kernel}, {b, channelsOut, sizeOut, sizeOut});
+        inputs->setInput(gradient, 0);
+        inputs->setInput(find(name + "weight").value, 1);
+        inputs->setInput(result, 2);
+        add(inputs);
+    };
+    auto& last = layers.back();
+    last.de = tensor({b, last.outputChannels, size, size});
+    backwardConv("encoder.head.", last.outputChannels, size, 2 * d, 1, 1, statisticsGradient, last.de);
+    std::shared_ptr<TensorElement<float>> imageGradient;
+    for (int i = int(layers.size()) - 1; i >= 0; --i) {
+        auto& layer = layers[size_t(i)];
+        const uint32_t next = layer.inputSize / 2;
+        const std::vector<uint32_t> shape{b, layer.outputChannels, next, next};
+        layer.dn = tensor(shape);
+        layer.da = tensor(shape);
+        auto elu = training::activationBackward(vulkanContext, training::Activation::Elu, shape);
+        elu->setInput(layer.n, 0);
+        elu->setInput(layer.de, 1);
+        elu->setInput(layer.dn, 2);
+        add(elu);
+        auto norm = training::channelNormBackwardInput(vulkanContext, shape);
+        norm->setInput(layer.a, 0);
+        norm->setInput(find("encoder.body." + std::to_string(3 * i + 1) + ".weight").value, 1);
+        norm->setInput(layer.stats, 2);
+        norm->setInput(layer.dn, 3);
+        norm->setInput(layer.da, 4);
+        add(norm);
+        auto previous = tensor({b, layer.inputChannels, layer.inputSize, layer.inputSize});
+        if (i > 0)
+            layers[size_t(i) - 1].de = previous;
+        else
+            imageGradient = previous;
+        backwardConv("encoder.body." + std::to_string(3 * i) + ".", layer.inputChannels, layer.inputSize,
+                     layer.outputChannels, 3, 2, layer.da, previous);
+    }
+    return imageGradient;
+}
+
+void PhotoEnhancerTraining::buildLatentCheck() {
+    const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
+    const uint32_t gbuffer = config.gbufferChannels, features = config.texture.levels * config.texture.features;
+    const uint32_t channelsIn = gbuffer + features + d, size = s >> config.encoderWidths.size(), step = s / size;
+    // The targets: view i's latents are view permutation[i]'s sampled ones.
+    latentPermutation = tensor({b});
+    auto swapped = tensor({b, k, d});
+    auto pick = training::embedding(vulkanContext, b, b, k * d);
+    pick->setInput(latentValues, 0);
+    pick->setInput(latentPermutation, 1);
+    pick->setInput(swapped, 2);
+    add(pick);
+    // The second renders: the first input's G-buffer channels and texture features with the permuted latent G-buffer.
+    auto input2 = tensor({b, channelsIn, s, s});
+    auto copy = training::channelCopy(vulkanContext, b, s * s, {channelsIn, 0}, {channelsIn, 0}, gbuffer + features);
+    copy->setInput(input, 0);
+    copy->setInput(input2, 1);
+    add(copy);
+    auto splat =
+        training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn, gbuffer + features);
+    splat->setInput(swapped, 0);
+    splat->setInput(objects, 1);
+    splat->setInput(counts, 2);
+    splat->setInput(input2, 3);
+    add(splat);
+    checkBlocks = blocks;
+    auto [x2, logits2, output2] = forwardGenerator(checkBlocks, input2);
+    // The fixed encoder on them, its means per object against the targets.
+    auto statistics2 = tensor({b, 2 * d, size, size});
+    checkEncoderLayers = forwardEncoder(output2, statistics2);
+    auto pooled2 = tensor({b, k, 2 * d}), counts2 = tensor({b, k});
     auto pool = training::objectMean(vulkanContext, {b, 2 * d, size, size}, k, {s, s, step, step / 2});
-    pool->setInput(encoderStatistics, 0);
+    pool->setInput(statistics2, 0);
     pool->setInput(objects, 1);
-    pool->setInput(pooled, 2);
-    pool->setInput(counts, 3);
+    pool->setInput(pooled2, 2);
+    pool->setInput(counts2, 3);
     add(pool);
-    latentNoise = tensor({b, k, d});
-    klShares = tensor({b, k});
-    klTotal = tensor({1});
-    auto sample = training::vae(vulkanContext, b, k, d, config.klWeight, config.freeBits);
-    sample->setInput(pooled, 0);
-    sample->setInput(latentNoise, 1);
-    sample->setInput(counts, 2);
-    sample->setInput(latentValues, 3);
-    sample->setInput(klShares, 4);
-    add(sample);
-    auto total = training::sum(vulkanContext, b * k);
-    total->setInput(klShares, 0);
-    total->setInput(klTotal, 1);
+    auto means2 = tensor({b, k, d}), meansGradient = tensor({b, k, d}), shares = tensor({b * k * d});
+    auto means = training::channelCopy(vulkanContext, b * k, 1, {2 * d, 0}, {d, 0}, d);
+    means->setInput(pooled2, 0);
+    means->setInput(means2, 1);
+    add(means);
+    auto distance = training::l1Distance(vulkanContext, b * k * d, config.latentCheck);
+    distance->setInput(means2, 0);
+    distance->setInput(swapped, 1);
+    distance->setInput(meansGradient, 2);
+    distance->setInput(shares, 3);
+    add(distance);
+    checkTotal = tensor({1});
+    auto total = training::sum(vulkanContext, b * k * d);
+    total->setInput(shares, 0);
+    total->setInput(checkTotal, 1);
     add(total);
+    // Back through the fixed encoder (the log-variances get no gradient) to the second renders.
+    auto pooledGradient2 = tensor({b, k, 2 * d});
+    auto zero = training::fill(vulkanContext, b * k * 2 * d);
+    zero->setInput(pooledGradient2, 0);
+    add(zero);
+    auto place = training::channelCopy(vulkanContext, b * k, 1, {d, 0}, {2 * d, 0}, d);
+    place->setInput(meansGradient, 0);
+    place->setInput(pooledGradient2, 1);
+    add(place);
+    auto statisticsGradient2 = tensor({b, 2 * d, size, size});
+    auto spread =
+        training::objectBroadcast(vulkanContext, {b, 2 * d, size, size}, k, {s, s, step, step / 2}, 2 * d, 0, true);
+    spread->setInput(pooledGradient2, 0);
+    spread->setInput(objects, 1);
+    spread->setInput(counts2, 2);
+    spread->setInput(statisticsGradient2, 3);
+    add(spread);
+    auto outputGradient2 = backwardEncoderInput(checkEncoderLayers, statisticsGradient2);
+    // The second generator pass's gradients, added to the first's; the permuted latents are targets, so their
+    // gradient ends here.
+    std::vector<std::string> redirected;
+    for (const auto& parameter : parameters)
+        if (parameter.name.rfind("generator.", 0) == 0) {
+            gradientRedirect[parameter.name] = tensor({uint32_t(parameter.gradient->getDataElementCount())});
+            redirected.push_back(parameter.name);
+        }
+    backwardGenerator(checkBlocks, x2, logits2, outputGradient2, tensor({b, 3, s, s}));
+    auto texture = hashTextureBackward(vulkanContext, config.texture);
+    texture->setInput(coordinates, 0);
+    texture->setInput(classes, 1);
+    texture->setInput(checkBlocks[0].dIn, 2);
+    texture->setInput(find("texture.table").gradient, 3);
+    add(texture);
+    for (const auto& name : redirected) {
+        const uint32_t count = uint32_t(find(name).gradient->getDataElementCount());
+        auto accumulate = training::channelCopy(vulkanContext, 1, count, {1, 0}, {1, 0}, 1, true);
+        accumulate->setInput(gradientRedirect[name], 0);
+        accumulate->setInput(find(name).gradient, 1);
+        add(accumulate);
+    }
+    gradientRedirect.clear();
 }
 
 void PhotoEnhancerTraining::buildEncoderBackward() {
@@ -919,6 +1079,21 @@ void PhotoEnhancerTraining::setLatentNoise(const std::vector<float>& noise) {
     latentNoiseGiven = true;
 }
 
+void PhotoEnhancerTraining::setLatentPermutation(const std::vector<float>& permutation) {
+    if (!latentPermutation)
+        throw std::logic_error("PhotoEnhancerTraining: a latent permutation needs the latent check");
+    latentPermutation->getDataBuffer(0).memcopyFrom(permutation);
+    latentPermutationGiven = true;
+}
+
+float PhotoEnhancerTraining::latentCheckLoss() const {
+    if (!checkTotal)
+        return 0.0f;
+    std::vector<float> value(1);
+    checkTotal->getDataBuffer(0).memcopyTo(value);
+    return value[0] / config.latentCheck;
+}
+
 std::vector<float> PhotoEnhancerTraining::latents() const {
     std::vector<float> values(latentValues ? latentValues->getDataElementCount() : 0);
     if (latentValues)
@@ -1284,6 +1459,16 @@ void PhotoEnhancerTraining::step() {
         latentNoise->getDataBuffer(0).memcopyFrom(noise);
     }
     latentNoiseGiven = false;
+    // The latent check renders view k with the latents of view k + shift (cyclically), shift 1 .. batch - 1.
+    if (latentPermutation && !latentPermutationGiven) {
+        const uint32_t b = config.batch;
+        const uint32_t shift = b > 1 ? 1u + uint32_t(random() % (b - 1)) : 0u;
+        std::vector<float> permutation(b);
+        for (uint32_t i = 0; i < b; ++i)
+            permutation[i] = float((i + shift) % b);
+        latentPermutation->getDataBuffer(0).memcopyFrom(permutation);
+    }
+    latentPermutationGiven = false;
     if (augmentation && !augmentationGiven)
         augmentation->getDataBuffer(0).memcopyFrom(randomAugmentation());
     augmentationGiven = false;

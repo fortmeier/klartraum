@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
     float minAlignment = 0.7f, perceptual = 0.0f, adversarial = 0.0f, featureMatching = 2.0f;
     bool profile = false, floor = true;
     uint32_t latent = 0;
-    float klWeight = 1e-3f, freeBits = 0.0f;
+    float klWeight = 1e-3f, freeBits = 0.0f, latentCheck = 0.0f;
     uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
     std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
@@ -258,6 +258,8 @@ int main(int argc, char** argv) {
             klWeight = std::stof(argv[++i]);
         else if (arg == "--free-bits" && hasValue)
             freeBits = std::stof(argv[++i]);
+        else if (arg == "--latent-check" && hasValue)
+            latentCheck = std::stof(argv[++i]);
         else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
@@ -317,6 +319,7 @@ int main(int argc, char** argv) {
             config.latentObjects = 1;
             config.klWeight = klWeight;
             config.freeBits = freeBits;
+            config.latentCheck = latentCheck;
         }
         config.appearanceSize = appearance;
         config.profile = profile;
@@ -459,7 +462,7 @@ int main(int argc, char** argv) {
 
         std::ofstream log(outDir / "log.txt", std::ios::app);
         double lossSum = 0.0, perceptualSum = 0.0, discriminatorSum = 0.0, adversarialSum = 0.0, matchingSum = 0.0,
-               klSum = 0.0;
+               klSum = 0.0, checkSum = 0.0;
         auto started = std::chrono::steady_clock::now();
         for (uint32_t step = 1; step <= steps; ++step) {
             const Batch batch = sampleBatch(training, batchSize, crop, rng);
@@ -473,6 +476,7 @@ int main(int argc, char** argv) {
             adversarialSum += trainer.adversarialLoss();
             matchingSum += trainer.featureMatchingLoss();
             klSum += trainer.klLoss();
+            checkSum += trainer.latentCheckLoss();
             if (step % 100 == 0) {
                 const double seconds =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() / 100.0;
@@ -482,11 +486,13 @@ int main(int argc, char** argv) {
                     line << " vgg " << perceptualSum / 100.0;
                 if (latent > 0)
                     line << " kl " << klSum / 100.0;
+                if (latentCheck > 0.0f)
+                    line << " check " << checkSum / 100.0;
                 if (adversarial > 0.0f)
                     line << " d " << discriminatorSum / 100.0 << " adv " << adversarialSum / 100.0 << " fm "
                          << matchingSum / 100.0;
                 line << " (" << seconds << " s/step)";
-                perceptualSum = discriminatorSum = adversarialSum = matchingSum = klSum = 0.0;
+                perceptualSum = discriminatorSum = adversarialSum = matchingSum = klSum = checkSum = 0.0;
                 std::cout << line.str() << std::endl;
                 log << line.str() << "\n";
                 log.flush();

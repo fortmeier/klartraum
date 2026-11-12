@@ -36,6 +36,9 @@
  * - latentStepMatchesPyTorch: one step of the latent-conditioned renderer (4 geometry channels, texture, encoder,
  *   VAE with given noise, latent G-buffer, decoder; L1, block-mean L1, VGG and KL) from latent_renderer.py's
  *   parameters on its batch: image, losses and every parameter after clipping and Adam equal PyTorch's
+ * - latentCheckStepMatchesPyTorch: the same step with the latent check (weight 0.5): every view rendered again with
+ *   the other view's latents, encoded by the fixed encoder, L1 to those latents; the check loss, the image and every
+ *   parameter after the step equal latent_renderer.latent_check()'s
  * - latentGanStepTrains: the latent-conditioned renderer with free bits and the 2-scale PatchGAN, from PyTorch's
  *   renderer and a fresh discriminator on its batch upsampled to 64 x 64, starts at the untrained discriminator's loss
  * (about 4 ln 2), keeps all losses finite over 30 steps on one batch, lowers the photometric loss and counts the KL at
@@ -870,10 +873,12 @@ TEST(PhotoEnhancerTraining, vaeFreeBitsMatchesPyTorch) {
     expectVaeMatches(fixture, expected, 0.3f);
 }
 
-TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
-    const Fixture fixture("latent_step");
-    if (!fixture.exists() || !std::filesystem::exists("build/models/vgg16/layers.txt"))
-        GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
+namespace {
+
+// One step of the latent-conditioned renderer from latent_renderer.py's parameters on its batch (fixture @p name),
+// with the latent check of weight @p check (and the fixture's permutation) if positive: image, losses and every
+// parameter after clipping and Adam equal PyTorch's.
+void expectLatentStepMatches(const Fixture& fixture, const std::string& name, float check) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     neural::PhotoEnhancerTrainingConfig config;
@@ -881,15 +886,16 @@ TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
     config.size = 32;
     config.widths = {32, 64, 128};
     config.gbufferChannels = 4;
-    config.texture = neural::HashTextureShape::fromFile(kFixtures + "latent_step_texture.txt");
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + name + "_texture.txt");
     config.latentSize = 4;
     config.latentObjects = 1;
     config.klWeight = 1e-2f;
     config.perceptual = 1.0f;
+    config.latentCheck = check;
     neural::PhotoEnhancerTraining trainer(vc, config);
     std::vector<std::string> names;
     {
-        std::ifstream file(kFixtures + "latent_step_parameters.txt");
+        std::ifstream file(kFixtures + name + "_parameters.txt");
         for (std::string parameter; file >> parameter;)
             names.push_back(parameter);
     }
@@ -900,11 +906,15 @@ TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
                      fixture.values("photos"), {});
     trainer.setObjects(fixture.values("objects"));
     trainer.setLatentNoise(fixture.values("epsilon"));
+    if (check > 0.0f)
+        trainer.setLatentPermutation(fixture.values("permutation"));
     trainer.step();
     EXPECT_LT(relativeError(trainer.image(), fixture.values("image")), 1e-5f);
     EXPECT_NEAR(trainer.loss(), fixture.values("photometric")[0], 1e-5f);
     EXPECT_NEAR(trainer.perceptualLoss(), fixture.values("perceptual")[0], 1e-4f);
     EXPECT_NEAR(trainer.klLoss(), fixture.values("kl")[0], 1e-4f);
+    if (check > 0.0f)
+        EXPECT_NEAR(trainer.latentCheckLoss(), fixture.values("check")[0], 1e-4f);
     for (const auto& parameter : names) {
         const auto after = fixture.values("after." + parameter);
         std::vector<float> actual(after.size());
@@ -915,6 +925,22 @@ TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
             worst = std::max(worst, std::abs(actual[i] - after[i]));
         EXPECT_LT(worst, 0.1f * rate) << parameter;
     }
+}
+
+} // namespace
+
+TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
+    const Fixture fixture("latent_step");
+    if (!fixture.exists() || !std::filesystem::exists("build/models/vgg16/layers.txt"))
+        GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "latent_step", 0.0f);
+}
+
+TEST(PhotoEnhancerTraining, latentCheckStepMatchesPyTorch) {
+    const Fixture fixture("latent_check_step");
+    if (!fixture.exists() || !std::filesystem::exists("build/models/vgg16/layers.txt"))
+        GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "latent_check_step", 0.5f);
 }
 
 namespace {
