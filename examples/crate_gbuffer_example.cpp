@@ -10,9 +10,12 @@
 // With --orbit the camera circles the crate instead (a turntable), and with --model every view is also enhanced by a
 // photo enhancer trained on the crate (neural::PhotoEnhancer: the learnable texture and the generator, on the GPU)
 // into frames/enhanced_NNNN.png, under the appearance code of a training image (--appearance) or their mean.
+// A latent-conditioned model (crate_training_example --latent) renders the crate with the latent of --latent-code.
 //
 //   crate_gbuffer_example --views 180 --size 512 --seed 1 --out-dir build/TestingOutput/crate/flights/crate_a
 //   crate_gbuffer_example --orbit --views 240 --model build/TestingOutput/crate/runs/c1/photo_enhancer_best
+//   crate_gbuffer_example --orbit --views 120 --size 256 --sample-size 128 --no-floor --out-dir DIR \
+//       --parameters build/TestingOutput/crate_views_i2i/runs/v3/parameters
 
 #include <algorithm>
 #include <array>
@@ -24,6 +27,7 @@
 #include <iostream>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -134,7 +138,8 @@ int main(int argc, char** argv) {
     bool qwenImageToImage = false;
     float untrained = 0.0f; // > 0: an untrained enhancer, its texture initialised to +-1e-4 x this
     bool features = false;
-    int appearanceRow = -1; // -1: the training codes' mean
+    int appearanceRow = -1;        // -1: the training codes' mean
+    std::vector<float> latentCode; // the crate's latent for a latent-conditioned model (empty: zeros)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -168,7 +173,12 @@ int main(int argc, char** argv) {
             untrained = std::stof(argv[++i]);
         else if (arg == "--features")
             features = true;
-        else {
+        else if (arg == "--latent-code" && hasValue) {
+            std::stringstream numbers(argv[++i]);
+            latentCode.clear();
+            for (std::string number; std::getline(numbers, number, ',');)
+                latentCode.push_back(std::stof(number));
+        } else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
         }
@@ -184,6 +194,17 @@ int main(int argc, char** argv) {
         graph.compileFrom(renderer.getOutput());
         // A photo enhancer trained in Klartraum (crate_training_example's saved parameters), run forward only.
         std::unique_ptr<neural::PhotoEnhancerTraining> trained;
+        // A latent-conditioned model (crate_training_example --latent) has an encoder; its latent size is half the
+        // encoder head's outputs (means and log-variances).
+        const auto encoderHead = parameters / "encoder.head.bias.bin";
+        const uint32_t latentSize = !parameters.empty() && std::filesystem::exists(encoderHead)
+                                        ? uint32_t(std::filesystem::file_size(encoderHead) / sizeof(float) / 2)
+                                        : 0;
+        if (latentSize > 0 && latentCode.empty())
+            latentCode.assign(latentSize, 0.0f);
+        if (latentSize > 0 && latentCode.size() != latentSize)
+            throw std::runtime_error("--latent-code: the model's latents have " + std::to_string(latentSize) +
+                                     " numbers");
         if (!parameters.empty() || untrained > 0.0f) {
             neural::PhotoEnhancerTrainingConfig config;
             config.forwardOnly = true;
@@ -199,6 +220,12 @@ int main(int argc, char** argv) {
             config.appearanceSize = 8;
             if (untrained > 0.0f)
                 config.appearances = 0;
+            if (latentSize > 0) {
+                config.appearances = 0;
+                config.gbufferChannels = 4; // inverse depth and normals
+                config.latentSize = latentSize;
+                config.latentObjects = 1;
+            }
             trained = std::make_unique<neural::PhotoEnhancerTraining>(vc, config);
             if (untrained > 0.0f) {
                 std::mt19937 rng(1);
@@ -253,7 +280,8 @@ int main(int argc, char** argv) {
         const std::pair<const char*, GBufferOutput> outputs[] = {
             {"", GBufferOutput::Colour},         {"class_", GBufferOutput::Classes},
             {"depth_", GBufferOutput::Depth},    {"depth16_", GBufferOutput::Depth16},
-            {"u_", GBufferOutput::CoordinatesU}, {"v_", GBufferOutput::CoordinatesV}};
+            {"u_", GBufferOutput::CoordinatesU}, {"v_", GBufferOutput::CoordinatesV},
+            {"normals_", GBufferOutput::Normals}};
         for (uint32_t view = 0; view < views; ++view) {
             // Any azimuth, 8 to 40 degrees above the crate, 2.2 to 3.8 away, looking near its centre; on the orbit
             // once around at 22 degrees, 3 away; with a fixed view always from azimuth 0.6 at 22 degrees, 3 away.
@@ -278,8 +306,8 @@ int main(int argc, char** argv) {
             neural::GBufferFrame frame;
             frame.width = frame.height = size;
             frame.depthFar = crate::kDepthFar;
-            std::vector<uint8_t>* buffers[] = {&frame.colour,  &frame.classes, nullptr,
-                                               &frame.depth16, &frame.u,       &frame.v};
+            std::vector<uint8_t>* buffers[] = {&frame.colour, &frame.classes, nullptr,       &frame.depth16,
+                                               &frame.u,      &frame.v,       &frame.normals};
             for (size_t k = 0; k < std::size(outputs); ++k) {
                 const auto& [kind, output] = outputs[k];
                 renderer.setOutput(output, 0.0f, crate::kDepthFar);
@@ -311,7 +339,22 @@ int main(int argc, char** argv) {
             }
             if (enhancer || trained) {
                 std::vector<float> image;
-                if (trained) {
+                if (trained && latentSize > 0) {
+                    // As crate_training_example --latent sees a view: inverse depth and normals, the crate as the
+                    // one object, its latent given.
+                    const size_t pixels = size_t(sampleSize) * sampleSize;
+                    std::vector<float> geometry(inputs.channels.begin() + 3 * pixels,
+                                                inputs.channels.begin() + 4 * pixels);
+                    geometry.insert(geometry.end(), inputs.normals.begin(), inputs.normals.end());
+                    std::vector<float> objects(pixels);
+                    for (size_t q = 0; q < pixels; ++q)
+                        objects[q] = inputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
+                    trained->setBatch(geometry, inputs.coordinates, inputs.classes, {}, {});
+                    trained->setObjects(objects);
+                    trained->setLatents(latentCode);
+                    trained->step();
+                    image = trained->image();
+                } else if (trained) {
                     trained->setBatch(inputs.channels, inputs.coordinates, inputs.classes, {}, {0.0f});
                     trained->step();
                     image = trained->image();
