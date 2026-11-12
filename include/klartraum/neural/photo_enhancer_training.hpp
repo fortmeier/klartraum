@@ -62,6 +62,8 @@ struct PhotoEnhancerTrainingConfig {
     uint32_t latentSize = 0;
     uint32_t latentObjects = 1; ///< objects 1..latentObjects of the object map (setObjects())
     float klWeight = 1e-3f;     ///< weight of the latents' KL divergence (summed over objects, mean over batch)
+    /// Nats of KL per latent number that cost nothing (free bits), so the encoder can use the latents freely.
+    float freeBits = 0.0f;
     std::vector<uint32_t> encoderWidths{32, 64, 128}; ///< stride-2 layers down to an eighth
     /// Forward only: the latents from the encoder of the batch's photos (their means), else given (setLatents()).
     bool encodeLatents = false;

@@ -128,7 +128,7 @@ struct ObjectPushConstants {
 
 struct VaePushConstants {
     uint32_t batch, objects, size;
-    float weight;
+    float weight, freeBits;
 };
 
 struct NormPushConstants {
@@ -453,19 +453,19 @@ ComputeGraphElementPtr objectBroadcast(VulkanContext& vulkanContext, const layer
     return operation;
 }
 
-ComputeGraphElementPtr vae(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size,
-                           float weight) {
+ComputeGraphElementPtr vae(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size, float weight,
+                           float freeBits) {
     auto operation = vulkanContext.create<GeneralComputation<VaePushConstants>>("shaders/training/vae.comp.spv");
-    operation->setPushConstants({{batch, objects, size, weight}});
+    operation->setPushConstants({{batch, objects, size, weight, freeBits}});
     operation->setGroupCountX((batch * objects + 63) / 64);
     return operation;
 }
 
 ComputeGraphElementPtr vaeBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size,
-                                   float weight) {
+                                   float weight, float freeBits) {
     auto operation =
         vulkanContext.create<GeneralComputation<VaePushConstants>>("shaders/training/vae_backward.comp.spv");
-    operation->setPushConstants({{batch, objects, size, weight}});
+    operation->setPushConstants({{batch, objects, size, weight, freeBits}});
     operation->setGroupCountX((batch * objects + 63) / 64);
     return operation;
 }

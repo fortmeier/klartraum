@@ -84,7 +84,11 @@ class LatentRenderer(nn.Module):
         return self.generator(x)
 
 
-def kl_divergence(mu: torch.Tensor, log_variance: torch.Tensor, counts: torch.Tensor) -> torch.Tensor:
-    """KL(N(mu, sigma) || N(0, 1)) summed over the latent and the objects that have pixels, averaged over the batch."""
-    terms = -0.5 * (1.0 + log_variance - mu * mu - log_variance.exp()).sum(dim=2)
+def kl_divergence(mu: torch.Tensor, log_variance: torch.Tensor, counts: torch.Tensor,
+                  free_bits: float = 0.0) -> torch.Tensor:
+    """KL(N(mu, sigma) || N(0, 1)) summed over the latent and the objects that have pixels, averaged over the batch.
+
+    With free bits, each latent number's KL counts as at least free_bits nats, so the first free_bits nats of each
+    number cost nothing (Kingma et al. 2016)."""
+    terms = (-0.5 * (1.0 + log_variance - mu * mu - log_variance.exp())).clamp(min=free_bits).sum(dim=2)
     return (terms * (counts > 0).to(terms.dtype)).sum() / mu.shape[0]

@@ -3,14 +3,15 @@
 // SPDX-License-Identifier: MIT
 
 // The VAE's latents from the encoder's per-object statistics (means, then log-variances): sample = mu + exp(lv / 2)
-// eps, and each object's share of weight x KL(N(mu, sigma) || N(0, 1)) / batch (0 for objects without pixels). One
-// invocation per (sample, object).
+// eps, and each object's share of weight x KL(N(mu, sigma) || N(0, 1)) / batch (0 for objects without pixels), each
+// latent number's KL counted as at least freeBits nats. One invocation per (sample, object).
 
 struct PushConstants {
     uint batch;
     uint objects;
     uint size;     // latent numbers per object
     float weight;  // of the KL divergence, divided by the batch
+    float freeBits; // nats per latent number that the KL term does not penalise
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -28,7 +29,7 @@ void main(uint3 id: SV_DispatchThreadID) {
     for (uint d = 0u; d < pc.size; ++d) {
         const float mu = statistics[id.x * 2u * pc.size + d], lv = statistics[id.x * 2u * pc.size + pc.size + d];
         latents[id.x * pc.size + d] = mu + exp(0.5 * lv) * epsilon[id.x * pc.size + d];
-        kl += -0.5 * (1.0 + lv - mu * mu - exp(lv));
+        kl += max(-0.5 * (1.0 + lv - mu * mu - exp(lv)), pc.freeBits);
     }
     shares[id.x] = counts[id.x] > 0.0 ? pc.weight * kl / float(pc.batch) : 0.0;
 }

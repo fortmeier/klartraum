@@ -36,6 +36,10 @@
  * - latentStepMatchesPyTorch: one step of the latent-conditioned renderer (4 geometry channels, texture, encoder,
  *   VAE with given noise, latent G-buffer, decoder; L1, block-mean L1, VGG and KL) from latent_renderer.py's
  *   parameters on its batch: image, losses and every parameter after clipping and Adam equal PyTorch's
+ * - latentGanStepTrains: the latent-conditioned renderer with free bits and the 2-scale PatchGAN, from PyTorch's
+ *   renderer and a fresh discriminator on its batch upsampled to 64 x 64, starts at the untrained discriminator's loss
+ * (about 4 ln 2), keeps all losses finite over 30 steps on one batch, lowers the photometric loss and counts the KL at
+ * least at its free bits
  * - forwardOnlyRendersTheSameImage: parameters saved from a training and loaded into a forward-only instance render
  *   PyTorch's image of the batch; with every row's code set to one code, the crops render as with that code
  * - maxPoolMatchesPyTorch: a 2 x 2 max-pool and its input gradient equal F.max_pool2d's
@@ -46,6 +50,8 @@
  *   counts, their backward pass (broadcast divided by the counts), the latent G-buffer (broadcast) and its backward
  *   pass (sum over the object's pixels) equal latent_renderer.object_mean()'s and splat()'s
  * - vaeMatchesPyTorch: the VAE's latents and KL divergence and the statistics' gradient equal PyTorch's
+ * - vaeFreeBitsMatchesPyTorch: with 0.3 free bits, the KL term (each number counted as at least 0.3 nats) and the
+ *   statistics' gradient (no KL gradient for numbers below) equal PyTorch's
  * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  *
@@ -60,6 +66,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -796,10 +803,11 @@ TEST(PhotoEnhancerTraining, objectMeanMatchesPyTorch) {
     }
 }
 
-TEST(PhotoEnhancerTraining, vaeMatchesPyTorch) {
-    const Fixture fixture("vae");
-    if (!fixture.exists())
-        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+namespace {
+
+// Runs vae() and vaeBackward() on the "vae" fixture's statistics with @p freeBits and compares the KL divergence and
+// the statistics' gradient with @p expected's (the latents with "vae"'s).
+void expectVaeMatches(const Fixture& fixture, const Fixture& expected, float freeBits) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     // The statistics as the encoder pools them: per object the means, then the log-variances.
@@ -812,7 +820,7 @@ TEST(PhotoEnhancerTraining, vaeMatchesPyTorch) {
     auto stats = tensor(vc, {2, 2, 6}), epsilon = tensor(vc, {2, 2, 3}), counts = tensor(vc, {2, 2});
     auto latents = tensor(vc, {2, 2, 3}), shares = tensor(vc, {2, 2}), dlatents = tensor(vc, {2, 2, 3});
     auto dstats = tensor(vc, {2, 2, 6}), total = tensor(vc, {1});
-    auto forward = training::vae(vc, 2, 2, 3, 0.3f);
+    auto forward = training::vae(vc, 2, 2, 3, 0.3f, freeBits);
     forward->setInput(stats, 0);
     forward->setInput(epsilon, 1);
     forward->setInput(counts, 2);
@@ -822,7 +830,7 @@ TEST(PhotoEnhancerTraining, vaeMatchesPyTorch) {
     add->setInput(shares, 0);
     add->setInput(total, 1);
     add->addDependency(forward);
-    auto backward = training::vaeBackward(vc, 2, 2, 3, 0.3f);
+    auto backward = training::vaeBackward(vc, 2, 2, 3, 0.3f, freeBits);
     backward->setInput(stats, 0);
     backward->setInput(epsilon, 1);
     backward->setInput(counts, 2);
@@ -837,13 +845,29 @@ TEST(PhotoEnhancerTraining, vaeMatchesPyTorch) {
     dlatents->getDataBuffer(0).memcopyFrom(fixture.values("dsample"));
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_LT(relativeError(read(latents), fixture.values("sample")), 1e-5f);
-    EXPECT_NEAR(read(total)[0], 0.3f * fixture.values("kl")[0], 1e-5f);
-    const auto gradient = read(dstats), dmu = fixture.values("dmu"), dlv = fixture.values("dlog_variance");
+    EXPECT_NEAR(read(total)[0], 0.3f * expected.values("kl")[0], 1e-5f);
+    const auto gradient = read(dstats), dmu = expected.values("dmu"), dlv = expected.values("dlog_variance");
     for (size_t object = 0; object < 4; ++object)
         for (size_t d = 0; d < 3; ++d) {
             EXPECT_NEAR(gradient[object * 6 + d], dmu[object * 3 + d], 1e-5f);
             EXPECT_NEAR(gradient[object * 6 + 3 + d], dlv[object * 3 + d], 1e-5f);
         }
+}
+
+} // namespace
+
+TEST(PhotoEnhancerTraining, vaeMatchesPyTorch) {
+    const Fixture fixture("vae");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectVaeMatches(fixture, fixture, 0.0f);
+}
+
+TEST(PhotoEnhancerTraining, vaeFreeBitsMatchesPyTorch) {
+    const Fixture fixture("vae"), expected("vae_free_bits");
+    if (!fixture.exists() || !expected.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectVaeMatches(fixture, expected, 0.3f);
 }
 
 TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
@@ -891,4 +915,61 @@ TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
             worst = std::max(worst, std::abs(actual[i] - after[i]));
         EXPECT_LT(worst, 0.1f * rate) << parameter;
     }
+}
+
+TEST(PhotoEnhancerTraining, latentGanStepTrains) {
+    const Fixture fixture("latent_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoEnhancerTrainingConfig config;
+    config.batch = 2;
+    config.size = 64; // the 2-scale PatchGAN needs at least 64 x 64
+    config.widths = {32, 64, 128};
+    config.gbufferChannels = 4;
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + "latent_step_texture.txt");
+    config.latentSize = 4;
+    config.latentObjects = 1;
+    config.klWeight = 1e-2f;
+    config.freeBits = 0.5f;
+    config.adversarial = 0.1f;
+    neural::PhotoEnhancerTraining trainer(vc, config);
+    // PyTorch's renderer, a discriminator from N(0, 0.02) (the PatchGAN's initialisation) with zero biases.
+    std::mt19937 rng(3);
+    std::normal_distribution<float> normal(0.0f, 0.02f);
+    for (const auto& parameter : trainer.parameterNames()) {
+        if (parameter.rfind("discriminator.", 0) != 0) {
+            trainer.setParameter(parameter, fixture.values("before." + parameter));
+            continue;
+        }
+        std::vector<float> values(trainer.parameter(parameter)->getDataElementCount(), 0.0f);
+        if (parameter.find("weight") != std::string::npos)
+            for (auto& v : values)
+                v = normal(rng);
+        trainer.setParameter(parameter, values);
+    }
+    // The fixture's 32 x 32 batch, every pixel repeated 2 x 2.
+    const auto upsample = [](const std::vector<float>& planes) {
+        std::vector<float> result(planes.size() * 4);
+        for (size_t plane = 0; plane < planes.size() / (32 * 32); ++plane)
+            for (size_t y = 0; y < 64; ++y)
+                for (size_t x = 0; x < 64; ++x)
+                    result[plane * 64 * 64 + y * 64 + x] = planes[plane * 32 * 32 + (y / 2) * 32 + x / 2];
+        return result;
+    };
+    trainer.setBatch(upsample(fixture.values("geometry")), upsample(fixture.values("coordinates")),
+                     upsample(fixture.values("classes")), upsample(fixture.values("photos")), {});
+    trainer.setObjects(upsample(fixture.values("objects")));
+    trainer.step();
+    const float first = trainer.loss();
+    // Before the discriminator learns, D is about 0 on both: softplus(0) per real and fake and scale.
+    EXPECT_NEAR(trainer.discriminatorLoss(), 2.0f * 2.0f * std::log(2.0f), 0.1f);
+    for (int step = 0; step < 30; ++step)
+        trainer.step();
+    for (const float value : {trainer.loss(), trainer.discriminatorLoss(), trainer.adversarialLoss(),
+                              trainer.featureMatchingLoss(), trainer.klLoss()})
+        EXPECT_TRUE(std::isfinite(value));
+    EXPECT_LT(trainer.loss(), first);
+    EXPECT_GE(trainer.klLoss(), 4 * 0.5f - 1e-4f); // 4 numbers, each counted as at least 0.5 nats
 }

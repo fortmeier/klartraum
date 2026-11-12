@@ -792,6 +792,7 @@ the held-out views are rendered with the codes' mean
 | `--no-floor` | The crate without a floor (as `crate_gbuffer_example --no-floor`) |
 | `--latent D` | The latent-conditioned renderer instead: inverse depth, normals, texture and a latent G-buffer of D numbers per object from a VAE encoder of the photo; validation renders encoded, zero and drawn latents |
 | `--kl W` | Weight of the latents' KL divergence (default 0.001) |
+| `--free-bits B` | Nats of KL per latent number that cost nothing (default 0); the logged `kl` counts each number as at least B |
 
 ```bash
 ./build/examples/crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1

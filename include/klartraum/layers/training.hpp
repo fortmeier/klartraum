@@ -343,12 +343,14 @@ ComputeGraphElementPtr objectBroadcast(VulkanContext& vulkanContext, const layer
 
 /**
  * @brief A VAE's latents from per-object statistics (@p size means, then @p size log-variances): mu + exp(lv / 2) eps,
- * and each object's share of @p weight x KL(N(mu, sigma) || N(0, 1)) / batch (0 for objects without pixels).
+ * and each object's share of @p weight x KL(N(mu, sigma) || N(0, 1)) / batch (0 for objects without pixels). With
+ * @p freeBits, each latent number's KL counts as at least that many nats (free bits: no KL gradient below).
  *
  * Slots: 0 statistics (N x objects x 2 size), 1 noise (N x objects x size), 2 counts, 3 latents, 4 shares (N x
  * objects).
  */
-ComputeGraphElementPtr vae(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size, float weight);
+ComputeGraphElementPtr vae(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size, float weight,
+                           float freeBits = 0.0f);
 
 /**
  * @brief The statistics' gradient of vae() from the latents' gradient and its KL term.
@@ -356,7 +358,7 @@ ComputeGraphElementPtr vae(VulkanContext& vulkanContext, uint32_t batch, uint32_
  * Slots: 0 statistics, 1 noise, 2 counts, 3 latents' gradient, 4 statistics' gradient.
  */
 ComputeGraphElementPtr vaeBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t objects, uint32_t size,
-                                   float weight);
+                                   float weight, float freeBits = 0.0f);
 
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {

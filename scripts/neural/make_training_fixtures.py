@@ -388,6 +388,13 @@ def latent_cases(out: Path, seed: int) -> None:
     save(out, "vae", {"mu": mu, "log_variance": log_variance, "epsilon": epsilon, "counts": vae_counts,
                       "sample": sample, "kl": kl.reshape(1), "dsample": dsample, "dmu": mu.grad,
                       "dlog_variance": log_variance.grad})
+    # The same VAE with 0.3 free bits: numbers below 0.3 nats get no KL gradient.
+    mu.grad = None
+    log_variance.grad = None
+    sample = mu + (0.5 * log_variance).exp() * epsilon
+    kl = kl_divergence(mu, log_variance, vae_counts, free_bits=0.3)
+    ((sample * dsample).sum() + 0.3 * kl).backward()
+    save(out, "vae_free_bits", {"kl": kl.reshape(1), "dmu": mu.grad, "dlog_variance": log_variance.grad})
 
     # One training step.
     torch.manual_seed(seed)

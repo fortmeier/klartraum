@@ -591,7 +591,7 @@ void PhotoEnhancerTraining::buildEncoder() {
     latentNoise = tensor({b, k, d});
     klShares = tensor({b, k});
     klTotal = tensor({1});
-    auto sample = training::vae(vulkanContext, b, k, d, config.klWeight);
+    auto sample = training::vae(vulkanContext, b, k, d, config.klWeight, config.freeBits);
     sample->setInput(pooled, 0);
     sample->setInput(latentNoise, 1);
     sample->setInput(counts, 2);
@@ -624,7 +624,7 @@ void PhotoEnhancerTraining::buildEncoderBackward() {
     gather->setInput(latentSums, 3);
     add(gather);
     pooledGradient = tensor({b, k, 2 * d});
-    auto vae = training::vaeBackward(vulkanContext, b, k, d, config.klWeight);
+    auto vae = training::vaeBackward(vulkanContext, b, k, d, config.klWeight, config.freeBits);
     vae->setInput(pooled, 0);
     vae->setInput(latentNoise, 1);
     vae->setInput(counts, 2);

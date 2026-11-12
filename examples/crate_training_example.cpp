@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
     float minAlignment = 0.7f, perceptual = 0.0f, adversarial = 0.0f, featureMatching = 2.0f;
     bool profile = false, floor = true;
     uint32_t latent = 0;
-    float klWeight = 1e-3f;
+    float klWeight = 1e-3f, freeBits = 0.0f;
     uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
     for (int i = 1; i < argc; ++i) {
@@ -241,6 +241,8 @@ int main(int argc, char** argv) {
             latent = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--kl" && hasValue)
             klWeight = std::stof(argv[++i]);
+        else if (arg == "--free-bits" && hasValue)
+            freeBits = std::stof(argv[++i]);
         else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
@@ -298,6 +300,7 @@ int main(int argc, char** argv) {
             config.latentSize = latent;
             config.latentObjects = 1;
             config.klWeight = klWeight;
+            config.freeBits = freeBits;
         }
         config.appearanceSize = appearance;
         config.profile = profile;
@@ -471,6 +474,8 @@ int main(int argc, char** argv) {
                     const std::vector<float> zeros(held.size() * latent, 0.0f);
                     const auto plain = renderLatent(held, &zeros);
                     const auto trainingImages = renderLatent(fitted, nullptr);
+                    const std::vector<float> fittedZeros(fitted.size() * latent, 0.0f);
+                    const auto trainingPlain = renderLatent(fitted, &fittedZeros);
                     // Eight crates from N(0, 1) on the first held-out view.
                     std::mt19937 sampler(42);
                     std::normal_distribution<float> normal(0.0f, 1.0f);
@@ -488,7 +493,7 @@ int main(int argc, char** argv) {
                     std::ostringstream line;
                     line << "validation step " << step << ": L1 encoded " << meanL1(encoded, held) << ", latents 0 "
                          << meanL1(plain, held) << ", training encoded " << meanL1(trainingImages, fitted)
-                         << ", samples' spread " << spread;
+                         << ", training latents 0 " << meanL1(trainingPlain, fitted) << ", samples' spread " << spread;
                     std::cout << line.str() << std::endl;
                     log << line.str() << "\n";
                     log.flush();
