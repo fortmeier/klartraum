@@ -75,8 +75,9 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
     if (levels < 2 || s % (1u << (levels - 1)) != 0 || s < 8u)
         throw std::invalid_argument("PhotoEnhancerTraining: the crop size must halve exactly at every level");
-    if (config.latentCheck > 0.0f && (config.latentSize == 0 || config.appearances > 0))
-        throw std::invalid_argument("PhotoEnhancerTraining: the latent check needs latents and no appearance codes");
+    if ((config.latentCheck > 0.0f || config.temporal > 0.0f) && (config.latentSize == 0 || config.appearances > 0))
+        throw std::invalid_argument(
+            "PhotoEnhancerTraining: the latent check and the temporal loss need latents and no appearance codes");
     // The PatchGAN's coarsest scale needs 24 x 24 pixels: three halvings and two 4 x 4 convolutions leave 1 x 1 logits.
     if (config.adversarial > 0.0f && !config.forwardOnly &&
         (config.criticScales == 0 || (s >> (config.criticScales - 1)) < 24u))
@@ -315,6 +316,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         buildEncoderBackward();
     if (config.latentCheck > 0.0f)
         buildLatentCheck();
+    if (config.temporal > 0.0f)
+        buildTemporal();
     if (film) {
         bool first = true;
         for (const auto& block : blocks)
@@ -646,19 +649,28 @@ void PhotoEnhancerTraining::buildLatentCheck() {
     spread->setInput(statisticsGradient2, 3);
     add(spread);
     auto outputGradient2 = backwardEncoderInput(checkEncoderLayers, statisticsGradient2);
-    // The second generator pass's gradients, added to the first's; the permuted latents are targets, so their
-    // gradient ends here.
+    // The permuted latents are targets, so their gradient ends here.
+    backwardSecondPass(checkBlocks, x2, logits2, outputGradient2, coordinates, classes);
+}
+
+void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, std::shared_ptr<TensorElement<float>> x,
+                                               std::shared_ptr<TensorElement<float>> passLogits,
+                                               std::shared_ptr<TensorElement<float>> passOutputGradient,
+                                               std::shared_ptr<TensorElement<float>> passCoordinates,
+                                               std::shared_ptr<TensorElement<float>> passClasses) {
+    const uint32_t b = config.batch, s = config.size;
     std::vector<std::string> redirected;
     for (const auto& parameter : parameters)
         if (parameter.name.rfind("generator.", 0) == 0) {
             gradientRedirect[parameter.name] = tensor({uint32_t(parameter.gradient->getDataElementCount())});
             redirected.push_back(parameter.name);
         }
-    backwardGenerator(checkBlocks, x2, logits2, outputGradient2, tensor({b, 3, s, s}));
+    backwardGenerator(passBlocks, x, passLogits, passOutputGradient, tensor({b, 3, s, s}));
+    // The texture's gradient adds atomically to the first pass's.
     auto texture = hashTextureBackward(vulkanContext, config.texture);
-    texture->setInput(coordinates, 0);
-    texture->setInput(classes, 1);
-    texture->setInput(checkBlocks[0].dIn, 2);
+    texture->setInput(passCoordinates, 0);
+    texture->setInput(passClasses, 1);
+    texture->setInput(passBlocks[0].dIn, 2);
     texture->setInput(find("texture.table").gradient, 3);
     add(texture);
     for (const auto& name : redirected) {
@@ -669,6 +681,56 @@ void PhotoEnhancerTraining::buildLatentCheck() {
         add(accumulate);
     }
     gradientRedirect.clear();
+}
+
+void PhotoEnhancerTraining::buildTemporal() {
+    const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
+    const uint32_t gbuffer = config.gbufferChannels, features = config.texture.levels * config.texture.features;
+    const uint32_t channelsIn = gbuffer + features + d;
+    // The second views' G-buffers, texture features and latent G-buffer (the same latents).
+    channels2 = tensor({b, gbuffer, s, s});
+    coordinates2 = tensor({b, 3, s, s});
+    classes2 = tensor({b, s, s});
+    objects2 = tensor({b, s, s});
+    flow = tensor({b, 2, s, s});
+    flowValid = tensor({b, s, s});
+    auto input2 = tensor({b, channelsIn, s, s});
+    auto copy = training::channelCopy(vulkanContext, b, s * s, {gbuffer, 0}, {channelsIn, 0}, gbuffer);
+    copy->setInput(channels2, 0);
+    copy->setInput(input2, 1);
+    add(copy);
+    auto texture = hashTexture(vulkanContext, config.texture);
+    texture->setInput(coordinates2, 0);
+    texture->setInput(classes2, 1);
+    texture->setInput(find("texture.table").value, 2);
+    texture->setInput(input2, 3);
+    add(texture);
+    auto splat =
+        training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn, gbuffer + features);
+    splat->setInput(latentValues, 0);
+    splat->setInput(objects2, 1);
+    splat->setInput(counts, 2);
+    splat->setInput(input2, 3);
+    add(splat);
+    temporalBlocks = blocks;
+    auto [x2, logits2, output2] = forwardGenerator(temporalBlocks, input2);
+    // The first render warped onto the second views against their renders.
+    auto outputGradient2 = tensor({b, 3, s, s}), shares = tensor({b, 3, s, s});
+    auto loss = training::flowWarpLoss(vulkanContext, {b, 3, s, s}, config.temporal);
+    loss->setInput(output, 0);
+    loss->setInput(output2, 1);
+    loss->setInput(flow, 2);
+    loss->setInput(flowValid, 3);
+    loss->setInput(outputGradient2, 4);
+    loss->setInput(shares, 5);
+    add(loss);
+    temporalTotal = tensor({1});
+    auto total = training::sum(vulkanContext, b * 3 * s * s);
+    total->setInput(shares, 0);
+    total->setInput(temporalTotal, 1);
+    add(total);
+    // The latents' gradient from the second pass ends here.
+    backwardSecondPass(temporalBlocks, x2, logits2, outputGradient2, coordinates2, classes2);
 }
 
 void PhotoEnhancerTraining::buildEncoderBackward() {
@@ -1084,6 +1146,28 @@ void PhotoEnhancerTraining::setLatentPermutation(const std::vector<float>& permu
         throw std::logic_error("PhotoEnhancerTraining: a latent permutation needs the latent check");
     latentPermutation->getDataBuffer(0).memcopyFrom(permutation);
     latentPermutationGiven = true;
+}
+
+void PhotoEnhancerTraining::setSecondView(const std::vector<float>& channelValues,
+                                          const std::vector<float>& coordinateValues,
+                                          const std::vector<float>& classValues, const std::vector<float>& objectValues,
+                                          const std::vector<float>& flowValues, const std::vector<float>& validValues) {
+    if (!flow)
+        throw std::logic_error("PhotoEnhancerTraining: second views need the temporal loss");
+    channels2->getDataBuffer(0).memcopyFrom(channelValues);
+    coordinates2->getDataBuffer(0).memcopyFrom(coordinateValues);
+    classes2->getDataBuffer(0).memcopyFrom(classValues);
+    objects2->getDataBuffer(0).memcopyFrom(objectValues);
+    flow->getDataBuffer(0).memcopyFrom(flowValues);
+    flowValid->getDataBuffer(0).memcopyFrom(validValues);
+}
+
+float PhotoEnhancerTraining::temporalLoss() const {
+    if (!temporalTotal)
+        return 0.0f;
+    std::vector<float> value(1);
+    temporalTotal->getDataBuffer(0).memcopyTo(value);
+    return value[0] / config.temporal;
 }
 
 float PhotoEnhancerTraining::latentCheckLoss() const {

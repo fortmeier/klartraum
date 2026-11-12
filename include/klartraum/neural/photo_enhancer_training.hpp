@@ -72,6 +72,10 @@ struct PhotoEnhancerTrainingConfig {
     /// Weight of the latent check (latent_renderer.latent_check()): every view rendered again with another view's
     /// latents (setLatentPermutation()), encoded by the encoder held fixed, L1 to those latents (0: none).
     float latentCheck = 0.0f;
+    /// Weight of the temporal consistency loss (latent_renderer.flow_warp_loss()): a second, nearby view of every
+    /// sample (setSecondView()) rendered with the same latents, the first render warped onto it by the views' flow
+    /// as the target, the mean squared difference on the pixels both views see (0: none).
+    float temporal = 0.0f;
     std::vector<uint32_t> encoderWidths{32, 64, 128}; ///< stride-2 layers down to an eighth
     /// Forward only: the latents from the encoder of the batch's photos (their means), else given (setLatents()).
     bool encodeLatents = false;
@@ -134,6 +138,14 @@ public:
     void setLatentPermutation(const std::vector<float>& permutation);
     /// The latent check's mean absolute difference of the last step (unweighted).
     float latentCheckLoss() const;
+    /// The second views of the batch for the temporal loss: G-buffer channels, coordinates, classes and objects as in
+    /// setBatch() and setObjects(), the flow onto the first views ([batch][2][size][size]: each pixel's position in
+    /// the first view, in pixels with centres at i + 0.5) and where the first view sees it ([batch][size][size]).
+    void setSecondView(const std::vector<float>& channels, const std::vector<float>& coordinates,
+                       const std::vector<float>& classes, const std::vector<float>& objects,
+                       const std::vector<float>& flow, const std::vector<float>& valid);
+    /// The temporal loss's mean squared difference of the last step (unweighted).
+    float temporalLoss() const;
     /// The next step's augmentation numbers, [2 batch][6] (real pairs, then fake pairs; see training::augmentPair()),
     /// instead of random ones.
     void setAugmentation(const std::vector<float>& numbers);
@@ -193,6 +205,14 @@ private:
     std::shared_ptr<TensorElement<float>>
     backwardEncoderInput(std::vector<EncoderLayer>& layers, std::shared_ptr<TensorElement<float>> statisticsGradient);
     void buildLatentCheck();
+    void buildTemporal();
+    /// The backward pass of a second generator pass (its blocks, output layer input, logits and image gradient):
+    /// the generator's gradients added to the first pass's, the texture's for these coordinates and classes too.
+    void backwardSecondPass(std::vector<Block>& passBlocks, std::shared_ptr<TensorElement<float>> x,
+                            std::shared_ptr<TensorElement<float>> passLogits,
+                            std::shared_ptr<TensorElement<float>> passOutputGradient,
+                            std::shared_ptr<TensorElement<float>> passCoordinates,
+                            std::shared_ptr<TensorElement<float>> passClasses);
     void forwardBlock(Block& block);
     void backwardBlock(Block& block);
     void buildDiscriminator();
@@ -242,6 +262,9 @@ private:
     std::vector<EncoderLayer> checkEncoderLayers;
     std::shared_ptr<TensorElement<float>> latentPermutation, checkTotal;
     bool latentPermutationGiven = false;
+    /// The temporal loss's second generator pass, the second views' inputs, their flow and mask, and its loss.
+    std::vector<Block> temporalBlocks;
+    std::shared_ptr<TensorElement<float>> channels2, coordinates2, classes2, objects2, flow, flowValid, temporalTotal;
     /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.
     std::vector<std::unique_ptr<Critic>> critics;
     std::shared_ptr<TensorElement<float>> augmentation;

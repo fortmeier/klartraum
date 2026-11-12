@@ -258,6 +258,17 @@ ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layer
 ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, float weight, bool accumulate = false);
 
 /**
+ * @brief The temporal consistency loss: the first N x C x H x W render warped onto the second view by the flow (each of
+ * the second view's pixels' position in the first, in pixels with centres at i + 0.5; bilinear, clamped to the border)
+ * and @p weight x the mean over all of the second render's values of the mask x the squared difference: every value's
+ * share and the gradient for the second render, written (the warped first render is the target).
+ *
+ * Slots: 0 first render, 1 second render, 2 flow (N x 2 x H x W), 3 mask (N x H x W), 4 gradient of the second,
+ * 5 shares.
+ */
+ComputeGraphElementPtr flowWarpLoss(VulkanContext& vulkanContext, const layers::Shape& shape, float weight);
+
+/**
  * @brief y = x * scale[c] + shift[c] per channel (at most four) of an N x C x H x W tensor, e.g. ImageNet's
  * normalization; with @p backward the input gradient dy * scale[c] instead, written or, with @p accumulate, added.
  *

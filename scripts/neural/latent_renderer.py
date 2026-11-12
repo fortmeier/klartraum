@@ -110,3 +110,14 @@ def latent_check(model: LatentRenderer, geometry: torch.Tensor, coordinates: tor
         parameter.requires_grad_(True)
     pooled, _ = object_mean(statistics, objects[:, 4::8, 4::8], model.objects)
     return F.l1_loss(pooled[..., :model.latent], swapped), image
+
+
+def flow_warp_loss(first: torch.Tensor, second: torch.Tensor, flow: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+    """The temporal consistency loss: the first render [N, 3, H, W] warped onto the second view by the flow [N, 2, H, W]
+    (each of the second view's pixels' position in the first, in pixels with centres at i + 0.5; bilinear, clamped to
+    the border), and the mean over all of the second render's values of valid [N, H, W] x the squared difference.
+    The warped first render is the target: no gradient into it."""
+    height, width = second.shape[2:]
+    grid = torch.stack([flow[:, 0] / width * 2.0 - 1.0, flow[:, 1] / height * 2.0 - 1.0], dim=-1)
+    warped = F.grid_sample(first.detach(), grid, mode="bilinear", padding_mode="border", align_corners=False)
+    return ((warped - second) ** 2 * valid[:, None]).mean()

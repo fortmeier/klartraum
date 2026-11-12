@@ -17,6 +17,9 @@
  * - filmMatchesPyTorch: FiLM's output and its input, scale and shift gradients equal PyTorch's
  * - photometricLossMatchesPyTorch: the gradient of 0.5 L1 + 5 L1 of 8 x 8 block means equals PyTorch's, and the sum
  *   of the loss shares is the loss
+ * - flowWarpLossMatchesPyTorch: the temporal consistency loss (the first render warped by a flow partly beyond the
+ *   image, bilinear and clamped, against the second on a mask) and its gradient for the second render equal
+ *   latent_renderer.flow_warp_loss()'s (grid_sample)
  * - linearMatchesPyTorch: a linear layer's output (with an offset) and its input (also accumulating), weight and
  *   bias gradients equal nn.Linear's
  * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
@@ -39,6 +42,9 @@
  * - latentCheckStepMatchesPyTorch: the same step with the latent check (weight 0.5): every view rendered again with
  *   the other view's latents, encoded by the fixed encoder, L1 to those latents; the check loss, the image and every
  *   parameter after the step equal latent_renderer.latent_check()'s
+ * - temporalStepMatchesPyTorch: the same step with the temporal consistency loss (weight 0.5): a second view of each
+ *   sample rendered with the same latents, the first render warped onto it by a given flow and mask; the temporal
+ *   loss, the image and every parameter after the step equal latent_renderer.flow_warp_loss()'s
  * - latentGanStepTrains: the latent-conditioned renderer with free bits and the 2-scale PatchGAN, from PyTorch's
  *   renderer and a fresh discriminator on its batch upsampled to 64 x 64, starts at the untrained discriminator's loss
  * (about 4 ln 2), keeps all losses finite over 30 steps on one batch, lowers the photometric loss and counts the KL at
@@ -404,6 +410,37 @@ TEST(PhotoEnhancerTraining, photometricLossMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-5f);
     EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, flowWarpLossMatchesPyTorch) {
+    const Fixture fixture("flow_warp");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("second");
+    auto first = tensor(vc, shape), second = tensor(vc, shape), gradient = tensor(vc, shape);
+    auto flow = tensor(vc, fixture.shapes.at("flow")), valid = tensor(vc, fixture.shapes.at("valid"));
+    auto shares = tensor(vc, shape), total = tensor(vc, {1});
+    auto loss = training::flowWarpLoss(vc, shape, 0.7f);
+    loss->setInput(first, 0);
+    loss->setInput(second, 1);
+    loss->setInput(flow, 2);
+    loss->setInput(valid, 3);
+    loss->setInput(gradient, 4);
+    loss->setInput(shares, 5);
+    auto add = training::sum(vc, uint32_t(shares->getDataElementCount()));
+    add->setInput(shares, 0);
+    add->setInput(total, 1);
+    add->addDependency(loss);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(add);
+    for (const auto& [element, name] :
+         {std::pair{first, "first"}, std::pair{second, "second"}, std::pair{flow, "flow"}, std::pair{valid, "valid"}})
+        element->getDataBuffer(0).memcopyFrom(fixture.values(name));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(gradient), fixture.values("dsecond")), 1e-5f);
+    EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-6f);
 }
 
 TEST(PhotoEnhancerTraining, linearMatchesPyTorch) {
@@ -876,9 +913,10 @@ TEST(PhotoEnhancerTraining, vaeFreeBitsMatchesPyTorch) {
 namespace {
 
 // One step of the latent-conditioned renderer from latent_renderer.py's parameters on its batch (fixture @p name),
-// with the latent check of weight @p check (and the fixture's permutation) if positive: image, losses and every
-// parameter after clipping and Adam equal PyTorch's.
-void expectLatentStepMatches(const Fixture& fixture, const std::string& name, float check) {
+// with the latent check of weight @p check (and the fixture's permutation) and the temporal consistency loss of
+// weight @p temporal (and the fixture's second views and flow) if positive: image, losses and every parameter after
+// clipping and Adam equal PyTorch's.
+void expectLatentStepMatches(const Fixture& fixture, const std::string& name, float check, float temporal = 0.0f) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     neural::PhotoEnhancerTrainingConfig config;
@@ -892,6 +930,7 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
     config.klWeight = 1e-2f;
     config.perceptual = 1.0f;
     config.latentCheck = check;
+    config.temporal = temporal;
     neural::PhotoEnhancerTraining trainer(vc, config);
     std::vector<std::string> names;
     {
@@ -908,6 +947,9 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
     trainer.setLatentNoise(fixture.values("epsilon"));
     if (check > 0.0f)
         trainer.setLatentPermutation(fixture.values("permutation"));
+    if (temporal > 0.0f)
+        trainer.setSecondView(fixture.values("geometry2"), fixture.values("coordinates2"), fixture.values("classes2"),
+                              fixture.values("objects2"), fixture.values("flow"), fixture.values("valid"));
     trainer.step();
     EXPECT_LT(relativeError(trainer.image(), fixture.values("image")), 1e-5f);
     EXPECT_NEAR(trainer.loss(), fixture.values("photometric")[0], 1e-5f);
@@ -915,14 +957,21 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
     EXPECT_NEAR(trainer.klLoss(), fixture.values("kl")[0], 1e-4f);
     if (check > 0.0f)
         EXPECT_NEAR(trainer.latentCheckLoss(), fixture.values("check")[0], 1e-4f);
+    if (temporal > 0.0f)
+        EXPECT_NEAR(trainer.temporalLoss(), fixture.values("temporal")[0], 1e-5f);
     for (const auto& parameter : names) {
-        const auto after = fixture.values("after." + parameter);
+        const auto before = fixture.values("before." + parameter), after = fixture.values("after." + parameter);
         std::vector<float> actual(after.size());
         trainer.parameter(parameter)->getDataBuffer(0).memcopyTo(actual);
         const float rate = parameter == "texture.table" ? 1e-2f : 1e-4f;
         float worst = 0.0f;
-        for (size_t i = 0; i < actual.size(); ++i)
+        for (size_t i = 0; i < actual.size(); ++i) {
+            // Adam's first step moves a parameter by about the rate unless its gradient is as small as Adam's
+            // epsilon; there the step follows the gradient's rounding, so such parameters are left out.
+            if (std::abs(after[i] - before[i]) < 0.2f * rate)
+                continue;
             worst = std::max(worst, std::abs(actual[i] - after[i]));
+        }
         EXPECT_LT(worst, 0.1f * rate) << parameter;
     }
 }
@@ -941,6 +990,13 @@ TEST(PhotoEnhancerTraining, latentCheckStepMatchesPyTorch) {
     if (!fixture.exists() || !std::filesystem::exists("build/models/vgg16/layers.txt"))
         GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
     expectLatentStepMatches(fixture, "latent_check_step", 0.5f);
+}
+
+TEST(PhotoEnhancerTraining, temporalStepMatchesPyTorch) {
+    const Fixture fixture("temporal_step");
+    if (!fixture.exists() || !std::filesystem::exists("build/models/vgg16/layers.txt"))
+        GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "temporal_step", 0.0f, 0.5f);
 }
 
 namespace {

@@ -125,6 +125,25 @@ def photometric_case(out: Path, seed: int) -> None:
     save(out, "photometric", {"image": image, "target": target, "dimage": image.grad, "loss": loss.reshape(1)})
 
 
+def flow_warp_case(out: Path, seed: int) -> None:
+    """latent_renderer.flow_warp_loss() (weight 0.7) on random renders, a flow partly beyond the image and a mask."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from latent_renderer import flow_warp_loss
+
+    generator = torch.Generator().manual_seed(seed)
+    first = torch.rand(2, 3, 12, 16, generator=generator)
+    second = torch.rand(2, 3, 12, 16, generator=generator, requires_grad=True)
+    flow = torch.stack([torch.rand(2, 12, 16, generator=generator) * 20.0 - 2.0,
+                        torch.rand(2, 12, 16, generator=generator) * 16.0 - 2.0], dim=1)
+    valid = (torch.rand(2, 12, 16, generator=generator) > 0.3).float()
+    loss = 0.7 * flow_warp_loss(first, second, flow, valid)
+    loss.backward()
+    save(out, "flow_warp", {"first": first, "second": second, "flow": flow, "valid": valid,
+                            "dsecond": second.grad, "loss": loss.reshape(1)})
+
+
 def linear_case(out: Path, seed: int) -> None:
     generator = torch.Generator().manual_seed(seed)
     layer = torch.nn.Linear(5, 7)
@@ -511,6 +530,80 @@ def latent_check_case(out: Path, seed: int) -> None:
         "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 3\n")
 
 
+def temporal_case(out: Path, seed: int) -> None:
+    """One latent renderer step as latent_cases()' with the temporal consistency loss (weight 0.5): a second view of
+    each sample rendered with the same latents, the first render warped onto it by a given flow and mask."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from hash_texture import SurfaceTexture
+    from latent_renderer import LatentRenderer, flow_warp_loss, kl_divergence
+    from train_photo_enhancer import Vgg
+
+    generator = torch.Generator().manual_seed(seed)
+    torch.manual_seed(seed)
+    texture = SurfaceTexture(classes=(3,), levels=4, features=2, log2_table=10, base=4, finest=64)
+    model = LatentRenderer(texture, geometry=4, latent=4, objects=1)
+    with torch.no_grad():
+        for grid in texture.grids:
+            grid.embeddings.copy_(torch.rand(grid.embeddings.shape, generator=generator) * 0.2 - 0.1)
+        model.generator.out.weight.copy_(torch.randn(model.generator.out.weight.shape, generator=generator) * 0.2)
+    b, size = 2, 32
+    geometry = torch.rand(b, 4, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.zeros(b, size, size, dtype=torch.long)
+    classes[:, 6:26, 8:28] = 3
+    objects = (classes == 3).long()
+    photos = torch.rand(b, 3, size, size, generator=generator)
+    epsilon = torch.randn(b, 1, 4, generator=generator)
+    # The second views: other geometry and coordinates, the crate shifted, and their flow onto the first views.
+    geometry2 = torch.rand(b, 4, size, size, generator=generator)
+    coordinates2 = torch.rand(b, 3, size, size, generator=generator)
+    classes2 = torch.zeros(b, size, size, dtype=torch.long)
+    classes2[:, 8:28, 6:24] = 3
+    objects2 = (classes2 == 3).long()
+    flow = torch.stack([torch.rand(b, size, size, generator=generator) * (size + 4) - 2,
+                        torch.rand(b, size, size, generator=generator) * (size + 4) - 2], dim=1)
+    valid = (torch.rand(b, size, size, generator=generator) > 0.3).float()
+    parameters = {"texture.table": None, **{f"generator.{k}": v for k, v in model.generator.named_parameters()},
+                  **{f"encoder.{k}": v for k, v in model.encoder.named_parameters()}}
+    tensors = {"geometry": geometry, "coordinates": coordinates, "classes": classes.float(),
+               "objects": objects.float(), "photos": photos, "epsilon": epsilon}
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in parameters.items():
+        tensors["before." + name] = (table if name == "texture.table" else value).detach().clone()
+    mu, log_variance, latent_counts = model.encode(photos, objects)
+    latents = mu + (0.5 * log_variance).exp() * epsilon
+    image = model(geometry, coordinates, classes, objects, latents)
+    photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
+    perceptual = Vgg().eval().distance(image, photos)
+    kl = kl_divergence(mu, log_variance, latent_counts)
+    second = model(geometry2, coordinates2, classes2, objects2, latents.detach())
+    temporal = flow_warp_loss(image, second, flow, valid)
+    loss = photometric + perceptual + 1e-2 * kl + 0.5 * temporal
+    network = list(model.generator.parameters()) + list(model.encoder.parameters())
+    optimiser = torch.optim.Adam([{"params": network, "lr": 1e-4},
+                                  {"params": [g.embeddings for g in texture.grids], "lr": 1e-2, "betas": (0.9, 0.99)}],
+                                 lr=1e-4, betas=(0.5, 0.999))
+    optimiser.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network, 1.0)
+    optimiser.step()
+    table = torch.stack([grid.embeddings for grid in texture.grids])
+    for name, value in parameters.items():
+        tensors["after." + name] = (table if name == "texture.table" else value).detach().clone()
+    tensors.update({"image": image, "photometric": photometric.reshape(1), "perceptual": perceptual.reshape(1),
+                    "kl": kl.reshape(1), "mu": mu, "log_variance": log_variance, "temporal": temporal.reshape(1),
+                    "geometry2": geometry2, "coordinates2": coordinates2, "classes2": classes2.float(),
+                    "objects2": objects2.float(), "flow": flow, "valid": valid, "second": second})
+    save(out, "temporal_step", tensors)
+    (out / "temporal_step_parameters.txt").write_text("\n".join(parameters) + "\n")
+    grid = texture.grids[0]
+    (out / "temporal_step_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
+        "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 3\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -535,6 +628,8 @@ def main() -> None:
     gan_step_case(args.out, 16)
     latent_cases(args.out, 17)
     latent_check_case(args.out, 18)
+    flow_warp_case(args.out, 19)
+    temporal_case(args.out, 20)
     print(f"fixtures in {args.out}")
 
 
