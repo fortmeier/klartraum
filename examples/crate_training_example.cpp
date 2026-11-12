@@ -47,9 +47,14 @@ uint32_t sampleSize = 256;
 // One view: its sample (G-buffer channels, coordinates, classes) and its photo [3][size][size] in [0, 1].
 struct View {
     std::string id;
+    glm::vec3 eye, look; ///< the camera
     neural::PhotoEnhancerInputs inputs;
     std::vector<float> photo;
     std::vector<float> objects; ///< for the latent renderer: 1 on the crate, 0 elsewhere
+    /// For the temporal loss: a nearby second view's sample and objects, and the flow of its pixels onto this view
+    /// ([2][size][size], crate::Flow's x and y) with where this view sees them ([size][size]).
+    neural::PhotoEnhancerInputs secondInputs;
+    std::vector<float> secondObjects, flow, flowValid;
 };
 
 // A binary PPM of the sample size, or a whole multiple of it averaged down (e.g. 256 x 256 photos for 128 x 128
@@ -112,7 +117,9 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
         view.photo = readPhoto(split / "photo" / (view.id + ".ppm"));
         if (view.photo.empty())
             continue;
-        crate::setCamera(renderer.getCamera()->ubo, glm::vec3(v[1], v[2], v[3]), glm::vec3(v[4], v[5], v[6]));
+        view.eye = glm::vec3(v[1], v[2], v[3]);
+        view.look = glm::vec3(v[4], v[5], v[6]);
+        crate::setCamera(renderer.getCamera()->ubo, view.eye, view.look);
         renderer.getCamera()->update(0);
         const auto frame = crate::renderFrame(vc, renderer, graph, target, 2 * sampleSize);
         view.inputs = neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
@@ -137,6 +144,8 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
 // channels and photo, every second coordinate and class), a random window, flipped half the time.
 struct Batch {
     std::vector<float> channels, coordinates, classes, photos, rows, objects;
+    /// The second views' crops and the flow onto the first views' crops (for the temporal loss).
+    std::vector<float> channels2, coordinates2, classes2, objects2, flow, flowValid;
 };
 
 Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop, std::mt19937& rng) {
@@ -148,12 +157,22 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
     batch.photos.resize(count * 3 * cropPixels);
     if (!views.front().objects.empty())
         batch.objects.resize(count * cropPixels);
+    const bool second = !views.front().flow.empty();
+    if (second) {
+        batch.channels2.resize(count * kChannels * cropPixels);
+        batch.coordinates2.resize(count * 3 * cropPixels);
+        batch.classes2.resize(count * cropPixels);
+        batch.objects2.resize(count * cropPixels);
+        batch.flow.resize(count * 2 * cropPixels);
+        batch.flowValid.resize(count * cropPixels);
+    }
     std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
     for (uint32_t k = 0; k < count; ++k) {
         const uint32_t index = uint32_t(rng() % views.size());
         const View& view = views[index];
         batch.rows.push_back(float(index));
-        const bool half = uniform(rng) < 0.3f && sampleSize / 2 >= crop;
+        // Half-scale crops only without second views, whose flow is in full-scale pixels.
+        const bool half = uniform(rng) < 0.3f && sampleSize / 2 >= crop && !second;
         const uint32_t size = half ? sampleSize / 2 : sampleSize, step = half ? 2 : 1;
         const uint32_t top = uint32_t(rng() % (size - crop + 1)), left = uint32_t(rng() % (size - crop + 1));
         const bool flip = flips && uniform(rng) < 0.5f;
@@ -182,6 +201,25 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
                 batch.classes[k * cropPixels + p] = at(view.inputs.classes, 0, y, x, false);
                 if (!batch.objects.empty())
                     batch.objects[k * cropPixels + p] = at(view.objects, 0, y, x, false);
+                if (!second)
+                    continue;
+                // The second view cropped at the same place; its flow in crop pixels, valid only inside the crop.
+                for (size_t c = 0; c < kChannels; ++c)
+                    batch.channels2[(k * kChannels + c) * cropPixels + p] =
+                        at(view.secondInputs.channels, c, y, x, false);
+                for (size_t c = 0; c < 3; ++c)
+                    batch.coordinates2[(k * 3 + c) * cropPixels + p] =
+                        at(view.secondInputs.coordinates, c, y, x, false);
+                batch.classes2[k * cropPixels + p] = at(view.secondInputs.classes, 0, y, x, false);
+                batch.objects2[k * cropPixels + p] = at(view.secondObjects, 0, y, x, false);
+                const float fx = at(view.flow, 0, y, x, false) - float(left),
+                            fy = at(view.flow, 1, y, x, false) - float(top);
+                batch.flow[(k * 2) * cropPixels + p] = fx;
+                batch.flow[(k * 2 + 1) * cropPixels + p] = fy;
+                batch.flowValid[k * cropPixels + p] = at(view.flowValid, 0, y, x, false) > 0.0f && fx >= 0.0f &&
+                                                              fy >= 0.0f && fx < float(crop) && fy < float(crop)
+                                                          ? 1.0f
+                                                          : 0.0f;
             }
     }
     return batch;
@@ -198,6 +236,7 @@ int main(int argc, char** argv) {
     bool profile = false, floor = true;
     uint32_t latent = 0;
     float klWeight = 1e-3f, freeBits = 0.0f, latentCheck = 0.0f;
+    float temporal = 0.0f, temporalDelta = 3.0f; // the temporal loss's weight and the second views' offset in degrees
     uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
     std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
@@ -260,6 +299,10 @@ int main(int argc, char** argv) {
             freeBits = std::stof(argv[++i]);
         else if (arg == "--latent-check" && hasValue)
             latentCheck = std::stof(argv[++i]);
+        else if (arg == "--temporal" && hasValue)
+            temporal = std::stof(argv[++i]);
+        else if (arg == "--temporal-delta" && hasValue)
+            temporalDelta = std::stof(argv[++i]);
         else {
             std::cerr << "unknown argument " << arg << std::endl;
             return 1;
@@ -297,6 +340,67 @@ int main(int argc, char** argv) {
                         view.objects[q] = view.inputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
                 }
         }
+        // The temporal loss's second views: each training view's camera turned by the offset (alternately to either
+        // side) about the vertical through its look point, its sample as the model sees it (without the floor if the
+        // views have none), and the flow of its pixels onto the view from G-buffers with the floor.
+        if (temporal > 0.0f) {
+            if (latent == 0)
+                throw std::runtime_error("--temporal needs --latent");
+            const VkExtent2D extent{2 * sampleSize, 2 * sampleSize}, flowExtent{sampleSize, sampleSize};
+            auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
+            GBufferMeshRenderer renderer(vc, crate::vertices(floor), target, extent);
+            ComputeGraph graph(vc, 1);
+            graph.compileFrom(renderer.getOutput());
+            auto flowTarget = std::make_shared<OffscreenTarget>(vc, flowExtent, 1);
+            GBufferMeshRenderer flowRenderer(vc, crate::vertices(true), flowTarget, flowExtent);
+            ComputeGraph flowGraph(vc, 1);
+            flowGraph.compileFrom(flowRenderer.getOutput());
+            const auto depth = [&](const CameraMVP& camera) {
+                flowRenderer.getCamera()->ubo = camera;
+                flowRenderer.getCamera()->update(0);
+                flowRenderer.setOutput(GBufferOutput::Depth16, 0.0f, crate::kDepthFar);
+                flowGraph.submitAndWait(vc.getGraphicsQueue(), 0);
+                return crate::readImage(vc, flowTarget->getImage(0), flowExtent);
+            };
+            const size_t pixels = size_t(sampleSize) * sampleSize;
+            for (size_t v = 0; v < training.size(); ++v) {
+                View& view = training[v];
+                const float angle = glm::radians(v % 2 == 0 ? temporalDelta : -temporalDelta);
+                const glm::vec3 offset = view.eye - view.look;
+                const glm::vec3 eye2 =
+                    view.look + glm::vec3(std::cos(angle) * offset.x + std::sin(angle) * offset.z, offset.y,
+                                          -std::sin(angle) * offset.x + std::cos(angle) * offset.z);
+                CameraMVP first{}, second{};
+                crate::setCamera(first, view.eye, view.look);
+                crate::setCamera(second, eye2, view.look);
+                renderer.getCamera()->ubo = second;
+                renderer.getCamera()->update(0);
+                const auto frame = crate::renderFrame(vc, renderer, graph, *target, 2 * sampleSize);
+                view.secondInputs =
+                    neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
+                std::vector<float> geometry(view.secondInputs.channels.begin() + 3 * pixels,
+                                            view.secondInputs.channels.begin() + 4 * pixels);
+                geometry.insert(geometry.end(), view.secondInputs.normals.begin(), view.secondInputs.normals.end());
+                view.secondInputs.channels = geometry;
+                view.secondObjects.resize(pixels);
+                for (size_t q = 0; q < pixels; ++q)
+                    view.secondObjects[q] = view.secondInputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
+                const auto flow = crate::flow(first, depth(first), second, depth(second), sampleSize);
+                view.flow = flow.x;
+                view.flow.insert(view.flow.end(), flow.y.begin(), flow.y.end());
+                view.flowValid.assign(flow.valid.begin(), flow.valid.end());
+            }
+            double valid = 0.0, length = 0.0;
+            for (const auto& view : training)
+                for (size_t p = 0; p < pixels; ++p)
+                    if (view.flowValid[p] > 0.0f) {
+                        valid += 1.0;
+                        length += std::hypot(view.flow[p] - float(p % sampleSize) - 0.5f,
+                                             view.flow[pixels + p] - float(size_t(p / sampleSize)) - 0.5f);
+                    }
+            std::printf("second views at %.1f degrees: %.1f %% of the pixels valid, flow %.2f px on average\n",
+                        temporalDelta, 100.0 * valid / double(training.size() * pixels), length / std::max(valid, 1.0));
+        }
         std::cout << training.size() << " training views, " << validation.size() << " validation views" << std::endl;
         if (training.empty())
             throw std::runtime_error("no training views with photos");
@@ -320,6 +424,7 @@ int main(int argc, char** argv) {
             config.klWeight = klWeight;
             config.freeBits = freeBits;
             config.latentCheck = latentCheck;
+            config.temporal = temporal;
         }
         config.appearanceSize = appearance;
         config.profile = profile;
@@ -462,13 +567,16 @@ int main(int argc, char** argv) {
 
         std::ofstream log(outDir / "log.txt", std::ios::app);
         double lossSum = 0.0, perceptualSum = 0.0, discriminatorSum = 0.0, adversarialSum = 0.0, matchingSum = 0.0,
-               klSum = 0.0, checkSum = 0.0;
+               klSum = 0.0, checkSum = 0.0, temporalSum = 0.0;
         auto started = std::chrono::steady_clock::now();
         for (uint32_t step = 1; step <= steps; ++step) {
             const Batch batch = sampleBatch(training, batchSize, crop, rng);
             trainer.setBatch(batch.channels, batch.coordinates, batch.classes, batch.photos, batch.rows);
             if (latent > 0)
                 trainer.setObjects(batch.objects);
+            if (temporal > 0.0f)
+                trainer.setSecondView(batch.channels2, batch.coordinates2, batch.classes2, batch.objects2, batch.flow,
+                                      batch.flowValid);
             trainer.step();
             lossSum += trainer.loss();
             perceptualSum += trainer.perceptualLoss();
@@ -477,6 +585,7 @@ int main(int argc, char** argv) {
             matchingSum += trainer.featureMatchingLoss();
             klSum += trainer.klLoss();
             checkSum += trainer.latentCheckLoss();
+            temporalSum += trainer.temporalLoss();
             if (step % 100 == 0) {
                 const double seconds =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() / 100.0;
@@ -488,11 +597,13 @@ int main(int argc, char** argv) {
                     line << " kl " << klSum / 100.0;
                 if (latentCheck > 0.0f)
                     line << " check " << checkSum / 100.0;
+                if (temporal > 0.0f)
+                    line << " temporal " << temporalSum / 100.0;
                 if (adversarial > 0.0f)
                     line << " d " << discriminatorSum / 100.0 << " adv " << adversarialSum / 100.0 << " fm "
                          << matchingSum / 100.0;
                 line << " (" << seconds << " s/step)";
-                perceptualSum = discriminatorSum = adversarialSum = matchingSum = klSum = checkSum = 0.0;
+                perceptualSum = discriminatorSum = adversarialSum = matchingSum = klSum = checkSum = temporalSum = 0.0;
                 std::cout << line.str() << std::endl;
                 log << line.str() << "\n";
                 log.flush();

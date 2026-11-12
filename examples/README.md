@@ -800,6 +800,8 @@ the held-out views are rendered with the codes' mean
 | `--no-floor` | The crate without a floor (as `crate_gbuffer_example --no-floor`) |
 | `--latent D` | The latent-conditioned renderer instead: inverse depth, normals, texture and a latent G-buffer of D numbers per object from a VAE encoder of the photo; validation renders encoded, zero and drawn latents |
 | `--kl W` | Weight of the latents' KL divergence (default 0.001) |
+| `--temporal W` | Weight of the temporal consistency loss: every crop's view turned by `--temporal-delta` degrees (alternately to either side) and rendered with the same latents; the first render warped onto it by the flow from the G-buffers (with the floor) is its target, the squared difference on the pixels both views see |
+| `--temporal-delta D` | The second views' offset in degrees (default 3) |
 | `--latent-check W` | Weight of the latent check: every crop rendered again with another crop's latents, encoded by the fixed encoder, L1 to those latents (default 0) |
 | `--free-bits B` | Nats of KL per latent number that cost nothing (default 0); the logged `kl` counts each number as at least B |
 
