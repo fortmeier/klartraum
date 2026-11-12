@@ -158,6 +158,54 @@ inline klartraum::neural::GBufferFrame renderFrame(klartraum::VulkanContext& vc,
     return frame;
 }
 
+// The flow of view b onto view a, both rendered at size x size: for every pixel of b, where a shows the same surface
+// point. The pixel's ray through b's camera at the distance of b's Depth16 G-buffer (over kDepthFar; 0 where nothing
+// was drawn) gives the point, a's camera projects it; it counts as seen by a (valid) when it falls inside a and a's
+// own distance at the nearest pixel agrees within 2 % (otherwise something in front of it occludes it).
+struct Flow {
+    uint32_t size = 0;
+    std::vector<float> x, y;    ///< b's pixels' positions in a, in a's pixel coordinates (pixel centres at i + 0.5)
+    std::vector<uint8_t> valid; ///< 1 where a sees b's point
+};
+
+inline float distance16(const std::vector<uint8_t>& bgra, size_t p) {
+    return float(bgra[4 * p + 2] * 256u + bgra[4 * p + 1]) / 65535.0f * kDepthFar;
+}
+
+inline Flow flow(const klartraum::CameraMVP& a, const std::vector<uint8_t>& depthA, const klartraum::CameraMVP& b,
+                 const std::vector<uint8_t>& depthB, uint32_t size) {
+    Flow result;
+    result.size = size;
+    const size_t pixels = size_t(size) * size;
+    result.x.assign(pixels, 0.0f);
+    result.y.assign(pixels, 0.0f);
+    result.valid.assign(pixels, 0);
+    const glm::mat4 toWorldB = glm::inverse(b.proj * b.view), toClipA = a.proj * a.view;
+    const glm::vec3 eyeA(a.cameraWorldPos), eyeB(b.cameraWorldPos);
+    for (uint32_t row = 0; row < size; ++row)
+        for (uint32_t column = 0; column < size; ++column) {
+            const size_t p = size_t(row) * size + column;
+            const float distanceB = distance16(depthB, p);
+            if (distanceB <= 0.0f)
+                continue;
+            const glm::vec4 far = toWorldB * glm::vec4((column + 0.5f) / size * 2.0f - 1.0f,
+                                                       (row + 0.5f) / size * 2.0f - 1.0f, 1.0f, 1.0f);
+            const glm::vec3 point = eyeB + glm::normalize(glm::vec3(far) / far.w - eyeB) * distanceB;
+            const glm::vec4 clip = toClipA * glm::vec4(point, 1.0f);
+            if (clip.w <= 0.0f)
+                continue;
+            const float x = (clip.x / clip.w + 1.0f) * 0.5f * size, y = (clip.y / clip.w + 1.0f) * 0.5f * size;
+            result.x[p] = x;
+            result.y[p] = y;
+            if (x < 0.0f || y < 0.0f || x >= float(size) || y >= float(size))
+                continue;
+            const float distanceA = distance16(depthA, size_t(y) * size + size_t(x));
+            const float expected = glm::length(point - eyeA);
+            result.valid[p] = distanceA > 0.0f && std::abs(distanceA - expected) < 0.02f * expected;
+        }
+    return result;
+}
+
 } // namespace crate
 
 #endif // KLARTRAUM_EXAMPLES_CRATE_SCENE_HPP

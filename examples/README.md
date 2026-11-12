@@ -806,3 +806,27 @@ the held-out views are rendered with the codes' mean
 ```bash
 ./build/examples/crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1
 ```
+### `crate_flow_example`
+
+The geometric flow between two nearby views of the crate scene and how
+consistently a trained latent crate model (one trained with latents)
+renders them. View a and view b (`--delta` degrees further along the orbit) are
+rendered by the model with the same latent; the flow of b onto a comes from the
+G-buffers of the crate and the floor (each pixel's point from b's distance,
+projected by a's camera, valid where a's own distance agrees). It writes
+`<out>/flow_pair.png` (a, b, the flow, a warped onto b, 4 x the difference, the
+mask) and prints the masked mean squared differences with and without the warp,
+and as a check of the flow how many of b's valid pixels find the same surface
+point in a.
+
+| Option | Meaning |
+|--------|---------|
+| `--parameters DIR` | A latent crate model's `parameters/` |
+| `--out DIR` | Output directory (default `build/TestingOutput/crate_views_i2i/flow`) |
+| `--sample-size S` | Size of the renders and the flow (default 128) |
+| `--azimuth A`, `--delta D` | View a's orbit angle and b's offset in degrees (default 34 and 3) |
+| `--latent-code a,b,...` | The crate's latent (default zeros) |
+
+```bash
+./build/examples/crate_flow_example --parameters build/TestingOutput/crate_views_i2i/runs/v4/parameters_2000
+```
