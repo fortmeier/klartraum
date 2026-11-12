@@ -220,6 +220,16 @@ int main(int argc, char** argv) {
             config.appearanceSize = 8;
             if (untrained > 0.0f)
                 config.appearances = 0;
+            // The U-Net's levels as saved: the channels of every down block.
+            std::vector<uint32_t> widths;
+            for (uint32_t level = 0;; ++level) {
+                const auto bias = parameters / ("generator.down." + std::to_string(level) + ".0.bias.bin");
+                if (parameters.empty() || !std::filesystem::exists(bias))
+                    break;
+                widths.push_back(uint32_t(std::filesystem::file_size(bias) / sizeof(float)));
+            }
+            if (widths.size() >= 2)
+                config.widths = widths;
             if (latentSize > 0) {
                 config.appearances = 0;
                 config.gbufferChannels = 4; // inverse depth and normals

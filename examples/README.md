@@ -789,7 +789,8 @@ the held-out views are rendered with the codes' mean
 | `--perceptual W` | Weight of the VGG-16 perceptual loss (default 0; needs `scripts/neural/export_vgg16.py`) |
 | `--adversarial W` | Weight of the adversarial loss of a 2-scale PatchGAN with DiffAugment (default 0: no GAN) |
 | `--feature-matching W` | Weight of the discriminator's feature matching (default 2) |
-| `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/` |
+| `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/`: every parameter of the same shape; a shallower U-Net's up blocks become the last ones (the deeper levels start fresh) |
+| `--widths a,b,...` | Channels of the generator's U-Net levels, each at half the previous resolution (default 32,64,128) |
 | `--no-floor` | The crate without a floor (as `crate_gbuffer_example --no-floor`) |
 | `--latent D` | The latent-conditioned renderer instead: inverse depth, normals, texture and a latent G-buffer of D numbers per object from a VAE encoder of the photo; validation renders encoded, zero and drawn latents |
 | `--kl W` | Weight of the latents' KL divergence (default 0.001) |

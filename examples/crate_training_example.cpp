@@ -200,6 +200,7 @@ int main(int argc, char** argv) {
     float klWeight = 1e-3f, freeBits = 0.0f;
     uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
+    std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -235,7 +236,12 @@ int main(int argc, char** argv) {
             featureMatching = std::stof(argv[++i]);
         else if (arg == "--init-from" && hasValue)
             initFrom = argv[++i];
-        else if (arg == "--no-floor")
+        else if (arg == "--widths" && hasValue) {
+            std::stringstream numbers(argv[++i]);
+            widths.clear();
+            for (std::string number; std::getline(numbers, number, ',');)
+                widths.push_back(uint32_t(std::stoul(number)));
+        } else if (arg == "--no-floor")
             floor = false;
         else if (arg == "--latent" && hasValue)
             latent = uint32_t(std::stoul(argv[++i]));
@@ -293,6 +299,7 @@ int main(int argc, char** argv) {
         neural::PhotoEnhancerTrainingConfig config;
         config.batch = batchSize;
         config.size = crop;
+        config.widths = widths;
         config.texture = crate::textureShape(textureLevels, textureBase, textureFinest);
         config.appearances = appearance > 0 && latent == 0 ? uint32_t(training.size()) : 0;
         if (latent > 0) {
@@ -309,15 +316,40 @@ int main(int argc, char** argv) {
         config.featureMatching = featureMatching;
         neural::PhotoEnhancerTraining trainer(vc, config);
         std::mt19937 rng(1);
+        std::vector<std::string> fresh; // generator, texture and encoder parameters not taken from --init-from
         for (const auto& name : trainer.parameterNames()) {
             auto values = crate::initialValue(trainer, name, rng);
-            // The generator, texture and codes from an earlier run (its saved averages), if given.
-            const auto saved = initFrom / (name + ".bin");
-            if (!initFrom.empty() && std::filesystem::exists(saved) && name.rfind("discriminator.", 0) != 0) {
+            // The generator, texture and codes from an earlier run (its saved averages), if given: every parameter of
+            // the same shape. A shallower U-Net's up blocks become the last ones of this one (the full-resolution
+            // end); the deeper levels keep their fresh initialisation.
+            std::string savedName = name;
+            const std::string up = "generator.up.";
+            if (!initFrom.empty() && name.rfind(up, 0) == 0) {
+                uint32_t savedLevels = 0;
+                while (std::filesystem::exists(initFrom /
+                                               ("generator.down." + std::to_string(savedLevels) + ".0.bias.bin")))
+                    ++savedLevels;
+                const size_t dot = name.find('.', up.size());
+                const int index =
+                    std::stoi(name.substr(up.size(), dot - up.size())) - (int(widths.size()) - int(savedLevels));
+                savedName = index >= 0 ? up + std::to_string(index) + name.substr(dot) : "";
+            }
+            const auto saved = initFrom / (savedName + ".bin");
+            if (!initFrom.empty() && !savedName.empty() && std::filesystem::exists(saved) &&
+                std::filesystem::file_size(saved) == values.size() * sizeof(float) &&
+                name.rfind("discriminator.", 0) != 0) {
                 std::ifstream file(saved, std::ios::binary);
                 file.read(reinterpret_cast<char*>(values.data()), std::streamsize(values.size() * sizeof(float)));
+            } else if (!initFrom.empty() && name.rfind("discriminator.", 0) != 0) {
+                fresh.push_back(name);
             }
             trainer.setParameter(name, values);
+        }
+        if (!initFrom.empty()) {
+            std::cout << "from " << initFrom << ": all but " << fresh.size() << " parameters, fresh:";
+            for (const auto& name : fresh)
+                std::cout << " " << name;
+            std::cout << std::endl;
         }
 
         // The latent renderer's validation: renders of the held-out views with the latents their photos encode to, with
