@@ -745,6 +745,7 @@ trained photo enhancer renders every view, entirely in Klartraum.
 | `--parameters DIR` | Enhance every view with a photo enhancer trained in Klartraum (`crate_training_example`'s `parameters/`) instead |
 | `--qwen-image-to-image` | With `--qwen-batch`, also write the rendering on white (`DIR/input/`) as each photo's starting image |
 | `--untrained S` | Enhance every view with an untrained photo enhancer (initialised as for training, its texture to +-1e-4 x S) |
+| `--latent-codes FILE` | For a latent-conditioned model: one latent per line (comma-separated), view after view, e.g. with `--fixed-view` a walk through the latent space |
 | `--latent-code a,b,...` | For a latent-conditioned model (detected by its encoder in `--parameters`): the crate's latent (default zeros) |
 | `--features` | With `--parameters` or `--untrained`, also write the texture's features of every view (`frames/features_NNNN.png`) |
 | `--qwen-batch DIR` | Write Qwen-Image's control depths (`DIR/depth_smooth/`) and batch lists (`DIR/batches/NN.txt`, photos to `DIR/photo/`) for the batch mode of `qwen_image_example` |

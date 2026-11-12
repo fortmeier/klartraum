@@ -10,7 +10,8 @@
 // With --orbit the camera circles the crate instead (a turntable), and with --model every view is also enhanced by a
 // photo enhancer trained on the crate (neural::PhotoEnhancer: the learnable texture and the generator, on the GPU)
 // into frames/enhanced_NNNN.png, under the appearance code of a training image (--appearance) or their mean.
-// A latent-conditioned model (crate_training_example --latent) renders the crate with the latent of --latent-code.
+// A latent-conditioned model (crate_training_example --latent) renders the crate with the latent of --latent-code,
+// or with --latent-codes every view with its own (a walk through the latent space).
 //
 //   crate_gbuffer_example --views 180 --size 512 --seed 1 --out-dir build/TestingOutput/crate/flights/crate_a
 //   crate_gbuffer_example --orbit --views 240 --model build/TestingOutput/crate/runs/c1/photo_enhancer_best
@@ -138,8 +139,9 @@ int main(int argc, char** argv) {
     bool qwenImageToImage = false;
     float untrained = 0.0f; // > 0: an untrained enhancer, its texture initialised to +-1e-4 x this
     bool features = false;
-    int appearanceRow = -1;        // -1: the training codes' mean
-    std::vector<float> latentCode; // the crate's latent for a latent-conditioned model (empty: zeros)
+    int appearanceRow = -1;            // -1: the training codes' mean
+    std::vector<float> latentCode;     // the crate's latent for a latent-conditioned model (empty: zeros)
+    std::filesystem::path latentCodes; // a file of one latent per line (comma-separated), for view after view
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -173,6 +175,8 @@ int main(int argc, char** argv) {
             untrained = std::stof(argv[++i]);
         else if (arg == "--features")
             features = true;
+        else if (arg == "--latent-codes" && hasValue)
+            latentCodes = argv[++i];
         else if (arg == "--latent-code" && hasValue) {
             std::stringstream numbers(argv[++i]);
             latentCode.clear();
@@ -200,6 +204,23 @@ int main(int argc, char** argv) {
         const uint32_t latentSize = !parameters.empty() && std::filesystem::exists(encoderHead)
                                         ? uint32_t(std::filesystem::file_size(encoderHead) / sizeof(float) / 2)
                                         : 0;
+        // Every view's latent: from --latent-codes (the lines repeating if there are fewer than views), else one.
+        std::vector<std::vector<float>> viewLatents;
+        if (!latentCodes.empty()) {
+            std::ifstream file(latentCodes);
+            for (std::string line; std::getline(file, line);) {
+                std::stringstream numbers(line);
+                std::vector<float> code;
+                for (std::string number; std::getline(numbers, number, ',');)
+                    code.push_back(std::stof(number));
+                if (code.size() != latentSize)
+                    throw std::runtime_error("--latent-codes: the model's latents have " + std::to_string(latentSize) +
+                                             " numbers");
+                viewLatents.push_back(code);
+            }
+            if (viewLatents.empty())
+                throw std::runtime_error("--latent-codes: no latents in " + latentCodes.string());
+        }
         if (latentSize > 0 && latentCode.empty())
             latentCode.assign(latentSize, 0.0f);
         if (latentSize > 0 && latentCode.size() != latentSize)
@@ -361,7 +382,7 @@ int main(int argc, char** argv) {
                         objects[q] = inputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
                     trained->setBatch(geometry, inputs.coordinates, inputs.classes, {}, {});
                     trained->setObjects(objects);
-                    trained->setLatents(latentCode);
+                    trained->setLatents(viewLatents.empty() ? latentCode : viewLatents[view % viewLatents.size()]);
                     trained->step();
                     image = trained->image();
                 } else if (trained) {
