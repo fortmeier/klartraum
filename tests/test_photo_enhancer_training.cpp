@@ -917,15 +917,16 @@ TEST(PhotoEnhancerTraining, latentStepMatchesPyTorch) {
     }
 }
 
-TEST(PhotoEnhancerTraining, latentGanStepTrains) {
-    const Fixture fixture("latent_step");
-    if (!fixture.exists())
-        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+namespace {
+
+// Trains the latent-conditioned renderer with free bits and a PatchGAN (@p conditional, @p scales) from PyTorch's
+// renderer and a fresh discriminator on latent_step's batch upsampled @p factor times, and checks the losses.
+void expectLatentGanTrains(const Fixture& fixture, bool conditional, uint32_t scales, uint32_t factor) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     neural::PhotoEnhancerTrainingConfig config;
     config.batch = 2;
-    config.size = 64; // the 2-scale PatchGAN needs at least 64 x 64
+    config.size = 32 * factor;
     config.widths = {32, 64, 128};
     config.gbufferChannels = 4;
     config.texture = neural::HashTextureShape::fromFile(kFixtures + "latent_step_texture.txt");
@@ -934,7 +935,12 @@ TEST(PhotoEnhancerTraining, latentGanStepTrains) {
     config.klWeight = 1e-2f;
     config.freeBits = 0.5f;
     config.adversarial = 0.1f;
+    config.conditionalDiscriminator = conditional;
+    config.criticScales = scales;
     neural::PhotoEnhancerTraining trainer(vc, config);
+    // The discriminator's first layer sees the G-buffer's 4 channels and the image, or the image only.
+    EXPECT_EQ(trainer.parameter("discriminator.discriminators.0.layers.0.0.weight")->getDataElementCount(),
+              64u * (conditional ? 7u : 3u) * 16u);
     // PyTorch's renderer, a discriminator from N(0, 0.02) (the PatchGAN's initialisation) with zero biases.
     std::mt19937 rng(3);
     std::normal_distribution<float> normal(0.0f, 0.02f);
@@ -949,13 +955,14 @@ TEST(PhotoEnhancerTraining, latentGanStepTrains) {
                 v = normal(rng);
         trainer.setParameter(parameter, values);
     }
-    // The fixture's 32 x 32 batch, every pixel repeated 2 x 2.
-    const auto upsample = [](const std::vector<float>& planes) {
-        std::vector<float> result(planes.size() * 4);
+    // The fixture's 32 x 32 batch, every pixel repeated factor x factor.
+    const size_t s = config.size;
+    const auto upsample = [&](const std::vector<float>& planes) {
+        std::vector<float> result(planes.size() * factor * factor);
         for (size_t plane = 0; plane < planes.size() / (32 * 32); ++plane)
-            for (size_t y = 0; y < 64; ++y)
-                for (size_t x = 0; x < 64; ++x)
-                    result[plane * 64 * 64 + y * 64 + x] = planes[plane * 32 * 32 + (y / 2) * 32 + x / 2];
+            for (size_t y = 0; y < s; ++y)
+                for (size_t x = 0; x < s; ++x)
+                    result[plane * s * s + y * s + x] = planes[plane * 32 * 32 + (y / factor) * 32 + x / factor];
         return result;
     };
     trainer.setBatch(upsample(fixture.values("geometry")), upsample(fixture.values("coordinates")),
@@ -964,7 +971,7 @@ TEST(PhotoEnhancerTraining, latentGanStepTrains) {
     trainer.step();
     const float first = trainer.loss();
     // Before the discriminator learns, D is about 0 on both: softplus(0) per real and fake and scale.
-    EXPECT_NEAR(trainer.discriminatorLoss(), 2.0f * 2.0f * std::log(2.0f), 0.1f);
+    EXPECT_NEAR(trainer.discriminatorLoss(), float(scales) * 2.0f * std::log(2.0f), 0.1f);
     for (int step = 0; step < 30; ++step)
         trainer.step();
     for (const float value : {trainer.loss(), trainer.discriminatorLoss(), trainer.adversarialLoss(),
@@ -972,4 +979,20 @@ TEST(PhotoEnhancerTraining, latentGanStepTrains) {
         EXPECT_TRUE(std::isfinite(value));
     EXPECT_LT(trainer.loss(), first);
     EXPECT_GE(trainer.klLoss(), 4 * 0.5f - 1e-4f); // 4 numbers, each counted as at least 0.5 nats
+}
+
+} // namespace
+
+TEST(PhotoEnhancerTraining, latentGanStepTrains) {
+    const Fixture fixture("latent_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectLatentGanTrains(fixture, true, 2, 2);
+}
+
+TEST(PhotoEnhancerTraining, latentUnconditionalGanStepTrains) {
+    const Fixture fixture("latent_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectLatentGanTrains(fixture, false, 3, 3);
 }

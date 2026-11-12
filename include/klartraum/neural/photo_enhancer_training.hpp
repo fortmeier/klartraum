@@ -42,6 +42,10 @@ struct PhotoEnhancerTrainingConfig {
     /// in every training step, on DiffAugment-ed pairs (no R1 penalty).
     float adversarial = 0.0f;
     float featureMatching = 2.0f; ///< weight of the discriminator's feature matching
+    /// Whether the discriminator sees the G-buffer channels with the image (a conditional PatchGAN) or the image only.
+    bool conditionalDiscriminator = true;
+    /// Scales of the PatchGAN, each at half the previous resolution (2: full and half).
+    uint32_t criticScales = 2;
     training::AdamParameters discriminatorAdam{2e-4f, 0.5f, 0.999f};
     uint32_t seed = 1; ///< of the augmentations' random numbers
     float clip = 1.0f; ///< global norm the generator's gradients are clipped to

@@ -789,6 +789,9 @@ the held-out views are rendered with the codes' mean
 | `--perceptual W` | Weight of the VGG-16 perceptual loss (default 0; needs `scripts/neural/export_vgg16.py`) |
 | `--adversarial W` | Weight of the adversarial loss of a 2-scale PatchGAN with DiffAugment (default 0: no GAN) |
 | `--feature-matching W` | Weight of the discriminator's feature matching (default 2) |
+| `--unconditional` | The discriminator sees the image only, not the G-buffer with it |
+| `--critic-scales N` | Scales of the PatchGAN, each at half the previous resolution (default 2; the coarsest needs 24 pixels) |
+| `--discriminator-lr R` | The discriminator's Adam learning rate (default 0.0002) |
 | `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/`: every parameter of the same shape; a shallower U-Net's up blocks become the last ones (the deeper levels start fresh) |
 | `--widths a,b,...` | Channels of the generator's U-Net levels, each at half the previous resolution (default 32,64,128) |
 | `--no-floor` | The crate without a floor (as `crate_gbuffer_example --no-floor`) |

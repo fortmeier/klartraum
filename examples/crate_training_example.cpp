@@ -201,6 +201,9 @@ int main(int argc, char** argv) {
     uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
     std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
+    bool unconditional = false;                // a discriminator of the image only
+    uint32_t criticScales = 2;
+    float discriminatorRate = 2e-4f;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -236,6 +239,12 @@ int main(int argc, char** argv) {
             featureMatching = std::stof(argv[++i]);
         else if (arg == "--init-from" && hasValue)
             initFrom = argv[++i];
+        else if (arg == "--unconditional")
+            unconditional = true;
+        else if (arg == "--critic-scales" && hasValue)
+            criticScales = uint32_t(std::stoul(argv[++i]));
+        else if (arg == "--discriminator-lr" && hasValue)
+            discriminatorRate = std::stof(argv[++i]);
         else if (arg == "--widths" && hasValue) {
             std::stringstream numbers(argv[++i]);
             widths.clear();
@@ -314,6 +323,9 @@ int main(int argc, char** argv) {
         config.perceptual = perceptual;
         config.adversarial = adversarial;
         config.featureMatching = featureMatching;
+        config.conditionalDiscriminator = !unconditional;
+        config.criticScales = criticScales;
+        config.discriminatorAdam.learningRate = discriminatorRate;
         neural::PhotoEnhancerTraining trainer(vc, config);
         std::mt19937 rng(1);
         std::vector<std::string> fresh; // generator, texture and encoder parameters not taken from --init-from

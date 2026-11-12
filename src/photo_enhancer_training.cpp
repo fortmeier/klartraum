@@ -21,7 +21,11 @@ enum Group { Network = 0, Texture = 1, Codes = 2, Discriminator = 3 };
 // The PatchGAN's layers: widths, strides (all 4 x 4, padding 1), then the logits.
 constexpr uint32_t kCriticWidths[4] = {64, 128, 256, 512};
 constexpr uint32_t kCriticStrides[4] = {2, 2, 2, 1};
-constexpr uint32_t kCriticScales = 2;
+
+// The G-buffer channels the discriminator sees in front of the image's three.
+uint32_t criticConditioning(const PhotoEnhancerTrainingConfig& config) {
+    return config.conditionalDiscriminator ? config.gbufferChannels : 0u;
+}
 
 layers::ConvAttributes convAttributes(uint32_t kernel, uint32_t stride) {
     layers::ConvAttributes attributes;
@@ -70,6 +74,10 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
     if (levels < 2 || s % (1u << (levels - 1)) != 0 || s < 8u)
         throw std::invalid_argument("PhotoEnhancerTraining: the crop size must halve exactly at every level");
+    // The PatchGAN's coarsest scale needs 24 x 24 pixels: three halvings and two 4 x 4 convolutions leave 1 x 1 logits.
+    if (config.adversarial > 0.0f && !config.forwardOnly &&
+        (config.criticScales == 0 || (s >> (config.criticScales - 1)) < 24u))
+        throw std::invalid_argument("PhotoEnhancerTraining: the discriminator's coarsest scale is below 24 pixels");
     this->config.texture.width = this->config.texture.height = s;
     this->config.texture.batch = b;
     const uint32_t kGBufferChannels = config.gbufferChannels;
@@ -144,9 +152,9 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     if (film)
         addParameter("codes.weight", {config.appearances, config.appearanceSize}, Codes);
     if (config.adversarial > 0.0f && !config.forwardOnly)
-        for (uint32_t scale = 0; scale < kCriticScales; ++scale) {
+        for (uint32_t scale = 0; scale < config.criticScales; ++scale) {
             const std::string prefix = "discriminator.discriminators." + std::to_string(scale) + ".";
-            uint32_t previous = kGBufferChannels + 3;
+            uint32_t previous = criticConditioning(config) + 3;
             for (uint32_t layer = 0; layer < 4; ++layer) {
                 const std::string name = prefix + "layers." + std::to_string(layer) + ".0.";
                 addParameter(name + "weight", {kCriticWidths[layer], previous, 4, 4}, Discriminator);
@@ -704,20 +712,22 @@ void PhotoEnhancerTraining::buildEncoderBackward() {
 }
 
 void PhotoEnhancerTraining::buildDiscriminator() {
-    const uint32_t kGBufferChannels = config.gbufferChannels;
-    const uint32_t b = config.batch, s = config.size, c = kGBufferChannels + 3, pixels = s * s;
-    // The pairs (G-buffer channels and image) of the real photos and of the generator's images, and both together
-    // (real ones first) augmented for the discriminator's step.
+    const uint32_t conditioning = criticConditioning(config);
+    const uint32_t b = config.batch, s = config.size, c = conditioning + 3, pixels = s * s;
+    // The pairs (the G-buffer channels if conditional, then the image) of the real photos and of the generator's
+    // images, and both together (real ones first) augmented for the discriminator's step.
     auto realPairs = tensor({b, c, s, s}), fakePairs = tensor({b, c, s, s});
     auto allPairs = tensor({2 * b, c, s, s}), augmented = tensor({2 * b, c, s, s});
     augmentation = tensor({2 * b, 6});
     for (const auto& [pairs, image] : {std::pair{realPairs, targets}, std::pair{fakePairs, output}}) {
-        auto gbuffers =
-            training::channelCopy(vulkanContext, b, pixels, {kGBufferChannels, 0}, {c, 0}, kGBufferChannels);
-        gbuffers->setInput(channels, 0);
-        gbuffers->setInput(pairs, 1);
-        add(gbuffers);
-        auto colour = training::channelCopy(vulkanContext, b, pixels, {3, 0}, {c, kGBufferChannels}, 3);
+        if (conditioning > 0) {
+            auto gbuffers = training::channelCopy(vulkanContext, b, pixels, {config.gbufferChannels, 0}, {c, 0},
+                                                  config.gbufferChannels);
+            gbuffers->setInput(channels, 0);
+            gbuffers->setInput(pairs, 1);
+            add(gbuffers);
+        }
+        auto colour = training::channelCopy(vulkanContext, b, pixels, {3, 0}, {c, conditioning}, 3);
         colour->setInput(image, 0);
         colour->setInput(pairs, 1);
         add(colour);
@@ -816,23 +826,25 @@ void PhotoEnhancerTraining::buildDiscriminator() {
         total->setInput(matchingTotals.back(), 1);
         add(total);
     });
-    auto colour = training::channelCopy(vulkanContext, b, pixels, {c, kGBufferChannels}, {3, 0}, 3, true);
+    auto colour = training::channelCopy(vulkanContext, b, pixels, {c, conditioning}, {3, 0}, 3, true);
     colour->setInput(pairGradient, 0);
     colour->setInput(outputGradient, 1);
     add(colour);
 }
 
 void PhotoEnhancerTraining::forwardCritic(Critic& critic, std::shared_ptr<TensorElement<float>> pairs) {
-    const uint32_t n = critic.batch, c = config.gbufferChannels + 3;
-    for (uint32_t scaleIndex = 0; scaleIndex < kCriticScales; ++scaleIndex) {
+    const uint32_t n = critic.batch, c = criticConditioning(config) + 3;
+    for (uint32_t scaleIndex = 0; scaleIndex < config.criticScales; ++scaleIndex) {
         Critic::Scale scale;
         scale.size = config.size >> scaleIndex;
         if (scaleIndex == 0) {
             scale.input = pairs;
         } else {
+            // The previous scale's input, average-pooled.
             scale.input = tensor({n, c, scale.size, scale.size});
-            auto pool = training::averagePool(vulkanContext, {n, c, config.size, config.size});
-            pool->setInput(pairs, 0);
+            const uint32_t previous = scale.size * 2;
+            auto pool = training::averagePool(vulkanContext, {n, c, previous, previous});
+            pool->setInput(critic.scales.back().input, 0);
             pool->setInput(scale.input, 1);
             add(pool);
         }
@@ -884,7 +896,7 @@ void PhotoEnhancerTraining::forwardCritic(Critic& critic, std::shared_ptr<Tensor
 void PhotoEnhancerTraining::backwardCritic(Critic& critic, bool withWeights,
                                            std::shared_ptr<TensorElement<float>> inputGradient,
                                            const std::function<void(Critic&, size_t, size_t)>& featureGradient) {
-    const uint32_t n = critic.batch, c = config.gbufferChannels + 3;
+    const uint32_t n = critic.batch, c = criticConditioning(config) + 3;
     for (size_t scaleIndex = 0; scaleIndex < critic.scales.size(); ++scaleIndex) {
         auto& scale = critic.scales[scaleIndex];
         const std::string prefix = "discriminator.discriminators." + std::to_string(scaleIndex) + ".";
@@ -954,10 +966,17 @@ void PhotoEnhancerTraining::backwardCritic(Critic& critic, bool withWeights,
             affine->setInput(scale.scaledGradient, 0);
             affine->setInput(scale.inputGradient, 1);
             add(affine);
-            auto pool = training::averagePoolBackward(vulkanContext, {n, c, config.size, config.size}, true);
-            pool->setInput(scale.inputGradient, 0);
-            pool->setInput(inputGradient, 1);
-            add(pool);
+            // Back through the average pools, one per scale, into the full-resolution pairs' gradient.
+            auto gradient = scale.inputGradient;
+            for (uint32_t size = scale.size * 2; size <= config.size; size *= 2) {
+                const bool last = size == config.size;
+                auto larger = last ? inputGradient : tensor({n, c, size, size});
+                auto pool = training::averagePoolBackward(vulkanContext, {n, c, size, size}, last);
+                pool->setInput(gradient, 0);
+                pool->setInput(larger, 1);
+                add(pool);
+                gradient = larger;
+            }
         }
     }
 }
