@@ -8,9 +8,10 @@
 #include <cstdint>
 #include <functional>
 #include <map>
-#include <random>
 #include <memory>
+#include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "klartraum/computegraph/computegraph.hpp"
@@ -163,6 +164,19 @@ private:
     Parameter& addParameter(const std::string& name, const std::vector<uint32_t>& shape, int group);
     const Parameter& find(const std::string& name) const;
     void add(ComputeGraphElementPtr element);
+    /// The U-Net and its output layer on `input` with these blocks' activations: the last up block's output, the
+    /// logits and the image.
+    std::tuple<std::shared_ptr<TensorElement<float>>, std::shared_ptr<TensorElement<float>>,
+               std::shared_ptr<TensorElement<float>>>
+    forwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> input);
+    /// The backward pass of forwardGenerator() from the image's gradient, down to blocks[0].dIn; the parameters'
+    /// gradients go to gradientOf().
+    void backwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> x,
+                           std::shared_ptr<TensorElement<float>> logits,
+                           std::shared_ptr<TensorElement<float>> outputGradient,
+                           std::shared_ptr<TensorElement<float>> logitGradient);
+    /// Where the backward pass writes a parameter's gradient: its gradient, or a tensor of gradientRedirect.
+    std::shared_ptr<TensorElement<float>> gradientOf(const std::string& name) const;
     void forwardBlock(Block& block);
     void backwardBlock(Block& block);
     void buildDiscriminator();
@@ -181,6 +195,8 @@ private:
     std::vector<Parameter> parameters;
     std::map<std::string, size_t> parameterIndex;
     std::vector<Block> blocks; ///< the down blocks, then the up blocks
+    /// Parameter gradients written elsewhere while the graph is built (a second generator pass), by name.
+    std::map<std::string, std::shared_ptr<TensorElement<float>>> gradientRedirect;
     /// The step's elements in submission order; each depends on the previous one.
     std::vector<ComputeGraphElementPtr> sequence;
     std::unique_ptr<ComputeGraph> graph;

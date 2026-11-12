@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 #include "klartraum/layers/layers.hpp"
 
@@ -252,50 +253,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         }
     }
     // The U-Net.
-    for (uint32_t i = 0; i < levels; ++i) {
-        Block& block = blocks[i];
-        block.in = i == 0 ? input : blocks[i - 1].out;
-        forwardBlock(block);
-    }
-    std::shared_ptr<TensorElement<float>> x = blocks[levels - 1].out;
-    for (uint32_t u = 0; u + 1 < levels; ++u) {
-        Block& block = blocks[levels + u];
-        const uint32_t deep = levels - 1 - u, size = s >> (deep - 1);
-        auto upsampled = tensor({b, w[deep], size, size});
-        auto upsample = layers::resizeLinear(vulkanContext, {b, w[deep], size / 2, size / 2}, {b, w[deep], size, size});
-        upsample->setInput(x, 0);
-        upsample->setInput(scalesDummy, 1);
-        upsample->setInput(upsampled, 2);
-        add(upsample);
-        block.in = tensor({b, block.inputChannels, size, size});
-        auto first =
-            training::channelCopy(vulkanContext, b, size * size, {w[deep], 0}, {block.inputChannels, 0}, w[deep]);
-        first->setInput(upsampled, 0);
-        first->setInput(block.in, 1);
-        add(first);
-        auto second = training::channelCopy(vulkanContext, b, size * size, {w[deep - 1], 0},
-                                            {block.inputChannels, w[deep]}, w[deep - 1]);
-        second->setInput(blocks[deep - 1].out, 0);
-        second->setInput(block.in, 1);
-        add(second);
-        forwardBlock(block);
-        x = block.out;
-    }
-    logits = tensor({b, 3, s, s});
-    output = tensor({b, 3, s, s});
-    {
-        auto conv =
-            layers::conv(vulkanContext, convAttributes(1, 1), {b, w[0], s, s}, {3, w[0], 1, 1}, {3}, {b, 3, s, s});
-        conv->setInput(x, 0);
-        conv->setInput(find("generator.out.weight").value, 1);
-        conv->setInput(find("generator.out.bias").value, 2);
-        conv->setInput(logits, 3);
-        add(conv);
-        auto sigmoid = layers::unary(vulkanContext, layers::UnaryOp::Sigmoid, {b, 3, s, s});
-        sigmoid->setInput(logits, 0);
-        sigmoid->setInput(output, 1);
-        add(sigmoid);
-    }
+    std::shared_ptr<TensorElement<float>> x;
+    std::tie(x, logits, output) = forwardGenerator(blocks, input);
 
     if (config.forwardOnly) {
         graph = std::make_unique<ComputeGraph>(vulkanContext, 1);
@@ -337,67 +296,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     }
 
     // Backward: output layer, up blocks, down blocks, texture, FiLM.
-    std::shared_ptr<TensorElement<float>> dx = tensor({b, w[0], s, s});
-    {
-        auto sigmoid = training::activationBackward(vulkanContext, training::Activation::Sigmoid, {b, 3, s, s});
-        sigmoid->setInput(logits, 0);
-        sigmoid->setInput(outputGradient, 1);
-        sigmoid->setInput(logitGradient, 2);
-        add(sigmoid);
-        const auto attributes = convAttributes(1, 1);
-        auto weights =
-            training::convBackwardWeights(vulkanContext, attributes, {b, w[0], s, s}, {3, w[0], 1, 1}, {b, 3, s, s});
-        weights->setInput(x, 0);
-        weights->setInput(logitGradient, 1);
-        weights->setInput(find("generator.out.weight").gradient, 2);
-        weights->setInput(find("generator.out.bias").gradient, 3);
-        add(weights);
-        auto inputs =
-            training::convBackwardInput(vulkanContext, attributes, {b, w[0], s, s}, {3, w[0], 1, 1}, {b, 3, s, s});
-        inputs->setInput(logitGradient, 0);
-        inputs->setInput(find("generator.out.weight").value, 1);
-        inputs->setInput(dx, 2);
-        add(inputs);
-    }
-    for (uint32_t i = 0; i < levels; ++i)
-        blocks[i].dOut = tensor({b, blocks[i].outputChannels, blocks[i].outputSize, blocks[i].outputSize});
-    for (int u = int(levels) - 2; u >= 0; --u) {
-        Block& block = blocks[levels + uint32_t(u)];
-        block.dOut = dx;
-        backwardBlock(block);
-        const uint32_t deep = levels - 1 - uint32_t(u), size = s >> (deep - 1);
-        // The upsampled part's gradient back to the deeper output, the skip's to its down block.
-        auto upsampledGradient = tensor({b, w[deep], size, size});
-        auto first =
-            training::channelCopy(vulkanContext, b, size * size, {block.inputChannels, 0}, {w[deep], 0}, w[deep]);
-        first->setInput(block.dIn, 0);
-        first->setInput(upsampledGradient, 1);
-        add(first);
-        dx = u == 0 ? blocks[levels - 1].dOut : tensor({b, w[deep], size / 2, size / 2});
-        auto upsample = training::upsample2xBackward(vulkanContext, {b, w[deep], size / 2, size / 2});
-        upsample->setInput(upsampledGradient, 0);
-        upsample->setInput(dx, 1);
-        add(upsample);
-        auto skip = training::channelCopy(vulkanContext, b, size * size, {block.inputChannels, w[deep]},
-                                          {w[deep - 1], 0}, w[deep - 1]);
-        skip->setInput(block.dIn, 0);
-        skip->setInput(blocks[deep - 1].dOut, 1);
-        add(skip);
-    }
-    for (int i = int(levels) - 1; i >= 0; --i) {
-        Block& block = blocks[uint32_t(i)];
-        backwardBlock(block);
-        if (i > 0) {
-            // The down block's input is the previous one's output, which also fed a skip.
-            const Block& previous = blocks[uint32_t(i) - 1];
-            auto accumulate = training::channelCopy(vulkanContext, b, previous.outputSize * previous.outputSize,
-                                                    {previous.outputChannels, 0}, {previous.outputChannels, 0},
-                                                    previous.outputChannels, true);
-            accumulate->setInput(block.dIn, 0);
-            accumulate->setInput(previous.dOut, 1);
-            add(accumulate);
-        }
-    }
+    backwardGenerator(blocks, x, logits, outputGradient, logitGradient);
     {
         const auto& table = find("texture.table");
         auto zero = training::fill(vulkanContext, uint32_t(table.gradient->getDataElementCount()));
@@ -1104,6 +1003,131 @@ void PhotoEnhancerTraining::add(ComputeGraphElementPtr element) {
     sequence.push_back(element);
 }
 
+std::tuple<std::shared_ptr<TensorElement<float>>, std::shared_ptr<TensorElement<float>>,
+           std::shared_ptr<TensorElement<float>>>
+PhotoEnhancerTraining::forwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> input) {
+    const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
+    const auto& w = config.widths;
+    for (uint32_t i = 0; i < levels; ++i) {
+        Block& block = blocks[i];
+        block.in = i == 0 ? input : blocks[i - 1].out;
+        forwardBlock(block);
+    }
+    std::shared_ptr<TensorElement<float>> x = blocks[levels - 1].out;
+    for (uint32_t u = 0; u + 1 < levels; ++u) {
+        Block& block = blocks[levels + u];
+        const uint32_t deep = levels - 1 - u, size = s >> (deep - 1);
+        auto upsampled = tensor({b, w[deep], size, size});
+        auto upsample = layers::resizeLinear(vulkanContext, {b, w[deep], size / 2, size / 2}, {b, w[deep], size, size});
+        upsample->setInput(x, 0);
+        upsample->setInput(scalesDummy, 1);
+        upsample->setInput(upsampled, 2);
+        add(upsample);
+        block.in = tensor({b, block.inputChannels, size, size});
+        auto first =
+            training::channelCopy(vulkanContext, b, size * size, {w[deep], 0}, {block.inputChannels, 0}, w[deep]);
+        first->setInput(upsampled, 0);
+        first->setInput(block.in, 1);
+        add(first);
+        auto second = training::channelCopy(vulkanContext, b, size * size, {w[deep - 1], 0},
+                                            {block.inputChannels, w[deep]}, w[deep - 1]);
+        second->setInput(blocks[deep - 1].out, 0);
+        second->setInput(block.in, 1);
+        add(second);
+        forwardBlock(block);
+        x = block.out;
+    }
+    auto logits = tensor({b, 3, s, s}), output = tensor({b, 3, s, s});
+    {
+        auto conv =
+            layers::conv(vulkanContext, convAttributes(1, 1), {b, w[0], s, s}, {3, w[0], 1, 1}, {3}, {b, 3, s, s});
+        conv->setInput(x, 0);
+        conv->setInput(find("generator.out.weight").value, 1);
+        conv->setInput(find("generator.out.bias").value, 2);
+        conv->setInput(logits, 3);
+        add(conv);
+        auto sigmoid = layers::unary(vulkanContext, layers::UnaryOp::Sigmoid, {b, 3, s, s});
+        sigmoid->setInput(logits, 0);
+        sigmoid->setInput(output, 1);
+        add(sigmoid);
+    }
+    return {x, logits, output};
+}
+
+void PhotoEnhancerTraining::backwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> x,
+                                              std::shared_ptr<TensorElement<float>> logits,
+                                              std::shared_ptr<TensorElement<float>> outputGradient,
+                                              std::shared_ptr<TensorElement<float>> logitGradient) {
+    const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
+    const auto& w = config.widths;
+    std::shared_ptr<TensorElement<float>> dx = tensor({b, w[0], s, s});
+    {
+        auto sigmoid = training::activationBackward(vulkanContext, training::Activation::Sigmoid, {b, 3, s, s});
+        sigmoid->setInput(logits, 0);
+        sigmoid->setInput(outputGradient, 1);
+        sigmoid->setInput(logitGradient, 2);
+        add(sigmoid);
+        const auto attributes = convAttributes(1, 1);
+        auto weights =
+            training::convBackwardWeights(vulkanContext, attributes, {b, w[0], s, s}, {3, w[0], 1, 1}, {b, 3, s, s});
+        weights->setInput(x, 0);
+        weights->setInput(logitGradient, 1);
+        weights->setInput(gradientOf("generator.out.weight"), 2);
+        weights->setInput(gradientOf("generator.out.bias"), 3);
+        add(weights);
+        auto inputs =
+            training::convBackwardInput(vulkanContext, attributes, {b, w[0], s, s}, {3, w[0], 1, 1}, {b, 3, s, s});
+        inputs->setInput(logitGradient, 0);
+        inputs->setInput(find("generator.out.weight").value, 1);
+        inputs->setInput(dx, 2);
+        add(inputs);
+    }
+    for (uint32_t i = 0; i < levels; ++i)
+        blocks[i].dOut = tensor({b, blocks[i].outputChannels, blocks[i].outputSize, blocks[i].outputSize});
+    for (int u = int(levels) - 2; u >= 0; --u) {
+        Block& block = blocks[levels + uint32_t(u)];
+        block.dOut = dx;
+        backwardBlock(block);
+        const uint32_t deep = levels - 1 - uint32_t(u), size = s >> (deep - 1);
+        // The upsampled part's gradient back to the deeper output, the skip's to its down block.
+        auto upsampledGradient = tensor({b, w[deep], size, size});
+        auto first =
+            training::channelCopy(vulkanContext, b, size * size, {block.inputChannels, 0}, {w[deep], 0}, w[deep]);
+        first->setInput(block.dIn, 0);
+        first->setInput(upsampledGradient, 1);
+        add(first);
+        dx = u == 0 ? blocks[levels - 1].dOut : tensor({b, w[deep], size / 2, size / 2});
+        auto upsample = training::upsample2xBackward(vulkanContext, {b, w[deep], size / 2, size / 2});
+        upsample->setInput(upsampledGradient, 0);
+        upsample->setInput(dx, 1);
+        add(upsample);
+        auto skip = training::channelCopy(vulkanContext, b, size * size, {block.inputChannels, w[deep]},
+                                          {w[deep - 1], 0}, w[deep - 1]);
+        skip->setInput(block.dIn, 0);
+        skip->setInput(blocks[deep - 1].dOut, 1);
+        add(skip);
+    }
+    for (int i = int(levels) - 1; i >= 0; --i) {
+        Block& block = blocks[uint32_t(i)];
+        backwardBlock(block);
+        if (i > 0) {
+            // The down block's input is the previous one's output, which also fed a skip.
+            const Block& previous = blocks[uint32_t(i) - 1];
+            auto accumulate = training::channelCopy(vulkanContext, b, previous.outputSize * previous.outputSize,
+                                                    {previous.outputChannels, 0}, {previous.outputChannels, 0},
+                                                    previous.outputChannels, true);
+            accumulate->setInput(block.dIn, 0);
+            accumulate->setInput(previous.dOut, 1);
+            add(accumulate);
+        }
+    }
+}
+
+std::shared_ptr<TensorElement<float>> PhotoEnhancerTraining::gradientOf(const std::string& name) const {
+    const auto redirected = gradientRedirect.find(name);
+    return redirected != gradientRedirect.end() ? redirected->second : find(name).gradient;
+}
+
 void PhotoEnhancerTraining::forwardBlock(Block& block) {
     const uint32_t b = config.batch, cin = block.inputChannels, cout = block.outputChannels;
     const uint32_t si = block.inputSize, so = block.outputSize;
@@ -1206,8 +1230,8 @@ void PhotoEnhancerTraining::backwardBlock(Block& block) {
         params->setInput(x, 0);
         params->setInput(stats, 1);
         params->setInput(gradient, 2);
-        params->setInput(find(name + ".weight").gradient, 3);
-        params->setInput(find(name + ".bias").gradient, 4);
+        params->setInput(gradientOf(name + ".weight"), 3);
+        params->setInput(gradientOf(name + ".bias"), 4);
         add(params);
     };
     const auto conv = [&](const std::string& name, std::shared_ptr<TensorElement<float>> x, uint32_t channelsIn,
@@ -1218,8 +1242,8 @@ void PhotoEnhancerTraining::backwardBlock(Block& block) {
         auto weights = training::convBackwardWeights(vulkanContext, attributes, inShape, weightShape, shape);
         weights->setInput(x, 0);
         weights->setInput(gradient, 1);
-        weights->setInput(find(name + ".weight").gradient, 2);
-        weights->setInput(find(name + ".bias").gradient, 3);
+        weights->setInput(gradientOf(name + ".weight"), 2);
+        weights->setInput(gradientOf(name + ".bias"), 3);
         add(weights);
         auto inputs = training::convBackwardInput(vulkanContext, attributes, inShape, weightShape, shape);
         inputs->setInput(gradient, 0);
