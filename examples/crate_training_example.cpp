@@ -196,7 +196,8 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
                     batch.channels[(k * kChannels + c) * cropPixels + p] = at(view.inputs.channels, c, y, x, true);
                 for (size_t c = 0; c < 3; ++c) {
                     batch.coordinates[(k * 3 + c) * cropPixels + p] = at(view.inputs.coordinates, c, y, x, false);
-                    batch.photos[(k * 3 + c) * cropPixels + p] = at(view.photo, c, y, x, true);
+                    if (!view.photo.empty())
+                        batch.photos[(k * 3 + c) * cropPixels + p] = at(view.photo, c, y, x, true);
                 }
                 batch.classes[k * cropPixels + p] = at(view.inputs.classes, 0, y, x, false);
                 if (!batch.objects.empty())
@@ -244,10 +245,14 @@ int main(int argc, char** argv) {
     neural::TextureMlp textureMlp;             // the latent-conditioned MLP texture instead (--texture-mlp)
     neural::AlbedoTexture albedoTexture;       // the albedo renderer instead (--albedo, --albedo-fade)
     std::filesystem::path evaluate;            // a saved model to evaluate with and without its texture (--evaluate)
+    // The GAN without reconstruction (--gan): random views of the crate with random latents against the photos.
+    bool gan = false;
+    uint32_t ganViews = 800; // random views rendered for it
     uint32_t denseComponents = 0, denseResolution = 0;
     bool unconditional = false; // a discriminator of the image only
     uint32_t criticScales = 2;
     float discriminatorRate = 2e-4f;
+    float networkRate = 1e-4f; // the generator's (and encoder's) Adam learning rate
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -288,6 +293,10 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--albedo-fade" && hasValue) {
             albedoTexture.fadeSteps = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--gan") {
+            gan = true;
+        } else if (arg == "--gan-views" && hasValue) {
+            ganViews = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--evaluate" && hasValue) {
             evaluate = argv[++i];
         } else if (arg == "--texture-mlp" && i + 3 < argc) {
@@ -312,6 +321,8 @@ int main(int argc, char** argv) {
             criticScales = uint32_t(std::stoul(argv[++i]));
         else if (arg == "--discriminator-lr" && hasValue)
             discriminatorRate = std::stof(argv[++i]);
+        else if (arg == "--lr" && hasValue)
+            networkRate = std::stof(argv[++i]);
         else if (arg == "--widths" && hasValue) {
             std::stringstream numbers(argv[++i]);
             widths.clear();
@@ -368,9 +379,55 @@ int main(int argc, char** argv) {
                         view.objects[q] = view.inputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
                 }
         }
-        // The temporal loss's second views: each training view's camera turned by the offset (alternately to either
-        // side) about the vertical through its look point, its sample as the model sees it (without the floor if the
-        // views have none), and the flow of its pixels onto the view from G-buffers with the floor.
+        // The GAN's views: random cameras as crate_gbuffer_example's random flights take them (any azimuth, 8 to 40
+        // degrees above the crate, 2.2 to 3.8 away, looking near its middle), their samples as the latent renderer sees
+        // them; no photos.
+        std::vector<View> bank;
+        if (gan) {
+            if (latent == 0)
+                throw std::runtime_error("--gan needs --latent");
+            const VkExtent2D extent{2 * sampleSize, 2 * sampleSize};
+            auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
+            GBufferMeshRenderer renderer(vc, crate::vertices(floor), target, extent);
+            ComputeGraph graph(vc, 1);
+            graph.compileFrom(renderer.getOutput());
+            std::mt19937 cameras(17);
+            std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+            std::normal_distribution<float> jitter(0.0f, 0.12f);
+            const size_t pixels = size_t(sampleSize) * sampleSize;
+            for (uint32_t v = 0; v < ganViews; ++v) {
+                View view;
+                view.id = "random_" + std::to_string(v);
+                const float azimuth = unit(cameras) * 6.2831853f;
+                const float elevation = glm::radians(8.0f + 32.0f * unit(cameras));
+                const float distance = 2.2f + 1.6f * unit(cameras);
+                view.look = glm::vec3(0.0f, 0.5f, 0.0f) + glm::vec3(jitter(cameras), jitter(cameras), jitter(cameras));
+                view.eye =
+                    view.look + distance * glm::vec3(std::sin(azimuth) * std::cos(elevation), std::sin(elevation),
+                                                     std::cos(azimuth) * std::cos(elevation));
+                view.eye.y = std::max(view.eye.y, 0.15f);
+                crate::setCamera(renderer.getCamera()->ubo, view.eye, view.look);
+                renderer.getCamera()->update(0);
+                const auto frame = crate::renderFrame(vc, renderer, graph, *target, 2 * sampleSize);
+                view.inputs =
+                    neural::photoEnhancerInputs(frame, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
+                std::vector<float> geometry(view.inputs.channels.begin() + 3 * pixels,
+                                            view.inputs.channels.begin() + 4 * pixels);
+                geometry.insert(geometry.end(), view.inputs.normals.begin(), view.inputs.normals.end());
+                view.inputs.channels = geometry;
+                view.inputs.normals.clear();
+                view.objects.resize(pixels);
+                for (size_t q = 0; q < pixels; ++q)
+                    view.objects[q] = view.inputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
+                bank.push_back(std::move(view));
+            }
+            std::cout << bank.size() << " random views for the GAN" << std::endl;
+        }
+        // The temporal loss's second views: each training view's (with --gan: each random view's) camera turned by the
+        // offset (alternately to either side) about the vertical through its look point, its sample as the model sees
+        // it (without the floor if the views have none), and the flow of its pixels onto the view from G-buffers with
+        // the floor.
+        std::vector<View>& temporalViews = gan ? bank : training;
         if (temporal > 0.0f) {
             if (latent == 0)
                 throw std::runtime_error("--temporal needs --latent");
@@ -391,8 +448,8 @@ int main(int argc, char** argv) {
                 return crate::readImage(vc, flowTarget->getImage(0), flowExtent);
             };
             const size_t pixels = size_t(sampleSize) * sampleSize;
-            for (size_t v = 0; v < training.size(); ++v) {
-                View& view = training[v];
+            for (size_t v = 0; v < temporalViews.size(); ++v) {
+                View& view = temporalViews[v];
                 const float angle = glm::radians(v % 2 == 0 ? temporalDelta : -temporalDelta);
                 const glm::vec3 offset = view.eye - view.look;
                 const glm::vec3 eye2 =
@@ -410,6 +467,7 @@ int main(int argc, char** argv) {
                                             view.secondInputs.channels.begin() + 4 * pixels);
                 geometry.insert(geometry.end(), view.secondInputs.normals.begin(), view.secondInputs.normals.end());
                 view.secondInputs.channels = geometry;
+                view.secondInputs.normals.clear();
                 view.secondObjects.resize(pixels);
                 for (size_t q = 0; q < pixels; ++q)
                     view.secondObjects[q] = view.secondInputs.classes[q] == float(tree::TREE_CLASS_STEM) ? 1.0f : 0.0f;
@@ -419,7 +477,7 @@ int main(int argc, char** argv) {
                 view.flowValid.assign(flow.valid.begin(), flow.valid.end());
             }
             double valid = 0.0, length = 0.0;
-            for (const auto& view : training)
+            for (const auto& view : temporalViews)
                 for (size_t p = 0; p < pixels; ++p)
                     if (view.flowValid[p] > 0.0f) {
                         valid += 1.0;
@@ -427,7 +485,8 @@ int main(int argc, char** argv) {
                                              view.flow[pixels + p] - float(size_t(p / sampleSize)) - 0.5f);
                     }
             std::printf("second views at %.1f degrees: %.1f %% of the pixels valid, flow %.2f px on average\n",
-                        temporalDelta, 100.0 * valid / double(training.size() * pixels), length / std::max(valid, 1.0));
+                        temporalDelta, 100.0 * valid / double(temporalViews.size() * pixels),
+                        length / std::max(valid, 1.0));
         }
         std::cout << training.size() << " training views, " << validation.size() << " validation views" << std::endl;
         if (training.empty())
@@ -464,8 +523,22 @@ int main(int argc, char** argv) {
         config.adversarial = adversarial;
         config.featureMatching = featureMatching;
         config.conditionalDiscriminator = !unconditional;
+        // The GAN without reconstruction: no encoder, no photo losses, the discriminator on inverse depth and image
+        // with the photos' own depth, DiffAugment in the generator step too.
+        if (gan) {
+            config.randomLatents = true;
+            config.l1 = config.colour = 0.0f;
+            config.perceptual = 0.0f;
+            config.featureMatching = 0.0f;
+            config.criticGBufferChannels = 1;
+            config.separateRealGBuffer = true;
+            config.augmentGeneratorStep = true;
+            if (config.adversarial <= 0.0f)
+                config.adversarial = 1.0f;
+        }
         config.criticScales = criticScales;
         config.discriminatorAdam.learningRate = discriminatorRate;
+        config.networkAdam.learningRate = networkRate;
         neural::PhotoEnhancerTraining trainer(vc, config);
         std::mt19937 rng(1);
         std::vector<std::string> fresh; // generator, texture and encoder parameters not taken from --init-from
@@ -511,11 +584,13 @@ int main(int argc, char** argv) {
         if (latent > 0) {
             auto encodeConfig = config;
             encodeConfig.forwardOnly = true;
-            encodeConfig.encodeLatents = true;
+            encodeConfig.encodeLatents = !gan;
+            encodeConfig.randomLatents = false;
             encodeConfig.batch = kLatentBatch;
             encodeConfig.size = sampleSize;
             encodeConfig.perceptual = encodeConfig.adversarial = 0.0f;
-            encodeRenderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, encodeConfig);
+            if (!gan)
+                encodeRenderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, encodeConfig);
             auto givenConfig = encodeConfig;
             givenConfig.encodeLatents = false;
             givenRenderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, givenConfig);
@@ -723,8 +798,20 @@ int main(int argc, char** argv) {
                klSum = 0.0, checkSum = 0.0, temporalSum = 0.0;
         auto started = std::chrono::steady_clock::now();
         for (uint32_t step = 1; step <= steps; ++step) {
-            const Batch batch = sampleBatch(training, batchSize, crop, rng);
-            trainer.setBatch(batch.channels, batch.coordinates, batch.classes, batch.photos, batch.rows);
+            // With --gan the generated views are random ones and the photos come with their own views' depth.
+            const Batch batch = sampleBatch(gan ? bank : training, batchSize, crop, rng);
+            if (gan) {
+                const Batch real = sampleBatch(training, batchSize, crop, rng);
+                trainer.setBatch(batch.channels, batch.coordinates, batch.classes, real.photos, batch.rows);
+                trainer.setRealGBuffer(real.channels);
+                std::normal_distribution<float> normal(0.0f, 1.0f);
+                std::vector<float> latents(batchSize * latent);
+                for (auto& v : latents)
+                    v = normal(rng);
+                trainer.setLatents(latents);
+            } else {
+                trainer.setBatch(batch.channels, batch.coordinates, batch.classes, batch.photos, batch.rows);
+            }
             if (latent > 0)
                 trainer.setObjects(batch.objects);
             if (temporal > 0.0f)
@@ -752,7 +839,7 @@ int main(int argc, char** argv) {
                     line << " check " << checkSum / 100.0;
                 if (temporal > 0.0f)
                     line << " temporal " << temporalSum / 100.0;
-                if (adversarial > 0.0f)
+                if (config.adversarial > 0.0f)
                     line << " d " << discriminatorSum / 100.0 << " adv " << adversarialSum / 100.0 << " fm "
                          << matchingSum / 100.0;
                 line << " (" << seconds << " s/step)";
@@ -776,6 +863,48 @@ int main(int argc, char** argv) {
             }
             if (step % every == 0 || step == steps) {
                 trainer.save((outDir / "parameters").string());
+                // --gan: 4 fixed random views, each with 4 fixed latents from N(0, 1), as samples_*.png (views in
+                // rows), and the samples' spread (mean L1 between the same view's renders with different latents).
+                if (gan) {
+                    givenRenderer->load((outDir / "parameters").string());
+                    std::vector<const View*> views;
+                    std::vector<float> latents;
+                    std::mt19937 sampler(42);
+                    std::normal_distribution<float> normal(0.0f, 1.0f);
+                    for (size_t row = 0; row < 4; ++row)
+                        for (size_t column = 0; column < 4; ++column) {
+                            views.push_back(&bank[(row * 97) % bank.size()]);
+                            for (uint32_t d = 0; d < latent; ++d)
+                                latents.push_back(normal(sampler));
+                        }
+                    // The same 4 latents in every row.
+                    for (size_t row = 1; row < 4; ++row)
+                        std::copy(latents.begin(), latents.begin() + 4 * latent, latents.begin() + row * 4 * latent);
+                    const auto images = renderLatent(views, &latents);
+                    const size_t pixels = size_t(sampleSize) * sampleSize;
+                    double spread = 0.0;
+                    for (size_t row = 0; row < 4; ++row)
+                        for (size_t column = 0; column + 1 < 4; ++column)
+                            for (size_t i = 0; i < 3 * pixels; ++i)
+                                spread += std::abs(images[(row * 4 + column) * 3 * pixels + i] -
+                                                   images[(row * 4 + column + 1) * 3 * pixels + i]);
+                    spread /= double(4 * 3 * 3 * pixels);
+                    std::ostringstream line;
+                    line << "validation step " << step << ": samples' spread " << spread;
+                    std::cout << line.str() << std::endl;
+                    log << line.str() << "\n";
+                    log.flush();
+                    std::vector<std::vector<float>> columns(4);
+                    for (size_t column = 0; column < 4; ++column)
+                        for (size_t row = 0; row < 4; ++row)
+                            columns[column].insert(columns[column].end(),
+                                                   images.begin() + (row * 4 + column) * 3 * pixels,
+                                                   images.begin() + (row * 4 + column + 1) * 3 * pixels);
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "samples_%06u.png", step);
+                    writeGrid(outDir / name, columns, 4);
+                    continue;
+                }
                 if (latent > 0 && !validation.empty()) {
                     encodeRenderer->load((outDir / "parameters").string());
                     givenRenderer->load((outDir / "parameters").string());

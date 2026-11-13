@@ -788,6 +788,8 @@ the held-out views are rendered with the codes' mean
 | `--sample-size S` | Size of the samples (default 256; the photos are averaged down to it) |
 | `--albedo F1,W1,F2,W2,...` | The albedo renderer instead: a multi-resolution albedo texture of residual blocks (block k: positional encoding of Fk octaves and the latent through two hidden layers of Wk channels), the decoder gives shading and background only (needs `--latent`) |
 | `--albedo-fade N` | Fade the albedo texture's blocks in one after the other over N steps each (default 0: all at once) |
+| `--gan` | The GAN without reconstruction instead: random views (`--gan-views N`, default 800) with random latents, a discriminator on inverse depth and image against the photos with their own views' depth, DiffAugment in both steps, no encoder, no photo losses (needs `--latent`; `--adversarial` defaults to 1); validation writes `samples_*.png` (4 views x 4 latents) |
+| `--gan-views N` | Random views rendered for `--gan` (default 800) |
 | `--evaluate DIR` | Instead of training, evaluate a saved latent model (its `parameters/`, with the options it was trained with): validation and training L1 with and without its texture's features, `<out>/evaluation.png` (photo, with, without) and `<out>/texture_features.png` |
 | `--texture-mlp F W K` | The latent-conditioned MLP texture instead: positional encoding of F octaves per surface coordinate and the crate's latent through two hidden layers of W channels to K features (needs `--latent`) |
 | `--texture-dense N R` | A plain dense texture instead: N components (1-4, or a multiple of 4 up to 64) per point at R cells per axis, indexed directly; `--texture-dense 0 0` trains without a texture |
@@ -802,6 +804,7 @@ the held-out views are rendered with the codes' mean
 | `--unconditional` | The discriminator sees the image only, not the G-buffer with it |
 | `--critic-scales N` | Scales of the PatchGAN, each at half the previous resolution (default 2; the coarsest needs 24 pixels) |
 | `--discriminator-lr R` | The discriminator's Adam learning rate (default 0.0002) |
+| `--lr R` | The generator's (and encoder's) Adam learning rate (default 0.0001) |
 | `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/`: every parameter of the same shape; a shallower U-Net's up blocks become the last ones (the deeper levels start fresh) |
 | `--widths a,b,...` | Channels of the generator's U-Net levels, each at half the previous resolution (default 32,64,128) |
 | `--no-floor` | The crate without a floor (as `crate_gbuffer_example --no-floor`) |
