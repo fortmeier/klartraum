@@ -25,6 +25,8 @@
  * - composeMatchesPyTorch: the albedo renderer's image (mask x sigmoid(albedo) x 2 sigmoid(shading) + (1 - mask) x
  *   sigmoid(background)) and its gradients for the albedo's logit and the decoder's 4 outputs equal
  *   latent_renderer.compose()'s
+ * - augmentPairBackwardMatchesPyTorch: DiffAugment of discriminator pairs (brightness, contrast, rolls both ways,
+ *   cutouts inside and at the border) and its input gradient equal augment_with()'s and autograd's
  * - linearMatchesPyTorch: a linear layer's output (with an offset) and its input (also accumulating), weight and
  *   bias gradients equal nn.Linear's
  * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
@@ -61,6 +63,10 @@
  *   (residual blocks of 1, 2 and 3 octaves, weighted 1, 0.5, 0.25), the decoder on geometry and latents giving shading
  *   and background, compose(): image, losses, every clipped gradient and every parameter after the step equal
  *   latent_renderer.AlbedoRenderer's
+ * - ganOnlyStepTrains: the latent renderer as a GAN without reconstruction: no encoder parameters, latents given,
+ *   the discriminator sees inverse depth and image (4 input channels) with the real photos' own G-buffer, DiffAugment
+ *   in the generator step too; it starts at the untrained discriminator's loss, keeps the losses finite and the
+ *   adversarial loss alone changes the image
  * - latentGanStepTrains: the latent-conditioned renderer with free bits and the 2-scale PatchGAN, from PyTorch's
  *   renderer and a fresh discriminator on its batch upsampled to 64 x 64, starts at the untrained discriminator's loss
  * (about 4 ln 2), keeps all losses finite over 30 steps on one batch, lowers the photometric loss and counts the KL at
@@ -521,6 +527,34 @@ TEST(PhotoEnhancerTraining, composeMatchesPyTorch) {
     EXPECT_LT(relativeError(read(image), fixture.values("image")), 1e-5f);
     EXPECT_LT(relativeError(read(dalbedo), fixture.values("dalbedo_logit")), 1e-5f);
     EXPECT_LT(relativeError(read(dlogits), fixture.values("dlogits")), 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, augmentPairBackwardMatchesPyTorch) {
+    const Fixture fixture("augment_backward");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("pair");
+    auto pair = tensor(vc, shape), numbers = tensor(vc, fixture.shapes.at("parameters"));
+    auto augmented = tensor(vc, shape), daugmented = tensor(vc, shape), dpair = tensor(vc, shape);
+    auto forward = training::augmentPair(vc, shape);
+    forward->setInput(pair, 0);
+    forward->setInput(numbers, 1);
+    forward->setInput(augmented, 2);
+    auto backward = training::augmentPairBackward(vc, shape);
+    backward->setInput(numbers, 0);
+    backward->setInput(daugmented, 1);
+    backward->setInput(dpair, 2);
+    backward->addDependency(forward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    pair->getDataBuffer(0).memcopyFrom(fixture.values("pair"));
+    numbers->getDataBuffer(0).memcopyFrom(fixture.values("parameters"));
+    daugmented->getDataBuffer(0).memcopyFrom(fixture.values("daugmented"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(augmented), fixture.values("augmented")), 1e-5f);
+    EXPECT_LT(relativeError(read(dpair), fixture.values("dpair")), 1e-5f);
 }
 
 TEST(PhotoEnhancerTraining, linearMatchesPyTorch) {
@@ -1229,4 +1263,78 @@ TEST(PhotoEnhancerTraining, latentUnconditionalGanStepTrains) {
     if (!fixture.exists())
         GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
     expectLatentGanTrains(fixture, false, 3, 3);
+}
+
+TEST(PhotoEnhancerTraining, ganOnlyStepTrains) {
+    const Fixture fixture("latent_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    neural::PhotoEnhancerTrainingConfig config;
+    config.batch = 2;
+    config.size = 64;
+    config.widths = {32, 64, 128};
+    config.gbufferChannels = 4;
+    config.texture = neural::HashTextureShape::fromFile(kFixtures + "latent_step_texture.txt");
+    config.latentSize = 4;
+    config.latentObjects = 1;
+    config.randomLatents = true;
+    config.l1 = config.colour = 0.0f;
+    config.adversarial = 1.0f;
+    config.featureMatching = 0.0f;
+    config.criticGBufferChannels = 1;
+    config.separateRealGBuffer = true;
+    config.augmentGeneratorStep = true;
+    neural::PhotoEnhancerTraining trainer(vc, config);
+    const auto names = trainer.parameterNames();
+    EXPECT_EQ(
+        std::count_if(names.begin(), names.end(), [](const std::string& n) { return n.rfind("encoder.", 0) == 0; }), 0);
+    // The discriminator sees the inverse depth and the image.
+    EXPECT_EQ(trainer.parameter("discriminator.discriminators.0.layers.0.0.weight")->getDataElementCount(),
+              64u * (1u + 3u) * 16u);
+    std::mt19937 rng(3);
+    std::normal_distribution<float> normal(0.0f, 0.02f);
+    for (const auto& parameter : names) {
+        if (parameter.rfind("discriminator.", 0) != 0) {
+            trainer.setParameter(parameter, fixture.values("before." + parameter));
+            continue;
+        }
+        std::vector<float> values(trainer.parameter(parameter)->getDataElementCount(), 0.0f);
+        if (parameter.find("weight") != std::string::npos)
+            for (auto& v : values)
+                v = normal(rng);
+        trainer.setParameter(parameter, values);
+    }
+    const auto upsample = [](const std::vector<float>& planes) {
+        std::vector<float> result(planes.size() * 4);
+        for (size_t plane = 0; plane < planes.size() / (32 * 32); ++plane)
+            for (size_t y = 0; y < 64; ++y)
+                for (size_t x = 0; x < 64; ++x)
+                    result[plane * 64 * 64 + y * 64 + x] = planes[plane * 32 * 32 + (y / 2) * 32 + x / 2];
+        return result;
+    };
+    // The generated views and the real photos come with different G-buffers (here: the batch's samples swapped).
+    const auto geometry = upsample(fixture.values("geometry"));
+    std::vector<float> swapped(geometry.begin() + geometry.size() / 2, geometry.end());
+    swapped.insert(swapped.end(), geometry.begin(), geometry.begin() + geometry.size() / 2);
+    trainer.setBatch(geometry, upsample(fixture.values("coordinates")), upsample(fixture.values("classes")),
+                     upsample(fixture.values("photos")), {});
+    trainer.setObjects(upsample(fixture.values("objects")));
+    trainer.setRealGBuffer(swapped);
+    std::normal_distribution<float> unit(0.0f, 1.0f);
+    std::vector<float> latents(2 * 4);
+    for (auto& v : latents)
+        v = unit(rng);
+    trainer.setLatents(latents);
+    trainer.step();
+    const auto first = trainer.image();
+    EXPECT_NEAR(trainer.discriminatorLoss(), 2.0f * 2.0f * std::log(2.0f), 0.1f);
+    EXPECT_EQ(trainer.klLoss(), 0.0f);
+    for (int step = 0; step < 20; ++step)
+        trainer.step();
+    for (const float value : {trainer.discriminatorLoss(), trainer.adversarialLoss()})
+        EXPECT_TRUE(std::isfinite(value));
+    // Only the adversarial loss trains the generator, so its image changes.
+    EXPECT_GT(relativeError(trainer.image(), first), 1e-3f);
 }

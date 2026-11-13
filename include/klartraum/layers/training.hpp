@@ -314,6 +314,13 @@ ComputeGraphElementPtr channelAffine(VulkanContext& vulkanContext, const layers:
 ComputeGraphElementPtr augmentPair(VulkanContext& vulkanContext, const layers::Shape& shape);
 
 /**
+ * @brief The input gradient of augmentPair() from its output's, written.
+ *
+ * Slots: 0 numbers (N x 6), 1 output gradient, 2 input gradient (N x C x H x W).
+ */
+ComputeGraphElementPtr augmentPairBackward(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
  * @brief A 2 x 2 average pool with stride 2 of an N x C x H x W tensor.
  *
  * Slots: 0 input, 1 output (N x C x H/2 x W/2).

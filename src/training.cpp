@@ -449,6 +449,17 @@ ComputeGraphElementPtr augmentPair(VulkanContext& vulkanContext, const layers::S
     return operation;
 }
 
+ComputeGraphElementPtr augmentPairBackward(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    if (shape.size() != 4 || shape[1] < 3)
+        throw std::invalid_argument("augmentPairBackward: needs N x C x H x W pairs with an image in the last three "
+                                    "channels");
+    auto operation = vulkanContext.create<GeneralComputation<AugmentPushConstants>>(
+        "shaders/training/augment_pair_backward.comp.spv");
+    operation->setPushConstants({{shape[0], shape[1], shape[2], shape[3]}});
+    operation->setGroupCountX((layers::elementCount(shape) + 255) / 256);
+    return operation;
+}
+
 ComputeGraphElementPtr averagePool(VulkanContext& vulkanContext, const layers::Shape& input) {
     const auto [n, c, pixels] = planesOf(input);
     auto operation =

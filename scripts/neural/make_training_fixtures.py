@@ -281,6 +281,20 @@ def augment_with(pair: torch.Tensor, parameters: torch.Tensor) -> torch.Tensor:
     return torch.cat(out)
 
 
+def augment_backward_case(out: Path, seed: int) -> None:
+    """augment_with() and its input gradient by autograd: pairs of 2 G-buffer channels and an image, a positive and a
+    negative roll, cutouts in the middle and at the border."""
+    generator = torch.Generator().manual_seed(seed)
+    pair = torch.rand(3, 5, 12, 16, generator=generator, requires_grad=True)
+    parameters = torch.tensor([[0.1, 1.3, 2.0, -3.0, 5.0, 7.0], [-0.15, 0.6, -1.0, 4.0, 0.0, 15.0],
+                               [0.0, 1.0, 0.0, 0.0, 11.0, 2.0]])
+    augmented = augment_with(pair, parameters)
+    gradient = torch.randn(augmented.shape, generator=generator)
+    (augmented * gradient).sum().backward()
+    save(out, "augment_backward", {"pair": pair, "parameters": parameters, "augmented": augmented,
+                                   "daugmented": gradient, "dpair": pair.grad})
+
+
 def gan_step_case(out: Path, seed: int) -> None:
     """One adversarial training step as train_photo_enhancer.py takes it, on 64 x 64 crops: the discriminator's step
     on the augmented real and fake pairs (non-saturating loss, Adam lr 2e-4), then the generator's with the
@@ -764,6 +778,7 @@ def main() -> None:
     mlp_texture_cases(args.out, 21)
     mlp_texture_cases(args.out, 21, perceptual=False, case="mlp_texture_step_l1")
     albedo_cases(args.out, 22)
+    augment_backward_case(args.out, 23)
     print(f"fixtures in {args.out}")
 
 

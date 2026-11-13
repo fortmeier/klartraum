@@ -25,7 +25,10 @@ constexpr uint32_t kCriticStrides[4] = {2, 2, 2, 1};
 
 // The G-buffer channels the discriminator sees in front of the image's three.
 uint32_t criticConditioning(const PhotoEnhancerTrainingConfig& config) {
-    return config.conditionalDiscriminator ? config.gbufferChannels : 0u;
+    if (!config.conditionalDiscriminator)
+        return 0u;
+    return config.criticGBufferChannels > 0 ? std::min(config.criticGBufferChannels, config.gbufferChannels)
+                                            : config.gbufferChannels;
 }
 
 layers::ConvAttributes convAttributes(uint32_t kernel, uint32_t stride) {
@@ -180,7 +183,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     addParameter("generator.out.weight", {albedo ? 4u : 3u, w[0], 1, 1}, Network);
     addParameter("generator.out.bias", {albedo ? 4u : 3u}, Network);
     // The encoder, unless the latents are given.
-    if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents)) {
+    if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents) && !config.randomLatents) {
         uint32_t previous = 3;
         for (size_t i = 0; i < config.encoderWidths.size(); ++i) {
             const std::string conv = "encoder.body." + std::to_string(3 * i) + ".";
@@ -250,7 +253,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         objects = tensor({b, s, s});
         counts = tensor({b, k});
         latentValues = tensor({b, k, d});
-        if (!config.forwardOnly || config.encodeLatents)
+        if ((!config.forwardOnly || config.encodeLatents) && !config.randomLatents)
             buildEncoder();
         auto splat = training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn,
                                                kGBufferChannels + features);
@@ -371,7 +374,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         mlpInputGradient = backwardTextureMlp(mainMlp, blocks[0].dIn);
     if (albedo)
         albedoInputGradients = backwardAlbedoTexture(*mainAlbedo);
-    if (config.latentSize > 0)
+    if (config.latentSize > 0 && !config.randomLatents)
         buildEncoderBackward();
     if (config.latentCheck > 0.0f)
         buildLatentCheck();
@@ -935,11 +938,13 @@ void PhotoEnhancerTraining::buildDiscriminator() {
     auto realPairs = tensor({b, c, s, s}), fakePairs = tensor({b, c, s, s});
     auto allPairs = tensor({2 * b, c, s, s}), augmented = tensor({2 * b, c, s, s});
     augmentation = tensor({2 * b, 6});
+    if (config.separateRealGBuffer)
+        realChannels = tensor({b, config.gbufferChannels, s, s});
     for (const auto& [pairs, image] : {std::pair{realPairs, targets}, std::pair{fakePairs, output}}) {
         if (conditioning > 0) {
-            auto gbuffers = training::channelCopy(vulkanContext, b, pixels, {config.gbufferChannels, 0}, {c, 0},
-                                                  config.gbufferChannels);
-            gbuffers->setInput(channels, 0);
+            auto gbuffers =
+                training::channelCopy(vulkanContext, b, pixels, {config.gbufferChannels, 0}, {c, 0}, conditioning);
+            gbuffers->setInput(pairs == realPairs && realChannels ? realChannels : channels, 0);
             gbuffers->setInput(pairs, 1);
             add(gbuffers);
         }
@@ -1002,14 +1007,30 @@ void PhotoEnhancerTraining::buildDiscriminator() {
 
     // The generator's adversarial loss and feature matching against the updated discriminator, on the pairs as they
     // are: its gradient joins the image's.
-    critics.push_back(std::make_unique<Critic>());
-    Critic& real = *critics.back();
-    real.batch = b;
-    forwardCritic(real, realPairs);
+    // Feature matching compares with the real pairs' features; it needs real and generated images of the same views.
+    const bool matching = config.featureMatching > 0.0f;
+    Critic* real = nullptr;
+    if (matching) {
+        critics.push_back(std::make_unique<Critic>());
+        real = critics.back().get();
+        real->batch = b;
+        forwardCritic(*real, realPairs);
+    }
+    // With augmentGeneratorStep the generated pairs are augmented as in the discriminator's step.
+    auto judged = fakePairs;
+    if (config.augmentGeneratorStep) {
+        generatorAugmentation = tensor({b, 6});
+        judged = tensor({b, c, s, s});
+        auto augmentFake = training::augmentPair(vulkanContext, {b, c, s, s});
+        augmentFake->setInput(fakePairs, 0);
+        augmentFake->setInput(generatorAugmentation, 1);
+        augmentFake->setInput(judged, 2);
+        add(augmentFake);
+    }
     critics.push_back(std::make_unique<Critic>());
     Critic& fake = *critics.back();
     fake.batch = b;
-    forwardCritic(fake, fakePairs);
+    forwardCritic(fake, judged);
     for (auto& scale : fake.scales) {
         const uint32_t count = b * scale.sizes.back() * scale.sizes.back();
         auto shares = tensor({count});
@@ -1026,13 +1047,13 @@ void PhotoEnhancerTraining::buildDiscriminator() {
         add(total);
     }
     auto pairGradient = tensor({b, c, s, s});
-    backwardCritic(fake, false, pairGradient, [&](Critic& critic, size_t scaleIndex, size_t layer) {
+    const auto featureGradient = [&](Critic& critic, size_t scaleIndex, size_t layer) {
         auto& scale = critic.scales[scaleIndex];
         const uint32_t count = uint32_t(scale.activated[layer]->getDataElementCount());
         auto shares = tensor({count});
         auto distance = training::l1Distance(vulkanContext, count, config.featureMatching / 4.0f, true);
         distance->setInput(scale.activated[layer], 0);
-        distance->setInput(real.scales[scaleIndex].activated[layer], 1);
+        distance->setInput(real->scales[scaleIndex].activated[layer], 1);
         distance->setInput(scale.activatedGradient[layer], 2);
         distance->setInput(shares, 3);
         add(distance);
@@ -1041,7 +1062,19 @@ void PhotoEnhancerTraining::buildDiscriminator() {
         total->setInput(shares, 0);
         total->setInput(matchingTotals.back(), 1);
         add(total);
-    });
+    };
+    backwardCritic(fake, false, pairGradient,
+                   matching ? std::function<void(Critic&, size_t, size_t)>(featureGradient)
+                            : std::function<void(Critic&, size_t, size_t)>());
+    if (config.augmentGeneratorStep) {
+        auto unaugmented = tensor({b, c, s, s});
+        auto back = training::augmentPairBackward(vulkanContext, {b, c, s, s});
+        back->setInput(generatorAugmentation, 0);
+        back->setInput(pairGradient, 1);
+        back->setInput(unaugmented, 2);
+        add(back);
+        pairGradient = unaugmented;
+    }
     auto colour = training::channelCopy(vulkanContext, b, pixels, {c, conditioning}, {3, 0}, 3, true);
     colour->setInput(pairGradient, 0);
     colour->setInput(outputGradient, 1);
@@ -1227,6 +1260,13 @@ void PhotoEnhancerTraining::setLatents(const std::vector<float>& values) {
     if (!latentValues || latentNoise)
         throw std::logic_error("PhotoEnhancerTraining: latents are given only forward only without the encoder");
     latentValues->getDataBuffer(0).memcopyFrom(values);
+}
+
+void PhotoEnhancerTraining::setRealGBuffer(const std::vector<float>& values) {
+    if (!realChannels)
+        throw std::logic_error(
+            "PhotoEnhancerTraining: a real G-buffer needs separateRealGBuffer and the discriminator");
+    realChannels->getDataBuffer(0).memcopyFrom(values);
 }
 
 void PhotoEnhancerTraining::setLatentNoise(const std::vector<float>& noise) {
@@ -1943,6 +1983,11 @@ void PhotoEnhancerTraining::step() {
     ++stepsTaken;
     if (augmentation && !augmentationGiven)
         augmentation->getDataBuffer(0).memcopyFrom(randomAugmentation());
+    if (generatorAugmentation) {
+        auto numbers = randomAugmentation();
+        numbers.resize(config.batch * 6);
+        generatorAugmentation->getDataBuffer(0).memcopyFrom(numbers);
+    }
     augmentationGiven = false;
     graph->submitAndWait(vulkanContext.getGraphicsQueue(), 0);
 }
