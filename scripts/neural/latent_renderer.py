@@ -80,8 +80,52 @@ class LatentRenderer(nn.Module):
         return pooled[..., :self.latent], pooled[..., self.latent:], counts
 
     def forward(self, geometry, coordinates, classes, objects, latents):
-        x = torch.cat([geometry, self.texture(coordinates, classes), splat(latents, objects)], dim=1)
+        latent_gbuffer = splat(latents, objects)
+        if getattr(self.texture, "conditioned", False):
+            features = self.texture(coordinates, classes, latent_gbuffer)
+        else:
+            features = self.texture(coordinates, classes)
+        x = torch.cat([geometry, features, latent_gbuffer], dim=1)
         return self.generator(x)
+
+
+def positional_encoding(coordinates: torch.Tensor, classes: torch.Tensor, frequencies: int,
+                        texture_classes: tuple[int, ...]) -> torch.Tensor:
+    """coordinates [N, 3, H, W] (u, v, id in [0, 1]) -> [N, 3 (2 F + 1), H, W]: per coordinate c and frequency
+    f < F the pair sin(2^f pi x_c), cos(2^f pi x_c), then the three raw coordinates; zero where the pixel's class
+    has no texture."""
+    channels = []
+    for c in range(3):
+        for f in range(frequencies):
+            angle = (2.0 ** f) * torch.pi * coordinates[:, c]
+            channels += [torch.sin(angle), torch.cos(angle)]
+    channels += [coordinates[:, c] for c in range(3)]
+    mask = torch.zeros_like(classes, dtype=coordinates.dtype)
+    for texture_class in texture_classes:
+        mask = mask + (classes == texture_class).to(coordinates.dtype)
+    return torch.stack(channels, dim=1) * mask[:, None]
+
+
+class MlpTexture(nn.Module):
+    """The latent-conditioned texture: a per-pixel MLP (1 x 1 convolutions with ELU) from the positional encoding of
+    the surface coordinates and the latent G-buffer to `outputs` texture features."""
+
+    conditioned = True
+
+    def __init__(self, latent: int, frequencies: int = 6, width: int = 32, hidden: int = 2, outputs: int = 8,
+                 classes: tuple[int, ...] = (3,)):
+        super().__init__()
+        self.frequencies, self.classes, self.channels = frequencies, classes, outputs
+        layers, previous = [], 3 * (2 * frequencies + 1) + latent
+        for _ in range(hidden):
+            layers += [nn.Conv2d(previous, width, 1), nn.ELU()]
+            previous = width
+        layers.append(nn.Conv2d(previous, outputs, 1))
+        self.mlp = nn.Sequential(*layers)
+
+    def forward(self, coordinates, classes, latent_gbuffer):
+        encoding = positional_encoding(coordinates, classes, self.frequencies, self.classes)
+        return self.mlp(torch.cat([encoding, latent_gbuffer], dim=1))
 
 
 def kl_divergence(mu: torch.Tensor, log_variance: torch.Tensor, counts: torch.Tensor,

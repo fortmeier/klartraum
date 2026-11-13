@@ -87,7 +87,11 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     const uint32_t kGBufferChannels = config.gbufferChannels;
     this->config.texture.outputOffset = kGBufferChannels;
     const HashTextureShape& shape = this->config.texture;
-    const uint32_t features = shape.levels * shape.features;
+    const bool mlp = config.textureMlp.frequencies > 0;
+    if (mlp && (config.latentSize == 0 || shape.levels > 0 || shape.classes.empty() || shape.classes.size() > 4))
+        throw std::invalid_argument(
+            "PhotoEnhancerTraining: the MLP texture needs latents, a texture of no levels and 1 to 4 classes");
+    const uint32_t features = textureFeatures();
     const uint32_t channelsIn = kGBufferChannels + features + config.latentSize;
     this->config.texture.outputChannels = channelsIn;
     const bool film = config.appearances > 0;
@@ -99,6 +103,17 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     if (textured)
         addParameter("texture.table", {uint32_t(shape.classes.size()), shape.levels, shape.tableSize, shape.features},
                      Texture);
+    if (mlp) {
+        const auto& t = config.textureMlp;
+        uint32_t previous = 3 * (2 * t.frequencies + 1) + config.latentSize;
+        for (uint32_t layer = 0; layer <= t.hidden; ++layer) {
+            const uint32_t next = layer == t.hidden ? t.outputs : t.width;
+            const std::string name = "generator.texture." + std::to_string(2 * layer) + ".";
+            addParameter(name + "weight", {next, previous, 1, 1}, Network);
+            addParameter(name + "bias", {next}, Network);
+            previous = next;
+        }
+    }
     const auto addBlock = [&](const std::string& prefix, uint32_t cin, uint32_t cout, uint32_t sizeIn,
                               uint32_t stride) {
         addParameter(prefix + "0.weight", {cout, cin, 3, 3}, Network);
@@ -214,6 +229,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         splat->setInput(counts, 2);
         splat->setInput(input, 3);
         add(splat);
+        if (mlp)
+            mainMlp = forwardTextureMlp(coordinates, classes, input);
     }
     // FiLM: the codes through the MLP.
     const uint32_t d = config.appearanceSize, hiddenSize = config.filmHidden;
@@ -317,6 +334,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         texture->setInput(table.gradient, 3);
         add(texture);
     }
+    if (mlp)
+        mlpInputGradient = backwardTextureMlp(mainMlp, blocks[0].dIn);
     if (config.latentSize > 0)
         buildEncoderBackward();
     if (config.latentCheck > 0.0f)
@@ -585,7 +604,7 @@ PhotoEnhancerTraining::backwardEncoderInput(std::vector<EncoderLayer>& layers,
 
 void PhotoEnhancerTraining::buildLatentCheck() {
     const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
-    const uint32_t gbuffer = config.gbufferChannels, features = config.texture.levels * config.texture.features;
+    const uint32_t gbuffer = config.gbufferChannels, features = textureFeatures();
     const uint32_t channelsIn = gbuffer + features + d, size = s >> config.encoderWidths.size(), step = s / size;
     // The targets: view i's latents are view permutation[i]'s sampled ones.
     latentPermutation = tensor({b});
@@ -608,6 +627,9 @@ void PhotoEnhancerTraining::buildLatentCheck() {
     splat->setInput(counts, 2);
     splat->setInput(input2, 3);
     add(splat);
+    const bool mlp = config.textureMlp.frequencies > 0;
+    if (mlp)
+        checkMlp = forwardTextureMlp(coordinates, classes, input2);
     checkBlocks = blocks;
     auto [x2, logits2, output2] = forwardGenerator(checkBlocks, input2);
     // The fixed encoder on them, its means per object against the targets.
@@ -655,14 +677,14 @@ void PhotoEnhancerTraining::buildLatentCheck() {
     add(spread);
     auto outputGradient2 = backwardEncoderInput(checkEncoderLayers, statisticsGradient2);
     // The permuted latents are targets, so their gradient ends here.
-    backwardSecondPass(checkBlocks, x2, logits2, outputGradient2, coordinates, classes);
+    backwardSecondPass(checkBlocks, x2, logits2, outputGradient2, coordinates, classes, mlp ? &checkMlp : nullptr);
 }
 
 void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, std::shared_ptr<TensorElement<float>> x,
                                                std::shared_ptr<TensorElement<float>> passLogits,
                                                std::shared_ptr<TensorElement<float>> passOutputGradient,
                                                std::shared_ptr<TensorElement<float>> passCoordinates,
-                                               std::shared_ptr<TensorElement<float>> passClasses) {
+                                               std::shared_ptr<TensorElement<float>> passClasses, MlpPass* passMlp) {
     const uint32_t b = config.batch, s = config.size;
     std::vector<std::string> redirected;
     for (const auto& parameter : parameters)
@@ -680,6 +702,9 @@ void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, s
         texture->setInput(find("texture.table").gradient, 3);
         add(texture);
     }
+    // The MLP texture's gradients (redirected as the generator's); the latents' end here.
+    if (passMlp)
+        backwardTextureMlp(*passMlp, passBlocks[0].dIn);
     for (const auto& name : redirected) {
         const uint32_t count = uint32_t(find(name).gradient->getDataElementCount());
         auto accumulate = training::channelCopy(vulkanContext, 1, count, {1, 0}, {1, 0}, 1, true);
@@ -692,7 +717,7 @@ void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, s
 
 void PhotoEnhancerTraining::buildTemporal() {
     const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
-    const uint32_t gbuffer = config.gbufferChannels, features = config.texture.levels * config.texture.features;
+    const uint32_t gbuffer = config.gbufferChannels, features = textureFeatures();
     const uint32_t channelsIn = gbuffer + features + d;
     // The second views' G-buffers, texture features and latent G-buffer (the same latents).
     channels2 = tensor({b, gbuffer, s, s});
@@ -721,6 +746,9 @@ void PhotoEnhancerTraining::buildTemporal() {
     splat->setInput(counts, 2);
     splat->setInput(input2, 3);
     add(splat);
+    const bool mlp = config.textureMlp.frequencies > 0;
+    if (mlp)
+        temporalMlp = forwardTextureMlp(coordinates2, classes2, input2);
     temporalBlocks = blocks;
     auto [x2, logits2, output2] = forwardGenerator(temporalBlocks, input2);
     // The first render warped onto the second views against their renders.
@@ -739,12 +767,13 @@ void PhotoEnhancerTraining::buildTemporal() {
     total->setInput(temporalTotal, 1);
     add(total);
     // The latents' gradient from the second pass ends here.
-    backwardSecondPass(temporalBlocks, x2, logits2, outputGradient2, coordinates2, classes2);
+    backwardSecondPass(temporalBlocks, x2, logits2, outputGradient2, coordinates2, classes2,
+                       mlp ? &temporalMlp : nullptr);
 }
 
 void PhotoEnhancerTraining::buildEncoderBackward() {
     const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
-    const uint32_t gbuffer = config.gbufferChannels, features = config.texture.levels * config.texture.features;
+    const uint32_t gbuffer = config.gbufferChannels, features = textureFeatures();
     const uint32_t channelsIn = gbuffer + features + d;
     // The latent G-buffer's gradient, summed per object, through the VAE to the per-object statistics, spread evenly
     // over each object's pixels of the head's output.
@@ -753,6 +782,14 @@ void PhotoEnhancerTraining::buildEncoderBackward() {
     slice->setInput(blocks[0].dIn, 0);
     slice->setInput(latentGBufferGradient, 1);
     add(slice);
+    // The latents also feed the MLP texture: its input gradient's latent channels add to the latent G-buffer's.
+    if (mlpInputGradient) {
+        const uint32_t encoding = 3 * (2 * config.textureMlp.frequencies + 1);
+        auto add = training::channelCopy(vulkanContext, b, s * s, {encoding + d, encoding}, {d, 0}, d, true);
+        add->setInput(mlpInputGradient, 0);
+        add->setInput(latentGBufferGradient, 1);
+        this->add(add);
+    }
     latentGradient = tensor({b, k, d});
     latentSums = tensor({b, k});
     auto gather = training::objectMean(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, false);
@@ -1164,7 +1201,7 @@ void PhotoEnhancerTraining::setSecondView(const std::vector<float>& channelValue
     if (!flow)
         throw std::logic_error("PhotoEnhancerTraining: second views need the temporal loss");
     channels2->getDataBuffer(0).memcopyFrom(channelValues);
-    if (config.texture.levels > 0) {
+    if (config.texture.levels > 0 || config.textureMlp.frequencies > 0) {
         coordinates2->getDataBuffer(0).memcopyFrom(coordinateValues);
         classes2->getDataBuffer(0).memcopyFrom(classValues);
     }
@@ -1398,6 +1435,125 @@ std::shared_ptr<TensorElement<float>> PhotoEnhancerTraining::gradientOf(const st
     return redirected != gradientRedirect.end() ? redirected->second : find(name).gradient;
 }
 
+TextureMlp TextureMlp::fromFile(const std::string& path) {
+    TextureMlp mlp;
+    std::ifstream file(path);
+    for (std::string line; std::getline(file, line);) {
+        std::istringstream words(line);
+        std::string key;
+        if (words >> key && key == "mlp")
+            words >> mlp.frequencies >> mlp.width >> mlp.outputs >> mlp.hidden;
+    }
+    return mlp;
+}
+
+uint32_t PhotoEnhancerTraining::textureFeatures() const {
+    return config.textureMlp.frequencies > 0 ? config.textureMlp.outputs
+                                             : config.texture.levels * config.texture.features;
+}
+
+PhotoEnhancerTraining::MlpPass
+PhotoEnhancerTraining::forwardTextureMlp(std::shared_ptr<TensorElement<float>> passCoordinates,
+                                         std::shared_ptr<TensorElement<float>> passClasses,
+                                         std::shared_ptr<TensorElement<float>> generatorInput) {
+    const uint32_t b = config.batch, s = config.size, d = config.latentSize, gbuffer = config.gbufferChannels;
+    const auto& t = config.textureMlp;
+    const uint32_t encoding = 3 * (2 * t.frequencies + 1), channelsIn = gbuffer + t.outputs + d;
+    MlpPass pass;
+    pass.encoding = tensor({b, encoding, s, s});
+    auto encode = training::positionalEncoding(vulkanContext, b, s * s, t.frequencies, config.texture.classes);
+    encode->setInput(passCoordinates, 0);
+    encode->setInput(passClasses, 1);
+    encode->setInput(pass.encoding, 2);
+    add(encode);
+    pass.in = tensor({b, encoding + d, s, s});
+    auto first = training::channelCopy(vulkanContext, b, s * s, {encoding, 0}, {encoding + d, 0}, encoding);
+    first->setInput(pass.encoding, 0);
+    first->setInput(pass.in, 1);
+    add(first);
+    auto latents =
+        training::channelCopy(vulkanContext, b, s * s, {channelsIn, gbuffer + t.outputs}, {encoding + d, encoding}, d);
+    latents->setInput(generatorInput, 0);
+    latents->setInput(pass.in, 1);
+    add(latents);
+    auto x = pass.in;
+    uint32_t previous = encoding + d;
+    for (uint32_t layer = 0; layer <= t.hidden; ++layer) {
+        const uint32_t next = layer == t.hidden ? t.outputs : t.width;
+        const std::string name = "generator.texture." + std::to_string(2 * layer) + ".";
+        auto y = tensor({b, next, s, s});
+        auto conv = layers::conv(vulkanContext, convAttributes(1, 1), {b, previous, s, s}, {next, previous, 1, 1},
+                                 {next}, {b, next, s, s});
+        conv->setInput(x, 0);
+        conv->setInput(find(name + "weight").value, 1);
+        conv->setInput(find(name + "bias").value, 2);
+        conv->setInput(y, 3);
+        add(conv);
+        pass.pre.push_back(y);
+        if (layer < t.hidden) {
+            auto activated = tensor({b, next, s, s});
+            auto elu = layers::elu(vulkanContext, {b, next, s, s}, 1.0f);
+            elu->setInput(y, 0);
+            elu->setInput(activated, 1);
+            add(elu);
+            pass.activated.push_back(activated);
+            x = activated;
+        }
+        previous = next;
+    }
+    auto out = training::channelCopy(vulkanContext, b, s * s, {t.outputs, 0}, {channelsIn, gbuffer}, t.outputs);
+    out->setInput(pass.pre.back(), 0);
+    out->setInput(generatorInput, 1);
+    add(out);
+    return pass;
+}
+
+std::shared_ptr<TensorElement<float>>
+PhotoEnhancerTraining::backwardTextureMlp(MlpPass& pass, std::shared_ptr<TensorElement<float>> generatorInputGradient) {
+    const uint32_t b = config.batch, s = config.size, d = config.latentSize, gbuffer = config.gbufferChannels;
+    const auto& t = config.textureMlp;
+    const uint32_t encoding = 3 * (2 * t.frequencies + 1), channelsIn = gbuffer + t.outputs + d;
+    auto gradient = tensor({b, t.outputs, s, s});
+    auto slice = training::channelCopy(vulkanContext, b, s * s, {channelsIn, gbuffer}, {t.outputs, 0}, t.outputs);
+    slice->setInput(generatorInputGradient, 0);
+    slice->setInput(gradient, 1);
+    add(slice);
+    std::shared_ptr<TensorElement<float>> inputGradient;
+    for (int layer = int(t.hidden); layer >= 0; --layer) {
+        const uint32_t next = uint32_t(layer) == t.hidden ? t.outputs : t.width;
+        const uint32_t previous = layer == 0 ? encoding + d : t.width;
+        const std::string name = "generator.texture." + std::to_string(2 * layer) + ".";
+        const auto attributes = convAttributes(1, 1);
+        const std::vector<uint32_t> inShape{b, previous, s, s}, weightShape{next, previous, 1, 1},
+            outShape{b, next, s, s};
+        auto x = layer == 0 ? pass.in : pass.activated[size_t(layer) - 1];
+        auto weights = training::convBackwardWeights(vulkanContext, attributes, inShape, weightShape, outShape);
+        weights->setInput(x, 0);
+        weights->setInput(gradient, 1);
+        weights->setInput(gradientOf(name + "weight"), 2);
+        weights->setInput(gradientOf(name + "bias"), 3);
+        add(weights);
+        auto result = tensor(inShape);
+        auto inputs = training::convBackwardInput(vulkanContext, attributes, inShape, weightShape, outShape);
+        inputs->setInput(gradient, 0);
+        inputs->setInput(find(name + "weight").value, 1);
+        inputs->setInput(result, 2);
+        add(inputs);
+        if (layer == 0) {
+            inputGradient = result;
+            break;
+        }
+        // Through the previous layer's ELU.
+        gradient = tensor(inShape);
+        auto elu = training::activationBackward(vulkanContext, training::Activation::Elu, inShape);
+        elu->setInput(pass.pre[size_t(layer) - 1], 0);
+        elu->setInput(result, 1);
+        elu->setInput(gradient, 2);
+        add(elu);
+    }
+    return inputGradient;
+}
+
 void PhotoEnhancerTraining::forwardBlock(Block& block) {
     const uint32_t b = config.batch, cin = block.inputChannels, cout = block.outputChannels;
     const uint32_t si = block.inputSize, so = block.outputSize;
@@ -1534,7 +1690,7 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
                                      const std::vector<float>& targetValues, const std::vector<float>& rowValues) {
     channels->getDataBuffer(0).memcopyFrom(channelValues);
     // The coordinates and classes only feed the texture.
-    if (config.texture.levels > 0) {
+    if (config.texture.levels > 0 || config.textureMlp.frequencies > 0) {
         coordinates->getDataBuffer(0).memcopyFrom(coordinateValues);
         classes->getDataBuffer(0).memcopyFrom(classValues);
     }
@@ -1587,6 +1743,9 @@ void PhotoEnhancerTraining::save(const std::string& directory, bool averages) co
         for (uint32_t c : shape.classes)
             texture << " " << c;
         texture << "\n";
+        const auto& t = config.textureMlp;
+        if (t.frequencies > 0)
+            texture << "mlp " << t.frequencies << " " << t.width << " " << t.outputs << " " << t.hidden << "\n";
     }
     std::ofstream manifest(std::filesystem::path(directory) / "parameters.txt");
     for (const auto& parameter : parameters) {

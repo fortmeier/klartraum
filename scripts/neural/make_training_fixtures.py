@@ -452,6 +452,9 @@ def latent_cases(out: Path, seed: int) -> None:
     optimiser.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_norm_(network, 1.0)
+    for name, value in parameters.items():
+        if value is not None:
+            tensors["gradient." + name] = value.grad.detach().clone()
     optimiser.step()
     table = torch.stack([grid.embeddings for grid in texture.grids])
     for name, value in parameters.items():
@@ -464,6 +467,68 @@ def latent_cases(out: Path, seed: int) -> None:
     (out / "latent_step_texture.txt").write_text(
         f"width {size}\nheight {size}\nlevels {grid.levels}\nfeatures {grid.features}\ntable {grid.table}\n"
         "resolutions " + " ".join(str(r) for r in grid.resolutions) + "\nclasses 3\n")
+
+
+def mlp_texture_cases(out: Path, seed: int, perceptual: bool = True, case: str = "mlp_texture_step") -> None:
+    """The latent-conditioned MLP texture (latent_renderer.MlpTexture): its positional encoding on random coordinates
+    and classes, and one latent renderer step with it as latent_cases()' (texture MLP, encoder, decoder; L1,
+    block-mean L1, VGG unless not `perceptual`, and KL; clipping and Adam) as `case`."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from latent_renderer import LatentRenderer, MlpTexture, kl_divergence, positional_encoding
+    from train_photo_enhancer import Vgg
+
+    generator = torch.Generator().manual_seed(seed)
+    coordinates = torch.rand(2, 3, 5, 7, generator=generator)
+    classes = torch.randint(0, 5, (2, 5, 7), generator=generator)
+    save(out, "positional_encoding", {"coordinates": coordinates, "classes": classes.float(),
+                                      "encoding": positional_encoding(coordinates, classes, 4, (3, 1))})
+
+    torch.manual_seed(seed)
+    texture = MlpTexture(latent=4, frequencies=3, width=16, hidden=2, outputs=5)
+    model = LatentRenderer(texture, geometry=4, latent=4, objects=1)
+    with torch.no_grad():
+        model.generator.out.weight.copy_(torch.randn(model.generator.out.weight.shape, generator=generator) * 0.2)
+    b, size = 2, 32
+    geometry = torch.rand(b, 4, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.zeros(b, size, size, dtype=torch.long)
+    classes[:, 6:26, 8:28] = 3
+    objects = (classes == 3).long()
+    photos = torch.rand(b, 3, size, size, generator=generator)
+    epsilon = torch.randn(b, 1, 4, generator=generator)
+    parameters = {**{f"generator.texture.{k[4:]}": v for k, v in texture.named_parameters()},
+                  **{f"generator.{k}": v for k, v in model.generator.named_parameters()},
+                  **{f"encoder.{k}": v for k, v in model.encoder.named_parameters()}}
+    tensors = {"geometry": geometry, "coordinates": coordinates, "classes": classes.float(),
+               "objects": objects.float(), "photos": photos, "epsilon": epsilon}
+    for name, value in parameters.items():
+        tensors["before." + name] = value.detach().clone()
+    mu, log_variance, latent_counts = model.encode(photos, objects)
+    latents = mu + (0.5 * log_variance).exp() * epsilon
+    image = model(geometry, coordinates, classes, objects, latents)
+    photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
+    perceptual = Vgg().eval().distance(image, photos) if perceptual else torch.zeros(())
+    kl = kl_divergence(mu, log_variance, latent_counts)
+    loss = photometric + perceptual + 1e-2 * kl
+    network = list(texture.parameters()) + list(model.generator.parameters()) + list(model.encoder.parameters())
+    optimiser = torch.optim.Adam(network, lr=1e-4, betas=(0.5, 0.999))
+    optimiser.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network, 1.0)
+    for name, value in parameters.items():
+        tensors["gradient." + name] = value.grad.detach().clone()
+    optimiser.step()
+    for name, value in parameters.items():
+        tensors["after." + name] = value.detach().clone()
+    tensors.update({"image": image, "photometric": photometric.reshape(1), "perceptual": perceptual.reshape(1),
+                    "kl": kl.reshape(1), "mu": mu, "log_variance": log_variance})
+    save(out, case, tensors)
+    (out / f"{case}_parameters.txt").write_text("\n".join(parameters) + "\n")
+    (out / f"{case}_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels 0\nfeatures 2\ntable 1\nresolutions\nclasses 3\n"
+        f"mlp {texture.frequencies} 16 {texture.channels} 2\n")
 
 
 def latent_check_case(out: Path, seed: int) -> None:
@@ -630,6 +695,8 @@ def main() -> None:
     latent_check_case(args.out, 18)
     flow_warp_case(args.out, 19)
     temporal_case(args.out, 20)
+    mlp_texture_cases(args.out, 21)
+    mlp_texture_cases(args.out, 21, perceptual=False, case="mlp_texture_step_l1")
     print(f"fixtures in {args.out}")
 
 

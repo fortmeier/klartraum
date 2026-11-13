@@ -20,6 +20,8 @@
  * - flowWarpLossMatchesPyTorch: the temporal consistency loss (the first render warped by a flow partly beyond the
  *   image, bilinear and clamped, against the second on a mask) and its gradient for the second render equal
  *   latent_renderer.flow_warp_loss()'s (grid_sample)
+ * - positionalEncodingMatchesPyTorch: the positional encoding of surface coordinates (sine and cosine of 4 octaves per
+ *   coordinate, then the coordinates; zero off the texture's classes) equals latent_renderer.positional_encoding()'s
  * - linearMatchesPyTorch: a linear layer's output (with an offset) and its input (also accumulating), weight and
  *   bias gradients equal nn.Linear's
  * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
@@ -47,6 +49,11 @@
  *   loss, the image and every parameter after the step equal latent_renderer.flow_warp_loss()'s
  * - untexturedLatentStepTrains: the latent-conditioned renderer without a texture (no levels) has no texture parameter,
  *   takes the G-buffer channels and the latents only, and lowers its photometric loss over 30 steps on one batch
+ * - mlpTextureStepMatchesPyTorch: the same step without VGG and with the latent-conditioned MLP texture (positional
+ *   encoding of 3 octaves and the latent G-buffer through 1 x 1 convolutions 16 - 16 - 5): image, losses, every
+ *   clipped gradient and every parameter after the step equal latent_renderer.MlpTexture's, the encoder's too (its
+ *   gradient also comes through the MLP); without VGG, whose max-pooling makes near-ties of the image amplify
+ *   rounding into gradient differences
  * - latentGanStepTrains: the latent-conditioned renderer with free bits and the 2-scale PatchGAN, from PyTorch's
  *   renderer and a fresh discriminator on its batch upsampled to 64 x 64, starts at the untrained discriminator's loss
  * (about 4 ln 2), keeps all losses finite over 30 steps on one batch, lowers the photometric loss and counts the KL at
@@ -443,6 +450,31 @@ TEST(PhotoEnhancerTraining, flowWarpLossMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_LT(relativeError(read(gradient), fixture.values("dsecond")), 1e-5f);
     EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-6f);
+}
+
+TEST(PhotoEnhancerTraining, positionalEncodingMatchesPyTorch) {
+    const Fixture fixture("positional_encoding");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("coordinates");
+    auto coordinates = tensor(vc, shape), classes = tensor(vc, fixture.shapes.at("classes"));
+    auto encoding = tensor(vc, fixture.shapes.at("encoding"));
+    auto encode = training::positionalEncoding(vc, shape[0], shape[2] * shape[3], 4, {3, 1});
+    encode->setInput(coordinates, 0);
+    encode->setInput(classes, 1);
+    encode->setInput(encoding, 2);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(encode);
+    coordinates->getDataBuffer(0).memcopyFrom(fixture.values("coordinates"));
+    classes->getDataBuffer(0).memcopyFrom(fixture.values("classes"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto actual = read(encoding), expected = fixture.values("encoding");
+    float worst = 0.0f;
+    for (size_t i = 0; i < actual.size(); ++i)
+        worst = std::max(worst, std::abs(actual[i] - expected[i]));
+    EXPECT_LT(worst, 1e-5f);
 }
 
 TEST(PhotoEnhancerTraining, linearMatchesPyTorch) {
@@ -918,7 +950,8 @@ namespace {
 // with the latent check of weight @p check (and the fixture's permutation) and the temporal consistency loss of
 // weight @p temporal (and the fixture's second views and flow) if positive: image, losses and every parameter after
 // clipping and Adam equal PyTorch's.
-void expectLatentStepMatches(const Fixture& fixture, const std::string& name, float check, float temporal = 0.0f) {
+void expectLatentStepMatches(const Fixture& fixture, const std::string& name, float check, float temporal = 0.0f,
+                             float perceptual = 1.0f) {
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
     neural::PhotoEnhancerTrainingConfig config;
@@ -927,10 +960,11 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
     config.widths = {32, 64, 128};
     config.gbufferChannels = 4;
     config.texture = neural::HashTextureShape::fromFile(kFixtures + name + "_texture.txt");
+    config.textureMlp = neural::TextureMlp::fromFile(kFixtures + name + "_texture.txt");
     config.latentSize = 4;
     config.latentObjects = 1;
     config.klWeight = 1e-2f;
-    config.perceptual = 1.0f;
+    config.perceptual = perceptual;
     config.latentCheck = check;
     config.temporal = temporal;
     neural::PhotoEnhancerTraining trainer(vc, config);
@@ -975,6 +1009,13 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
             worst = std::max(worst, std::abs(actual[i] - after[i]));
         }
         EXPECT_LT(worst, 0.1f * rate) << parameter;
+        // Where the fixture has the clipped gradients, they match too.
+        if (fixture.shapes.count("gradient." + parameter)) {
+            const auto expected = fixture.values("gradient." + parameter);
+            std::vector<float> gradient(expected.size());
+            trainer.gradient(parameter)->getDataBuffer(0).memcopyTo(gradient);
+            EXPECT_LT(relativeError(gradient, expected), 1e-4f) << parameter;
+        }
     }
 }
 
@@ -999,6 +1040,13 @@ TEST(PhotoEnhancerTraining, temporalStepMatchesPyTorch) {
     if (!fixture.exists() || !std::filesystem::exists("build/models/vgg16/layers.txt"))
         GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_training_fixtures.py first";
     expectLatentStepMatches(fixture, "temporal_step", 0.0f, 0.5f);
+}
+
+TEST(PhotoEnhancerTraining, mlpTextureStepMatchesPyTorch) {
+    const Fixture fixture("mlp_texture_step_l1");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "mlp_texture_step_l1", 0.0f, 0.0f, 0.0f);
 }
 
 namespace {

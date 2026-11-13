@@ -23,6 +23,18 @@
 
 namespace klartraum::neural {
 
+/// The latent-conditioned MLP texture (latent_renderer.MlpTexture): a per-pixel MLP of 1 x 1 convolutions with ELU
+/// from the positional encoding of the surface coordinates and the latent G-buffer to texture features.
+struct TextureMlp {
+    uint32_t frequencies = 0; ///< octaves of the positional encoding per coordinate (0: no MLP texture)
+    uint32_t width = 32;      ///< channels of the hidden layers
+    uint32_t outputs = 8;     ///< texture features
+    uint32_t hidden = 2;      ///< hidden layers
+
+    /// The MLP texture of a saved model (the "mlp F W K H" line of its texture.txt), frequencies 0 without one.
+    static TextureMlp fromFile(const std::string& path);
+};
+
 /// The photo enhancer that PhotoEnhancerTraining trains, and how.
 struct PhotoEnhancerTrainingConfig {
     uint32_t batch = 16; ///< crops per step
@@ -31,6 +43,9 @@ struct PhotoEnhancerTrainingConfig {
     std::vector<uint32_t> widths{32, 64, 128};
     /// The surface texture's grids; width, height, batch and outputOffset are set by the training.
     HashTextureShape texture;
+    /// The MLP texture instead of the grids (needs latents and a texture of no levels; its classes are the textured
+    /// ones).
+    TextureMlp textureMlp;
     uint32_t appearances = 0;    ///< training images with an appearance code (0: none, no FiLM)
     uint32_t appearanceSize = 8; ///< numbers per code
     uint32_t filmHidden = 64;    ///< width of the FiLM MLP
@@ -205,6 +220,22 @@ private:
     std::shared_ptr<TensorElement<float>>
     backwardEncoderInput(std::vector<EncoderLayer>& layers, std::shared_ptr<TensorElement<float>> statisticsGradient);
     void buildLatentCheck();
+    /// One pass of the MLP texture: its encoding, input (encoding and latent G-buffer), layers and output.
+    struct MlpPass {
+        std::shared_ptr<TensorElement<float>> encoding, in;
+        std::vector<std::shared_ptr<TensorElement<float>>> pre, activated; ///< each layer's output, before / after ELU
+    };
+    /// The MLP texture on these coordinates and classes and the latent G-buffer already in `generatorInput`, its
+    /// features written into `generatorInput`'s texture channels.
+    MlpPass forwardTextureMlp(std::shared_ptr<TensorElement<float>> passCoordinates,
+                              std::shared_ptr<TensorElement<float>> passClasses,
+                              std::shared_ptr<TensorElement<float>> generatorInput);
+    /// The backward pass of forwardTextureMlp() from the generator input's gradient: the MLP's parameter gradients
+    /// (to gradientOf()) and its input's gradient, whose last latentSize channels are the latent G-buffer's.
+    std::shared_ptr<TensorElement<float>>
+    backwardTextureMlp(MlpPass& pass, std::shared_ptr<TensorElement<float>> generatorInputGradient);
+    /// The texture's feature channels of the generator input.
+    uint32_t textureFeatures() const;
     void buildTemporal();
     /// The backward pass of a second generator pass (its blocks, output layer input, logits and image gradient):
     /// the generator's gradients added to the first pass's, the texture's for these coordinates and classes too.
@@ -212,7 +243,7 @@ private:
                             std::shared_ptr<TensorElement<float>> passLogits,
                             std::shared_ptr<TensorElement<float>> passOutputGradient,
                             std::shared_ptr<TensorElement<float>> passCoordinates,
-                            std::shared_ptr<TensorElement<float>> passClasses);
+                            std::shared_ptr<TensorElement<float>> passClasses, MlpPass* passMlp);
     void forwardBlock(Block& block);
     void backwardBlock(Block& block);
     void buildDiscriminator();
@@ -264,6 +295,9 @@ private:
     bool latentPermutationGiven = false;
     /// The temporal loss's second generator pass, the second views' inputs, their flow and mask, and its loss.
     std::vector<Block> temporalBlocks;
+    /// The MLP texture's passes (main, latent check, temporal) and the main pass's input gradient.
+    MlpPass mainMlp, checkMlp, temporalMlp;
+    std::shared_ptr<TensorElement<float>> mlpInputGradient;
     std::shared_ptr<TensorElement<float>> channels2, coordinates2, classes2, objects2, flow, flowValid, temporalTotal;
     /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.
     std::vector<std::unique_ptr<Critic>> critics;
