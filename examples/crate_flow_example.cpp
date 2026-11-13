@@ -144,6 +144,7 @@ int main(int argc, char** argv) {
         config.batch = 1;
         config.size = s;
         config.texture = neural::HashTextureShape::fromFile((parameters / "texture.txt").string());
+        config.textureMlp = neural::TextureMlp::fromFile((parameters / "texture.txt").string());
         config.widths.clear();
         for (uint32_t level = 0;; ++level) {
             const auto bias = parameters / ("generator.down." + std::to_string(level) + ".0.bias.bin");

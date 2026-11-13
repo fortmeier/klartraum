@@ -784,6 +784,7 @@ the held-out views are rendered with the codes' mean
 | `--steps N` | Training steps (default 30000) |
 | `--batch N`, `--crop S` | Crops per step and their size (default 16 and 128) |
 | `--sample-size S` | Size of the samples (default 256; the photos are averaged down to it) |
+| `--texture-mlp F W K` | The latent-conditioned MLP texture instead: positional encoding of F octaves per surface coordinate and the crate's latent through two hidden layers of W channels to K features (needs `--latent`) |
 | `--texture-dense N R` | A plain dense texture instead: N components (1-4, or a multiple of 4 up to 64) per point at R cells per axis, indexed directly; `--texture-dense 0 0` trains without a texture |
 | `--texture L B F` | The surface texture's levels and their coarsest and finest cells per axis (default 12 16 2048) |
 | `--appearance D` | Size of the appearance codes (default 8, 0 for none) |

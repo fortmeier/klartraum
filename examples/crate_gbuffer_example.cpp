@@ -243,6 +243,8 @@ int main(int argc, char** argv) {
             config.texture = !parameters.empty() && std::filesystem::exists(parameters / "texture.txt")
                                  ? neural::HashTextureShape::fromFile((parameters / "texture.txt").string())
                                  : crate::textureShape();
+            if (!parameters.empty() && std::filesystem::exists(parameters / "texture.txt"))
+                config.textureMlp = neural::TextureMlp::fromFile((parameters / "texture.txt").string());
             const auto codes = parameters / "codes.weight.bin";
             config.appearances =
                 std::filesystem::exists(codes) ? uint32_t(std::filesystem::file_size(codes) / sizeof(float) / 8) : 0;

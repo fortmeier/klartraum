@@ -241,6 +241,7 @@ int main(int argc, char** argv) {
     std::filesystem::path initFrom;
     std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
     bool dense = false;                        // a plain dense texture (--texture-dense) instead of the hash texture
+    neural::TextureMlp textureMlp;             // the latent-conditioned MLP texture instead (--texture-mlp)
     uint32_t denseComponents = 0, denseResolution = 0;
     bool unconditional = false; // a discriminator of the image only
     uint32_t criticScales = 2;
@@ -272,6 +273,10 @@ int main(int argc, char** argv) {
             textureLevels = uint32_t(std::stoul(argv[++i]));
             textureBase = uint32_t(std::stoul(argv[++i]));
             textureFinest = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--texture-mlp" && i + 3 < argc) {
+            textureMlp.frequencies = uint32_t(std::stoul(argv[++i]));
+            textureMlp.width = uint32_t(std::stoul(argv[++i]));
+            textureMlp.outputs = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--texture-dense" && i + 2 < argc) {
             denseComponents = uint32_t(std::stoul(argv[++i]));
             denseResolution = uint32_t(std::stoul(argv[++i]));
@@ -421,8 +426,10 @@ int main(int argc, char** argv) {
         config.batch = batchSize;
         config.size = crop;
         config.widths = widths;
-        config.texture = dense ? crate::denseTextureShape(denseComponents, denseResolution)
-                               : crate::textureShape(textureLevels, textureBase, textureFinest);
+        config.texture = textureMlp.frequencies > 0 ? crate::denseTextureShape(0, 0)
+                         : dense                    ? crate::denseTextureShape(denseComponents, denseResolution)
+                                                    : crate::textureShape(textureLevels, textureBase, textureFinest);
+        config.textureMlp = textureMlp;
         config.appearances = appearance > 0 && latent == 0 ? uint32_t(training.size()) : 0;
         if (latent > 0) {
             config.gbufferChannels = kChannels;
