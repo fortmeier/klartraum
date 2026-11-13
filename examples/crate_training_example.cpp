@@ -242,6 +242,7 @@ int main(int argc, char** argv) {
     std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
     bool dense = false;                        // a plain dense texture (--texture-dense) instead of the hash texture
     neural::TextureMlp textureMlp;             // the latent-conditioned MLP texture instead (--texture-mlp)
+    std::filesystem::path evaluate;            // a saved model to evaluate with and without its texture (--evaluate)
     uint32_t denseComponents = 0, denseResolution = 0;
     bool unconditional = false; // a discriminator of the image only
     uint32_t criticScales = 2;
@@ -273,6 +274,8 @@ int main(int argc, char** argv) {
             textureLevels = uint32_t(std::stoul(argv[++i]));
             textureBase = uint32_t(std::stoul(argv[++i]));
             textureFinest = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--evaluate" && hasValue) {
+            evaluate = argv[++i];
         } else if (arg == "--texture-mlp" && i + 3 < argc) {
             textureMlp.frequencies = uint32_t(std::stoul(argv[++i]));
             textureMlp.width = uint32_t(std::stoul(argv[++i]));
@@ -504,9 +507,10 @@ int main(int argc, char** argv) {
         }
         // Renders `views` in chunks (the last filled up with the first views) with latents encoded from the photos or,
         // given `latents` ([views][latent]), with those; the images [views][3][size][size].
-        const auto renderLatent = [&](const std::vector<const View*>& views, const std::vector<float>* latents) {
+        const auto renderLatent = [&](const std::vector<const View*>& views, const std::vector<float>* latents,
+                                      neural::PhotoEnhancerTraining* encoding = nullptr) {
             const size_t pixels = size_t(sampleSize) * sampleSize;
-            auto& renderer = latents ? *givenRenderer : *encodeRenderer;
+            auto& renderer = latents ? *givenRenderer : encoding ? *encoding : *encodeRenderer;
             std::vector<float> images;
             for (size_t first = 0; first < views.size(); first += kLatentBatch) {
                 Batch chunk;
@@ -577,6 +581,64 @@ int main(int argc, char** argv) {
             held.classes.insert(held.classes.end(), view.inputs.classes.begin(), view.inputs.classes.end());
             held.photos.insert(held.photos.end(), view.photo.begin(), view.photo.end());
             held.rows.push_back(0.0f);
+        }
+
+        // --evaluate: the saved model on the held-out views with its latents encoded from the photos, once as it is and
+        // once with its texture's features zeroed; the texture's features of the first views as images.
+        if (!evaluate.empty()) {
+            if (latent == 0 || validation.empty())
+                throw std::runtime_error("--evaluate needs --latent and validation views");
+            auto plainConfig = config;
+            plainConfig.forwardOnly = true;
+            plainConfig.encodeLatents = true;
+            plainConfig.textureOff = true;
+            plainConfig.batch = kLatentBatch;
+            plainConfig.size = sampleSize;
+            plainConfig.perceptual = plainConfig.adversarial = 0.0f;
+            neural::PhotoEnhancerTraining plain(vc, plainConfig);
+            encodeRenderer->load(evaluate.string());
+            plain.load(evaluate.string());
+            std::vector<const View*> held, fitted;
+            for (const auto& view : validation)
+                held.push_back(&view);
+            for (const auto& view : training)
+                fitted.push_back(&view);
+            const auto with = renderLatent(held, nullptr), without = renderLatent(held, nullptr, &plain);
+            const auto fittedWith = renderLatent(fitted, nullptr),
+                       fittedWithout = renderLatent(fitted, nullptr, &plain);
+            std::printf("evaluation of %s: validation L1 %.4f with the texture, %.4f without; training L1 %.4f with, "
+                        "%.4f without\n",
+                        evaluate.string().c_str(), meanL1(with, held), meanL1(without, held),
+                        meanL1(fittedWith, fitted), meanL1(fittedWithout, fitted));
+            std::vector<float> photos;
+            for (const auto* view : held)
+                photos.insert(photos.end(), view->photo.begin(), view->photo.end());
+            std::filesystem::create_directories(outDir);
+            writeGrid(outDir / "evaluation.png", {photos, with, without}, std::min<size_t>(6, held.size()));
+            // The texture's features of the first held-out views (the generator input's channels after the G-buffer's),
+            // each channel grey around 0.5, scaled by its largest magnitude over these views.
+            renderLatent(
+                std::vector<const View*>(held.begin(), held.begin() + std::min<size_t>(kLatentBatch, held.size())),
+                nullptr);
+            const auto input = encodeRenderer->generatorInput();
+            const size_t pixels = size_t(sampleSize) * sampleSize;
+            const uint32_t channelsIn = uint32_t(input.size() / (kLatentBatch * pixels));
+            const uint32_t features = channelsIn - kChannels - latent;
+            std::vector<std::vector<float>> columns(features, std::vector<float>(kLatentBatch * 3 * pixels));
+            for (uint32_t f = 0; f < features; ++f) {
+                float largest = 1e-12f;
+                for (uint32_t k = 0; k < kLatentBatch; ++k)
+                    for (size_t p = 0; p < pixels; ++p)
+                        largest = std::max(largest, std::abs(input[(k * channelsIn + kChannels + f) * pixels + p]));
+                for (uint32_t k = 0; k < kLatentBatch; ++k)
+                    for (size_t p = 0; p < pixels; ++p)
+                        for (size_t c = 0; c < 3; ++c)
+                            columns[f][(k * 3 + c) * pixels + p] =
+                                0.5f + 0.5f * input[(k * channelsIn + kChannels + f) * pixels + p] / largest;
+            }
+            if (features > 0)
+                writeGrid(outDir / "texture_features.png", columns, kLatentBatch);
+            return 0;
         }
 
         std::ofstream log(outDir / "log.txt", std::ios::app);

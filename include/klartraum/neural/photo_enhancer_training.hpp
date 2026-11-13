@@ -46,6 +46,9 @@ struct PhotoEnhancerTrainingConfig {
     /// The MLP texture instead of the grids (needs latents and a texture of no levels; its classes are the textured
     /// ones).
     TextureMlp textureMlp;
+    /// Forward only: render with the texture's features zeroed (its parameters still load), to measure how much the
+    /// generator relies on them.
+    bool textureOff = false;
     uint32_t appearances = 0;    ///< training images with an appearance code (0: none, no FiLM)
     uint32_t appearanceSize = 8; ///< numbers per code
     uint32_t filmHidden = 64;    ///< width of the FiLM MLP

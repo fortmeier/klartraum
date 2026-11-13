@@ -99,11 +99,12 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
 
     // Parameters, in the order of the PyTorch state dict.
     // A texture of no levels: the generator sees the G-buffer channels (and the latents) only.
-    const bool textured = shape.levels > 0;
+    // With textureOff the texture's parameters are not created either (load() skips them).
+    const bool textured = shape.levels > 0 && !config.textureOff;
     if (textured)
         addParameter("texture.table", {uint32_t(shape.classes.size()), shape.levels, shape.tableSize, shape.features},
                      Texture);
-    if (mlp) {
+    if (mlp && !config.textureOff) {
         const auto& t = config.textureMlp;
         uint32_t previous = 3 * (2 * t.frequencies + 1) + config.latentSize;
         for (uint32_t layer = 0; layer <= t.hidden; ++layer) {
@@ -197,7 +198,14 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     scalesDummy = tensor({1});
     stepCounter = vulkanContext.create<TensorElement<uint32_t>>(std::vector<uint32_t>{1});
 
-    // Forward: G-buffer channels and texture features into the input.
+    // Forward: G-buffer channels and texture features into the input; without the texture its channels stay zero.
+    if (config.textureOff) {
+        if (!config.forwardOnly)
+            throw std::invalid_argument("PhotoEnhancerTraining: textureOff is for rendering only");
+        auto zero = training::fill(vulkanContext, b * channelsIn * s * s);
+        zero->setInput(input, 0);
+        add(zero);
+    }
     {
         auto copy =
             training::channelCopy(vulkanContext, b, s * s, {kGBufferChannels, 0}, {channelsIn, 0}, kGBufferChannels);
@@ -229,7 +237,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         splat->setInput(counts, 2);
         splat->setInput(input, 3);
         add(splat);
-        if (mlp)
+        if (mlp && !config.textureOff)
             mainMlp = forwardTextureMlp(coordinates, classes, input);
     }
     // FiLM: the codes through the MLP.
@@ -1690,7 +1698,7 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
                                      const std::vector<float>& targetValues, const std::vector<float>& rowValues) {
     channels->getDataBuffer(0).memcopyFrom(channelValues);
     // The coordinates and classes only feed the texture.
-    if (config.texture.levels > 0 || config.textureMlp.frequencies > 0) {
+    if ((config.texture.levels > 0 || config.textureMlp.frequencies > 0) && !config.textureOff) {
         coordinates->getDataBuffer(0).memcopyFrom(coordinateValues);
         classes->getDataBuffer(0).memcopyFrom(classValues);
     }
