@@ -22,6 +22,9 @@
  *   latent_renderer.flow_warp_loss()'s (grid_sample)
  * - positionalEncodingMatchesPyTorch: the positional encoding of surface coordinates (sine and cosine of 4 octaves per
  *   coordinate, then the coordinates; zero off the texture's classes) equals latent_renderer.positional_encoding()'s
+ * - composeMatchesPyTorch: the albedo renderer's image (mask x sigmoid(albedo) x 2 sigmoid(shading) + (1 - mask) x
+ *   sigmoid(background)) and its gradients for the albedo's logit and the decoder's 4 outputs equal
+ *   latent_renderer.compose()'s
  * - linearMatchesPyTorch: a linear layer's output (with an offset) and its input (also accumulating), weight and
  *   bias gradients equal nn.Linear's
  * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
@@ -54,6 +57,10 @@
  *   clipped gradient and every parameter after the step equal latent_renderer.MlpTexture's, the encoder's too (its
  *   gradient also comes through the MLP); without VGG, whose max-pooling makes near-ties of the image amplify
  *   rounding into gradient differences
+ * - albedoStepMatchesPyTorch: the same step without VGG with the albedo renderer: the multi-resolution albedo texture
+ *   (residual blocks of 1, 2 and 3 octaves, weighted 1, 0.5, 0.25), the decoder on geometry and latents giving shading
+ *   and background, compose(): image, losses, every clipped gradient and every parameter after the step equal
+ *   latent_renderer.AlbedoRenderer's
  * - latentGanStepTrains: the latent-conditioned renderer with free bits and the 2-scale PatchGAN, from PyTorch's
  *   renderer and a fresh discriminator on its batch upsampled to 64 x 64, starts at the untrained discriminator's loss
  * (about 4 ln 2), keeps all losses finite over 30 steps on one batch, lowers the photometric loss and counts the KL at
@@ -475,6 +482,45 @@ TEST(PhotoEnhancerTraining, positionalEncodingMatchesPyTorch) {
     for (size_t i = 0; i < actual.size(); ++i)
         worst = std::max(worst, std::abs(actual[i] - expected[i]));
     EXPECT_LT(worst, 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, composeMatchesPyTorch) {
+    const Fixture fixture("compose");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto albedoShape = fixture.shapes.at("albedo_logit"), logitShape = fixture.shapes.at("logits");
+    auto albedo = tensor(vc, albedoShape), logits = tensor(vc, logitShape),
+         mask = tensor(vc, fixture.shapes.at("mask"));
+    auto image = tensor(vc, albedoShape), albedoImage = tensor(vc, albedoShape);
+    auto shading = tensor(vc, {albedoShape[0], 1, albedoShape[2], albedoShape[3]});
+    auto dimage = tensor(vc, albedoShape), dalbedo = tensor(vc, albedoShape), dlogits = tensor(vc, logitShape);
+    auto forward = training::compose(vc, albedoShape);
+    forward->setInput(albedo, 0);
+    forward->setInput(logits, 1);
+    forward->setInput(mask, 2);
+    forward->setInput(image, 3);
+    forward->setInput(albedoImage, 4);
+    forward->setInput(shading, 5);
+    auto backward = training::composeBackward(vc, albedoShape);
+    backward->setInput(albedo, 0);
+    backward->setInput(logits, 1);
+    backward->setInput(mask, 2);
+    backward->setInput(dimage, 3);
+    backward->setInput(dalbedo, 4);
+    backward->setInput(dlogits, 5);
+    backward->addDependency(forward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    albedo->getDataBuffer(0).memcopyFrom(fixture.values("albedo_logit"));
+    logits->getDataBuffer(0).memcopyFrom(fixture.values("logits"));
+    mask->getDataBuffer(0).memcopyFrom(fixture.values("mask"));
+    dimage->getDataBuffer(0).memcopyFrom(fixture.values("dimage"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(image), fixture.values("image")), 1e-5f);
+    EXPECT_LT(relativeError(read(dalbedo), fixture.values("dalbedo_logit")), 1e-5f);
+    EXPECT_LT(relativeError(read(dlogits), fixture.values("dlogits")), 1e-5f);
 }
 
 TEST(PhotoEnhancerTraining, linearMatchesPyTorch) {
@@ -961,6 +1007,7 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
     config.gbufferChannels = 4;
     config.texture = neural::HashTextureShape::fromFile(kFixtures + name + "_texture.txt");
     config.textureMlp = neural::TextureMlp::fromFile(kFixtures + name + "_texture.txt");
+    config.albedoTexture = neural::AlbedoTexture::fromFile(kFixtures + name + "_texture.txt");
     config.latentSize = 4;
     config.latentObjects = 1;
     config.klWeight = 1e-2f;
@@ -981,6 +1028,8 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
                      fixture.values("photos"), {});
     trainer.setObjects(fixture.values("objects"));
     trainer.setLatentNoise(fixture.values("epsilon"));
+    if (fixture.shapes.count("weights"))
+        trainer.setAlbedoWeights(fixture.values("weights"));
     if (check > 0.0f)
         trainer.setLatentPermutation(fixture.values("permutation"));
     if (temporal > 0.0f)
@@ -1047,6 +1096,13 @@ TEST(PhotoEnhancerTraining, mlpTextureStepMatchesPyTorch) {
     if (!fixture.exists())
         GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
     expectLatentStepMatches(fixture, "mlp_texture_step_l1", 0.0f, 0.0f, 0.0f);
+}
+
+TEST(PhotoEnhancerTraining, albedoStepMatchesPyTorch) {
+    const Fixture fixture("albedo_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "albedo_step", 0.0f, 0.0f, 0.0f);
 }
 
 namespace {

@@ -35,6 +35,21 @@ struct TextureMlp {
     static TextureMlp fromFile(const std::string& path);
 };
 
+/// The multi-resolution albedo texture (latent_renderer.AlbedoTexture): residual blocks, each a texture MLP on the
+/// positional encoding of its octaves and the latent G-buffer giving 3 values, summed (each weighted) into the albedo's
+/// logit; the decoder then gives shading and background only (latent_renderer.compose()).
+struct AlbedoTexture {
+    std::vector<uint32_t> frequencies; ///< octaves of each block (none: no albedo texture)
+    std::vector<uint32_t> widths;      ///< hidden channels of each block
+    uint32_t hidden = 2;               ///< hidden layers per block
+    /// Steps over which each block after the first fades in after the previous one (0: all at full weight).
+    uint32_t fadeSteps = 0;
+
+    bool enabled() const { return !frequencies.empty(); }
+    /// The albedo texture of a saved model (the "albedo F1 W1 F2 W2 ..." line of its texture.txt), none without one.
+    static AlbedoTexture fromFile(const std::string& path);
+};
+
 /// The photo enhancer that PhotoEnhancerTraining trains, and how.
 struct PhotoEnhancerTrainingConfig {
     uint32_t batch = 16; ///< crops per step
@@ -46,6 +61,8 @@ struct PhotoEnhancerTrainingConfig {
     /// The MLP texture instead of the grids (needs latents and a texture of no levels; its classes are the textured
     /// ones).
     TextureMlp textureMlp;
+    /// The albedo renderer instead (needs latents, one object, a texture of no levels and no MLP texture).
+    AlbedoTexture albedoTexture;
     /// Forward only: render with the texture's features zeroed (its parameters still load), to measure how much the
     /// generator relies on them.
     bool textureOff = false;
@@ -156,6 +173,11 @@ public:
     void setLatentPermutation(const std::vector<float>& permutation);
     /// The latent check's mean absolute difference of the last step (unweighted).
     float latentCheckLoss() const;
+    /// The albedo texture's block weights from now on, instead of the fade-in's (all 1 when rendering).
+    void setAlbedoWeights(const std::vector<float>& weights);
+    /// The albedo renderer's albedo [batch][3][size][size] and shading [batch][size][size] of the last step.
+    std::vector<float> albedo() const;
+    std::vector<float> shading() const;
     /// The second views of the batch for the temporal loss: G-buffer channels, coordinates, classes and objects as in
     /// setBatch() and setObjects(), the flow onto the first views ([batch][2][size][size]: each pixel's position in
     /// the first view, in pixels with centres at i + 0.5) and where the first view sees it ([batch][size][size]).
@@ -204,15 +226,17 @@ private:
     void add(ComputeGraphElementPtr element);
     /// The U-Net and its output layer on `input` with these blocks' activations: the last up block's output, the
     /// logits and the image.
+    struct AlbedoPass;
     std::tuple<std::shared_ptr<TensorElement<float>>, std::shared_ptr<TensorElement<float>>,
                std::shared_ptr<TensorElement<float>>>
-    forwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> input);
+    forwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> input,
+                     AlbedoPass* albedo = nullptr);
     /// The backward pass of forwardGenerator() from the image's gradient, down to blocks[0].dIn; the parameters'
     /// gradients go to gradientOf().
     void backwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> x,
                            std::shared_ptr<TensorElement<float>> logits,
                            std::shared_ptr<TensorElement<float>> outputGradient,
-                           std::shared_ptr<TensorElement<float>> logitGradient);
+                           std::shared_ptr<TensorElement<float>> logitGradient, AlbedoPass* albedo = nullptr);
     /// Where the backward pass writes a parameter's gradient: its gradient, or a tensor of gradientRedirect.
     std::shared_ptr<TensorElement<float>> gradientOf(const std::string& name) const;
     struct EncoderLayer;
@@ -228,6 +252,18 @@ private:
         std::shared_ptr<TensorElement<float>> encoding, in;
         std::vector<std::shared_ptr<TensorElement<float>>> pre, activated; ///< each layer's output, before / after ELU
     };
+    /// A texture MLP (parameters prefix + "0.", "2.", ...): the positional encoding of these coordinates and classes
+    /// and the latent G-buffer (generatorInput's channels from latentOffset) through hidden ELU layers of `width` to
+    /// `outputs` values (pass.pre.back()).
+    MlpPass forwardMlp(const std::string& prefix, uint32_t frequencies, uint32_t width, uint32_t hidden,
+                       uint32_t outputs, std::shared_ptr<TensorElement<float>> passCoordinates,
+                       std::shared_ptr<TensorElement<float>> passClasses,
+                       std::shared_ptr<TensorElement<float>> generatorInput, uint32_t latentOffset);
+    /// The backward pass of forwardMlp() from its outputs' gradient: the parameters' gradients (to gradientOf()) and
+    /// its input's gradient, whose last latentSize channels are the latent G-buffer's.
+    std::shared_ptr<TensorElement<float>> backwardMlp(MlpPass& pass, const std::string& prefix, uint32_t frequencies,
+                                                      uint32_t width, uint32_t hidden, uint32_t outputs,
+                                                      std::shared_ptr<TensorElement<float>> outputGradient);
     /// The MLP texture on these coordinates and classes and the latent G-buffer already in `generatorInput`, its
     /// features written into `generatorInput`'s texture channels.
     MlpPass forwardTextureMlp(std::shared_ptr<TensorElement<float>> passCoordinates,
@@ -239,6 +275,23 @@ private:
     backwardTextureMlp(MlpPass& pass, std::shared_ptr<TensorElement<float>> generatorInputGradient);
     /// The texture's feature channels of the generator input.
     uint32_t textureFeatures() const;
+    /// One pass of the albedo texture and compose(): its blocks, their weighted outputs, the albedo's logit and its
+    /// gradient, the mask, and the albedo and shading compose() writes.
+    struct AlbedoPass {
+        std::vector<MlpPass> blocks;
+        std::vector<std::shared_ptr<TensorElement<float>>> weighted;
+        std::shared_ptr<TensorElement<float>> logit, logitGradient, mask, albedo, shading;
+    };
+    /// The albedo texture on these coordinates and classes and the latent G-buffer in `generatorInput`, the mask
+    /// (the object map) for compose().
+    AlbedoPass forwardAlbedoTexture(std::shared_ptr<TensorElement<float>> passCoordinates,
+                                    std::shared_ptr<TensorElement<float>> passClasses,
+                                    std::shared_ptr<TensorElement<float>> generatorInput,
+                                    std::shared_ptr<TensorElement<float>> mask);
+    /// The backward pass of forwardAlbedoTexture() from pass.logitGradient: its blocks' parameter gradients and their
+    /// input gradients (the last latentSize channels each are the latent G-buffer's).
+    std::vector<std::shared_ptr<TensorElement<float>>> backwardAlbedoTexture(AlbedoPass& pass);
+    void uploadAlbedoWeights(const std::vector<float>& weights);
     void buildTemporal();
     /// The backward pass of a second generator pass (its blocks, output layer input, logits and image gradient):
     /// the generator's gradients added to the first pass's, the texture's for these coordinates and classes too.
@@ -246,7 +299,8 @@ private:
                             std::shared_ptr<TensorElement<float>> passLogits,
                             std::shared_ptr<TensorElement<float>> passOutputGradient,
                             std::shared_ptr<TensorElement<float>> passCoordinates,
-                            std::shared_ptr<TensorElement<float>> passClasses, MlpPass* passMlp);
+                            std::shared_ptr<TensorElement<float>> passClasses, MlpPass* passMlp,
+                            AlbedoPass* passAlbedo = nullptr);
     void forwardBlock(Block& block);
     void backwardBlock(Block& block);
     void buildDiscriminator();
@@ -301,6 +355,13 @@ private:
     /// The MLP texture's passes (main, latent check, temporal) and the main pass's input gradient.
     MlpPass mainMlp, checkMlp, temporalMlp;
     std::shared_ptr<TensorElement<float>> mlpInputGradient;
+    /// The albedo texture's passes (main, temporal), its main pass's block input gradients, the blocks' weights
+    /// ([batch][3] each, as FiLM scales) with the zero shift, and the training steps taken (for the fade-in).
+    std::unique_ptr<AlbedoPass> mainAlbedo, temporalAlbedo;
+    std::vector<std::shared_ptr<TensorElement<float>>> albedoInputGradients, albedoWeights;
+    std::shared_ptr<TensorElement<float>> albedoShift;
+    bool albedoWeightsGiven = false;
+    uint32_t stepsTaken = 0;
     std::shared_ptr<TensorElement<float>> channels2, coordinates2, classes2, objects2, flow, flowValid, temporalTotal;
     /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.
     std::vector<std::unique_ptr<Critic>> critics;

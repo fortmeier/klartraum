@@ -91,6 +91,10 @@ struct PoolPushConstants {
     uint32_t planes, inputHeight, inputWidth;
 };
 
+struct ComposePushConstants {
+    uint32_t batch, pixels;
+};
+
 struct EncodingPushConstants {
     uint32_t batch, pixels, frequencies, classCount;
     uint32_t classes[4];
@@ -372,6 +376,26 @@ ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, 
         vulkanContext.create<GeneralComputation<DistancePushConstants>>("shaders/training/l1_distance.comp.spv");
     operation->setPushConstants({{count, weight, accumulate ? 1u : 0u}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr compose(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    if (shape.size() != 4 || shape[1] != 3)
+        throw std::invalid_argument("compose: needs an N x 3 x H x W shape");
+    auto operation =
+        vulkanContext.create<GeneralComputation<ComposePushConstants>>("shaders/training/compose.comp.spv");
+    operation->setPushConstants({{shape[0], shape[2] * shape[3]}});
+    operation->setGroupCountX((shape[0] * shape[2] * shape[3] + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr composeBackward(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    if (shape.size() != 4 || shape[1] != 3)
+        throw std::invalid_argument("composeBackward: needs an N x 3 x H x W shape");
+    auto operation =
+        vulkanContext.create<GeneralComputation<ComposePushConstants>>("shaders/training/compose_backward.comp.spv");
+    operation->setPushConstants({{shape[0], shape[2] * shape[3]}});
+    operation->setGroupCountX((shape[0] * shape[2] * shape[3] + 255) / 256);
     return operation;
 }
 
