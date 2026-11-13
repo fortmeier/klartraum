@@ -242,6 +242,7 @@ int main(int argc, char** argv) {
     std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
     bool dense = false;                        // a plain dense texture (--texture-dense) instead of the hash texture
     neural::TextureMlp textureMlp;             // the latent-conditioned MLP texture instead (--texture-mlp)
+    neural::AlbedoTexture albedoTexture;       // the albedo renderer instead (--albedo, --albedo-fade)
     std::filesystem::path evaluate;            // a saved model to evaluate with and without its texture (--evaluate)
     uint32_t denseComponents = 0, denseResolution = 0;
     bool unconditional = false; // a discriminator of the image only
@@ -274,6 +275,19 @@ int main(int argc, char** argv) {
             textureLevels = uint32_t(std::stoul(argv[++i]));
             textureBase = uint32_t(std::stoul(argv[++i]));
             textureFinest = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--albedo" && hasValue) {
+            std::stringstream numbers(argv[++i]);
+            std::vector<uint32_t> values;
+            for (std::string number; std::getline(numbers, number, ',');)
+                values.push_back(uint32_t(std::stoul(number)));
+            albedoTexture.frequencies.clear();
+            albedoTexture.widths.clear();
+            for (size_t k = 0; k + 1 < values.size(); k += 2) {
+                albedoTexture.frequencies.push_back(values[k]);
+                albedoTexture.widths.push_back(values[k + 1]);
+            }
+        } else if (arg == "--albedo-fade" && hasValue) {
+            albedoTexture.fadeSteps = uint32_t(std::stoul(argv[++i]));
         } else if (arg == "--evaluate" && hasValue) {
             evaluate = argv[++i];
         } else if (arg == "--texture-mlp" && i + 3 < argc) {
@@ -429,10 +443,11 @@ int main(int argc, char** argv) {
         config.batch = batchSize;
         config.size = crop;
         config.widths = widths;
-        config.texture = textureMlp.frequencies > 0 ? crate::denseTextureShape(0, 0)
-                         : dense                    ? crate::denseTextureShape(denseComponents, denseResolution)
-                                                    : crate::textureShape(textureLevels, textureBase, textureFinest);
+        config.texture = textureMlp.frequencies > 0 || albedoTexture.enabled() ? crate::denseTextureShape(0, 0)
+                         : dense ? crate::denseTextureShape(denseComponents, denseResolution)
+                                 : crate::textureShape(textureLevels, textureBase, textureFinest);
         config.textureMlp = textureMlp;
+        config.albedoTexture = albedoTexture;
         config.appearances = appearance > 0 && latent == 0 ? uint32_t(training.size()) : 0;
         if (latent > 0) {
             config.gbufferChannels = kChannels;
@@ -508,7 +523,8 @@ int main(int argc, char** argv) {
         // Renders `views` in chunks (the last filled up with the first views) with latents encoded from the photos or,
         // given `latents` ([views][latent]), with those; the images [views][3][size][size].
         const auto renderLatent = [&](const std::vector<const View*>& views, const std::vector<float>* latents,
-                                      neural::PhotoEnhancerTraining* encoding = nullptr) {
+                                      neural::PhotoEnhancerTraining* encoding = nullptr,
+                                      std::vector<float>* albedos = nullptr, std::vector<float>* shadings = nullptr) {
             const size_t pixels = size_t(sampleSize) * sampleSize;
             auto& renderer = latents ? *givenRenderer : encoding ? *encoding : *encodeRenderer;
             std::vector<float> images;
@@ -537,6 +553,14 @@ int main(int argc, char** argv) {
                 const auto part = renderer.image();
                 const size_t count = std::min<size_t>(kLatentBatch, views.size() - first);
                 images.insert(images.end(), part.begin(), part.begin() + count * 3 * pixels);
+                if (albedos) {
+                    const auto albedo = renderer.albedo();
+                    albedos->insert(albedos->end(), albedo.begin(), albedo.begin() + count * 3 * pixels);
+                }
+                if (shadings) {
+                    const auto shading = renderer.shading();
+                    shadings->insert(shadings->end(), shading.begin(), shading.begin() + count * pixels);
+                }
             }
             return images;
         };
@@ -588,6 +612,59 @@ int main(int argc, char** argv) {
         if (!evaluate.empty()) {
             if (latent == 0 || validation.empty())
                 throw std::runtime_error("--evaluate needs --latent and validation views");
+            // The albedo renderer: the image with each view's albedo replaced by its mean colour over the crate (how
+            // much of the picture the texture carries), the albedo, the shading, and the albedo after block 1, 1 + 2,
+            // ... of the multi-resolution texture.
+            if (albedoTexture.enabled()) {
+                encodeRenderer->load(evaluate.string());
+                std::vector<const View*> held;
+                for (const auto& view : validation)
+                    held.push_back(&view);
+                std::vector<float> albedos, shadings;
+                const auto images = renderLatent(held, nullptr, nullptr, &albedos, &shadings);
+                const size_t pixels = size_t(sampleSize) * sampleSize;
+                auto flat = images;
+                for (size_t v = 0; v < held.size(); ++v) {
+                    double mean[3] = {0, 0, 0}, count = 0;
+                    for (size_t p = 0; p < pixels; ++p)
+                        if (held[v]->objects[p] > 0.5f) {
+                            for (size_t c = 0; c < 3; ++c)
+                                mean[c] += albedos[(v * 3 + c) * pixels + p];
+                            count += 1;
+                        }
+                    for (size_t p = 0; p < pixels; ++p)
+                        if (held[v]->objects[p] > 0.5f)
+                            for (size_t c = 0; c < 3; ++c)
+                                flat[(v * 3 + c) * pixels + p] =
+                                    float(mean[c] / std::max(count, 1.0)) * shadings[v * pixels + p];
+                }
+                std::printf("evaluation of %s: validation L1 %.4f with the albedo, %.4f with its mean colour\n",
+                            evaluate.string().c_str(), meanL1(images, held), meanL1(flat, held));
+                std::vector<float> photos, shadingImages(held.size() * 3 * pixels);
+                for (const auto* view : held)
+                    photos.insert(photos.end(), view->photo.begin(), view->photo.end());
+                for (size_t v = 0; v < held.size(); ++v)
+                    for (size_t c = 0; c < 3; ++c)
+                        for (size_t p = 0; p < pixels; ++p)
+                            shadingImages[(v * 3 + c) * pixels + p] = 0.5f * shadings[v * pixels + p];
+                std::filesystem::create_directories(outDir);
+                writeGrid(outDir / "evaluation.png", {photos, images, albedos, shadingImages, flat},
+                          std::min<size_t>(6, held.size()));
+                // The albedo with the first k blocks only.
+                std::vector<std::vector<float>> levels;
+                const std::vector<const View*> first(held.begin(),
+                                                     held.begin() + std::min<size_t>(kLatentBatch, held.size()));
+                for (size_t k = 1; k <= albedoTexture.frequencies.size(); ++k) {
+                    std::vector<float> weights(albedoTexture.frequencies.size(), 0.0f);
+                    std::fill(weights.begin(), weights.begin() + k, 1.0f);
+                    encodeRenderer->setAlbedoWeights(weights);
+                    std::vector<float> levelAlbedo;
+                    renderLatent(first, nullptr, nullptr, &levelAlbedo);
+                    levels.push_back(levelAlbedo);
+                }
+                writeGrid(outDir / "albedo_levels.png", levels, first.size());
+                return 0;
+            }
             auto plainConfig = config;
             plainConfig.forwardOnly = true;
             plainConfig.encodeLatents = true;
