@@ -15,6 +15,12 @@
  * - normalsShowTheFaces: the normals G-buffer of the box's front face (seen from +z) decodes to (0, 0, 1), of the
  *   floor to (0, 1, 0)
  * - colourIsLitFromTheLight: the face turned towards the light is brighter than the one turned away
+ * - shadowsFallAwayFromTheLights: with two hard lights low from +x and -x, the shadows G-buffer (red light 1, green
+ *   light 2) is 0 on the floor behind the box as seen from each light and 1 on the floor in front of it, and holds
+ *   no values between 0 and 1
+ * - softShadowsHavePenumbras: lights of some angular size give values between 0 and 1 along the shadows' edges
+ * - litShadowedIsDarkInTheShadow: the lit output with shadows is darker on the floor in light 1's shadow than on the
+ *   lit floor
  **/
 
 #include <gtest/gtest.h>
@@ -73,6 +79,15 @@ size_t at(uint32_t x, uint32_t y) { return (size_t(y) * kExtent.width + x) * 4; 
 glm::vec3 rgb(const std::vector<uint8_t>& bgra, uint32_t x, uint32_t y) {
     const size_t k = at(x, y);
     return glm::vec3(bgra[k + 2], bgra[k + 1], bgra[k]) / 255.0f;
+}
+
+// The pixel (x, y) the world point shows from `eye` (as BoxScene::draw() sets the camera).
+glm::ivec2 project(glm::vec3 eye, glm::vec3 point) {
+    CameraMVP camera{};
+    setCamera(camera, eye, glm::vec3(0.0f, 0.5f, 0.0f), 40.0f, 1.0f, 0.05f, 50.0f);
+    const glm::vec4 clip = camera.proj * camera.view * glm::vec4(point, 1.0f);
+    return glm::ivec2(int((clip.x / clip.w * 0.5f + 0.5f) * float(kExtent.width)),
+                      int((clip.y / clip.w * 0.5f + 0.5f) * float(kExtent.height)));
 }
 
 float value16(const std::vector<uint8_t>& bgra, uint32_t x, uint32_t y) {
@@ -151,4 +166,49 @@ TEST(GBufferMeshRenderer, normalsShowTheFaces) {
     const glm::vec3 front = rgb(normals, 32, 32) * 2.0f - 1.0f, floor = rgb(normals, 32, 62) * 2.0f - 1.0f;
     EXPECT_LT(glm::length(front - glm::vec3(0.0f, 0.0f, 1.0f)), 0.02f);
     EXPECT_LT(glm::length(floor - glm::vec3(0.0f, 1.0f, 0.0f)), 0.02f);
+}
+
+TEST(GBufferMeshRenderer, shadowsFallAwayFromTheLights) {
+    BoxScene scene;
+    // Both lights 26.6 degrees high: the unit box's shadow reaches 2 units beyond it.
+    scene.renderer->setLights({glm::vec3(1.0f, 0.5f, 0.0f), 0.0f, 1.0f}, {glm::vec3(-1.0f, 0.5f, 0.0f), 0.0f, 1.0f},
+                              0.2f);
+    const glm::vec3 eye(0.0f, 4.0f, 3.0f);
+    const auto shadows = scene.draw(GBufferOutput::Shadows, eye);
+    const auto left = project(eye, glm::vec3(-1.3f, 0.0f, 0.0f)), right = project(eye, glm::vec3(1.3f, 0.0f, 0.0f));
+    EXPECT_EQ(rgb(shadows, left.x, left.y).r, 0.0f);   // light 1 (from +x) is behind the box
+    EXPECT_EQ(rgb(shadows, right.x, right.y).r, 1.0f); // and shines on the floor in front of it
+    EXPECT_EQ(rgb(shadows, right.x, right.y).g, 0.0f); // light 2 (from -x) the other way round
+    EXPECT_EQ(rgb(shadows, left.x, left.y).g, 1.0f);
+    size_t between = 0;
+    for (uint32_t y = 0; y < kExtent.height; ++y)
+        for (uint32_t x = 0; x < kExtent.width; ++x) {
+            const glm::vec3 v = rgb(shadows, x, y);
+            between += (v.r > 0.02f && v.r < 0.98f) || (v.g > 0.02f && v.g < 0.98f);
+        }
+    EXPECT_EQ(between, 0u);
+}
+
+TEST(GBufferMeshRenderer, softShadowsHavePenumbras) {
+    BoxScene scene;
+    scene.renderer->setLights({glm::vec3(1.0f, 0.5f, 0.0f), 0.15f, 1.0f}, {glm::vec3(-1.0f, 0.5f, 0.0f), 0.15f, 1.0f},
+                              0.2f);
+    const auto shadows = scene.draw(GBufferOutput::Shadows, glm::vec3(0.0f, 4.0f, 3.0f));
+    size_t between = 0;
+    for (uint32_t y = 0; y < kExtent.height; ++y)
+        for (uint32_t x = 0; x < kExtent.width; ++x) {
+            const float v = rgb(shadows, x, y).r;
+            between += v > 0.05f && v < 0.95f;
+        }
+    EXPECT_GT(between, 10u);
+}
+
+TEST(GBufferMeshRenderer, litShadowedIsDarkInTheShadow) {
+    BoxScene scene;
+    scene.renderer->setLights({glm::vec3(1.0f, 0.5f, 0.0f), 0.0f, 1.0f}, {glm::vec3(-1.0f, 0.5f, 0.0f), 0.0f, 0.0f},
+                              0.2f);
+    const glm::vec3 eye(0.0f, 4.0f, 3.0f);
+    const auto lit = scene.draw(GBufferOutput::LitShadowed, eye);
+    const auto left = project(eye, glm::vec3(-1.3f, 0.0f, 0.0f)), right = project(eye, glm::vec3(1.3f, 0.0f, 0.0f));
+    EXPECT_GT(glm::length(rgb(lit, right.x, right.y)), 2.0f * glm::length(rgb(lit, left.x, left.y)));
 }

@@ -747,6 +747,8 @@ trained photo enhancer renders every view, entirely in Klartraum.
 | `--untrained S` | Enhance every view with an untrained photo enhancer (initialised as for training, its texture to +-1e-4 x S) |
 | `--time` | With `--parameters` of a latent-conditioned model: print the wall-clock time of its step per view (without GPU profiling) |
 | `--profile` | With `--parameters`: print the trained model's GPU time per view, element by element and per kind |
+| `--lights a1,e1,r1,i1,a2,e2,r2,i2` | The two lights of the shadows G-buffers (`classical_shadows_*`: red light 1, green light 2; `classical_lit_*`: lit with both): azimuth and elevation in degrees, angular radius in radians (0: hard shadows), intensity |
+| `--random-lights SEED` | Draw both lights at random for every view (azimuth, elevation 15-70 degrees, radius 0-0.15, intensity 0.5-1.2), written to `lights.csv` |
 | `--latent-codes FILE` | For a latent-conditioned model: one latent per line (comma-separated), view after view, e.g. with `--fixed-view` a walk through the latent space |
 | `--latent-code a,b,...` | For a latent-conditioned model (detected by its encoder in `--parameters`): the crate's latent (default zeros) |
 | `--features` | With `--parameters` or `--untrained`, also write the texture's features of every view (`frames/features_NNNN.png`) |

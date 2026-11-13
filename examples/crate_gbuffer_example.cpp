@@ -143,8 +143,13 @@ int main(int argc, char** argv) {
     int appearanceRow = -1;            // -1: the training codes' mean
     std::vector<float> latentCode;     // the crate's latent for a latent-conditioned model (empty: zeros)
     std::filesystem::path latentCodes; // a file of one latent per line (comma-separated), for view after view
-    bool profile = false;              // time the trained model's every element on the GPU
-    bool timeSteps = false;            // time the trained model's steps on the CPU (submission to finish)
+    // The two lights of the shadows G-buffer (--lights), or drawn at random per view (--random-lights SEED).
+    std::array<GBufferLight, 2> lights{GBufferLight{glm::vec3(0.45f, 0.8f, 0.35f), 0.05f, 1.0f},
+                                       GBufferLight{glm::vec3(-0.6f, 0.5f, -0.3f), 0.05f, 0.5f}};
+    bool randomLights = false;
+    uint32_t lightSeed = 1;
+    bool profile = false;   // time the trained model's every element on the GPU
+    bool timeSteps = false; // time the trained model's steps on the CPU (submission to finish)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -182,7 +187,25 @@ int main(int argc, char** argv) {
             profile = true;
         else if (arg == "--time")
             timeSteps = true;
-        else if (arg == "--latent-codes" && hasValue)
+        else if (arg == "--lights" && hasValue) {
+            // azimuth and elevation in degrees, angular radius in radians, intensity; for light 1, then light 2
+            std::stringstream numbers(argv[++i]);
+            std::vector<float> values;
+            for (std::string number; std::getline(numbers, number, ',');)
+                values.push_back(std::stof(number));
+            if (values.size() != 8)
+                throw std::invalid_argument("--lights needs 8 numbers");
+            for (int k = 0; k < 2; ++k) {
+                const float azimuth = glm::radians(values[4 * k]), elevation = glm::radians(values[4 * k + 1]);
+                lights[k].towardsLight = glm::vec3(std::sin(azimuth) * std::cos(elevation), std::sin(elevation),
+                                                   std::cos(azimuth) * std::cos(elevation));
+                lights[k].angularRadius = values[4 * k + 2];
+                lights[k].intensity = values[4 * k + 3];
+            }
+        } else if (arg == "--random-lights" && hasValue) {
+            randomLights = true;
+            lightSeed = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--latent-codes" && hasValue)
             latentCodes = argv[++i];
         else if (arg == "--latent-code" && hasValue) {
             std::stringstream numbers(argv[++i]);
@@ -318,13 +341,34 @@ int main(int argc, char** argv) {
         std::ofstream cameras(outDir / "cameras_classical.csv");
         cameras << "frame,eye_x,eye_y,eye_z,look_x,look_y,look_z,near_plane,fov_y_degrees,depth_near,depth_far\n";
         std::mt19937 rng(seed);
+        // The two lights of the shadows G-buffer: given, or drawn per view (--random-lights).
+        std::mt19937 lightRandom(lightSeed);
+        const auto drawLight = [&]() {
+            std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+            const float azimuth = 6.2831853f * unit(lightRandom),
+                        elevation = glm::radians(15.0f + 55.0f * unit(lightRandom));
+            GBufferLight light;
+            light.towardsLight = glm::vec3(std::sin(azimuth) * std::cos(elevation), std::sin(elevation),
+                                           std::cos(azimuth) * std::cos(elevation));
+            light.angularRadius = 0.15f * unit(lightRandom);
+            light.intensity = 0.5f + 0.7f * unit(lightRandom);
+            return light;
+        };
+        std::ofstream lightLog;
+        if (randomLights)
+            lightLog.open(outDir / "lights.csv");
+        if (lightLog)
+            lightLog << "view,light,azimuth_degrees,elevation_degrees,angular_radius,intensity\n";
+        if (!randomLights)
+            renderer.setLights(lights[0], lights[1], 0.25f);
         std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
         std::normal_distribution<float> jitter(0.0f, 0.12f);
         const std::pair<const char*, GBufferOutput> outputs[] = {
-            {"", GBufferOutput::Colour},         {"class_", GBufferOutput::Classes},
-            {"depth_", GBufferOutput::Depth},    {"depth16_", GBufferOutput::Depth16},
-            {"u_", GBufferOutput::CoordinatesU}, {"v_", GBufferOutput::CoordinatesV},
-            {"normals_", GBufferOutput::Normals}};
+            {"", GBufferOutput::Colour},          {"class_", GBufferOutput::Classes},
+            {"depth_", GBufferOutput::Depth},     {"depth16_", GBufferOutput::Depth16},
+            {"u_", GBufferOutput::CoordinatesU},  {"v_", GBufferOutput::CoordinatesV},
+            {"normals_", GBufferOutput::Normals}, {"shadows_", GBufferOutput::Shadows},
+            {"lit_", GBufferOutput::LitShadowed}};
         constexpr uint32_t kWarmUp = 5; // views before --profile and --time start timing
         double stepSeconds = 0.0;       // the latent model's steps after the warm-up
         for (uint32_t view = 0; view < views; ++view) {
@@ -350,11 +394,21 @@ int main(int argc, char** argv) {
             ubo.proj[1][1] *= -1.0f;
             ubo.cameraWorldPos = glm::vec4(eye, 1.0f);
             renderer.getCamera()->update(0);
+            if (randomLights) {
+                const GBufferLight first = drawLight(), second = drawLight();
+                renderer.setLights(first, second, 0.25f);
+                for (int k = 0; k < 2; ++k) {
+                    const GBufferLight& l = k == 0 ? first : second;
+                    const glm::vec3 d = glm::normalize(l.towardsLight);
+                    lightLog << view << "," << k + 1 << "," << glm::degrees(std::atan2(d.x, d.z)) << ","
+                             << glm::degrees(std::asin(d.y)) << "," << l.angularRadius << "," << l.intensity << "\n";
+                }
+            }
             neural::GBufferFrame frame;
             frame.width = frame.height = size;
             frame.depthFar = crate::kDepthFar;
-            std::vector<uint8_t>* buffers[] = {&frame.colour, &frame.classes, nullptr,       &frame.depth16,
-                                               &frame.u,      &frame.v,       &frame.normals};
+            std::vector<uint8_t>* buffers[] = {&frame.colour, &frame.classes, nullptr, &frame.depth16, &frame.u,
+                                               &frame.v,      &frame.normals, nullptr, nullptr};
             for (size_t k = 0; k < std::size(outputs); ++k) {
                 const auto& [kind, output] = outputs[k];
                 renderer.setOutput(output, 0.0f, crate::kDepthFar);

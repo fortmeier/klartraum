@@ -22,6 +22,9 @@ GBufferMeshRenderer::GBufferMeshRenderer(VulkanContext& vulkanContext, const std
     camera = std::make_shared<CameraUboType>();
     current.output = glm::vec4(float(GBufferOutput::Colour), 0.0f, 1.0f, 0.0f);
     current.light = glm::vec4(glm::normalize(glm::vec3(0.45f, 0.8f, 0.35f)), 0.25f);
+    current.lights[0] = glm::vec4(glm::vec3(current.light), 0.0f);
+    current.lights[1] = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+    current.lighting = glm::vec4(1.0f, 0.0f, 0.25f, float(vertices.size() / 3));
     settings =
         std::make_shared<HostValues<GBufferMeshSettings>>(vulkanContext, std::vector<GBufferMeshSettings>{current});
 
@@ -49,6 +52,13 @@ void GBufferMeshRenderer::setOutput(GBufferOutput output, float nearDistance, fl
 
 void GBufferMeshRenderer::setLight(glm::vec3 towardsLight, float ambient) {
     current.light = glm::vec4(glm::normalize(towardsLight), ambient);
+    store();
+}
+
+void GBufferMeshRenderer::setLights(const GBufferLight& first, const GBufferLight& second, float ambient) {
+    current.lights[0] = glm::vec4(glm::normalize(first.towardsLight), first.angularRadius);
+    current.lights[1] = glm::vec4(glm::normalize(second.towardsLight), second.angularRadius);
+    current.lighting = glm::vec4(first.intensity, second.intensity, ambient, current.lighting.w);
     store();
 }
 

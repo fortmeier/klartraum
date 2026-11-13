@@ -37,12 +37,28 @@ enum class GBufferOutput : uint32_t {
     CoordinatesV = 7, ///< v as CoordinatesU, blue the object id's low byte
     Depth16 = 8,      ///< the distance from near to far as 16 bits (red high byte, green low byte)
     Normals = 9,      ///< the world-space normal n as (n + 1) / 2 in red, green and blue
+    /// How much of each of the two lights (setLights()) reaches the surface, 0 to 1: red light 1, green light 2
+    Shadows = 10,
+    /// The albedo lit by the two lights with their shadows and the ambient share
+    LitShadowed = 11,
+};
+
+/// One of a GBufferMeshRenderer's two directional lights (GBufferOutput::Shadows and LitShadowed).
+struct GBufferLight {
+    glm::vec3 towardsLight{0.0f, 1.0f, 0.0f}; ///< the direction towards the light (need not be normalised)
+    /// Angular radius in radians of the light's disc: 0 casts hard shadows, larger ones soft shadows
+    float angularRadius = 0.0f;
+    float intensity = 1.0f; ///< the light's strength in LitShadowed
 };
 
 /// The values the shaders of a GBufferMeshRenderer read; std430 and C++ share the layout.
 struct GBufferMeshSettings {
     glm::vec4 output; ///< x the GBufferOutput, y and z the depth window's near and far distance, w unused
     glm::vec4 light;  ///< xyz the direction towards the light, w the ambient share of the light
+    /// The two shadow-casting lights: xyz the direction towards each, w its angular radius
+    glm::vec4 lights[2];
+    /// x and y the two lights' intensities, z their ambient share, w the triangles the shadow rays test
+    glm::vec4 lighting;
 };
 
 /**
@@ -77,6 +93,10 @@ public:
     void setOutput(GBufferOutput output, float nearDistance = 0.0f, float farDistance = 1.0f);
     /// The light of GBufferOutput::Colour: the direction towards it and the ambient share.
     void setLight(glm::vec3 towardsLight, float ambient);
+    /// The two lights of GBufferOutput::Shadows and LitShadowed and the ambient share of LitShadowed. Their shadows
+    /// are traced against the renderer's whole triangle list per fragment (fine for small scenes such as a toy
+    /// object on a floor; large scenes would need shadow maps).
+    void setLights(const GBufferLight& first, const GBufferLight& second, float ambient);
 
     std::shared_ptr<CameraUboType> getCamera() const { return camera; }
     /// The render pass; compile a graph from it.
