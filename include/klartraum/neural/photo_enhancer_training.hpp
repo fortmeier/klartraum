@@ -35,6 +35,10 @@ struct TextureMlp {
     static TextureMlp fromFile(const std::string& path);
 };
 
+/// The latent size of a saved latent model: the "latent D" line of its texture.txt, else half its encoder head's
+/// outputs (older models), else 0.
+uint32_t savedLatentSize(const std::string& directory);
+
 /// The multi-resolution albedo texture (latent_renderer.AlbedoTexture): residual blocks, each a texture MLP on the
 /// positional encoding of its octaves and the latent G-buffer giving 3 values, summed (each weighted) into the albedo's
 /// logit; the decoder then gives shading and background only (latent_renderer.compose()).

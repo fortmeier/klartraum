@@ -1550,6 +1550,19 @@ std::shared_ptr<TensorElement<float>> PhotoEnhancerTraining::gradientOf(const st
     return redirected != gradientRedirect.end() ? redirected->second : find(name).gradient;
 }
 
+uint32_t savedLatentSize(const std::string& directory) {
+    std::ifstream file(std::filesystem::path(directory) / "texture.txt");
+    for (std::string line; std::getline(file, line);) {
+        std::istringstream words(line);
+        std::string key;
+        uint32_t size = 0;
+        if (words >> key >> size && key == "latent")
+            return size;
+    }
+    const auto head = std::filesystem::path(directory) / "encoder.head.bias.bin";
+    return std::filesystem::exists(head) ? uint32_t(std::filesystem::file_size(head) / sizeof(float) / 2) : 0;
+}
+
 TextureMlp TextureMlp::fromFile(const std::string& path) {
     TextureMlp mlp;
     std::ifstream file(path);
@@ -2006,6 +2019,8 @@ void PhotoEnhancerTraining::save(const std::string& directory, bool averages) co
         for (uint32_t c : shape.classes)
             texture << " " << c;
         texture << "\n";
+        if (config.latentSize > 0)
+            texture << "latent " << config.latentSize << "\n";
         const auto& t = config.textureMlp;
         if (t.frequencies > 0)
             texture << "mlp " << t.frequencies << " " << t.width << " " << t.outputs << " " << t.hidden << "\n";

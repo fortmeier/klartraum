@@ -228,12 +228,8 @@ int main(int argc, char** argv) {
         graph.compileFrom(renderer.getOutput());
         // A photo enhancer trained in Klartraum (crate_training_example's saved parameters), run forward only.
         std::unique_ptr<neural::PhotoEnhancerTraining> trained;
-        // A latent-conditioned model (crate_training_example --latent) has an encoder; its latent size is half the
-        // encoder head's outputs (means and log-variances).
-        const auto encoderHead = parameters / "encoder.head.bias.bin";
-        const uint32_t latentSize = !parameters.empty() && std::filesystem::exists(encoderHead)
-                                        ? uint32_t(std::filesystem::file_size(encoderHead) / sizeof(float) / 2)
-                                        : 0;
+        // A latent-conditioned model (crate_training_example --latent) and its latent size.
+        const uint32_t latentSize = parameters.empty() ? 0 : neural::savedLatentSize(parameters.string());
         // Every view's latent: from --latent-codes (the lines repeating if there are fewer than views), else one.
         std::vector<std::vector<float>> viewLatents;
         if (!latentCodes.empty()) {

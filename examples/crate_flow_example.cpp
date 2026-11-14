@@ -154,8 +154,7 @@ int main(int argc, char** argv) {
             config.widths.push_back(uint32_t(std::filesystem::file_size(bias) / sizeof(float)));
         }
         config.gbufferChannels = 4;
-        config.latentSize =
-            uint32_t(std::filesystem::file_size(parameters / "encoder.head.bias.bin") / sizeof(float) / 2);
+        config.latentSize = neural::savedLatentSize(parameters.string());
         config.latentObjects = 1;
         neural::PhotoEnhancerTraining model(vc, config);
         model.load(parameters.string());
