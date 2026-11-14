@@ -191,12 +191,13 @@ struct Flow {
     std::vector<uint8_t> valid; ///< 1 where a sees b's point
 };
 
-inline float distance16(const std::vector<uint8_t>& bgra, size_t p) {
-    return float(bgra[4 * p + 2] * 256u + bgra[4 * p + 1]) / 65535.0f * kDepthFar;
+inline float distance16(const std::vector<uint8_t>& bgra, size_t p, float depthFar = kDepthFar) {
+    return float(bgra[4 * p + 2] * 256u + bgra[4 * p + 1]) / 65535.0f * depthFar;
 }
 
+// The depth windows' far ends default to the crate scene's (kDepthFar); flights pass each frame's own.
 inline Flow flow(const klartraum::CameraMVP& a, const std::vector<uint8_t>& depthA, const klartraum::CameraMVP& b,
-                 const std::vector<uint8_t>& depthB, uint32_t size) {
+                 const std::vector<uint8_t>& depthB, uint32_t size, float farA = kDepthFar, float farB = kDepthFar) {
     Flow result;
     result.size = size;
     const size_t pixels = size_t(size) * size;
@@ -208,7 +209,7 @@ inline Flow flow(const klartraum::CameraMVP& a, const std::vector<uint8_t>& dept
     for (uint32_t row = 0; row < size; ++row)
         for (uint32_t column = 0; column < size; ++column) {
             const size_t p = size_t(row) * size + column;
-            const float distanceB = distance16(depthB, p);
+            const float distanceB = distance16(depthB, p, farB);
             if (distanceB <= 0.0f)
                 continue;
             const glm::vec4 far = toWorldB * glm::vec4((column + 0.5f) / size * 2.0f - 1.0f,
@@ -222,7 +223,7 @@ inline Flow flow(const klartraum::CameraMVP& a, const std::vector<uint8_t>& dept
             result.y[p] = y;
             if (x < 0.0f || y < 0.0f || x >= float(size) || y >= float(size))
                 continue;
-            const float distanceA = distance16(depthA, size_t(y) * size + size_t(x));
+            const float distanceA = distance16(depthA, size_t(y) * size + size_t(x), farA);
             const float expected = glm::length(point - eyeA);
             result.valid[p] = distanceA > 0.0f && std::abs(distanceA - expected) < 0.02f * expected;
         }

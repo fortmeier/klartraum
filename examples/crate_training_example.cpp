@@ -142,6 +142,81 @@ std::vector<View> loadViews(VulkanContext& vc, GBufferMeshRenderer& renderer, Co
 
 // The batch of random crops (as train_photo_enhancer.crops()): a view, at full or (30 %) half scale (area mean of
 // channels and photo, every second coordinate and class), a random window, flipped half the time.
+// A frame of a flight of tree_bonsai_example --fly-in --gbuffers: its camera, depth window and G-buffers.
+struct FlightFrame {
+    int index = 0;
+    glm::vec3 eye, look;
+    float depthFar = 1.0f;
+    neural::GBufferFrame gbuffers;
+};
+
+// An RGB binary PPM as BGRA bytes (as a readback gives them); empty if missing.
+std::vector<uint8_t> readBgra(const std::filesystem::path& path, uint32_t& width, uint32_t& height) {
+    std::ifstream file(path, std::ios::binary);
+    std::string magic;
+    uint32_t maximum = 0;
+    if (!(file >> magic >> width >> height >> maximum) || magic != "P6")
+        return {};
+    file.get();
+    std::vector<uint8_t> rgb(size_t(width) * height * 3);
+    file.read(reinterpret_cast<char*>(rgb.data()), std::streamsize(rgb.size()));
+    std::vector<uint8_t> bgra(size_t(width) * height * 4, 255);
+    for (size_t p = 0; p < size_t(width) * height; ++p)
+        for (size_t c = 0; c < 3; ++c)
+            bgra[4 * p + 2 - c] = rgb[3 * p + c];
+    return bgra;
+}
+
+// The frames of a flight from frame `first` on.
+std::vector<FlightFrame> readFlightFrames(const std::filesystem::path& flight, int first) {
+    std::ifstream cameras(flight / "cameras_classical.csv");
+    std::string line;
+    std::getline(cameras, line);
+    std::vector<FlightFrame> frames;
+    while (std::getline(cameras, line)) {
+        std::vector<float> v;
+        std::stringstream fields(line);
+        for (std::string field; std::getline(fields, field, ',');)
+            v.push_back(std::stof(field));
+        if (v.size() < 11 || int(v[0]) < first)
+            continue;
+        FlightFrame frame;
+        frame.index = int(v[0]);
+        frame.eye = glm::vec3(v[1], v[2], v[3]);
+        frame.look = glm::vec3(v[4], v[5], v[6]);
+        frame.depthFar = v[10];
+        auto& g = frame.gbuffers;
+        g.depthFar = frame.depthFar;
+        const auto path = [&](const char* kind) {
+            char name[64];
+            std::snprintf(name, sizeof(name), "classical%s_%04d.ppm", kind, frame.index);
+            return flight / "frames" / name;
+        };
+        g.colour = readBgra(path(""), g.width, g.height);
+        uint32_t w = 0, h = 0;
+        g.classes = readBgra(path("_class"), w, h);
+        g.depth16 = readBgra(path("_depth16"), w, h);
+        g.u = readBgra(path("_u"), w, h);
+        g.v = readBgra(path("_v"), w, h);
+        if (g.colour.empty() || g.classes.empty() || g.depth16.empty() || g.u.empty() || g.v.empty())
+            continue;
+        frames.push_back(std::move(frame));
+    }
+    return frames;
+}
+
+// A depth16 BGRA image reduced to `size` by taking each block's centre pixel (distances must not be averaged).
+std::vector<uint8_t> reduceDepth(const std::vector<uint8_t>& bgra, uint32_t width, uint32_t size) {
+    const uint32_t factor = width / size;
+    std::vector<uint8_t> out(size_t(size) * size * 4);
+    for (uint32_t y = 0; y < size; ++y)
+        for (uint32_t x = 0; x < size; ++x)
+            for (size_t c = 0; c < 4; ++c)
+                out[(size_t(y) * size + x) * 4 + c] =
+                    bgra[(size_t(y * factor + factor / 2) * width + x * factor + factor / 2) * 4 + c];
+    return out;
+}
+
 struct Batch {
     std::vector<float> channels, coordinates, classes, photos, rows, objects;
     /// The second views' crops and the flow onto the first views' crops (for the temporal loss).
@@ -245,6 +320,12 @@ int main(int argc, char** argv) {
     neural::TextureMlp textureMlp;             // the latent-conditioned MLP texture instead (--texture-mlp)
     neural::AlbedoTexture albedoTexture;       // the albedo renderer instead (--albedo, --albedo-fade)
     std::filesystem::path evaluate;            // a saved model to evaluate with and without its texture (--evaluate)
+    // A flight of tree_bonsai_example --fly-in --gbuffers instead of the crate (--flight DIR PHOTOS FIRST): its
+    // frames from FIRST on with their photos PHOTOS/<frame>.ppm.
+    std::filesystem::path flightDir, flightPhotos;
+    int flightFirst = 0;
+    // After training, render the model along a flight (--render-flight DIR OUT).
+    std::filesystem::path renderFlight, renderOut;
     // The GAN without reconstruction (--gan): random views of the crate with random latents against the photos.
     bool gan = false;
     uint32_t ganViews = 800; // random views rendered for it
@@ -295,6 +376,13 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--albedo-fade" && hasValue) {
             albedoTexture.fadeSteps = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--flight" && i + 3 < argc) {
+            flightDir = argv[++i];
+            flightPhotos = argv[++i];
+            flightFirst = std::stoi(argv[++i]);
+        } else if (arg == "--render-flight" && i + 2 < argc) {
+            renderFlight = argv[++i];
+            renderOut = argv[++i];
         } else if (arg == "--gan") {
             gan = true;
         } else if (arg == "--gan-views" && hasValue) {
@@ -357,7 +445,64 @@ int main(int argc, char** argv) {
         HeadlessFrontend frontend;
         VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
         std::vector<View> training, validation;
-        {
+        // A flight's views (--flight): G-buffers and photos from disk, every tenth frame held out; each view's second
+        // view for the temporal loss is the flight's next frame (the previous for the last), the flow between them from
+        // the frames' distances and cameras.
+        const bool fromFlight = !flightDir.empty();
+        const size_t samplePixels = size_t(sampleSize) * sampleSize;
+        // The latent renderer's sample of a frame: inverse depth and (missing) normals as geometry, every
+        // non-background pixel one object (the latent is the whole image's).
+        const auto sampleOf = [&](const FlightFrame& frame, neural::PhotoEnhancerInputs& inputs,
+                                  std::vector<float>& objects) {
+            inputs =
+                neural::photoEnhancerInputs(frame.gbuffers, neural::PhotoEnhancerSample{sampleSize, sampleSize, 1.0f});
+            if (inputs.normals.empty())
+                inputs.normals.assign(3 * samplePixels, 0.0f);
+            std::vector<float> geometry(inputs.channels.begin() + 3 * samplePixels,
+                                        inputs.channels.begin() + 4 * samplePixels);
+            geometry.insert(geometry.end(), inputs.normals.begin(), inputs.normals.end());
+            inputs.channels = geometry;
+            objects.assign(samplePixels, 0.0f);
+            for (size_t q = 0; q < samplePixels; ++q)
+                objects[q] = inputs.classes[q] != 0.0f ? 1.0f : 0.0f;
+        };
+        const auto cameraOf = [](const FlightFrame& frame) {
+            CameraMVP camera{};
+            crate::setCamera(camera, frame.eye, frame.look);
+            return camera;
+        };
+        if (fromFlight) {
+            if (latent == 0)
+                throw std::runtime_error("--flight needs --latent");
+            const auto frames = readFlightFrames(flightDir, flightFirst);
+            for (size_t k = 0; k < frames.size(); ++k) {
+                const FlightFrame& frame = frames[k];
+                View view;
+                char name[32];
+                std::snprintf(name, sizeof(name), "%04d", frame.index);
+                view.id = name;
+                view.eye = frame.eye;
+                view.look = frame.look;
+                view.photo = readPhoto(flightPhotos / (view.id + ".ppm"));
+                if (view.photo.empty())
+                    continue;
+                sampleOf(frame, view.inputs, view.objects);
+                if (temporal > 0.0f) {
+                    const FlightFrame& partner = frames[k + 1 < frames.size() ? k + 1 : k - 1];
+                    sampleOf(partner, view.secondInputs, view.secondObjects);
+                    const auto flow = crate::flow(
+                        cameraOf(frame), reduceDepth(frame.gbuffers.depth16, frame.gbuffers.width, sampleSize),
+                        cameraOf(partner), reduceDepth(partner.gbuffers.depth16, partner.gbuffers.width, sampleSize),
+                        sampleSize, frame.depthFar, partner.depthFar);
+                    view.flow = flow.x;
+                    view.flow.insert(view.flow.end(), flow.y.begin(), flow.y.end());
+                    view.flowValid.assign(flow.valid.begin(), flow.valid.end());
+                }
+                (k % 10 == 5 ? validation : training).push_back(std::move(view));
+            }
+            kChannels = 4;
+            flips = false;
+        } else {
             const VkExtent2D extent{2 * sampleSize, 2 * sampleSize};
             auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
             GBufferMeshRenderer renderer(vc, crate::vertices(floor), target, extent);
@@ -370,7 +515,7 @@ int main(int argc, char** argv) {
                                    crateDir / "data/validation", minAlignment, floor ? 0.6f : 1.0f);
         }
         // The latent renderer's geometry: inverse depth and normals; its one object, the crate.
-        if (latent > 0) {
+        if (latent > 0 && !fromFlight) {
             kChannels = 4;
             flips = false;
             const size_t pixels = size_t(sampleSize) * sampleSize;
@@ -434,7 +579,7 @@ int main(int argc, char** argv) {
         // it (without the floor if the views have none), and the flow of its pixels onto the view from G-buffers with
         // the floor.
         std::vector<View>& temporalViews = gan ? bank : training;
-        if (temporal > 0.0f) {
+        if (temporal > 0.0f && !fromFlight) {
             if (latent == 0)
                 throw std::runtime_error("--temporal needs --latent");
             const VkExtent2D extent{2 * sampleSize, 2 * sampleSize}, flowExtent{sampleSize, sampleSize};
@@ -513,6 +658,9 @@ int main(int argc, char** argv) {
                                  : crate::textureShape(textureLevels, textureBase, textureFinest);
         config.textureMlp = textureMlp;
         config.albedoTexture = albedoTexture;
+        // A flight's texture covers the terrain, the trunks and the leaves.
+        if (fromFlight)
+            config.texture.classes = {tree::TREE_CLASS_SOIL, tree::TREE_CLASS_STEM, tree::TREE_CLASS_LEAF};
         config.appearances = appearance > 0 && latent == 0 ? uint32_t(training.size()) : 0;
         if (latent > 0) {
             config.gbufferChannels = kChannels;
@@ -1062,6 +1210,33 @@ int main(int argc, char** argv) {
                 std::snprintf(name, sizeof(name), "validation_%06u.png", step);
                 writeImage(outDir / name, grid.data(), width, uint32_t(sampleSize * shown), 3);
             }
+        }
+        // --render-flight: the trained model along a (finely rendered) flight, latents 0, OUT/frame_<frame>.ppm.
+        if (!renderFlight.empty()) {
+            if (!givenRenderer)
+                throw std::runtime_error("--render-flight needs --latent");
+            givenRenderer->load((outDir / "parameters").string());
+            const auto frames = readFlightFrames(renderFlight, flightFirst);
+            std::vector<View> views(frames.size());
+            std::vector<const View*> pointers;
+            for (size_t k = 0; k < frames.size(); ++k) {
+                sampleOf(frames[k], views[k].inputs, views[k].objects);
+                views[k].photo.assign(3 * samplePixels, 0.0f);
+                pointers.push_back(&views[k]);
+            }
+            const std::vector<float> zeros(views.size() * latent, 0.0f);
+            const auto images = renderLatent(pointers, &zeros);
+            std::filesystem::create_directories(renderOut);
+            for (size_t k = 0; k < frames.size(); ++k) {
+                std::vector<uint8_t> rgb(3 * samplePixels);
+                for (size_t q = 0; q < samplePixels; ++q)
+                    for (size_t c = 0; c < 3; ++c)
+                        rgb[3 * q + c] = byte(images[(k * 3 + c) * samplePixels + q]);
+                char name[64];
+                std::snprintf(name, sizeof(name), "frame_%04d.png", frames[k].index);
+                writeImage(renderOut / name, rgb.data(), sampleSize, sampleSize, 3);
+            }
+            std::cout << frames.size() << " flight frames rendered to " << renderOut << std::endl;
         }
     } catch (const std::exception& e) {
         std::cerr << "crate_training_example: " << e.what() << std::endl;

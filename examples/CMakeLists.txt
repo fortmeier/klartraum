@@ -258,3 +258,11 @@ target_link_libraries(crate_paint_example
 )
 
 add_dependencies(crate_paint_example Shaders)
+
+add_executable(flight_paint_example
+    flight_paint_example.cpp
+)
+
+target_link_libraries(flight_paint_example
+    klartraum_lib
+)

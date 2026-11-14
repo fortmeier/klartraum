@@ -788,6 +788,8 @@ the held-out views are rendered with the codes' mean
 | `--sample-size S` | Size of the samples (default 256; the photos are averaged down to it) |
 | `--albedo F1,W1,F2,W2,...` | The albedo renderer instead: a multi-resolution albedo texture of residual blocks (block k: positional encoding of Fk octaves and the latent through two hidden layers of Wk channels), the decoder gives shading and background only (needs `--latent`) |
 | `--albedo-fade N` | Fade the albedo texture's blocks in one after the other over N steps each (default 0: all at once) |
+| `--flight DIR PHOTOS FIRST` | Train on a fly-in flight of `tree_bonsai_example` (with its G-buffers) instead of the crate: its frames from FIRST on, photos `PHOTOS/<frame>.ppm`, every tenth frame held out, the temporal loss between consecutive frames (needs `--latent`; the latent is the whole image's) |
+| `--render-flight DIR OUT` | After training, render the model along a flight (its frames from `--flight`'s FIRST on, latents 0) to `OUT/frame_<frame>.png` |
 | `--gan` | The GAN without reconstruction instead: random views (`--gan-views N`, default 800) with random latents, a discriminator on inverse depth and image against the photos with their own views' depth, DiffAugment in both steps, no encoder, no photo losses (needs `--latent`; `--adversarial` defaults to 1); validation writes `samples_*.png` (4 views x 4 latents) |
 | `--gan-views N` | Random views rendered for `--gan` (default 800) |
 | `--evaluate DIR` | Instead of training, evaluate a saved latent model (its `parameters/`, with the options it was trained with): validation and training L1 with and without its texture's features, `<out>/evaluation.png` (photo, with, without) and `<out>/texture_features.png` |
@@ -842,6 +844,24 @@ atlas's mean colour, lightly shaded, elsewhere. A driver script alternates it wi
 
 ```bash
 ./build/examples/crate_paint_example --atlas build/TestingOutput/crate_painted/atlas --bake FLIGHT PHOTOS
+```
+
+### `flight_paint_example`
+
+Consistent Qwen-Image photos along a fly-in flight of `tree_bonsai_example` (with its G-buffers), the
+way `crate_paint_example` paints the crate: every frame's start image is the previous frame's
+photo warped onto it by the geometric flow (each pixel's point from its distance and the
+camera, projected into the previous frame, kept where that frame sees it; gaps of a few pixels
+filled from their neighbours), the newly visible parts from the classical rendering.
+
+| Option | Meaning |
+|--------|---------|
+| `--check FLIGHT` | The flow's check: each rendering warped onto the next frame against that frame's own rendering |
+| `--start FLIGHT FRAME PHOTOS OUT` | The start image of FRAME from the previous frame's photo (`PHOTOS/<frame>.ppm`), `OUT/start_<frame>.ppm` and the depth control `OUT/control_<frame>.ppm` |
+| `--consistency FLIGHT PHOTOS` | How well consecutive photos agree (warped mean squared difference) |
+
+```bash
+./build/examples/flight_paint_example --check build/TestingOutput/flyin_painted/flight
 ```
 
 ### `crate_flow_example`
