@@ -252,7 +252,9 @@ int main(int argc, char** argv) {
     bool unconditional = false; // a discriminator of the image only
     uint32_t criticScales = 2;
     float discriminatorRate = 2e-4f;
-    float networkRate = 1e-4f; // the generator's (and encoder's) Adam learning rate
+    float networkRate = 1e-4f;     // the generator's (and encoder's) Adam learning rate
+    uint32_t criticChannels = 0;   // the conditional discriminator's G-buffer channels (0: all)
+    bool augmentGenerator = false; // DiffAugment in the generator's step too
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -323,6 +325,10 @@ int main(int argc, char** argv) {
             discriminatorRate = std::stof(argv[++i]);
         else if (arg == "--lr" && hasValue)
             networkRate = std::stof(argv[++i]);
+        else if (arg == "--critic-channels" && hasValue)
+            criticChannels = uint32_t(std::stoul(argv[++i]));
+        else if (arg == "--augment-generator")
+            augmentGenerator = true;
         else if (arg == "--widths" && hasValue) {
             std::stringstream numbers(argv[++i]);
             widths.clear();
@@ -539,6 +545,8 @@ int main(int argc, char** argv) {
         config.criticScales = criticScales;
         config.discriminatorAdam.learningRate = discriminatorRate;
         config.networkAdam.learningRate = networkRate;
+        config.criticGBufferChannels = criticChannels;
+        config.augmentGeneratorStep = augmentGenerator;
         neural::PhotoEnhancerTraining trainer(vc, config);
         std::mt19937 rng(1);
         std::vector<std::string> fresh; // generator, texture and encoder parameters not taken from --init-from

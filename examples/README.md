@@ -804,6 +804,8 @@ the held-out views are rendered with the codes' mean
 | `--unconditional` | The discriminator sees the image only, not the G-buffer with it |
 | `--critic-scales N` | Scales of the PatchGAN, each at half the previous resolution (default 2; the coarsest needs 24 pixels) |
 | `--discriminator-lr R` | The discriminator's Adam learning rate (default 0.0002) |
+| `--critic-channels N` | The conditional discriminator sees only the first N G-buffer channels (default 0: all; 1: the inverse depth) |
+| `--augment-generator` | DiffAugment in the generator's step too (as in the discriminator's) |
 | `--lr R` | The generator's (and encoder's) Adam learning rate (default 0.0001) |
 | `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/`: every parameter of the same shape; a shallower U-Net's up blocks become the last ones (the deeper levels start fresh) |
 | `--widths a,b,...` | Channels of the generator's U-Net levels, each at half the previous resolution (default 32,64,128) |
@@ -818,6 +820,30 @@ the held-out views are rendered with the codes' mean
 ```bash
 ./build/examples/crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1
 ```
+### `crate_paint_example`
+
+Projective painting of the crate, as TEXTure paints meshes, so that Qwen-Image photos of
+different views show the same crate: a UV atlas of the crate's six faces (128 x 128 texels
+each) filled photo by photo. A texel takes a photo's colour where the view sees it at a cosine
+of at least 0.3 and more frontally than the view that painted it so far (its surface point
+projected into the photo, the depth checked, sampled bilinearly). Start images for
+image-to-image show the atlas where it is painted (holes filled from neighbours) and the
+atlas's mean colour, lightly shaded, elsewhere. A driver script alternates it with
+`qwen_image_example`.
+
+| Option | Meaning |
+|--------|---------|
+| `--atlas DIR` | The atlas (`atlas.bin`, `atlas.png`; default `build/TestingOutput/crate_painted/atlas`) |
+| `--start FLIGHT OUT` | Start images of the flight's views (`OUT/start/`), Qwen's depth controls (`OUT/control/`) and `OUT/batch.txt` (photos to `OUT/photo/`) |
+| `--bake FLIGHT PHOTOS` | Bake the flight's photos (`<flight>_<frame>.ppm`) into the atlas |
+| `--views a,b,...` | Only these frames of the flight |
+| `--consistency FLIGHT PHOTOS` | How well a flight's photos agree: each against its nearest other view, warped onto it by the geometric flow, mean squared difference on the crate |
+| `--self-test` | Bake synthetic photos (each face its own colour) and check a new view's start image |
+
+```bash
+./build/examples/crate_paint_example --atlas build/TestingOutput/crate_painted/atlas --bake FLIGHT PHOTOS
+```
+
 ### `crate_flow_example`
 
 The geometric flow between two nearby views of the crate scene and how
