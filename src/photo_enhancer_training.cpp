@@ -101,9 +101,17 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
          config.albedoTexture.widths.size() != config.albedoTexture.frequencies.size()))
         throw std::invalid_argument("PhotoEnhancerTraining: the albedo texture needs latents of one object, no other "
                                     "texture, no appearance codes, no latent check and a width per block");
+    if (config.latentCodes > 0 && (config.latentSize == 0 || config.appearances > 0 || config.randomLatents ||
+                                   config.encodeLatents || config.latentCheck > 0.0f))
+        throw std::invalid_argument("PhotoEnhancerTraining: the latent table needs latents, no appearance codes, no "
+                                    "given or encoded latents and no latent check");
+    if (!config.latentToDecoder && (config.latentSize == 0 || albedo || config.latentCheck > 0.0f))
+        throw std::invalid_argument(
+            "PhotoEnhancerTraining: latents only in the texture need latents, no albedo renderer and no latent check");
     const uint32_t features = textureFeatures();
     const uint32_t channelsIn = kGBufferChannels + features + config.latentSize;
     this->config.texture.outputChannels = channelsIn;
+    const bool table = config.latentCodes > 0 && !config.forwardOnly;
     const bool film = config.appearances > 0;
     const auto& w = config.widths;
 
@@ -183,7 +191,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     addParameter("generator.out.weight", {albedo ? 4u : 3u, w[0], 1, 1}, Network);
     addParameter("generator.out.bias", {albedo ? 4u : 3u}, Network);
     // The encoder, unless the latents are given.
-    if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents) && !config.randomLatents) {
+    if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents) && !config.randomLatents &&
+        config.latentCodes == 0) {
         uint32_t previous = 3;
         for (size_t i = 0; i < config.encoderWidths.size(); ++i) {
             const std::string conv = "encoder.body." + std::to_string(3 * i) + ".";
@@ -199,6 +208,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     }
     if (film)
         addParameter("codes.weight", {config.appearances, config.appearanceSize}, Codes);
+    if (table)
+        addParameter("latents.weight", {config.latentCodes, config.latentObjects * config.latentSize}, Codes);
     if (config.adversarial > 0.0f && !config.forwardOnly)
         for (uint32_t scale = 0; scale < config.criticScales; ++scale) {
             const std::string prefix = "discriminator.discriminators." + std::to_string(scale) + ".";
@@ -253,7 +264,13 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         objects = tensor({b, s, s});
         counts = tensor({b, k});
         latentValues = tensor({b, k, d});
-        if ((!config.forwardOnly || config.encodeLatents) && !config.randomLatents)
+        if (table) {
+            auto pick = training::embedding(vulkanContext, b, config.latentCodes, k * d);
+            pick->setInput(find("latents.weight").value, 0);
+            pick->setInput(rows, 1);
+            pick->setInput(latentValues, 2);
+            add(pick);
+        } else if ((!config.forwardOnly || config.encodeLatents) && !config.randomLatents && config.latentCodes == 0)
             buildEncoder();
         auto splat = training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn,
                                                kGBufferChannels + features);
@@ -266,6 +283,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
             mainMlp = forwardTextureMlp(coordinates, classes, input);
         if (albedo)
             mainAlbedo = std::make_unique<AlbedoPass>(forwardAlbedoTexture(coordinates, classes, input, objects));
+        if (!config.latentToDecoder)
+            hideLatents(input);
     }
     // FiLM: the codes through the MLP.
     const uint32_t d = config.appearanceSize, hiddenSize = config.filmHidden;
@@ -375,7 +394,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     if (albedo)
         albedoInputGradients = backwardAlbedoTexture(*mainAlbedo);
     if (config.latentSize > 0 && !config.randomLatents)
-        buildEncoderBackward();
+        buildLatentBackward();
     if (config.latentCheck > 0.0f)
         buildLatentCheck();
     if (config.temporal > 0.0f)
@@ -792,6 +811,8 @@ void PhotoEnhancerTraining::buildTemporal() {
     const bool mlp = config.textureMlp.frequencies > 0;
     if (mlp)
         temporalMlp = forwardTextureMlp(coordinates2, classes2, input2);
+    if (!config.latentToDecoder)
+        hideLatents(input2);
     if (config.albedoTexture.enabled())
         temporalAlbedo = std::make_unique<AlbedoPass>(forwardAlbedoTexture(coordinates2, classes2, input2, objects2));
     temporalBlocks = blocks;
@@ -816,17 +837,39 @@ void PhotoEnhancerTraining::buildTemporal() {
                        mlp ? &temporalMlp : nullptr, temporalAlbedo.get());
 }
 
-void PhotoEnhancerTraining::buildEncoderBackward() {
+void PhotoEnhancerTraining::hideLatents(std::shared_ptr<TensorElement<float>> generatorInput) {
+    const uint32_t b = config.batch, s = config.size, d = config.latentSize;
+    const uint32_t channelsIn = config.gbufferChannels + textureFeatures() + d;
+    if (!latentZeros) {
+        latentZeros = tensor({b, d, s, s});
+        auto zero = training::fill(vulkanContext, b * d * s * s);
+        zero->setInput(latentZeros, 0);
+        add(zero);
+    }
+    auto clear = training::channelCopy(vulkanContext, b, s * s, {d, 0}, {channelsIn, channelsIn - d}, d);
+    clear->setInput(latentZeros, 0);
+    clear->setInput(generatorInput, 1);
+    add(clear);
+}
+
+void PhotoEnhancerTraining::buildLatentBackward() {
     const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
     const uint32_t gbuffer = config.gbufferChannels, features = textureFeatures();
     const uint32_t channelsIn = gbuffer + features + d;
     // The latent G-buffer's gradient, summed per object, through the VAE to the per-object statistics, spread evenly
     // over each object's pixels of the head's output.
     latentGBufferGradient = tensor({b, d, s, s});
-    auto slice = training::channelCopy(vulkanContext, b, s * s, {channelsIn, gbuffer + features}, {d, 0}, d);
-    slice->setInput(blocks[0].dIn, 0);
-    slice->setInput(latentGBufferGradient, 1);
-    add(slice);
+    if (config.latentToDecoder) {
+        auto slice = training::channelCopy(vulkanContext, b, s * s, {channelsIn, gbuffer + features}, {d, 0}, d);
+        slice->setInput(blocks[0].dIn, 0);
+        slice->setInput(latentGBufferGradient, 1);
+        add(slice);
+    } else {
+        // The generator never saw the latents: only the texture's input gradient reaches them.
+        auto zero = training::fill(vulkanContext, b * d * s * s);
+        zero->setInput(latentGBufferGradient, 0);
+        add(zero);
+    }
     // The latents also feed the MLP texture: its input gradient's latent channels add to the latent G-buffer's.
     if (mlpInputGradient) {
         const uint32_t encoding = 3 * (2 * config.textureMlp.frequencies + 1);
@@ -850,6 +893,16 @@ void PhotoEnhancerTraining::buildEncoderBackward() {
     gather->setInput(latentGradient, 2);
     gather->setInput(latentSums, 3);
     add(gather);
+    if (config.latentCodes > 0) {
+        const auto& latentTable = find("latents.weight");
+        auto scatter = training::embeddingBackward(vulkanContext, b, config.latentCodes, k * d, config.latentCodeDecay);
+        scatter->setInput(latentTable.value, 0);
+        scatter->setInput(rows, 1);
+        scatter->setInput(latentGradient, 2);
+        scatter->setInput(latentTable.gradient, 3);
+        add(scatter);
+        return;
+    }
     pooledGradient = tensor({b, k, 2 * d});
     auto vae = training::vaeBackward(vulkanContext, b, k, d, config.klWeight, config.freeBits);
     vae->setInput(pooled, 0);
@@ -1563,6 +1616,18 @@ uint32_t savedLatentSize(const std::string& directory) {
     return std::filesystem::exists(head) ? uint32_t(std::filesystem::file_size(head) / sizeof(float) / 2) : 0;
 }
 
+bool savedLatentToDecoder(const std::string& directory) {
+    std::ifstream file(std::filesystem::path(directory) / "texture.txt");
+    for (std::string line; std::getline(file, line);) {
+        std::istringstream words(line);
+        std::string key;
+        int value = 1;
+        if (words >> key >> value && key == "decoder-latent")
+            return value != 0;
+    }
+    return true;
+}
+
 TextureMlp TextureMlp::fromFile(const std::string& path) {
     TextureMlp mlp;
     std::ifstream file(path);
@@ -1957,7 +2022,7 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
     // Forward only, the targets are not part of the graph.
     if (!config.forwardOnly || (config.latentSize > 0 && config.encodeLatents))
         targets->getDataBuffer(0).memcopyFrom(targetValues);
-    if (config.appearances > 0)
+    if (config.appearances > 0 || (config.latentCodes > 0 && !config.forwardOnly))
         rows->getDataBuffer(0).memcopyFrom(rowValues);
 }
 
@@ -2021,6 +2086,8 @@ void PhotoEnhancerTraining::save(const std::string& directory, bool averages) co
         texture << "\n";
         if (config.latentSize > 0)
             texture << "latent " << config.latentSize << "\n";
+        if (config.latentSize > 0 && !config.latentToDecoder)
+            texture << "decoder-latent 0\n";
         const auto& t = config.textureMlp;
         if (t.frequencies > 0)
             texture << "mlp " << t.frequencies << " " << t.width << " " << t.outputs << " " << t.hidden << "\n";

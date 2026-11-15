@@ -545,6 +545,64 @@ def mlp_texture_cases(out: Path, seed: int, perceptual: bool = True, case: str =
         f"mlp {texture.frequencies} 16 {texture.channels} 2\n")
 
 
+def latent_table_cases(out: Path, seed: int) -> None:
+    """One step of the latent renderer with a learned latent table instead of the encoder (an auto-decoder) and the
+    latents only in the MLP texture (latent_to_decoder False): rows 3 and 1 of a 5-row table, L1 and block-mean L1
+    plus the table's L2 penalty (1e-2 x the batch's mean squared row norm); the network clipped and stepped by Adam
+    (1e-4), the table by its own Adam (5e-3, betas 0.9 and 0.99) unclipped."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from latent_renderer import LatentRenderer, MlpTexture
+
+    generator = torch.Generator().manual_seed(seed)
+    torch.manual_seed(seed)
+    texture = MlpTexture(latent=4, frequencies=3, width=16, hidden=2, outputs=5)
+    model = LatentRenderer(texture, geometry=4, latent=4, objects=1, latent_to_decoder=False)
+    table = torch.nn.Embedding(5, 4)
+    with torch.no_grad():
+        model.generator.out.weight.copy_(torch.randn(model.generator.out.weight.shape, generator=generator) * 0.2)
+        table.weight.copy_(torch.randn(table.weight.shape, generator=generator))
+    b, size = 2, 32
+    geometry = torch.rand(b, 4, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.zeros(b, size, size, dtype=torch.long)
+    classes[:, 6:26, 8:28] = 3
+    objects = (classes == 3).long()
+    photos = torch.rand(b, 3, size, size, generator=generator)
+    rows = torch.tensor([3, 1])
+    network_parameters = {**{f"generator.texture.{k[4:]}": v for k, v in texture.named_parameters()},
+                          **{f"generator.{k}": v for k, v in model.generator.named_parameters()}}
+    parameters = {**network_parameters, "latents.weight": table.weight}
+    tensors = {"geometry": geometry, "coordinates": coordinates, "classes": classes.float(),
+               "objects": objects.float(), "photos": photos, "rows": rows.float()}
+    for name, value in parameters.items():
+        tensors["before." + name] = value.detach().clone()
+    latents = table(rows)[:, None, :]
+    image = model(geometry, coordinates, classes, objects, latents)
+    photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
+    loss = photometric + 1e-2 * table(rows).pow(2).sum(1).mean()
+    network = list(network_parameters.values())
+    optimiser = torch.optim.Adam([{"params": network, "lr": 1e-4},
+                                  {"params": [table.weight], "lr": 5e-3, "betas": (0.9, 0.99)}],
+                                 lr=1e-4, betas=(0.5, 0.999))
+    optimiser.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network, 1.0)
+    for name, value in parameters.items():
+        tensors["gradient." + name] = value.grad.detach().clone()
+    optimiser.step()
+    for name, value in parameters.items():
+        tensors["after." + name] = value.detach().clone()
+    tensors.update({"image": image, "photometric": photometric.reshape(1), "perceptual": torch.zeros(1),
+                    "kl": torch.zeros(1)})
+    save(out, "latent_table_step", tensors)
+    (out / "latent_table_step_parameters.txt").write_text("\n".join(parameters) + "\n")
+    (out / "latent_table_step_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels 0\nfeatures 2\ntable 1\nresolutions\nclasses 3\n"
+        f"mlp {texture.frequencies} 16 {texture.channels} 2\n")
+
+
 def albedo_cases(out: Path, seed: int) -> None:
     """The albedo renderer (latent_renderer.AlbedoRenderer): compose() and its gradients on random values, and one step
     without VGG with the multi-resolution texture's blocks weighted (1, 0.5, 0.25) as in a fade-in."""
@@ -777,6 +835,7 @@ def main() -> None:
     temporal_case(args.out, 20)
     mlp_texture_cases(args.out, 21)
     mlp_texture_cases(args.out, 21, perceptual=False, case="mlp_texture_step_l1")
+    latent_table_cases(args.out, 23)
     albedo_cases(args.out, 22)
     augment_backward_case(args.out, 23)
     print(f"fixtures in {args.out}")

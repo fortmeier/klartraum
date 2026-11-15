@@ -38,6 +38,9 @@ struct TextureMlp {
 /// The latent size of a saved latent model: the "latent D" line of its texture.txt, else half its encoder head's
 /// outputs (older models), else 0.
 uint32_t savedLatentSize(const std::string& directory);
+/// Whether a saved latent model's generator takes the latents (PhotoEnhancerTrainingConfig::latentToDecoder): false
+/// where its texture.txt says "decoder-latent 0".
+bool savedLatentToDecoder(const std::string& directory);
 
 /// The multi-resolution albedo texture (latent_renderer.AlbedoTexture): residual blocks, each a texture MLP on the
 /// positional encoding of its octaves and the latent G-buffer giving 3 values, summed (each weighted) into the albedo's
@@ -128,6 +131,14 @@ struct PhotoEnhancerTrainingConfig {
     bool encodeLatents = false;
     /// Training without the encoder: the latents are given every step (setLatents(), e.g. drawn from N(0, 1)); no KL.
     bool randomLatents = false;
+    /// Learned latents instead of the encoder (an auto-decoder): a table "latents.weight" of this many rows, each
+    /// the latentObjects x latentSize latents of one appearance (e.g. one crate), the batch's rows chosen by
+    /// setBatch(); trained with codesAdam, no KL (0: none).
+    uint32_t latentCodes = 0;
+    float latentCodeDecay = 1e-2f; ///< weight of the latent table's L2 penalty (the batch's mean squared row norm)
+    /// Whether the latent G-buffer also enters the generator; false: only the texture sees the latents and the
+    /// generator's latent channels stay zero, so every difference between latents goes through the texture.
+    bool latentToDecoder = true;
 };
 
 /**
@@ -151,7 +162,7 @@ public:
     /**
      * @brief The next step's batch: the G-buffer channels [batch][11][size][size], the surface coordinates
      * [batch][3][size][size], class indices [batch][size][size], target photos [batch][3][size][size] in [0, 1] and
-     * the crops' appearance code rows [batch] (ignored without codes).
+     * the crops' rows [batch] of the appearance codes or of the latent table (ignored without either).
      */
     void setBatch(const std::vector<float>& channels, const std::vector<float>& coordinates,
                   const std::vector<float>& classes, const std::vector<float>& targets, const std::vector<float>& rows);
@@ -321,7 +332,11 @@ private:
     void backwardBlock(Block& block);
     void buildDiscriminator();
     void buildEncoder();
-    void buildEncoderBackward();
+    /// The latents' gradient from the latent G-buffer's (generator input and texture), into the latent table or
+    /// through the VAE and the encoder.
+    void buildLatentBackward();
+    /// Zeroes the latent channels of a generator input once the texture has read them (latentToDecoder false).
+    void hideLatents(std::shared_ptr<TensorElement<float>> generatorInput);
     void forwardCritic(Critic& critic, std::shared_ptr<TensorElement<float>> pairs);
     /// The critic's backward pass from its logits' gradients: its parameters' gradients (withWeights), its input's
     /// gradient into `inputGradient` (if given), `featureGradient(scale, layer)` called once each layer's output
@@ -355,6 +370,8 @@ private:
     /// head, the per-object statistics, noise, latents and KL shares, and their gradients.
     std::shared_ptr<TensorElement<float>> objects, encoderStatistics, pooled, counts, latentNoise, latentValues,
         klShares, klTotal, latentGBufferGradient, latentGradient, pooledGradient, statisticsGradient, latentSums;
+    /// Zeros of the latent G-buffer's shape that hideLatents() copies over the generator input's latent channels.
+    std::shared_ptr<TensorElement<float>> latentZeros;
     struct EncoderLayer {
         uint32_t inputChannels, outputChannels, inputSize;
         std::shared_ptr<TensorElement<float>> in, a, n, stats, e, da, dn, de;

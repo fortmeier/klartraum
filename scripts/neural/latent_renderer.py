@@ -64,10 +64,12 @@ class LatentRenderer(nn.Module):
     3 levels, ChannelNorm) on geometry channels, texture features and the latent G-buffer."""
 
     def __init__(self, texture: nn.Module, geometry: int = 4, latent: int = 4, objects: int = 1,
-                 widths: tuple[int, ...] = (32, 64, 128)):
+                 widths: tuple[int, ...] = (32, 64, 128), latent_to_decoder: bool = True):
         super().__init__()
         self.texture = texture
         self.latent, self.objects = latent, objects
+        # False: only the texture sees the latents; the generator's latent channels are zero.
+        self.latent_to_decoder = latent_to_decoder
         channels = geometry + texture.channels + latent
         self.generator = Generator(widths=widths, extra=channels - INPUT_CHANNELS, blur_depth=False, norm="channel")
         self.encoder = Encoder(latent)
@@ -85,7 +87,8 @@ class LatentRenderer(nn.Module):
             features = self.texture(coordinates, classes, latent_gbuffer)
         else:
             features = self.texture(coordinates, classes)
-        x = torch.cat([geometry, features, latent_gbuffer], dim=1)
+        decoder_latents = latent_gbuffer if self.latent_to_decoder else torch.zeros_like(latent_gbuffer)
+        x = torch.cat([geometry, features, decoder_latents], dim=1)
         return self.generator(x)
 
 
