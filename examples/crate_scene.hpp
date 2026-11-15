@@ -94,7 +94,7 @@ inline klartraum::neural::HashTextureShape denseTextureShape(uint32_t components
 
 // The initial value of a photo enhancer parameter as train_photo_enhancer.py starts it: nn.Linear and nn.Conv2d's
 // default initialisation (uniform within 1 / sqrt(fan in)), ChannelNorm's ones and zeros, the texture's +-1e-4 (times
-// textureScale), the codes' N(0, 0.1); FiLM's heads and the output layer start at zero.
+// textureScale), the codes' and the latent table's N(0, 0.1); FiLM's heads and the output layer start at zero.
 inline std::vector<float> initialValue(const klartraum::neural::PhotoEnhancerTraining& trainer, const std::string& name,
                                        std::mt19937& rng, float textureScale = 1.0f) {
     const auto dims = trainer.parameter(name)->getDimensions();
@@ -116,7 +116,7 @@ inline std::vector<float> initialValue(const klartraum::neural::PhotoEnhancerTra
         std::uniform_real_distribution<float> tiny(-1e-4f * textureScale, 1e-4f * textureScale);
         for (auto& v : values)
             v = tiny(rng);
-    } else if (name == "codes.weight") {
+    } else if (name == "codes.weight" || name == "latents.weight") {
         std::normal_distribution<float> normal(0.0f, 0.1f);
         for (auto& v : values)
             v = normal(rng);

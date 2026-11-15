@@ -287,6 +287,7 @@ int main(int argc, char** argv) {
                 config.gbufferChannels = 4; // inverse depth and normals
                 config.latentSize = latentSize;
                 config.latentObjects = 1;
+                config.latentToDecoder = neural::savedLatentToDecoder(parameters.string());
             }
             trained = std::make_unique<neural::PhotoEnhancerTraining>(vc, config);
             if (untrained > 0.0f) {

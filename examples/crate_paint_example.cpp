@@ -12,6 +12,9 @@
 //   --bake FLIGHT PHOTOS  bakes the flight's photos into the atlas: a texel takes a photo's colour where the photo sees
 //                         it more frontally than the view that painted it so far (the crate's outline band left out)
 //   --views a,b,...       only these frames of the flight
+//   --margin M            how much more frontally (cosine of the viewing angle) a view must see an already painted
+//   texel
+//                         to paint it again (default 0.02)
 //   --consistency FLIGHT PHOTOS  how well the flight's photos agree: each against its nearest other view, warped onto
 //                         it by the geometric flow, mean squared difference on the crate
 //   --self-test           bakes a synthetic flight (each face its own colour) and checks the start image of a new view
@@ -308,10 +311,10 @@ TexelPoints texelPoints() {
 
 // Bakes `photo` (RGB bytes, kSize x kSize) into the atlas from the texels' side: every texel's surface point projected
 // into the view, taken where the view sees it (its distance agrees with the view's depth, the pixel lies in the
-// crate's interior) more frontally than the texel's painter so far; the colour sampled bilinearly. Returns the texels
-// painted.
+// crate's interior) more frontally than the texel's painter so far, by more than `margin` (so that two views seeing a
+// face about equally do not split it between them); the colour sampled bilinearly. Returns the texels painted.
 size_t bake(Atlas& atlas, const TexelPoints& points, const ViewBuffers& view, const std::vector<uint8_t>& photo,
-            glm::vec3 eye) {
+            glm::vec3 eye, float margin = 0.02f) {
     const glm::mat4 toClip = view.camera.proj * view.camera.view;
     const auto distance16 = [&](uint32_t x, uint32_t y) {
         const size_t p = size_t(y) * kSize + x;
@@ -326,7 +329,7 @@ size_t bake(Atlas& atlas, const TexelPoints& points, const ViewBuffers& view, co
             const glm::vec3 towards = eye - point;
             const float facing = glm::dot(points.normal[face], glm::normalize(towards));
             // Seen too obliquely, a photo smears the face: such views do not paint.
-            if (facing < 0.3f || facing <= atlas.confidence[t] + 0.02f)
+            if (facing < 0.3f || facing <= atlas.confidence[t] + margin)
                 continue;
             const glm::vec4 clip = toClip * glm::vec4(point, 1.0f);
             if (clip.w <= 0.0f)
@@ -483,6 +486,7 @@ int main(int argc, char** argv) {
                           bakePhotos;
     std::vector<int> only;
     bool selfTest = false;
+    float margin = 0.02f; // how much more frontally a view must see a painted texel to paint it again (--margin)
     std::filesystem::path consistencyFlight, consistencyPhotos;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -494,6 +498,8 @@ int main(int argc, char** argv) {
         } else if (arg == "--bake" && i + 2 < argc) {
             bakeFlight = argv[++i];
             bakePhotos = argv[++i];
+        } else if (arg == "--margin" && i + 1 < argc) {
+            margin = std::stof(argv[++i]);
         } else if (arg == "--views" && i + 1 < argc) {
             std::stringstream numbers(argv[++i]);
             for (std::string number; std::getline(numbers, number, ',');)
@@ -607,7 +613,7 @@ int main(int argc, char** argv) {
                     std::cerr << "no photo " << id << std::endl;
                     continue;
                 }
-                const size_t painted = bake(atlas, points, painter.render(camera), photo, camera.eye);
+                const size_t painted = bake(atlas, points, painter.render(camera), photo, camera.eye, margin);
                 std::cout << id << ": " << painted << " texels painted" << std::endl;
             }
             atlas.save(atlasDir);

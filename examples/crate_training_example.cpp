@@ -11,6 +11,12 @@
 // are rendered with the codes' mean (validation_NNNNNN.png: rendering | photo | enhanced, and the L1 in log.txt).
 //
 //   crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1
+//
+// With --crates DIR many crates train together (crate_paint_example's crates/<id>, six painted views each): every
+// crate has its own row of a learned latent table (no encoder), --texture-only-latent keeps the latents out of the
+// generator so that only the texture tells the crates apart; the last --held-out-crates crates are left out and their
+// codes fitted afterwards on three of their views (--fit-steps), the other three measuring how well a new crate is
+// reproduced.
 
 #include <algorithm>
 #include <chrono>
@@ -55,6 +61,7 @@ struct View {
     /// ([2][size][size], crate::Flow's x and y) with where this view sees them ([size][size]).
     neural::PhotoEnhancerInputs secondInputs;
     std::vector<float> secondObjects, flow, flowValid;
+    int code = -1; ///< with --crates: the row of the view's crate in the latent table
 };
 
 // A binary PPM of the sample size, or a whole multiple of it averaged down (e.g. 256 x 256 photos for 128 x 128
@@ -245,7 +252,7 @@ Batch sampleBatch(const std::vector<View>& views, uint32_t count, uint32_t crop,
     for (uint32_t k = 0; k < count; ++k) {
         const uint32_t index = uint32_t(rng() % views.size());
         const View& view = views[index];
-        batch.rows.push_back(float(index));
+        batch.rows.push_back(float(view.code >= 0 ? uint32_t(view.code) : index));
         // Half-scale crops only without second views, whose flow is in full-scale pixels.
         const bool half = uniform(rng) < 0.3f && sampleSize / 2 >= crop && !second;
         const uint32_t size = half ? sampleSize / 2 : sampleSize, step = half ? 2 : 1;
@@ -328,7 +335,12 @@ int main(int argc, char** argv) {
     std::filesystem::path renderFlight, renderOut;
     // The GAN without reconstruction (--gan): random views of the crate with random latents against the photos.
     bool gan = false;
-    uint32_t ganViews = 800; // random views rendered for it
+    // Many crates (--crates DIR): every crate of crate_paint_example's crates/<id> with its own row of a learned latent
+    // table; the last --held-out-crates crates only for fitting their codes after training (--fit-steps).
+    std::filesystem::path cratesDir;
+    uint32_t heldOutCrates = 10, fitSteps = 1000;
+    bool textureOnlyLatent = false; // the latents feed only the texture, not the generator (--texture-only-latent)
+    uint32_t ganViews = 800;        // random views rendered for it
     uint32_t denseComponents = 0, denseResolution = 0;
     bool unconditional = false; // a discriminator of the image only
     uint32_t criticScales = 2;
@@ -383,6 +395,14 @@ int main(int argc, char** argv) {
         } else if (arg == "--render-flight" && i + 2 < argc) {
             renderFlight = argv[++i];
             renderOut = argv[++i];
+        } else if (arg == "--crates" && hasValue) {
+            cratesDir = argv[++i];
+        } else if (arg == "--held-out-crates" && hasValue) {
+            heldOutCrates = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--fit-steps" && hasValue) {
+            fitSteps = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--texture-only-latent") {
+            textureOnlyLatent = true;
         } else if (arg == "--gan") {
             gan = true;
         } else if (arg == "--gan-views" && hasValue) {
@@ -445,6 +465,8 @@ int main(int argc, char** argv) {
         HeadlessFrontend frontend;
         VulkanContext& vc = frontend.getKlartraumEngine().getVulkanContext();
         std::vector<View> training, validation;
+        std::vector<View> fitting; // --crates: the held-out crates' views, for fitting their codes after training
+        uint32_t crateCount = 0;
         // A flight's views (--flight): G-buffers and photos from disk, every tenth frame held out; each view's second
         // view for the temporal loss is the flight's next frame (the previous for the last), the flow between them from
         // the frames' distances and cameras.
@@ -502,6 +524,38 @@ int main(int argc, char** argv) {
             }
             kChannels = 4;
             flips = false;
+        } else if (!cratesDir.empty()) {
+            // Every crate's views (crates/<id>/cameras_classical.csv, photos in crates/<id>/photo), each with its
+            // crate's row; view 5 of every fifth crate held out for validation, the last heldOutCrates crates kept for
+            // fitting.
+            if (latent == 0)
+                throw std::runtime_error("--crates needs --latent");
+            const VkExtent2D extent{2 * sampleSize, 2 * sampleSize};
+            auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
+            GBufferMeshRenderer renderer(vc, crate::vertices(floor), target, extent);
+            ComputeGraph graph(vc, 1);
+            graph.compileFrom(renderer.getOutput());
+            neural::PhotoAlignment alignment(vc);
+            std::vector<std::filesystem::path> crates;
+            for (const auto& entry : std::filesystem::directory_iterator(cratesDir / "crates"))
+                if (entry.is_directory() && std::filesystem::exists(entry.path() / "photo"))
+                    crates.push_back(entry.path());
+            std::sort(crates.begin(), crates.end());
+            crateCount = uint32_t(crates.size());
+            if (crateCount <= heldOutCrates)
+                throw std::runtime_error("--crates: fewer crates than --held-out-crates");
+            for (uint32_t k = 0; k < crateCount; ++k)
+                for (auto& view : loadViews(vc, renderer, graph, *target, alignment, crates[k], crates[k], minAlignment,
+                                            floor ? 0.6f : 1.0f)) {
+                    view.code = int(k);
+                    const bool last = view.id.size() > 5 && view.id.substr(view.id.size() - 5) == "_0005";
+                    (k >= crateCount - heldOutCrates ? fitting
+                     : k % 5 == 0 && last            ? validation
+                                                     : training)
+                        .push_back(std::move(view));
+                }
+            std::cout << crateCount << " crates, " << heldOutCrates << " held out (" << fitting.size() << " views)"
+                      << std::endl;
         } else {
             const VkExtent2D extent{2 * sampleSize, 2 * sampleSize};
             auto target = std::make_shared<OffscreenTarget>(vc, extent, 1);
@@ -519,7 +573,7 @@ int main(int argc, char** argv) {
             kChannels = 4;
             flips = false;
             const size_t pixels = size_t(sampleSize) * sampleSize;
-            for (auto* views : {&training, &validation})
+            for (auto* views : {&training, &validation, &fitting})
                 for (auto& view : *views) {
                     std::vector<float> geometry(view.inputs.channels.begin() + 3 * pixels,
                                                 view.inputs.channels.begin() + 4 * pixels);
@@ -670,6 +724,8 @@ int main(int argc, char** argv) {
             config.freeBits = freeBits;
             config.latentCheck = latentCheck;
             config.temporal = temporal;
+            config.latentCodes = crateCount;
+            config.latentToDecoder = !textureOnlyLatent;
         }
         config.appearanceSize = appearance;
         config.profile = profile;
@@ -745,7 +801,8 @@ int main(int argc, char** argv) {
             encodeConfig.batch = kLatentBatch;
             encodeConfig.size = sampleSize;
             encodeConfig.perceptual = encodeConfig.adversarial = 0.0f;
-            if (!gan)
+            encodeConfig.latentCodes = 0;
+            if (!gan && cratesDir.empty())
                 encodeRenderer = std::make_unique<neural::PhotoEnhancerTraining>(vc, encodeConfig);
             auto givenConfig = encodeConfig;
             givenConfig.encodeLatents = false;
@@ -817,6 +874,33 @@ int main(int argc, char** argv) {
                             grid[(y * width + x) * 3 + c] = byte(columns[column][(r * 3 + c) * pixels + p]);
                         }
             writeImage(path, grid.data(), width, uint32_t(sampleSize * rows), 3);
+        };
+
+        // --crates: the latent table as saved (the averages, [crates][latent]), each view's row of it, and the mean of
+        // the training crates' rows.
+        const auto readTable = [&](const std::filesystem::path& parameters) {
+            std::vector<float> table(size_t(crateCount) * latent);
+            std::ifstream file(parameters / "latents.weight.bin", std::ios::binary);
+            file.read(reinterpret_cast<char*>(table.data()), std::streamsize(table.size() * sizeof(float)));
+            return table;
+        };
+        const auto codesOf = [&](const std::vector<const View*>& views, const std::vector<float>& table) {
+            std::vector<float> codes;
+            for (const auto* view : views)
+                codes.insert(codes.end(), table.begin() + size_t(view->code) * latent,
+                             table.begin() + size_t(view->code + 1) * latent);
+            return codes;
+        };
+        const auto meanCodeOf = [&](const std::vector<float>& table, size_t views) {
+            std::vector<float> mean(latent, 0.0f);
+            const uint32_t trained = crateCount - heldOutCrates;
+            for (uint32_t k = 0; k < trained; ++k)
+                for (uint32_t d = 0; d < latent; ++d)
+                    mean[d] += table[size_t(k) * latent + d] / float(trained);
+            std::vector<float> codes;
+            for (size_t v = 0; v < views; ++v)
+                codes.insert(codes.end(), mean.begin(), mean.end());
+            return codes;
         };
 
         // Validation: the held-out views at the full sample size, with the codes' mean.
@@ -1061,6 +1145,65 @@ int main(int argc, char** argv) {
                     writeGrid(outDir / name, columns, 4);
                     continue;
                 }
+                // --crates: the held-out views with their crate's code and with the mean code, eight training views
+                // with their codes, and 16 crates on the same view (view 0 has the same camera for every crate) with
+                // the mean L1 between consecutive crates (how different the codes make them).
+                if (!cratesDir.empty()) {
+                    givenRenderer->load((outDir / "parameters").string());
+                    const auto table = readTable(outDir / "parameters");
+                    std::vector<const View*> held, fitted;
+                    for (const auto& view : validation)
+                        held.push_back(&view);
+                    for (size_t v = 0; v < 8; ++v)
+                        fitted.push_back(&training[v * training.size() / 8]);
+                    const auto heldCodes = codesOf(held, table), heldMean = meanCodeOf(table, held.size());
+                    const auto fittedCodes = codesOf(fitted, table);
+                    const auto own = renderLatent(held, &heldCodes), plain = renderLatent(held, &heldMean);
+                    const auto trainingImages = renderLatent(fitted, &fittedCodes);
+                    const View* front = &training.front();
+                    for (const auto& view : training)
+                        if (view.id.size() > 5 && view.id.substr(view.id.size() - 5) == "_0000") {
+                            front = &view;
+                            break;
+                        }
+                    const uint32_t shownCrates = std::min<uint32_t>(16, crateCount - heldOutCrates);
+                    const std::vector<const View*> same(shownCrates, front);
+                    const std::vector<float> crateCodes(table.begin(), table.begin() + size_t(shownCrates) * latent);
+                    const auto crates = renderLatent(same, &crateCodes);
+                    const size_t pixels = size_t(sampleSize) * sampleSize;
+                    double spread = 0.0;
+                    for (size_t v = 0; v + 1 < shownCrates; ++v)
+                        for (size_t i = 0; i < 3 * pixels; ++i)
+                            spread += std::abs(crates[v * 3 * pixels + i] - crates[(v + 1) * 3 * pixels + i]);
+                    spread /= double(std::max<uint32_t>(1, shownCrates - 1) * 3 * pixels);
+                    std::ostringstream line;
+                    line << "validation step " << step << ": L1 own code " << meanL1(own, held) << ", mean code "
+                         << meanL1(plain, held) << ", training " << meanL1(trainingImages, fitted)
+                         << ", crates' spread " << spread;
+                    std::cout << line.str() << std::endl;
+                    log << line.str() << "\n";
+                    log.flush();
+                    // validation_*.png: photo | own code | mean code; crates_*.png: the crates in rows of four.
+                    std::vector<float> photos;
+                    for (const auto* view : held)
+                        photos.insert(photos.end(), view->photo.begin(), view->photo.end());
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "validation_%06u.png", step);
+                    writeGrid(outDir / name, {photos, own, plain}, std::min<size_t>(8, held.size()));
+                    // Rows of four, the last one filled up with black.
+                    const uint32_t gridRows = (shownCrates + 3) / 4;
+                    std::vector<std::vector<float>> columns(4);
+                    for (uint32_t v = 0; v < 4 * gridRows; ++v) {
+                        if (v < shownCrates)
+                            columns[v % 4].insert(columns[v % 4].end(), crates.begin() + v * 3 * pixels,
+                                                  crates.begin() + (v + 1) * 3 * pixels);
+                        else
+                            columns[v % 4].resize(columns[v % 4].size() + 3 * pixels, 0.0f);
+                    }
+                    std::snprintf(name, sizeof(name), "crates_%06u.png", step);
+                    writeGrid(outDir / name, columns, gridRows);
+                    continue;
+                }
                 if (latent > 0 && !validation.empty()) {
                     encodeRenderer->load((outDir / "parameters").string());
                     givenRenderer->load((outDir / "parameters").string());
@@ -1209,6 +1352,79 @@ int main(int argc, char** argv) {
                 char name[64];
                 std::snprintf(name, sizeof(name), "validation_%06u.png", step);
                 writeImage(outDir / name, grid.data(), width, uint32_t(sampleSize * shown), 3);
+            }
+        }
+        // --crates: the held-out crates' codes fitted on their first three views with everything else fixed (the
+        // network's and texture's learning rates 0, no temporal loss, no GAN), each starting at the training crates'
+        // mean code; then their other three views rendered with the fitted codes and with the mean code
+        // (new_crates.png: photo | fitted | mean, one view per crate). The whole table goes to crate_codes.txt, one
+        // crate per line.
+        if (!cratesDir.empty()) {
+            auto table = readTable(outDir / "parameters");
+            if (!fitting.empty() && fitSteps > 0) {
+                auto fitConfig = config;
+                fitConfig.networkAdam.learningRate = 0.0f;
+                fitConfig.textureAdam.learningRate = 0.0f;
+                fitConfig.temporal = 0.0f;
+                fitConfig.adversarial = 0.0f;
+                neural::PhotoEnhancerTraining fitter(vc, fitConfig);
+                fitter.load((outDir / "parameters").string());
+                const auto mean = meanCodeOf(table, 1);
+                for (uint32_t k = crateCount - heldOutCrates; k < crateCount; ++k)
+                    std::copy(mean.begin(), mean.end(), table.begin() + size_t(k) * latent);
+                fitter.setParameter("latents.weight", table);
+                std::vector<View> fitViews, testViews;
+                for (const auto& view : fitting) {
+                    const int index = std::stoi(view.id.substr(view.id.size() - 4));
+                    (index < 3 ? fitViews : testViews).push_back(view);
+                }
+                double fitLoss = 0.0;
+                for (uint32_t step = 1; step <= fitSteps; ++step) {
+                    const Batch batch = sampleBatch(fitViews, batchSize, crop, rng);
+                    fitter.setBatch(batch.channels, batch.coordinates, batch.classes, batch.photos, batch.rows);
+                    fitter.setObjects(batch.objects);
+                    fitter.step();
+                    fitLoss += fitter.loss();
+                    if (step % 100 == 0) {
+                        std::ostringstream line;
+                        line << "fit step " << step << " loss " << fitLoss / 100.0;
+                        std::cout << line.str() << std::endl;
+                        log << line.str() << "\n";
+                        fitLoss = 0.0;
+                    }
+                }
+                fitter.parameter("latents.weight")->getDataBuffer(0).memcopyTo(table);
+                givenRenderer->load((outDir / "parameters").string());
+                std::vector<const View*> tests;
+                for (const auto& view : testViews)
+                    tests.push_back(&view);
+                const auto fittedCodes = codesOf(tests, table), meanCodes = meanCodeOf(table, tests.size());
+                const auto fitted = renderLatent(tests, &fittedCodes), plain = renderLatent(tests, &meanCodes);
+                std::ostringstream line;
+                line << "new crates: L1 " << meanL1(fitted, tests) << " with codes fitted on 3 views, "
+                     << meanL1(plain, tests) << " with the mean code (" << tests.size() << " views of " << heldOutCrates
+                     << " crates)";
+                std::cout << line.str() << std::endl;
+                log << line.str() << "\n";
+                log.flush();
+                std::vector<const View*> shown;
+                std::vector<float> photos, shownFitted, shownPlain;
+                const size_t pixels = size_t(sampleSize) * sampleSize;
+                for (size_t v = 0; v < tests.size(); ++v)
+                    if (tests[v]->id.substr(tests[v]->id.size() - 4) == "0003") {
+                        photos.insert(photos.end(), tests[v]->photo.begin(), tests[v]->photo.end());
+                        shownFitted.insert(shownFitted.end(), fitted.begin() + v * 3 * pixels,
+                                           fitted.begin() + (v + 1) * 3 * pixels);
+                        shownPlain.insert(shownPlain.end(), plain.begin() + v * 3 * pixels,
+                                          plain.begin() + (v + 1) * 3 * pixels);
+                    }
+                writeGrid(outDir / "new_crates.png", {photos, shownFitted, shownPlain}, photos.size() / (3 * pixels));
+            }
+            std::ofstream codes(outDir / "crate_codes.txt");
+            for (uint32_t k = 0; k < crateCount; ++k) {
+                for (uint32_t d = 0; d < latent; ++d)
+                    codes << (d > 0 ? "," : "") << table[size_t(k) * latent + d];
+                codes << "\n";
             }
         }
         // --render-flight: the trained model along a (finely rendered) flight, latents 0, OUT/frame_<frame>.ppm.

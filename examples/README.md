@@ -790,6 +790,10 @@ the held-out views are rendered with the codes' mean
 | `--albedo-fade N` | Fade the albedo texture's blocks in one after the other over N steps each (default 0: all at once) |
 | `--flight DIR PHOTOS FIRST` | Train on a fly-in flight of `tree_bonsai_example` (with its G-buffers) instead of the crate: its frames from FIRST on, photos `PHOTOS/<frame>.ppm`, every tenth frame held out, the temporal loss between consecutive frames (needs `--latent`; the latent is the whole image's) |
 | `--render-flight DIR OUT` | After training, render the model along a flight (its frames from `--flight`'s FIRST on, latents 0) to `OUT/frame_<frame>.png` |
+| `--crates DIR` | Many crates instead: every `DIR/crates/<id>/` (six views painted by `crate_paint_example`, `cameras_classical.csv` and `photo/`) with its own row of a learned latent table instead of the encoder (needs `--latent`); view 5 of every fifth crate held out. Validation renders the held-out views with their crate's code and with the mean code, and 16 crates on one view (`crates_NNNNNN.png`); the table goes to `<out>/crate_codes.txt`, one crate per line |
+| `--held-out-crates N` | With `--crates`: the last N crates are left out of training; afterwards their codes are fitted on views 0-2 and views 3-5 measure the result (`<out>/new_crates.png`: photo, fitted, mean code; default 10) |
+| `--fit-steps N` | Steps of fitting the held-out crates' codes, with everything else fixed (default 1000) |
+| `--texture-only-latent` | The latents feed only the texture, not the generator: every difference between latents has to go through the texture |
 | `--gan` | The GAN without reconstruction instead: random views (`--gan-views N`, default 800) with random latents, a discriminator on inverse depth and image against the photos with their own views' depth, DiffAugment in both steps, no encoder, no photo losses (needs `--latent`; `--adversarial` defaults to 1); validation writes `samples_*.png` (4 views x 4 latents) |
 | `--gan-views N` | Random views rendered for `--gan` (default 800) |
 | `--evaluate DIR` | Instead of training, evaluate a saved latent model (its `parameters/`, with the options it was trained with): validation and training L1 with and without its texture's features, `<out>/evaluation.png` (photo, with, without) and `<out>/texture_features.png` |
@@ -839,6 +843,7 @@ atlas's mean colour, lightly shaded, elsewhere. A driver script alternates it wi
 | `--start FLIGHT OUT` | Start images of the flight's views (`OUT/start/`), Qwen's depth controls (`OUT/control/`) and `OUT/batch.txt` (photos to `OUT/photo/`) |
 | `--bake FLIGHT PHOTOS` | Bake the flight's photos (`<flight>_<frame>.ppm`) into the atlas |
 | `--views a,b,...` | Only these frames of the flight |
+| `--margin M` | How much more frontally (cosine of the viewing angle) a view must see an already painted texel to paint it again (default 0.02); larger keeps two views that see a face about equally from splitting it |
 | `--consistency FLIGHT PHOTOS` | How well a flight's photos agree: each against its nearest other view, warped onto it by the geometric flow, mean squared difference on the crate |
 | `--self-test` | Bake synthetic photos (each face its own colour) and check a new view's start image |
 
