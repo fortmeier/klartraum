@@ -255,6 +255,40 @@ public:
     }
 };
 
+/**
+ * @brief The counterpart of ImageToGeneral: moves the images of the ImageViewSrc
+ *        at input 0 from VK_IMAGE_LAYOUT_GENERAL to their source's final layout
+ *        override (e.g. TRANSFER_SRC_OPTIMAL for an OffscreenTarget), keeping
+ *        their contents, and stands for them.
+ *
+ * For a target that a compute element (e.g. ImageResample) wrote last, which
+ * leaves it in GENERAL, so it is read back like one a render pass wrote.
+ */
+class ImageToFinalLayout : public ImageViewForward {
+public:
+    const char* getType() const override { return "ImageToFinalLayout"; }
+
+    void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
+        ComputeGraphElement::_record(commandBuffer, pathId);
+        const VkImageLayout finalLayout = getFinalLayoutOverride().value_or(VK_IMAGE_LAYOUT_GENERAL);
+        if (finalLayout == VK_IMAGE_LAYOUT_GENERAL) {
+            return;
+        }
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = finalLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = getImage(pathId);
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+    }
+};
+
 class ImageSrc : public ComputeGraphElement {
 public:
     ImageSrc(VkImage image) { images.push_back(image); };
