@@ -21,6 +21,8 @@ struct ColumnSumPushConstants {
 struct AdamPushConstants {
     uint32_t elementCount;
     float learningRate, beta1, beta2, epsilon;
+    uint32_t decaySteps;
+    float finalFactor;
 };
 
 } // namespace
@@ -55,8 +57,8 @@ ComputeGraphElementPtr columnSum(VulkanContext& vulkanContext, uint32_t rows, ui
 
 ComputeGraphElementPtr adamStep(VulkanContext& vulkanContext, uint32_t count, const AdamParameters& parameters) {
     auto operation = vulkanContext.create<GeneralComputation<AdamPushConstants>>("shaders/training/adam_step.comp.spv");
-    operation->setPushConstants(
-        {{count, parameters.learningRate, parameters.beta1, parameters.beta2, parameters.epsilon}});
+    operation->setPushConstants({{count, parameters.learningRate, parameters.beta1, parameters.beta2,
+                                  parameters.epsilon, parameters.decaySteps, parameters.finalFactor}});
     operation->setGroupCountX((count + 255) / 256);
     return operation;
 }
