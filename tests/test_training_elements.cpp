@@ -51,6 +51,9 @@
  *   5 x 5 texels; coordinates partly beyond the edges, classes 3 and 1 textured) writes latent_renderer.
  *   sample_texture_basis()'s features at its channels of a wider output and leaves the others alone; its backward
  *   pass gives autograd's table and latent gradients
+ * - textureBasisRegularizeMatchesPyTorch: the feature texture's regularisation (decay 0.3 x squared texels + smoothness
+ *   0.7 x squared differences of neighbouring texels within each plane) adds latent_renderer.texture_basis_penalty()'s
+ *   gradient to the table's gradient
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -889,4 +892,31 @@ TEST(TrainingElements, textureBasisMatchesPyTorch) {
     EXPECT_LT(worst, 1e-5f);
     EXPECT_LT(relativeError(read(tableGradient), fixture.values("dtable")), 1e-5f);
     EXPECT_LT(relativeError(read(latentGradient), fixture.values("dlatents")), 1e-5f);
+}
+
+TEST(TrainingElements, textureBasisRegularizeMatchesPyTorch) {
+    const Fixture fixture("texture_basis_penalty");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    training::TextureBasisShape shape;
+    shape.faces = 6;
+    shape.layers = 3;
+    shape.channels = 4;
+    shape.resolution = 5;
+    auto table = tensor(vc, {uint32_t(shape.tableSize())}), gradient = tensor(vc, {uint32_t(shape.tableSize())});
+    auto regularize = training::textureBasisRegularize(vc, shape, 0.3f, 0.7f);
+    regularize->setInput(table, 0);
+    regularize->setInput(gradient, 1);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(regularize);
+    table->getDataBuffer(0).memcopyFrom(fixture.values("table"));
+    // The penalty's gradient adds to what is there.
+    gradient->getDataBuffer(0).memcopyFrom(std::vector<float>(shape.tableSize(), 1.0f));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    auto expected = fixture.values("dtable");
+    for (auto& v : expected)
+        v += 1.0f;
+    EXPECT_LT(relativeError(read(gradient), expected), 1e-5f);
 }

@@ -123,6 +123,11 @@ TextureBasisPushConstants textureBasisConstants(const TextureBasisShape& shape) 
     return constants;
 }
 
+struct RegularizePushConstants {
+    uint32_t planes, resolution;
+    float decay, smoothness;
+};
+
 struct FlowWarpPushConstants {
     uint32_t batch, channels, height, width;
     float weight;
@@ -429,6 +434,16 @@ ComputeGraphElementPtr textureBasisBackward(VulkanContext& vulkanContext, const 
         "shaders/training/texture_basis_backward.comp.spv");
     operation->setPushConstants({textureBasisConstants(shape)});
     operation->setGroupCountX((shape.batch * shape.pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr textureBasisRegularize(VulkanContext& vulkanContext, const TextureBasisShape& shape, float decay,
+                                              float smoothness) {
+    const uint32_t planes = shape.faces * shape.layers * shape.channels;
+    auto operation = vulkanContext.create<GeneralComputation<RegularizePushConstants>>(
+        "shaders/training/texture_basis_regularize.comp.spv");
+    operation->setPushConstants({{planes, shape.resolution, decay, smoothness}});
+    operation->setGroupCountX(uint32_t((shape.tableSize() + 255) / 256));
     return operation;
 }
 
