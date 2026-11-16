@@ -91,6 +91,11 @@ struct PoolPushConstants {
     uint32_t planes, inputHeight, inputWidth;
 };
 
+struct EncodingPushConstants {
+    uint32_t batch, pixels, frequencies, classCount;
+    uint32_t classes[4];
+};
+
 struct FlowWarpPushConstants {
     uint32_t batch, channels, height, width;
     float weight;
@@ -367,6 +372,20 @@ ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, 
         vulkanContext.create<GeneralComputation<DistancePushConstants>>("shaders/training/l1_distance.comp.spv");
     operation->setPushConstants({{count, weight, accumulate ? 1u : 0u}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr positionalEncoding(VulkanContext& vulkanContext, uint32_t batch, uint32_t pixels,
+                                          uint32_t frequencies, const std::vector<uint32_t>& classes) {
+    if (classes.empty() || classes.size() > 4)
+        throw std::invalid_argument("positionalEncoding: 1 to 4 classes");
+    EncodingPushConstants constants{batch, pixels, frequencies, uint32_t(classes.size()), {0, 0, 0, 0}};
+    for (size_t k = 0; k < classes.size(); ++k)
+        constants.classes[k] = classes[k];
+    auto operation = vulkanContext.create<GeneralComputation<EncodingPushConstants>>(
+        "shaders/training/positional_encoding.comp.spv");
+    operation->setPushConstants({constants});
+    operation->setGroupCountX((batch * pixels + 255) / 256);
     return operation;
 }
 

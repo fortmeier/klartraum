@@ -258,6 +258,16 @@ ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layer
 ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, float weight, bool accumulate = false);
 
 /**
+ * @brief The positional encoding of surface coordinates for a texture MLP: per coordinate c of (u, v, id) and
+ * frequency f < @p frequencies the pair sin(2^f pi x_c), cos(2^f pi x_c), then the three coordinates, so
+ * 3 (2 frequencies + 1) channels; zero where the pixel's class is none of @p classes (at most 4).
+ *
+ * Slots: 0 coordinates (N x 3 x pixels), 1 classes (N x pixels, as floats), 2 encoding.
+ */
+ComputeGraphElementPtr positionalEncoding(VulkanContext& vulkanContext, uint32_t batch, uint32_t pixels,
+                                          uint32_t frequencies, const std::vector<uint32_t>& classes);
+
+/**
  * @brief The temporal consistency loss: the first N x C x H x W render warped onto the second view by the flow (each of
  * the second view's pixels' position in the first, in pixels with centres at i + 0.5; bilinear, clamped to the border)
  * and @p weight x the mean over all of the second render's values of the mask x the squared difference: every value's

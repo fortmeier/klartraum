@@ -115,3 +115,20 @@ def flow_warp_loss(first: torch.Tensor, second: torch.Tensor, flow: torch.Tensor
     grid = torch.stack([flow[:, 0] / width * 2.0 - 1.0, flow[:, 1] / height * 2.0 - 1.0], dim=-1)
     warped = F.grid_sample(first.detach(), grid, mode="bilinear", padding_mode="border", align_corners=False)
     return ((warped - second) ** 2 * valid[:, None]).mean()
+
+
+def positional_encoding(coordinates: torch.Tensor, classes: torch.Tensor, frequencies: int,
+                        texture_classes: tuple[int, ...]) -> torch.Tensor:
+    """coordinates [N, 3, H, W] (u, v, id in [0, 1]) -> [N, 3 (2 F + 1), H, W]: per coordinate c and frequency
+    f < F the pair sin(2^f pi x_c), cos(2^f pi x_c), then the three raw coordinates; zero where the pixel's class
+    has no texture."""
+    channels = []
+    for c in range(3):
+        for f in range(frequencies):
+            angle = (2.0 ** f) * torch.pi * coordinates[:, c]
+            channels += [torch.sin(angle), torch.cos(angle)]
+    channels += [coordinates[:, c] for c in range(3)]
+    mask = torch.zeros_like(classes, dtype=coordinates.dtype)
+    for texture_class in texture_classes:
+        mask = mask + (classes == texture_class).to(coordinates.dtype)
+    return torch.stack(channels, dim=1) * mask[:, None]

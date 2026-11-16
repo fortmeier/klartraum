@@ -45,6 +45,8 @@
  *   latent_renderer.flow_warp_loss()'s (grid_sample)
  * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
+ * - positionalEncodingMatchesPyTorch: the positional encoding of surface coordinates (sine and cosine of 4 octaves per
+ *   coordinate, then the coordinates; zero off the texture's classes) equals latent_renderer.positional_encoding()'s
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -791,4 +793,29 @@ TEST(TrainingElements, hashTextureBackwardMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_LT(relativeError(read(features), fixture.values("features")), 1e-5f);
     EXPECT_LT(relativeError(read(dtable), fixture.values("dtable")), 1e-5f);
+}
+
+TEST(TrainingElements, positionalEncodingMatchesPyTorch) {
+    const Fixture fixture("positional_encoding");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("coordinates");
+    auto coordinates = tensor(vc, shape), classes = tensor(vc, fixture.shapes.at("classes"));
+    auto encoding = tensor(vc, fixture.shapes.at("encoding"));
+    auto encode = training::positionalEncoding(vc, shape[0], shape[2] * shape[3], 4, {3, 1});
+    encode->setInput(coordinates, 0);
+    encode->setInput(classes, 1);
+    encode->setInput(encoding, 2);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(encode);
+    coordinates->getDataBuffer(0).memcopyFrom(fixture.values("coordinates"));
+    classes->getDataBuffer(0).memcopyFrom(fixture.values("classes"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto actual = read(encoding), expected = fixture.values("encoding");
+    float worst = 0.0f;
+    for (size_t i = 0; i < actual.size(); ++i)
+        worst = std::max(worst, std::abs(actual[i] - expected[i]));
+    EXPECT_LT(worst, 1e-5f);
 }

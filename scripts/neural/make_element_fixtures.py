@@ -252,6 +252,17 @@ def hash_texture_case(out: Path, seed: int) -> None:
                                "features": features, "dfeatures": gradient, "dtable": table_gradient})
 
 
+def positional_encoding_case(out: Path, seed: int) -> None:
+    """The positional encoding (4 octaves) of random coordinates of random classes, classes 3 and 1 textured."""
+    from training_reference import positional_encoding
+
+    generator = torch.Generator().manual_seed(seed)
+    coordinates = torch.rand(2, 3, 5, 7, generator=generator)
+    classes = torch.randint(0, 5, (2, 5, 7), generator=generator)
+    save(out, "positional_encoding", {"coordinates": coordinates, "classes": classes.float(),
+                                      "encoding": positional_encoding(coordinates, classes, 4, (3, 1))})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -275,6 +286,7 @@ def main() -> None:
     object_vae_cases(args.out, 17)
     flow_warp_case(args.out, 19)
     hash_texture_case(args.out, 10)
+    positional_encoding_case(args.out, 21)
     print(f"fixtures in {args.out}")
 
 
