@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <functional>
 #include <vulkan/vulkan.h>
 
@@ -664,6 +665,37 @@ void VulkanContext::createLogicalDevice() {
                 meshShaderFeatures.pNext = &maintenance4Features;
                 scalarBlockLayoutFeatures.pNext = &meshShaderFeatures;
                 meshShaderSupported = true;
+            }
+        }
+    }
+
+    // Optionally enable VK_EXT_shader_atomic_float for atomic float addition on storage buffers.
+    VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures{};
+    atomicFloatFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+    {
+        uint32_t cnt = 0;
+        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &cnt, nullptr);
+        std::vector<VkExtensionProperties> avail(cnt);
+        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &cnt, avail.data());
+        const bool extPresent = std::any_of(avail.begin(), avail.end(), [](const VkExtensionProperties& e) {
+            return strcmp(e.extensionName, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) == 0;
+        });
+        if (extPresent) {
+            VkPhysicalDeviceShaderAtomicFloatFeaturesEXT probe{};
+            probe.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+            VkPhysicalDeviceFeatures2 features2{};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2.pNext = &probe;
+            vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+            if (probe.shaderBufferFloat32AtomicAdd) {
+                deviceExtensions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+                createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+                createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+                atomicFloatFeatures.shaderBufferFloat32Atomics = probe.shaderBufferFloat32Atomics;
+                atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
+                atomicFloatFeatures.pNext = scalarBlockLayoutFeatures.pNext;
+                scalarBlockLayoutFeatures.pNext = &atomicFloatFeatures;
+                bufferFloatAtomicAddSupported = true;
             }
         }
     }

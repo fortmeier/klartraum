@@ -11,6 +11,8 @@
  * - minimalComputeDispatch: dispatching the minimal pipeline produces correct output
  * - deviceLocalBufferStagingRoundtrip: data copied into a device-local buffer through
  *   staging and back is unchanged
+ * - floatAtomicAddSumsContributions: the device supports atomic float addition on storage buffers, and many
+ *   invocations adding into a few sums give their exact totals
  **/
 
 #include <gtest/gtest.h>
@@ -19,6 +21,9 @@
 
 #include <vulkan/vulkan.h>
 
+#include "klartraum/computegraph/bufferelement.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/vulkan_context.hpp"
 #include "klartraum/vulkan_helpers.hpp"
@@ -324,4 +329,29 @@ TEST_F(VulkanContextTest, deviceLocalBufferStagingRoundtrip) {
     buffer.memcopyTo(actual);
 
     EXPECT_EQ(actual, expected);
+}
+
+TEST_F(VulkanContextTest, floatAtomicAddSumsContributions) {
+    ASSERT_TRUE(vc->isBufferFloatAtomicAddSupported());
+    const uint32_t count = 100000;
+    struct PushConstants {
+        uint32_t count;
+    };
+    auto sums = std::make_shared<BufferElement<VulkanBuffer<float>>>(*vc, 7);
+    auto add = std::make_shared<GeneralComputation<PushConstants>>(*vc, "shaders/test/float_atomic_add.comp.spv");
+    add->setPushConstants({{count}});
+    add->setGroupCountX((count + 255) / 256);
+    add->setInput(sums, 0);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(add);
+    sums->getBuffer(0).memcopyFrom(std::vector<float>(7, 0.0f));
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<float> result(7);
+    sums->getBuffer(0).memcopyTo(result);
+    for (uint32_t bucket = 0; bucket < 7; ++bucket) {
+        double expected = 0.0;
+        for (uint32_t i = bucket; i < count; i += 7)
+            expected += double(i % 5) + 0.25;
+        EXPECT_FLOAT_EQ(result[bucket], float(expected)) << bucket; // quarters sum exactly in float
+    }
 }

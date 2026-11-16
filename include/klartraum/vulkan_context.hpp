@@ -321,6 +321,10 @@ public:
     bool isPipelineStatisticsQuerySupported() const { return pipelineStatisticsQuerySupported; }
     bool isFragmentStoresAndAtomicsSupported() const { return fragmentStoresAndAtomicsSupported; }
 
+    // VK_EXT_shader_atomic_float with shaderBufferFloat32AtomicAdd is enabled when the physical device supports it:
+    // atomic float addition on storage buffers, e.g. to scatter gradients from pixels to vertices and texels.
+    bool isBufferFloatAtomicAddSupported() const { return bufferFloatAtomicAddSupported; }
+
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
 
@@ -336,6 +340,7 @@ public:
     bool meshShaderSupported = false;
     bool pipelineStatisticsQuerySupported = false;
     bool fragmentStoresAndAtomicsSupported = false;
+    bool bufferFloatAtomicAddSupported = false;
     PFN_vkCmdDrawMeshTasksIndirectEXT pfnCmdDrawMeshTasksIndirectEXT = nullptr;
 };
 
