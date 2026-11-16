@@ -14,6 +14,8 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "load-spz.h"
+
 #include "klartraum/computegraph/generalcomputation.hpp"
 #include "klartraum/raster/differentiable_shading.hpp"
 #include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
@@ -296,6 +298,45 @@ void writeSplatPly(const SplatSet& splats, const std::filesystem::path& path) {
                                splats.rotations[4 * i + 2]};
         out.write(reinterpret_cast<const char*>(row), sizeof(row));
     }
+}
+
+void writeSplatSpz(const SplatSet& splats, const std::filesystem::path& path) {
+    spz::GaussianCloud cloud;
+    cloud.numPoints = int32_t(splats.size());
+    const float shBase = 0.28209479f;
+    for (uint32_t i = 0; i < splats.size(); ++i) {
+        for (int c = 0; c < 3; ++c) {
+            cloud.positions.push_back(splats.means[4 * i + c]);
+            cloud.scales.push_back(splats.logScales[4 * i + c]);
+            cloud.colors.push_back((splats.colors[4 * i + c] - 0.5f) / shBase);
+        }
+        for (int c = 0; c < 4; ++c)
+            cloud.rotations.push_back(splats.rotations[4 * i + c]);
+        cloud.alphas.push_back(splats.opacities[i]);
+    }
+    if (!spz::saveSpz(cloud, spz::PackOptions{}, path.string()))
+        throw std::runtime_error("writeSplatSpz: cannot write " + path.string());
+}
+
+std::vector<Gaussian3D> gaussiansFromSplats(const SplatSet& splats) {
+    std::vector<Gaussian3D> gaussians(splats.size());
+    const float shBase = 0.28209479f;
+    for (uint32_t i = 0; i < splats.size(); ++i) {
+        Gaussian3D& g = gaussians[i];
+        const glm::vec4 q = glm::normalize(glm::vec4(splats.rotations[4 * i], splats.rotations[4 * i + 1],
+                                                     splats.rotations[4 * i + 2], splats.rotations[4 * i + 3]));
+        for (int c = 0; c < 3; ++c) {
+            g.position[c] = splats.means[4 * i + c];
+            g.scale[c] = std::exp(splats.logScales[4 * i + c]);
+            g.color[c] = (splats.colors[4 * i + c] - 0.5f) / shBase;
+        }
+        g.rotation = {q.x, q.y, q.z, q.w};
+        g.alpha = 1.0f / (1.0f + std::exp(-splats.opacities[i]));
+        g.shR.fill(0.0f);
+        g.shG.fill(0.0f);
+        g.shB.fill(0.0f);
+    }
+    return gaussians;
 }
 
 SplatTraining::SplatTraining(VulkanContext& vulkanContext, const SplatSet& start, const std::vector<glm::mat4>& cameras,

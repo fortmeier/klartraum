@@ -8,7 +8,9 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -152,6 +154,88 @@ void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path, const
         out << "f " << tri.x + 1 << "/" << 3 * t + 1 << " " << tri.y + 1 << "/" << 3 * t + 2 << " " << tri.z + 1 << "/"
             << 3 * t + 3 << "\n";
     }
+}
+
+TriangleMesh readObj(const std::filesystem::path& path, std::filesystem::path* texture) {
+    std::ifstream in(path);
+    if (!in)
+        throw std::runtime_error("readObj: cannot open " + path.string());
+    TriangleMesh mesh;
+    std::vector<glm::vec2> uvs;
+    std::string line, material;
+    if (texture)
+        texture->clear();
+    while (std::getline(in, line)) {
+        std::istringstream words(line);
+        std::string key;
+        words >> key;
+        if (key == "v") {
+            glm::vec3 p;
+            words >> p.x >> p.y >> p.z;
+            mesh.positions.push_back(p);
+        } else if (key == "vt") {
+            glm::vec2 uv;
+            words >> uv.x >> uv.y;
+            uvs.emplace_back(uv.x, 1.0f - uv.y);
+        } else if (key == "f") {
+            std::vector<glm::ivec2> corners; // position, texture coordinate (0-based, -1: none)
+            for (std::string corner; words >> corner;) {
+                const size_t slash = corner.find('/');
+                const int v = std::stoi(corner.substr(0, slash));
+                int t = 0;
+                if (slash != std::string::npos && slash + 1 < corner.size() && corner[slash + 1] != '/')
+                    t = std::stoi(corner.substr(slash + 1));
+                const auto index = [](int i, size_t count) { return i < 0 ? int(count) + i : i - 1; };
+                corners.emplace_back(index(v, mesh.positions.size()), t == 0 ? -1 : index(t, uvs.size()));
+            }
+            for (size_t k = 2; k < corners.size(); ++k) {
+                mesh.triangles.emplace_back(corners[0].x, corners[k - 1].x, corners[k].x);
+                for (const size_t c : {size_t(0), k - 1, k})
+                    mesh.cornerUvs.push_back(corners[c].y >= 0 ? uvs.at(corners[c].y) : glm::vec2(0.0f));
+            }
+        } else if (key == "mtllib" && texture) {
+            std::string name;
+            words >> name;
+            std::ifstream materialFile(path.parent_path() / name);
+            for (std::string materialLine; std::getline(materialFile, materialLine);) {
+                std::istringstream materialWords(materialLine);
+                std::string materialKey, map;
+                materialWords >> materialKey >> map;
+                if (materialKey == "map_Kd")
+                    *texture = path.parent_path() / map;
+            }
+        }
+    }
+    return mesh;
+}
+
+void writeTexturePpm(const std::vector<float>& texels, uint32_t width, uint32_t height,
+                     const std::filesystem::path& path) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out)
+        throw std::runtime_error("writeTexturePpm: cannot open " + path.string());
+    out << "P6\n" << width << " " << height << "\n255\n";
+    for (size_t i = 0; i < size_t(width) * height; ++i)
+        for (int c = 0; c < 3; ++c)
+            out.put(char(std::lround(std::clamp(texels[4 * i + c], 0.0f, 1.0f) * 255.0f)));
+}
+
+std::vector<float> readTexturePpm(const std::filesystem::path& path, uint32_t& width, uint32_t& height) {
+    std::ifstream in(path, std::ios::binary);
+    std::string magic;
+    uint32_t maximum = 0;
+    if (!(in >> magic >> width >> height >> maximum) || magic != "P6" || maximum != 255)
+        throw std::runtime_error("readTexturePpm: not an 8-bit binary PPM: " + path.string());
+    in.get(); // the single whitespace after the header
+    std::vector<float> texels;
+    texels.reserve(4 * size_t(width) * height);
+    for (size_t i = 0; i < size_t(width) * height; ++i) {
+        unsigned char rgb[3];
+        if (!in.read(reinterpret_cast<char*>(rgb), 3))
+            throw std::runtime_error("readTexturePpm: truncated: " + path.string());
+        texels.insert(texels.end(), {rgb[0] / 255.0f, rgb[1] / 255.0f, rgb[2] / 255.0f, 1.0f});
+    }
+    return texels;
 }
 
 glm::mat4 perspective(float verticalFov, float aspect, float nearPlane, float farPlane) {

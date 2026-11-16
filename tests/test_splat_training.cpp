@@ -16,6 +16,8 @@
  * - transformedSplatsRenderAlike: Gaussians moved by a similarity transform (rotation, scale, translation) and seen
  *   by the camera moved alike render the same image (up to float rounding), and writeSplatPly() writes a header
  *   for every Gaussian and 17 floats each
+ * - spzRoundTrip: Gaussians written with writeSplatSpz() load back with loadGaussiansSpz() as gaussiansFromSplats()
+ *   converts them, within the precision of the format
  * - trainingFitsRenderedViews: SplatTraining, from Gaussians on a sphere, fits 24 rendered views of the textured
  *   synthetic pumpkin with densification, one submit per step; three held-out views reach a silhouette IoU above
  *   0.97 and a PSNR inside the object above 29 dB
@@ -42,6 +44,7 @@
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/raster/differentiable_shading.hpp"
+#include "klartraum/rendering/gaussian_data_standard.hpp"
 #include "klartraum/raster/mesh.hpp"
 #include "klartraum/raster/mesh_training.hpp"
 #include "klartraum/splatting/splat_training.hpp"
@@ -446,6 +449,30 @@ TEST_F(SplatTrainingTest, transformedSplatsRenderAlike) {
     const auto bodyStart = in.tellg();
     in.seekg(0, std::ios::end);
     EXPECT_EQ(size_t(in.tellg() - bodyStart), 80 * 17 * sizeof(float));
+}
+
+TEST_F(SplatTrainingTest, spzRoundTrip) {
+    const Gaussians g = randomGaussians(200, 0.8f, 0.1f);
+    const splatting::SplatSet splats{g.means, g.logScales, g.rotations, g.colors, g.opacities};
+    std::filesystem::create_directories("build/TestingOutput");
+    const std::filesystem::path path = "build/TestingOutput/splats.spz";
+    splatting::writeSplatSpz(splats, path);
+    const std::vector<Gaussian3D> expected = splatting::gaussiansFromSplats(splats);
+    const std::vector<Gaussian3D> loaded = loadGaussiansSpz(path.string(), false);
+    ASSERT_EQ(loaded.size(), expected.size());
+    for (size_t i = 0; i < loaded.size(); ++i) {
+        const Gaussian3D &a = loaded[i], &b = expected[i];
+        for (int c = 0; c < 3; ++c) {
+            EXPECT_NEAR(a.position[c], b.position[c], 1e-3f) << i;
+            EXPECT_NEAR(a.scale[c], b.scale[c], 0.07f * b.scale[c]) << i;
+            // Colours: 0.5 + 0.2821 x the coefficient, stored with 8 bits.
+            EXPECT_NEAR(0.2821f * a.color[c], 0.2821f * b.color[c], 0.02f) << i;
+        }
+        EXPECT_NEAR(a.alpha, b.alpha, 0.01f) << i;
+        const float dot = a.rotation[0] * b.rotation[0] + a.rotation[1] * b.rotation[1] +
+                          a.rotation[2] * b.rotation[2] + a.rotation[3] * b.rotation[3];
+        EXPECT_GT(std::abs(dot), 0.995f) << i;
+    }
 }
 
 TEST_F(SplatTrainingTest, trainingFitsRenderedViews) {

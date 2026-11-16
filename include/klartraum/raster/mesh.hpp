@@ -63,6 +63,20 @@ VertexAdjacency vertexAdjacency(const TriangleMesh& mesh);
  */
 void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path, const std::string& textureFile = {});
 
+/**
+ * @brief Reads a Wavefront OBJ file as writeObj() writes it: positions, a texture coordinate per triangle corner and
+ * triangles (polygons are fanned). With @p texture, also returns the diffuse map its material file names (map_Kd,
+ * relative to the OBJ), or an empty path.
+ */
+TriangleMesh readObj(const std::filesystem::path& path, std::filesystem::path* texture = nullptr);
+
+/** @brief Writes a texture of four floats per texel (rgb used, clamped to [0, 1]) as a binary PPM file. */
+void writeTexturePpm(const std::vector<float>& texels, uint32_t width, uint32_t height,
+                     const std::filesystem::path& path);
+
+/** @brief Reads a binary PPM file (8 bits per channel) as four floats per texel (rgb, 1). */
+std::vector<float> readTexturePpm(const std::filesystem::path& path, uint32_t& width, uint32_t& height);
+
 /** @brief A Vulkan clip-from-view perspective matrix (right-handed, camera looks down -z, y down, depth 0 to 1). */
 glm::mat4 perspective(float verticalFov, float aspect, float nearPlane, float farPlane);
 

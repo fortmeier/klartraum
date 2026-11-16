@@ -17,6 +17,7 @@
 #include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/layers/training.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
 #include "klartraum/vulkan_context.hpp"
 
 /**
@@ -143,6 +144,18 @@ SplatSet transformSplats(const SplatSet& splats, const glm::mat4& similarity);
  * splat viewers read.
  */
 void writeSplatPly(const SplatSet& splats, const std::filesystem::path& path);
+
+/**
+ * @brief Writes Gaussians as an SPZ file without coordinate conversion (loadGaussiansSpz() with flipY false reads them
+ * back as they are), at spherical-harmonics degree 0.
+ */
+void writeSplatSpz(const SplatSet& splats, const std::filesystem::path& path);
+
+/**
+ * @brief The Gaussians in the renderer's layout (Gaussian3D): linear scales, opacities, and colours as degree-0
+ * spherical harmonics (colour = 0.5 + 0.2821 x coefficient).
+ */
+std::vector<Gaussian3D> gaussiansFromSplats(const SplatSet& splats);
 
 /** @brief Loss weight, optimizers and the densification schedule of a SplatTraining. */
 struct SplatTrainingOptions {
