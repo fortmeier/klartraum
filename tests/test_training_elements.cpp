@@ -10,6 +10,8 @@
  *   out recovers them, and accumulating adds
  * - linearMatchesPyTorch: a linear layer's output (with an offset) and its input (also accumulating), weight and
  *   bias gradients equal nn.Linear's
+ * - convBackwardMatchesPyTorch: the input, weight and bias gradients of 2D convolutions (3x3 with stride 1 and 2,
+ *   1x1, 4x4 with stride 2) equal PyTorch autograd's for the same inputs and upstream gradient
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -162,4 +164,47 @@ TEST(TrainingElements, linearMatchesPyTorch) {
         v *= 2.0f;
     EXPECT_LT(relativeError(read(y), expectedY), 1e-5f);
     EXPECT_LT(relativeError(read(dx), expectedDx), 1e-5f);
+}
+
+TEST(TrainingElements, convBackwardMatchesPyTorch) {
+    const struct {
+        const char* name;
+        uint32_t kernel, stride, pad;
+    } cases[] = {
+        {"conv3x3", 3, 1, 1}, {"conv3x3_stride2", 3, 2, 1}, {"conv1x1", 1, 1, 0}, {"conv4x4_stride2", 4, 2, 1}};
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    for (const auto& c : cases) {
+        const Fixture fixture(c.name);
+        if (!fixture.exists())
+            GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+        layers::ConvAttributes attributes;
+        attributes.kernelShape = {c.kernel, c.kernel};
+        attributes.strides = {c.stride, c.stride};
+        attributes.pads = {c.pad, c.pad, c.pad, c.pad};
+        const auto& xShape = fixture.shapes.at("x");
+        const auto& wShape = fixture.shapes.at("w");
+        const auto& yShape = fixture.shapes.at("y");
+        auto x = tensor(vc, xShape), w = tensor(vc, wShape), dy = tensor(vc, yShape);
+        auto dx = tensor(vc, xShape), dw = tensor(vc, wShape), db = tensor(vc, {wShape[0]});
+        auto inputGradient = training::convBackwardInput(vc, attributes, xShape, wShape, yShape);
+        inputGradient->setInput(dy, 0);
+        inputGradient->setInput(w, 1);
+        inputGradient->setInput(dx, 2);
+        auto weightGradient = training::convBackwardWeights(vc, attributes, xShape, wShape, yShape);
+        weightGradient->setInput(x, 0);
+        weightGradient->setInput(dy, 1);
+        weightGradient->setInput(dw, 2);
+        weightGradient->setInput(db, 3);
+        weightGradient->addDependency(inputGradient);
+        ComputeGraph graph(vc, 1);
+        graph.compileFrom(weightGradient);
+        x->getDataBuffer(0).memcopyFrom(fixture.values("x"));
+        w->getDataBuffer(0).memcopyFrom(fixture.values("w"));
+        dy->getDataBuffer(0).memcopyFrom(fixture.values("dy"));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        EXPECT_LT(relativeError(read(dx), fixture.values("dx")), 1e-5f) << c.name;
+        EXPECT_LT(relativeError(read(dw), fixture.values("dw")), 1e-5f) << c.name;
+        EXPECT_LT(relativeError(read(db), fixture.values("db")), 1e-5f) << c.name;
+    }
 }

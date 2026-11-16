@@ -23,6 +23,38 @@ struct ColumnSumPushConstants {
     uint32_t rows, columns;
 };
 
+// The geometry of a 2D convolution, for its backward shaders.
+struct ConvBackwardPushConstants {
+    uint32_t batch, inputChannels, inputHeight, inputWidth;
+    uint32_t outputChannels, outputHeight, outputWidth;
+    uint32_t kernelHeight, kernelWidth, strideY, strideX, padTop, padLeft;
+};
+
+struct ConvWeightsPushConstants {
+    ConvBackwardPushConstants geometry;
+    uint32_t splits, sliceLength, phase;
+};
+
+ConvBackwardPushConstants convGeometry(const layers::ConvAttributes& attributes, const layers::Shape& input,
+                                       const layers::Shape& weights, const layers::Shape& output) {
+    if (input.size() != 4 || weights.size() != 4 || output.size() != 4 || attributes.group != 1 ||
+        attributes.dilations != std::array<uint32_t, 2>{1, 1} || weights[1] != input[1] || weights[0] != output[1])
+        throw std::invalid_argument("conv backward: needs an ungrouped, undilated NCHW convolution");
+    return {input[0],
+            input[1],
+            input[2],
+            input[3],
+            output[1],
+            output[2],
+            output[3],
+            weights[2],
+            weights[3],
+            attributes.strides[0],
+            attributes.strides[1],
+            attributes.pads[0],
+            attributes.pads[1]};
+}
+
 struct FillPushConstants {
     uint32_t count;
     float value;
@@ -148,6 +180,41 @@ ComputeGraphElementPtr columnSum(VulkanContext& vulkanContext, uint32_t rows, ui
         vulkanContext.create<GeneralComputation<ColumnSumPushConstants>>("shaders/training/column_sum.comp.spv");
     operation->setPushConstants({{rows, columns}});
     operation->setGroupCountX((columns + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr convBackwardInput(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
+                                         const layers::Shape& input, const layers::Shape& weights,
+                                         const layers::Shape& output) {
+    const auto constants = convGeometry(attributes, input, weights, output);
+    auto operation = vulkanContext.create<GeneralComputation<ConvBackwardPushConstants>>(
+        "shaders/training/conv_backward_input.comp.spv");
+    operation->setPushConstants({constants});
+    // 64 x 64 tiles of input positions (x) and input channels (y).
+    operation->setGroupCount((input[0] * input[2] * input[3] + 63) / 64, (input[1] + 63) / 64, 1);
+    return operation;
+}
+
+ComputeGraphElementPtr convBackwardWeights(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
+                                           const layers::Shape& input, const layers::Shape& weights,
+                                           const layers::Shape& output) {
+    const auto geometry = convGeometry(attributes, input, weights, output);
+    // A matrix product of outputs x columns (weights per output channel and the bias) over k = batch x positions:
+    // 64 x 64 tiles, and k split into slices so that there are about 512 workgroups.
+    const uint32_t columns = weights[1] * weights[2] * weights[3] + 1;
+    const uint32_t tilesX = (columns + 63) / 64, tilesY = (weights[0] + 63) / 64;
+    const uint32_t total = output[0] * output[2] * output[3];
+    const uint32_t wanted = std::max(1u, 512u / (tilesX * tilesY));
+    const uint32_t sliceLength = std::max(16u, ((total + wanted - 1) / wanted + 15) / 16 * 16);
+    const uint32_t splits = (total + sliceLength - 1) / sliceLength;
+    auto operation = vulkanContext.create<GeneralComputation<ConvWeightsPushConstants>>(
+        "shaders/training/conv_backward_weights.comp.spv");
+    // Phase 0 then phase 1 over the same grid, which covers every result of phase 1 too.
+    operation->setPushConstants({{geometry, splits, sliceLength, 0u}, {geometry, splits, sliceLength, 1u}});
+    operation->setGroupCount(tilesX, tilesY, splits);
+    auto partial =
+        std::make_shared<BufferElementSinglePath<VulkanBuffer<float>>>(vulkanContext, splits * weights[0] * columns);
+    operation->addScratchBufferElement(partial, false);
     return operation;
 }
 

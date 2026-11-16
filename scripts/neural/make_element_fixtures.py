@@ -57,6 +57,19 @@ def linear_case(out: Path, seed: int) -> None:
                          "dw": layer.weight.grad, "db": layer.bias.grad})
 
 
+def conv_case(out: Path, case: str, n: int, cin: int, cout: int, size: tuple[int, int], kernel: int, stride: int,
+              pad: int, seed: int) -> None:
+    """A 2D convolution and its input, weight and bias gradients."""
+    generator = torch.Generator().manual_seed(seed)
+    x = torch.randn(n, cin, *size, generator=generator, requires_grad=True)
+    w = (torch.randn(cout, cin, kernel, kernel, generator=generator) * 0.3).requires_grad_(True)
+    b = torch.randn(cout, generator=generator, requires_grad=True)
+    y = F.conv2d(x, w, b, stride=stride, padding=pad)
+    dy = torch.randn(y.shape, generator=generator)
+    y.backward(dy)
+    save(out, case, {"x": x, "w": w, "b": b, "y": y, "dy": dy, "dx": x.grad, "dw": w.grad, "db": b.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -65,6 +78,10 @@ def main() -> None:
     activation_case(args.out, "elu", F.elu, 5)
     activation_case(args.out, "leaky_relu", lambda x: F.leaky_relu(x, 0.2), 6)
     linear_case(args.out, 12)
+    conv_case(args.out, "conv3x3", 2, 5, 7, (9, 11), 3, 1, 1, 1)
+    conv_case(args.out, "conv3x3_stride2", 2, 5, 7, (10, 12), 3, 2, 1, 2)
+    conv_case(args.out, "conv1x1", 2, 6, 3, (8, 8), 1, 1, 0, 3)
+    conv_case(args.out, "conv4x4_stride2", 2, 4, 6, (12, 10), 4, 2, 1, 4)
     print(f"fixtures in {args.out}")
 
 

@@ -61,6 +61,27 @@ ComputeGraphElementPtr sigmoidMseLossBackward(VulkanContext& vulkanContext, cons
  */
 ComputeGraphElementPtr columnSum(VulkanContext& vulkanContext, uint32_t rows, uint32_t columns);
 
+/**
+ * @brief The input gradient of layers::conv() (NCHW input, OIHW weights, ungrouped, undilated): every input element
+ * gathers the weights times the output gradients of the outputs it reaches.
+ *
+ * Slots: 0 output gradient (@p output), 1 weights (@p weights), 2 input gradient (@p input).
+ */
+ComputeGraphElementPtr convBackwardInput(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
+                                         const layers::Shape& input, const layers::Shape& weights,
+                                         const layers::Shape& output);
+
+/**
+ * @brief The weight and bias gradients of layers::conv(): a tiled matrix product of the output gradients with the
+ * inputs each weight met (and ones for the bias) over the batch and the output positions, split into slices whose
+ * partial sums are then added in a fixed order.
+ *
+ * Slots: 0 input (@p input), 1 output gradient (@p output), 2 weight gradients (@p weights), 3 bias gradients (O).
+ */
+ComputeGraphElementPtr convBackwardWeights(VulkanContext& vulkanContext, const layers::ConvAttributes& attributes,
+                                           const layers::Shape& input, const layers::Shape& weights,
+                                           const layers::Shape& output);
+
 /** @brief Where channelCopy() reads and writes: channel ranges of two N x C x H x W tensors. */
 struct ChannelRange {
     uint32_t channels = 0; ///< of the whole tensor
