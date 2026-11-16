@@ -90,6 +90,35 @@ ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float 
  */
 ComputeGraphElementPtr sum(VulkanContext& vulkanContext, uint32_t count);
 
+/** @brief The sizes of a linear layer (nn.Linear): a batch of input vectors to output vectors. */
+struct LinearShape {
+    uint32_t batch = 1;
+    uint32_t inputs = 0;
+    uint32_t outputs = 0;
+};
+
+/**
+ * @brief y = x W^T + bias + @p offset, W as [outputs][inputs] (nn.Linear's layout).
+ *
+ * Slots: 0 input (batch x inputs), 1 weights, 2 bias (outputs), 3 output (batch x outputs).
+ */
+ComputeGraphElementPtr linear(VulkanContext& vulkanContext, const LinearShape& shape, float offset = 0.0f);
+
+/**
+ * @brief The input gradient of linear(); with @p accumulate added to it (several layers reading one input).
+ *
+ * Slots: 0 output gradient, 1 weights, 2 input gradient.
+ */
+ComputeGraphElementPtr linearBackwardInput(VulkanContext& vulkanContext, const LinearShape& shape,
+                                           bool accumulate = false);
+
+/**
+ * @brief The weight and bias gradients of linear().
+ *
+ * Slots: 0 input, 1 output gradient, 2 weight gradients, 3 bias gradients.
+ */
+ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const LinearShape& shape);
+
 /**
  * @brief y = x * @p scale + @p shift for @p count elements; with @p backward the input gradient dy * @p scale.
  * Written or, with @p accumulate, added.

@@ -28,6 +28,12 @@ struct FillPushConstants {
     float value;
 };
 
+struct LinearPushConstants {
+    uint32_t batch, inputs, outputs;
+    float offset;
+    uint32_t accumulate;
+};
+
 struct ScalarAffinePushConstants {
     uint32_t count;
     float scale, shift;
@@ -93,6 +99,29 @@ ComputeGraphElementPtr sum(VulkanContext& vulkanContext, uint32_t count) {
     auto operation = vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/sum.comp.spv");
     operation->setPushConstants({{count}});
     operation->setGroupCountX(1);
+    return operation;
+}
+
+ComputeGraphElementPtr linear(VulkanContext& vulkanContext, const LinearShape& shape, float offset) {
+    auto operation = vulkanContext.create<GeneralComputation<LinearPushConstants>>("shaders/training/linear.comp.spv");
+    operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, offset, 0u}});
+    operation->setGroupCountX((shape.batch * shape.outputs + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr linearBackwardInput(VulkanContext& vulkanContext, const LinearShape& shape, bool accumulate) {
+    auto operation = vulkanContext.create<GeneralComputation<LinearPushConstants>>(
+        "shaders/training/linear_backward_input.comp.spv");
+    operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, 0.0f, accumulate ? 1u : 0u}});
+    operation->setGroupCountX((shape.batch * shape.inputs + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const LinearShape& shape) {
+    auto operation = vulkanContext.create<GeneralComputation<LinearPushConstants>>(
+        "shaders/training/linear_backward_weights.comp.spv");
+    operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, 0.0f, 0u}});
+    operation->setGroupCountX((shape.outputs * (shape.inputs + 1) + 63) / 64);
     return operation;
 }
 

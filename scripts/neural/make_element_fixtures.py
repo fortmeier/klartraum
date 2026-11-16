@@ -42,6 +42,21 @@ def activation_case(out: Path, case: str, function, seed: int) -> None:
     save(out, case, {"x": x, "y": y, "dy": dy, "dx": x.grad})
 
 
+def linear_case(out: Path, seed: int) -> None:
+    """A linear layer (nn.Linear 5 -> 7) on a batch of 3 and its input, weight and bias gradients."""
+    generator = torch.Generator().manual_seed(seed)
+    layer = torch.nn.Linear(5, 7)
+    with torch.no_grad():
+        layer.weight.copy_(torch.randn(7, 5, generator=generator))
+        layer.bias.copy_(torch.randn(7, generator=generator))
+    x = torch.randn(3, 5, generator=generator, requires_grad=True)
+    y = layer(x)
+    dy = torch.randn(3, 7, generator=generator)
+    y.backward(dy)
+    save(out, "linear", {"x": x, "w": layer.weight, "b": layer.bias, "y": y, "dy": dy, "dx": x.grad,
+                         "dw": layer.weight.grad, "db": layer.bias.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -49,6 +64,7 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     activation_case(args.out, "elu", F.elu, 5)
     activation_case(args.out, "leaky_relu", lambda x: F.leaky_relu(x, 0.2), 6)
+    linear_case(args.out, 12)
     print(f"fixtures in {args.out}")
 
 

@@ -8,6 +8,8 @@
  *   PyTorch's
  * - channelCopyConcatsAndSplits: copying two tensors' channels to their offsets concatenates them, copying them back
  *   out recovers them, and accumulating adds
+ * - linearMatchesPyTorch: a linear layer's output (with an offset) and its input (also accumulating), weight and
+ *   bias gradients equal nn.Linear's
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -113,4 +115,51 @@ TEST(TrainingElements, channelCopyConcatsAndSplits) {
                 EXPECT_EQ(r[(s * 3 + c) * pixels + p], 2.0f * vb[(s * 3 + c) * pixels + p]);
             }
         }
+}
+
+TEST(TrainingElements, linearMatchesPyTorch) {
+    const Fixture fixture("linear");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const training::LinearShape shape{3, 5, 7};
+    checkElement(vc, fixture, training::linear(vc, shape), {{"x", {3, 5}}, {"w", {7, 5}}, {"b", {7}}, {"y", {3, 7}}},
+                 3);
+    checkElement(vc, fixture, training::linearBackwardInput(vc, shape), {{"dy", {3, 7}}, {"w", {7, 5}}, {"dx", {3, 5}}},
+                 2);
+    checkElement(vc, fixture, training::linearBackwardWeights(vc, shape),
+                 {{"x", {3, 5}}, {"dy", {3, 7}}, {"dw", {7, 5}}, {"db", {7}}}, 2);
+    // The offset adds to every output, and accumulate adds to the input gradient.
+    auto x = tensor(vc, {3, 5}), w = tensor(vc, {7, 5}), b = tensor(vc, {7}), y = tensor(vc, {3, 7});
+    auto dy = tensor(vc, {3, 7}), dx = tensor(vc, {3, 5});
+    auto forward = training::linear(vc, shape, 1.0f);
+    forward->setInput(x, 0);
+    forward->setInput(w, 1);
+    forward->setInput(b, 2);
+    forward->setInput(y, 3);
+    auto first = training::linearBackwardInput(vc, shape);
+    first->setInput(dy, 0);
+    first->setInput(w, 1);
+    first->setInput(dx, 2);
+    first->addDependency(forward);
+    auto second = training::linearBackwardInput(vc, shape, true);
+    second->setInput(dy, 0);
+    second->setInput(w, 1);
+    second->setInput(dx, 2);
+    second->addDependency(first);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(second);
+    x->getDataBuffer(0).memcopyFrom(fixture.values("x"));
+    w->getDataBuffer(0).memcopyFrom(fixture.values("w"));
+    b->getDataBuffer(0).memcopyFrom(fixture.values("b"));
+    dy->getDataBuffer(0).memcopyFrom(fixture.values("dy"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    auto expectedY = fixture.values("y"), expectedDx = fixture.values("dx");
+    for (auto& v : expectedY)
+        v += 1.0f;
+    for (auto& v : expectedDx)
+        v *= 2.0f;
+    EXPECT_LT(relativeError(read(y), expectedY), 1e-5f);
+    EXPECT_LT(relativeError(read(dx), expectedDx), 1e-5f);
 }
