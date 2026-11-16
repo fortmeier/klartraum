@@ -30,7 +30,8 @@ void main(uint localIndex: SV_GroupIndex, uint3 localId: SV_GroupThreadID, uint3
 
     uint numWorkGroups = WorkgroupCount().x;
     uint numElements = activeNumElements();
-    uint itemsPerWorkGroup0 = numElements / numWorkGroups;
+    // Rounded up, so the workgroups together cover every element.
+    uint itemsPerWorkGroup0 = (numElements + numWorkGroups - 1) / numWorkGroups;
     uint iterationsPerWorkGroup = (itemsPerWorkGroup0 + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
     uint itemsPerWorkGroup = iterationsPerWorkGroup * WORKGROUP_SIZE;
 
