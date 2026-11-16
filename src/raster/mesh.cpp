@@ -117,10 +117,32 @@ VertexAdjacency vertexAdjacency(const TriangleMesh& mesh) {
     return adjacency;
 }
 
-void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path) {
+std::vector<float> syntheticPumpkinTexture(uint32_t width, uint32_t height) {
+    std::vector<float> texels;
+    texels.reserve(4 * size_t(width) * height);
+    for (uint32_t j = 0; j < height; ++j)
+        for (uint32_t i = 0; i < width; ++i) {
+            const float u = (float(i) + 0.5f) / float(width), v = (float(j) + 0.5f) / float(height);
+            const float stripe = 0.75f + 0.25f * std::cos(10.0f * 2.0f * glm::pi<float>() * u);
+            const glm::vec3 color = v < 0.12f ? glm::vec3(0.25f, 0.45f, 0.15f) : stripe * glm::vec3(0.95f, 0.5f, 0.1f);
+            texels.insert(texels.end(), {color.r, color.g, color.b, 1.0f});
+        }
+    return texels;
+}
+
+void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path, const std::string& textureFile) {
     std::ofstream out(path);
     if (!out)
         throw std::runtime_error("writeObj: cannot open " + path.string());
+    if (!textureFile.empty()) {
+        std::filesystem::path materialPath = path;
+        materialPath.replace_extension(".mtl");
+        std::ofstream material(materialPath);
+        if (!material)
+            throw std::runtime_error("writeObj: cannot open " + materialPath.string());
+        material << "newmtl surface\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nmap_Kd " << textureFile << "\n";
+        out << "mtllib " << materialPath.filename().string() << "\nusemtl surface\n";
+    }
     for (const auto& p : mesh.positions)
         out << "v " << p.x << " " << p.y << " " << p.z << "\n";
     for (const auto& uv : mesh.cornerUvs)

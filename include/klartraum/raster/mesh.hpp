@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -39,6 +40,12 @@ TriangleMesh icosphere(uint32_t subdivisions);
 TriangleMesh syntheticPumpkin(uint32_t subdivisions, uint32_t ribs = 10, float ribDepth = 0.08f, float height = 0.75f);
 
 /**
+ * @brief The texture of the synthetic pumpkin for its equirectangular corner coordinates, four floats per texel
+ * (rgb, 1), row-major: orange with ten darker stripes along the ribs and a green cap around the stem.
+ */
+std::vector<float> syntheticPumpkinTexture(uint32_t width, uint32_t height);
+
+/**
  * @brief The vertex neighbourhoods of a mesh in compressed sparse rows: the neighbours of vertex v are
  * neighbours[offsets[v]] to neighbours[offsets[v + 1] - 1], each vertex sharing an edge with v once, ascending.
  */
@@ -50,8 +57,11 @@ struct VertexAdjacency {
 /** @brief The vertex adjacency of @p mesh. */
 VertexAdjacency vertexAdjacency(const TriangleMesh& mesh);
 
-/** @brief Writes the mesh as a Wavefront OBJ file with corner texture coordinates. */
-void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path);
+/**
+ * @brief Writes the mesh as a Wavefront OBJ file with corner texture coordinates. With @p textureFile (relative to
+ * the OBJ), also writes a material file beside it (same name, .mtl) whose diffuse map is that texture.
+ */
+void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path, const std::string& textureFile = {});
 
 /** @brief A Vulkan clip-from-view perspective matrix (right-handed, camera looks down -z, y down, depth 0 to 1). */
 glm::mat4 perspective(float verticalFov, float aspect, float nearPlane, float farPlane);
