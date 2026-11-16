@@ -61,6 +61,44 @@ ComputeGraphElementPtr sigmoidMseLossBackward(VulkanContext& vulkanContext, cons
  */
 ComputeGraphElementPtr columnSum(VulkanContext& vulkanContext, uint32_t rows, uint32_t columns);
 
+/** @brief Where channelCopy() reads and writes: channel ranges of two N x C x H x W tensors. */
+struct ChannelRange {
+    uint32_t channels = 0; ///< of the whole tensor
+    uint32_t offset = 0;   ///< of the first copied channel
+};
+
+/**
+ * @brief Copies @p count channels from @p source to @p target (or adds them to it, with @p accumulate): a concat
+ * along the channels, and its backward pass, adding where a tensor's gradient comes from several consumers.
+ *
+ * Slots: 0 source, 1 target.
+ */
+ComputeGraphElementPtr channelCopy(VulkanContext& vulkanContext, uint32_t batch, uint32_t pixels, ChannelRange source,
+                                   ChannelRange target, uint32_t count, bool accumulate = false);
+
+/**
+ * @brief Sets @p count floats to @p value, e.g. a gradient that elements add to.
+ *
+ * Slots: 0 buffer.
+ */
+ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float value = 0.0f);
+
+/**
+ * @brief The sum of @p count floats, in a fixed order.
+ *
+ * Slots: 0 data, 1 result (one float).
+ */
+ComputeGraphElementPtr sum(VulkanContext& vulkanContext, uint32_t count);
+
+/**
+ * @brief y = x * @p scale + @p shift for @p count elements; with @p backward the input gradient dy * @p scale.
+ * Written or, with @p accumulate, added.
+ *
+ * Slots: 0 input (backward: output gradient), 1 output (backward: input gradient).
+ */
+ComputeGraphElementPtr affine(VulkanContext& vulkanContext, uint32_t count, float scale, float shift,
+                              bool backward = false, bool accumulate = false);
+
 /** @brief Hyperparameters of adamStep(). */
 struct AdamParameters {
     float learningRate = 1e-3f;

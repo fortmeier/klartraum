@@ -23,6 +23,21 @@ struct ColumnSumPushConstants {
     uint32_t rows, columns;
 };
 
+struct FillPushConstants {
+    uint32_t count;
+    float value;
+};
+
+struct ScalarAffinePushConstants {
+    uint32_t count;
+    float scale, shift;
+    uint32_t backward, accumulate;
+};
+
+struct ChannelCopyPushConstants {
+    uint32_t batch, pixels, sourceChannels, sourceOffset, targetChannels, targetOffset, count, accumulate;
+};
+
 struct AdamPushConstants {
     uint32_t elementCount;
     float learningRate, beta1, beta2, epsilon;
@@ -51,6 +66,41 @@ ComputeGraphElementPtr leakyRelu(VulkanContext& vulkanContext, const layers::Sha
         vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/leaky_relu.comp.spv");
     const uint32_t count = layers::elementCount(shape);
     operation->setPushConstants({{count}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelCopy(VulkanContext& vulkanContext, uint32_t batch, uint32_t pixels, ChannelRange source,
+                                   ChannelRange target, uint32_t count, bool accumulate) {
+    if (source.offset + count > source.channels || target.offset + count > target.channels)
+        throw std::invalid_argument("channelCopy: channel range out of the tensor");
+    auto operation =
+        vulkanContext.create<GeneralComputation<ChannelCopyPushConstants>>("shaders/training/channel_copy.comp.spv");
+    operation->setPushConstants(
+        {{batch, pixels, source.channels, source.offset, target.channels, target.offset, count, accumulate ? 1u : 0u}});
+    operation->setGroupCountX((batch * count * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float value) {
+    auto operation = vulkanContext.create<GeneralComputation<FillPushConstants>>("shaders/training/fill.comp.spv");
+    operation->setPushConstants({{count, value}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr sum(VulkanContext& vulkanContext, uint32_t count) {
+    auto operation = vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/sum.comp.spv");
+    operation->setPushConstants({{count}});
+    operation->setGroupCountX(1);
+    return operation;
+}
+
+ComputeGraphElementPtr affine(VulkanContext& vulkanContext, uint32_t count, float scale, float shift, bool backward,
+                              bool accumulate) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<ScalarAffinePushConstants>>("shaders/training/affine.comp.spv");
+    operation->setPushConstants({{count, scale, shift, backward ? 1u : 0u, accumulate ? 1u : 0u}});
     operation->setGroupCountX((count + 255) / 256);
     return operation;
 }
