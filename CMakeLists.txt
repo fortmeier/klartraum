@@ -261,6 +261,7 @@ add_executable(
   tests/test_main.cpp
   tests/test_vulkan_buffers.cpp
   tests/test_vulkan_context.cpp
+  tests/test_storage_draw_component.cpp
   tests/test_vulkan_helpers.cpp
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
@@ -336,6 +337,7 @@ set(KLARTRAUM_LIB_SRC
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
+  src/storage_draw_component.cpp
   src/rendering/gaussian_morph.cpp
   src/rendering/gaussian_lighting.cpp
   ${SPZ_SRC}
