@@ -26,6 +26,9 @@
  * - emaCopiesThenAverages: during the warm-up the average copies the parameters, after it moves by the rate
  * - photometricLossMatchesPyTorch: the gradient of 0.5 L1 + 5 L1 of 8 x 8 block means equals PyTorch's, and the sum
  *   of the loss shares is the loss
+ * - vggLossMatchesPyTorch: the perceptual loss of an image against a target through VGG-16 up to relu4_3 and its
+ *   gradient (added to a zeroed image gradient) equal train_photo_enhancer.Vgg's (skips without
+ *   scripts/neural/export_vgg16.py's weights)
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -43,6 +46,7 @@
 #include "klartraum/computegraph/tensorelement.hpp"
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/layers/training.hpp"
+#include "klartraum/neural/vgg_loss.hpp"
 #include "training_fixtures.hpp"
 
 using namespace klartraum;
@@ -488,4 +492,27 @@ TEST(TrainingElements, photometricLossMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-5f);
     EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-5f);
+}
+
+TEST(TrainingElements, vggLossMatchesPyTorch) {
+    const Fixture fixture("vgg");
+    const std::string weights = "build/models/vgg16";
+    if (!fixture.exists() || !std::filesystem::exists(weights + "/layers.txt"))
+        GTEST_SKIP() << "run scripts/neural/export_vgg16.py and make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("image");
+    auto images = tensor(vc, shape), targets = tensor(vc, shape), gradient = tensor(vc, shape);
+    auto zero = training::fill(vc, uint32_t(gradient->getDataElementCount()));
+    zero->setInput(gradient, 0);
+    neural::VggLoss loss(vc, weights, shape[0], shape[2], shape[3], 1.0f, images, targets, gradient);
+    loss.elements().front()->addDependency(zero);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(loss.elements().back());
+    loss.upload();
+    images->getDataBuffer(0).memcopyFrom(fixture.values("image"));
+    targets->getDataBuffer(0).memcopyFrom(fixture.values("target"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_NEAR(loss.loss(), fixture.values("loss")[0], 1e-4f * fixture.values("loss")[0]);
+    EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-3f);
 }

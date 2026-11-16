@@ -250,6 +250,24 @@ ComputeGraphElementPtr maxPool(VulkanContext& vulkanContext, const layers::Shape
 ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layers::Shape& input);
 
 /**
+ * @brief @p weight x the mean absolute difference of two tensors of @p count elements: each element's share and the
+ * gradient for the first tensor, written or, with @p accumulate, added.
+ *
+ * Slots: 0 first tensor, 1 second tensor, 2 gradient of the first, 3 shares.
+ */
+ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, float weight, bool accumulate = false);
+
+/**
+ * @brief y = x * scale[c] + shift[c] per channel (at most four) of an N x C x H x W tensor, e.g. ImageNet's
+ * normalization; with @p backward the input gradient dy * scale[c] instead, written or, with @p accumulate, added.
+ *
+ * Slots: 0 input (backward: output gradient), 1 output (backward: input gradient).
+ */
+ComputeGraphElementPtr channelAffine(VulkanContext& vulkanContext, const layers::Shape& shape,
+                                     const std::vector<float>& scale, const std::vector<float>& shift,
+                                     bool backward = false, bool accumulate = false);
+
+/**
  * @brief A 2 x 2 average pool with stride 2 of an N x C x H x W tensor.
  *
  * Slots: 0 input, 1 output (N x C x H/2 x W/2).

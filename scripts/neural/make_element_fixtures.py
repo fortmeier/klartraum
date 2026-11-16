@@ -142,6 +142,19 @@ def photometric_case(out: Path, seed: int) -> None:
     save(out, "photometric", {"image": image, "target": target, "dimage": image.grad, "loss": loss.reshape(1)})
 
 
+def vgg_case(out: Path, seed: int) -> None:
+    """The VGG-16 perceptual distance of an image to a target and the image's gradient."""
+    from training_reference import Vgg
+
+    generator = torch.Generator().manual_seed(seed)
+    vgg = Vgg().eval()
+    image = torch.rand(2, 3, 32, 32, generator=generator, requires_grad=True)
+    target = torch.rand(2, 3, 32, 32, generator=generator)
+    distance = vgg.distance(image, target)
+    distance.backward()
+    save(out, "vgg", {"image": image, "target": target, "dimage": image.grad, "loss": distance.reshape(1)})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -160,6 +173,7 @@ def main() -> None:
     film_case(args.out, 9)
     clip_case(args.out, 13)
     photometric_case(args.out, 11)
+    vgg_case(args.out, 15)
     print(f"fixtures in {args.out}")
 
 

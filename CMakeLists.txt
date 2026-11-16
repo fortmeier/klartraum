@@ -338,6 +338,7 @@ set(KLARTRAUM_LIB_SRC
   src/onnx_network.cpp
   src/layers.cpp
   src/training.cpp
+  src/vgg_loss.cpp
   src/mlp_training.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
