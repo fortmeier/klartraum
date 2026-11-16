@@ -70,11 +70,18 @@ class Flight:
         return path if path.exists() else path.with_suffix(".png")
 
     def distance(self, frame: int) -> np.ndarray:
-        """Distance from the camera per G-buffer pixel; NaN on the background."""
-        depth = read_ppm(self.frame_path(frame, "depth")).astype(np.float64)
+        """Distance from the camera per G-buffer pixel; NaN on the background. From the 16-bit depth (red high byte,
+        green low byte) where the flight has it, else from the 8-bit one."""
         covered = read_ppm(self.frame_path(frame, "class")).any(axis=2)
-        d = depth.mean(axis=2) / 255.0 - 1.0 / 255.0
         far = float(self.cameras[frame]["depth_far"])
+        precise = self.frame_path(frame, "depth16")
+        if precise.exists():
+            depth16 = read_ppm(precise).astype(np.float64)
+            d = (depth16[..., 0] * 256.0 + depth16[..., 1]) / 65535.0
+            return np.where(covered, d * far, np.nan)
+        depth = read_ppm(self.frame_path(frame, "depth")).astype(np.float64)
+        # The channels hold d offset by 0, 1/3 and 2/3 of an 8-bit step (treeGBufferColor()).
+        d = depth.mean(axis=2) / 255.0 - 1.0 / 765.0
         return np.where(covered, np.clip(d, 0.0, 1.0) * far, np.nan)
 
     def basis(self, frame: int) -> tuple[np.ndarray, np.ndarray, float]:
