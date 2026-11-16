@@ -21,6 +21,7 @@
  *   quarter of each output gradient onto the block's pixels, written or added to what is there
  * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
  *   the picked rows' gradients plus the L2 penalty's, and is zero for rows nobody picked
+ * - filmMatchesPyTorch: FiLM's output and its input, scale and shift gradients equal PyTorch's
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -382,4 +383,19 @@ TEST(TrainingElements, embeddingPicksAndScattersRows) {
     EXPECT_NEAR(g[4], 0.5f + 4.0f + 2.0f * p * 5.0f, 1e-6f);
     EXPECT_NEAR(g[5], 1.0f + 5.0f + 2.0f * p * 6.0f, 1e-6f);
     EXPECT_EQ(g[6], 0.0f);
+}
+
+TEST(TrainingElements, filmMatchesPyTorch) {
+    const Fixture fixture("film");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("x");
+    const std::vector<uint32_t> planes{shape[0], shape[1]};
+    checkElement(vc, fixture, training::film(vc, shape),
+                 {{"x", shape}, {"scale", planes}, {"shift", planes}, {"y", shape}}, 3);
+    checkElement(
+        vc, fixture, training::filmBackward(vc, shape),
+        {{"x", shape}, {"scale", planes}, {"dy", shape}, {"dx", shape}, {"dscale", planes}, {"dshift", planes}}, 3);
 }

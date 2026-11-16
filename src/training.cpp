@@ -98,6 +98,10 @@ struct ChannelCopyPushConstants {
     uint32_t batch, pixels, sourceChannels, sourceOffset, targetChannels, targetOffset, count, accumulate;
 };
 
+struct FilmPushConstants {
+    uint32_t batch, channels, pixels;
+};
+
 // N, C and H x W of a rank-four shape.
 std::array<uint32_t, 3> planesOf(const layers::Shape& shape) {
     if (shape.size() != 4)
@@ -183,6 +187,23 @@ ComputeGraphElementPtr channelCopy(VulkanContext& vulkanContext, uint32_t batch,
     operation->setPushConstants(
         {{batch, pixels, source.channels, source.offset, target.channels, target.offset, count, accumulate ? 1u : 0u}});
     operation->setGroupCountX((batch * count * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr film(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation = vulkanContext.create<GeneralComputation<FilmPushConstants>>("shaders/training/film.comp.spv");
+    operation->setPushConstants({{n, c, pixels}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation =
+        vulkanContext.create<GeneralComputation<FilmPushConstants>>("shaders/training/film_backward.comp.spv");
+    operation->setPushConstants({{n, c, pixels}});
+    operation->setGroupCountX(n * c);
     return operation;
 }
 

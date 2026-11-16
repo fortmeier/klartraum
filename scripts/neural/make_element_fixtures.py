@@ -107,6 +107,19 @@ def max_pool_case(out: Path, seed: int) -> None:
     save(out, "max_pool", {"x": x, "y": y, "dy": dy, "dx": x.grad})
 
 
+def film_case(out: Path, seed: int) -> None:
+    """FiLM (a scale and shift per sample and channel) and its input, scale and shift gradients."""
+    generator = torch.Generator().manual_seed(seed)
+    x = torch.randn(2, 4, 5, 6, generator=generator, requires_grad=True)
+    scale = torch.randn(2, 4, generator=generator, requires_grad=True)
+    shift = torch.randn(2, 4, generator=generator, requires_grad=True)
+    y = x * scale[:, :, None, None] + shift[:, :, None, None]
+    dy = torch.randn(y.shape, generator=generator)
+    y.backward(dy)
+    save(out, "film", {"x": x, "scale": scale, "shift": shift, "y": y, "dy": dy, "dx": x.grad,
+                       "dscale": scale.grad, "dshift": shift.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -122,6 +135,7 @@ def main() -> None:
     channel_norm_case(args.out, 7)
     upsample_case(args.out, 8)
     max_pool_case(args.out, 15)
+    film_case(args.out, 9)
     print(f"fixtures in {args.out}")
 
 

@@ -128,6 +128,21 @@ ComputeGraphElementPtr channelCopy(VulkanContext& vulkanContext, uint32_t batch,
                                    ChannelRange target, uint32_t count, bool accumulate = false);
 
 /**
+ * @brief FiLM: y = x * scale + shift with a scale and shift per sample and channel.
+ *
+ * Slots: 0 input (N x C x H x W), 1 scale (N x C), 2 shift (N x C), 3 output.
+ */
+ComputeGraphElementPtr film(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The backward pass of film(): the input gradient and the scale and shift gradients, one workgroup per sample
+ * and channel.
+ *
+ * Slots: 0 input, 1 scale, 2 output gradient, 3 input gradient, 4 scale gradient (N x C), 5 shift gradient (N x C).
+ */
+ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
  * @brief Sets @p count floats to @p value, e.g. a gradient that elements add to.
  *
  * Slots: 0 buffer.
