@@ -171,6 +171,47 @@ def augment_backward_case(out: Path, seed: int) -> None:
                                    "daugmented": gradient, "dpair": pair.grad})
 
 
+def object_vae_cases(out: Path, seed: int) -> None:
+    """The mean over each object's pixels and the latent G-buffer (both with their gradients), and the VAE's sample and
+    KL divergence with their gradients, also with free bits."""
+    from training_reference import kl_divergence, object_mean, splat
+
+    generator = torch.Generator().manual_seed(seed)
+    # Object means: 2 samples, 6 channels, 5 x 7 pixels, objects 0 (none), 1 and 2; object 2 missing in sample 1.
+    values = torch.randn(2, 6, 5, 7, generator=generator, requires_grad=True)
+    objects = torch.randint(0, 3, (2, 5, 7), generator=generator)
+    objects[1][objects[1] == 2] = 1
+    means, counts = object_mean(values, objects, 2)
+    weights = torch.randn(means.shape, generator=generator)
+    (means * weights).sum().backward()
+    latents = torch.randn(2, 2, 3, generator=generator, requires_grad=True)
+    splatted = splat(latents, objects)
+    splat_weights = torch.randn(splatted.shape, generator=generator)
+    (splatted * splat_weights).sum().backward()
+    save(out, "object_mean", {"values": values, "objects": objects.float(), "means": means, "counts": counts,
+                              "dmeans": weights, "dvalues": values.grad, "latents": latents, "splatted": splatted,
+                              "dsplatted": splat_weights, "dlatents": latents.grad})
+    # VAE: 2 samples, 2 objects (object 2 empty in sample 1), latent 3.
+    mu = torch.randn(2, 2, 3, generator=generator, requires_grad=True)
+    log_variance = (torch.randn(2, 2, 3, generator=generator) * 0.5).requires_grad_(True)
+    epsilon = torch.randn(2, 2, 3, generator=generator)
+    vae_counts = torch.tensor([[4.0, 3.0], [5.0, 0.0]])
+    sample = mu + (0.5 * log_variance).exp() * epsilon
+    dsample = torch.randn(sample.shape, generator=generator)
+    kl = kl_divergence(mu, log_variance, vae_counts)
+    ((sample * dsample).sum() + 0.3 * kl).backward()
+    save(out, "vae", {"mu": mu, "log_variance": log_variance, "epsilon": epsilon, "counts": vae_counts,
+                      "sample": sample, "kl": kl.reshape(1), "dsample": dsample, "dmu": mu.grad,
+                      "dlog_variance": log_variance.grad})
+    # The same VAE with 0.3 free bits: numbers below 0.3 nats get no KL gradient.
+    mu.grad = None
+    log_variance.grad = None
+    sample = mu + (0.5 * log_variance).exp() * epsilon
+    kl = kl_divergence(mu, log_variance, vae_counts, free_bits=0.3)
+    ((sample * dsample).sum() + 0.3 * kl).backward()
+    save(out, "vae_free_bits", {"kl": kl.reshape(1), "dmu": mu.grad, "dlog_variance": log_variance.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -191,6 +232,7 @@ def main() -> None:
     photometric_case(args.out, 11)
     vgg_case(args.out, 15)
     augment_backward_case(args.out, 23)
+    object_vae_cases(args.out, 17)
     print(f"fixtures in {args.out}")
 
 

@@ -70,3 +70,37 @@ def augment_with(pair: torch.Tensor, parameters: torch.Tensor) -> torch.Tensor:
         mask[:, :, max(0, cy - h // 4):cy + h // 4, max(0, cx - w // 4):cx + w // 4] = 0
         out.append(sample * mask)
     return torch.cat(out)
+
+
+def object_mean(values: torch.Tensor, objects: torch.Tensor, count: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """values [N, C, h, w], object indices [N, h, w] (0: none) -> the mean of each object's pixels [N, count, C] (0
+    for objects without pixels) and the pixel counts [N, count]."""
+    n, c = values.shape[:2]
+    means = torch.zeros(n, count, c, dtype=values.dtype)
+    counts = torch.zeros(n, count)
+    for k in range(count):
+        mask = (objects == k + 1).to(values.dtype)[:, None]
+        pixels = mask.sum(dim=(1, 2, 3))
+        counts[:, k] = pixels
+        means[:, k] = (values * mask).sum(dim=(2, 3)) / pixels.clamp(min=1.0)[:, None]
+    return means, counts
+
+
+def splat(latents: torch.Tensor, objects: torch.Tensor) -> torch.Tensor:
+    """latents [N, count, D], object indices [N, H, W] -> the latent G-buffer [N, D, H, W] (0 off the objects)."""
+    n, count, d = latents.shape
+    out = torch.zeros(n, d, *objects.shape[1:], dtype=latents.dtype)
+    for k in range(count):
+        mask = (objects == k + 1).to(latents.dtype)[:, None]
+        out = out + mask * latents[:, k, :, None, None]
+    return out
+
+
+def kl_divergence(mu: torch.Tensor, log_variance: torch.Tensor, counts: torch.Tensor,
+                  free_bits: float = 0.0) -> torch.Tensor:
+    """KL(N(mu, sigma) || N(0, 1)) summed over the latent and the objects that have pixels, averaged over the batch.
+
+    With free bits, each latent number's KL counts as at least free_bits nats, so the first free_bits nats of each
+    number cost nothing (Kingma et al. 2016)."""
+    terms = (-0.5 * (1.0 + log_variance - mu * mu - log_variance.exp())).clamp(min=free_bits).sum(dim=2)
+    return (terms * (counts > 0).to(terms.dtype)).sum() / mu.shape[0]
