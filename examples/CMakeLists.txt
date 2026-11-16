@@ -123,3 +123,13 @@ target_link_libraries(splat_training_example
 )
 
 add_dependencies(splat_training_example Shaders)
+# Interactive Qwen3.6-27B chat on the GGUF runtime (model from scripts/qwen_gguf)
+add_executable(qwen_chat_example
+    qwen_chat_example.cpp
+)
+
+target_link_libraries(qwen_chat_example
+    klartraum_lib
+)
+
+add_dependencies(qwen_chat_example Shaders)
