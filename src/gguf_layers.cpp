@@ -30,6 +30,10 @@ struct MatMulPushConstants {
     uint32_t rows, columns, rowBytes, tokens, accumulate, hasBias;
 };
 
+struct FullAttentionPushConstants {
+    uint32_t tokens, heads, causal;
+};
+
 struct RmsNormPushConstants {
     uint32_t width;
     uint32_t rowsPerToken;
@@ -181,6 +185,16 @@ ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, GgmlType type, uint3
     auto operation = computation(vulkanContext, matMulShader(type).c_str(), constants);
     // TILE_ROWS x TILE_TOKENS per workgroup in matmul.slang.
     operation->setGroupCount((rows + 63) / 64, (tokens + 63) / 64, 1);
+    return operation;
+}
+
+ComputeGraphElementPtr fullAttention(VulkanContext& vulkanContext, uint32_t tokens, uint32_t heads, bool causal) {
+    if (tokens == 0 || heads == 0)
+        throw std::runtime_error("GGUF fullAttention needs tokens and heads");
+    auto operation = computation(vulkanContext, "shaders/gguf/full_attention.comp.spv",
+                                 FullAttentionPushConstants{tokens, heads, causal ? 1u : 0u});
+    // 16 queries of one head per workgroup.
+    operation->setGroupCount((tokens + 15) / 16, heads, 1);
     return operation;
 }
 
