@@ -27,17 +27,21 @@ struct MeshTrainingOptions {
     float maskWeight = 1.0f;                        ///< weight of the coverage term of imageLoss()
     float laplacianWeight = 100.0f;                 ///< weight of laplacianRegularizer(), 0 for none
     training::AdamParameters geometry{0.002f};      ///< optimizer of the vertex positions
-    training::AdamParameters texture{0.01f};        ///< optimizer of the texels
-    uint32_t seed = 1;                              ///< seed of the noise the texture starts from
+    training::AdamParameters texture{0.01f};
+    bool viewColors = false;       ///< learn a colour gain and offset per view (imageLossWithViewColors())
+    float viewColorWeight = 0.01f; ///< pull of the per-view corrections towards identity
+    training::AdamParameters viewColor{
+        0.002f};       ///< optimizer of the per-view corrections        ///< optimizer of the texels
+    uint32_t seed = 1; ///< seed of the noise the texture starts from
 };
 
 /**
  * @brief Fits the vertex positions and the texture of a triangle mesh to masked images seen by known cameras.
  *
  * One training step is one pre-recorded command buffer and one submit: advance the view index (on the GPU, cycling
- * through all cameras), the visibility pass, shading, antialiasing, the image loss, the backward elements down to
- * vertex and texel gradients, the Laplacian regularizer and an Adam step for positions and texels. The topology and
- * the corner texture coordinates of the start mesh stay fixed.
+ * through all cameras), the visibility pass, shading, antialiasing, the image loss (optionally with a colour correction
+ * per view), the backward elements down to vertex and texel gradients, the Laplacian regularizer and an Adam step for
+ * positions and texels. The topology and the corner texture coordinates of the start mesh stay fixed.
  */
 class MeshTraining {
 public:
@@ -63,6 +67,9 @@ public:
     /** @brief The current texture, four floats per texel (rgb used), row-major. */
     std::vector<float> texture() const;
 
+    /** @brief The per-view colour corrections: eight floats per view (gain rgb, 0, offset rgb, 0); empty without. */
+    std::vector<float> viewColors() const;
+
     /** @brief Replaces the texture (four floats per texel). */
     void setTexture(const std::vector<float>& texels);
 
@@ -77,6 +84,8 @@ private:
     TriangleMesh startMesh;
     // The trained parameters and their Adam moments.
     std::shared_ptr<Tensor> positions, texels, positionMoments[2], texelMoments[2];
+    // The per-view colour corrections (with MeshTrainingOptions::viewColors), their gradients and Adam moments.
+    std::shared_ptr<Tensor> viewColorValues, viewColorGradients, viewColorMoments[2];
     // The fixed scene inputs: corner texture coordinates, cameras, targets and the adjacency of the regularizer.
     std::shared_ptr<Tensor> cornerUvs, cameraBuffer, targets;
     std::shared_ptr<UintBuffer> triangles, viewIndex, adjacencyOffsets, neighbours, stepCount;
