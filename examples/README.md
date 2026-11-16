@@ -263,7 +263,8 @@ PSNR of a held-out view. It writes the following to
 `build/TestingOutput/mesh_texture_fitting/`: three target views, a progress
 frame per epoch in `frames/` (the held-out target beside the current fit), and
 the fitted mesh with its texture (`fitted.obj`, `.mtl`, `fitted_texture.ppm`)
-next to the true mesh.
+next to the true mesh. `object.obj` holds the fitted mesh in the frame it was
+trained in: its enclosing sphere is the unit sphere and up is +y.
 
 | Option | Meaning |
 |---|---|
@@ -319,7 +320,8 @@ scene's training and validation views. It writes the following to
 `build/TestingOutput/splat_training/<scene>/`: progress frames (a photo turned
 upright beside the splats seen upright from its side), residuals of four
 training views, and the Gaussians as `splats.ply` in scene coordinates, readable
-by common splat viewers.
+by common splat viewers. `object.spz` holds the Gaussians in the frame they were
+trained in (enclosing sphere the unit sphere, up +y).
 
 | Option | Meaning |
 |---|---|
