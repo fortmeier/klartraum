@@ -9,6 +9,7 @@
 //
 //   qwen_image_example --prompt "a bonsai tree, watercolor" --size 512 512 --out bonsai.ppm
 //   qwen_image_example --prompt "..." --image rendering.ppm --strength 0.6 --out styled.ppm
+//   qwen_image_example --prompt "..." --batch frames.txt --strength 0.6   # lines "input.ppm output.ppm"
 //
 // Images are binary PPM (P6); the input is used at --size (it must have that size).
 
@@ -38,7 +39,7 @@ const std::string kModels = "build/models/qwen-image/";
 struct Arguments {
     std::string prompt = "a bonsai tree in a clay pot, watercolor painting";
     uint32_t height = 512, width = 512, steps = 8, seed = 0;
-    std::string image, out = "build/TestingOutput/qwen_image/image.ppm";
+    std::string image, batch, out = "build/TestingOutput/qwen_image/image.ppm";
     float strength = 0.6f;
     std::string transformer = kModels + "transformer/qwen-image-Q4_K_S.gguf";
     std::string text = kModels + "text/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
@@ -65,6 +66,8 @@ Arguments parse(int argc, char** argv) {
             a.seed = uint32_t(std::stoul(next()));
         else if (arg == "--image")
             a.image = next();
+        else if (arg == "--batch")
+            a.batch = next();
         else if (arg == "--strength")
             a.strength = std::stof(next());
         else if (arg == "--out")
@@ -192,50 +195,73 @@ int main(int argc, char** argv) {
         }
         std::cout << "prompt: " << textTokens << " tokens in " << seconds(start) << " s" << std::endl;
 
-        auto sigmas = lightningSigmas(args.steps);
+        // The jobs: one image, or with --batch every line's input and output (the same noise for all of them).
+        std::vector<std::pair<std::string, std::string>> jobs;
+        if (args.batch.empty()) {
+            jobs.emplace_back(args.image, args.out);
+        } else {
+            std::ifstream list(args.batch);
+            std::string input, output;
+            while (list >> input >> output)
+                jobs.emplace_back(input, output);
+            if (jobs.empty())
+                throw std::runtime_error(args.batch + " lists no images");
+        }
+
+        const auto sigmas = lightningSigmas(args.steps);
         std::mt19937 rng(args.seed);
         std::normal_distribution<float> normal;
         std::vector<float> noise(size_t(16) * h * w);
         for (auto& n : noise)
             n = normal(rng);
-        std::vector<float> latent = noise;
-        uint32_t first = 0;
-        if (!args.image.empty()) {
-            // Image to image: start from the input's latent noised to the schedule's sigma after skipping the first
-            // steps (diffusers' Img2Img pipeline: int(steps - steps * strength) steps skipped).
-            const auto clean =
-                runVae(vc, kModels + "onnx/vae_encoder_" + size + ".onnx", "image", {1, 3, args.height, args.width},
-                       readPpm(args.image, args.height, args.width), "latent");
-            first = uint32_t(std::max(0.0, double(args.steps) - double(args.steps) * args.strength));
-            const float sigma = sigmas[first];
-            for (size_t i = 0; i < latent.size(); ++i)
-                latent[i] = sigma * noise[i] + (1.0f - sigma) * clean[i];
-        }
 
-        auto packed = pack(latent, h, w);
+        // Three phases, so that the VAE graphs never share the GPU with the transformer: encode every input, denoise
+        // every latent, then decode them all.
+        const uint32_t first =
+            uint32_t(std::max(0.0, double(args.steps) - double(args.steps) * args.strength)); // with an input image
+        std::vector<std::vector<float>> latents;
+        for (const auto& [input, output] : jobs) {
+            std::vector<float> latent = noise;
+            if (!input.empty()) {
+                // Image to image: start from the input's latent noised to the schedule's sigma after skipping the
+                // first steps (diffusers' Img2Img pipeline: int(steps - steps * strength) steps skipped).
+                const auto clean =
+                    runVae(vc, kModels + "onnx/vae_encoder_" + size + ".onnx", "image", {1, 3, args.height, args.width},
+                           readPpm(input, args.height, args.width), "latent");
+                const float sigma = sigmas[first];
+                for (size_t i = 0; i < latent.size(); ++i)
+                    latent[i] = sigma * noise[i] + (1.0f - sigma) * clean[i];
+            }
+            latents.push_back(pack(latent, h, w));
+        }
         {
             auto transformer = vc.create<QwenImageTransformer>(
                 args.transformer, QwenImageTransformerOptions{h, w, textTokens, args.lora, 0});
             ComputeGraph graph(vc, 1);
             graph.compileFrom(transformer);
             transformer->setPromptEmbedding(embedding);
-            for (uint32_t step = first; step < args.steps; ++step) {
-                const auto stepStart = std::chrono::steady_clock::now();
-                transformer->setLatent(packed);
-                transformer->setSigma(sigmas[step]);
-                graph.submitAndWait(vc.getGraphicsQueue(), 0);
-                const auto velocity = transformer->readVelocity();
-                for (size_t i = 0; i < packed.size(); ++i)
-                    packed[i] += (sigmas[step + 1] - sigmas[step]) * velocity[i];
-                std::cout << "step " << step + 1 << "/" << args.steps << " (sigma " << sigmas[step] << ") in "
-                          << seconds(stepStart) << " s" << std::endl;
+            for (size_t job = 0; job < jobs.size(); ++job) {
+                const auto jobStart = std::chrono::steady_clock::now();
+                auto& packed = latents[job];
+                for (uint32_t step = jobs[job].first.empty() ? 0 : first; step < args.steps; ++step) {
+                    transformer->setLatent(packed);
+                    transformer->setSigma(sigmas[step]);
+                    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+                    const auto velocity = transformer->readVelocity();
+                    for (size_t i = 0; i < packed.size(); ++i)
+                        packed[i] += (sigmas[step + 1] - sigmas[step]) * velocity[i];
+                }
+                std::cout << "denoised " << job + 1 << "/" << jobs.size() << " in " << seconds(jobStart) << " s"
+                          << std::endl;
             }
         }
-
-        const auto image = runVae(vc, kModels + "onnx/vae_decoder_" + size + ".onnx", "latent", {1, 16, h, w},
-                                  unpack(packed, h, w), "image");
-        writePpm(args.out, image, args.height, args.width);
-        std::cout << "wrote " << args.out << " after " << seconds(start) << " s" << std::endl;
+        for (size_t job = 0; job < jobs.size(); ++job) {
+            const auto image = runVae(vc, kModels + "onnx/vae_decoder_" + size + ".onnx", "latent", {1, 16, h, w},
+                                      unpack(latents[job], h, w), "image");
+            writePpm(jobs[job].second, image, args.height, args.width);
+            std::cout << "wrote " << jobs[job].second << std::endl;
+        }
+        std::cout << "done after " << seconds(start) << " s" << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "qwen_image_example: " << e.what() << std::endl;
         return 1;
