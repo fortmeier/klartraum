@@ -155,6 +155,22 @@ def vgg_case(out: Path, seed: int) -> None:
     save(out, "vgg", {"image": image, "target": target, "dimage": image.grad, "loss": distance.reshape(1)})
 
 
+def augment_backward_case(out: Path, seed: int) -> None:
+    """DiffAugment with given numbers (training_reference.augment_with()) and its input gradient: pairs of 2 G-buffer
+    channels and an image, a positive and a negative roll, cutouts in the middle and at the border."""
+    from training_reference import augment_with
+
+    generator = torch.Generator().manual_seed(seed)
+    pair = torch.rand(3, 5, 12, 16, generator=generator, requires_grad=True)
+    parameters = torch.tensor([[0.1, 1.3, 2.0, -3.0, 5.0, 7.0], [-0.15, 0.6, -1.0, 4.0, 0.0, 15.0],
+                               [0.0, 1.0, 0.0, 0.0, 11.0, 2.0]])
+    augmented = augment_with(pair, parameters)
+    gradient = torch.randn(augmented.shape, generator=generator)
+    (augmented * gradient).sum().backward()
+    save(out, "augment_backward", {"pair": pair, "parameters": parameters, "augmented": augmented,
+                                   "daugmented": gradient, "dpair": pair.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -174,6 +190,7 @@ def main() -> None:
     clip_case(args.out, 13)
     photometric_case(args.out, 11)
     vgg_case(args.out, 15)
+    augment_backward_case(args.out, 23)
     print(f"fixtures in {args.out}")
 
 

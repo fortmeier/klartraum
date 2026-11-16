@@ -29,6 +29,11 @@
  * - vggLossMatchesPyTorch: the perceptual loss of an image against a target through VGG-16 up to relu4_3 and its
  *   gradient (added to a zeroed image gradient) equal train_photo_enhancer.Vgg's (skips without
  *   scripts/neural/export_vgg16.py's weights)
+ * - softplusLossMatchesMean: the GAN loss over a range of logits gives each logit its share weight x softplus(sign x) /
+ *   count (also for large logits) and the gradient weight x sign x sigmoid(sign x) / count, and leaves the logits
+ *   outside the range alone
+ * - augmentPairBackwardMatchesPyTorch: DiffAugment of discriminator pairs (brightness, contrast, rolls both ways,
+ *   cutouts inside and at the border) and its input gradient equal augment_with()'s and autograd's
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -515,4 +520,65 @@ TEST(TrainingElements, vggLossMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_NEAR(loss.loss(), fixture.values("loss")[0], 1e-4f * fixture.values("loss")[0]);
     EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-3f);
+}
+
+TEST(TrainingElements, softplusLossMatchesMean) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const std::vector<float> logits{9.0f, -1.5f, 0.0f, 0.7f, 40.0f, -40.0f, 2.0f};
+    const uint32_t offset = 1, count = 5;
+    const float weight = 0.6f;
+    for (const float sign : {-1.0f, 1.0f}) {
+        auto x = tensor(vc, {7}), gradient = tensor(vc, {7}), shares = tensor(vc, {7});
+        auto loss = training::softplusLoss(vc, offset, count, sign, weight);
+        loss->setInput(x, 0);
+        loss->setInput(gradient, 1);
+        loss->setInput(shares, 2);
+        ComputeGraph graph(vc, 1);
+        graph.compileFrom(loss);
+        x->getDataBuffer(0).memcopyFrom(logits);
+        gradient->getDataBuffer(0).memcopyFrom(std::vector<float>(7, -7.0f));
+        shares->getDataBuffer(0).memcopyFrom(std::vector<float>(7, -7.0f));
+        graph.submitAndWait(vc.getGraphicsQueue(), 0);
+        const auto g = read(gradient), s = read(shares);
+        for (uint32_t i = 0; i < 7; ++i) {
+            if (i < offset || i >= offset + count) {
+                EXPECT_EQ(g[i], -7.0f);
+                EXPECT_EQ(s[i], -7.0f);
+                continue;
+            }
+            const double z = double(sign) * logits[i];
+            const double softplus = std::max(z, 0.0) + std::log1p(std::exp(-std::abs(z)));
+            EXPECT_NEAR(s[i], weight * softplus / count, 1e-5) << i;
+            EXPECT_NEAR(g[i], weight * sign / (1.0 + std::exp(-z)) / count, 1e-6) << i;
+        }
+    }
+}
+
+TEST(TrainingElements, augmentPairBackwardMatchesPyTorch) {
+    const Fixture fixture("augment_backward");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("pair");
+    auto pair = tensor(vc, shape), numbers = tensor(vc, fixture.shapes.at("parameters"));
+    auto augmented = tensor(vc, shape), daugmented = tensor(vc, shape), dpair = tensor(vc, shape);
+    auto forward = training::augmentPair(vc, shape);
+    forward->setInput(pair, 0);
+    forward->setInput(numbers, 1);
+    forward->setInput(augmented, 2);
+    auto backward = training::augmentPairBackward(vc, shape);
+    backward->setInput(numbers, 0);
+    backward->setInput(daugmented, 1);
+    backward->setInput(dpair, 2);
+    backward->addDependency(forward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    pair->getDataBuffer(0).memcopyFrom(fixture.values("pair"));
+    numbers->getDataBuffer(0).memcopyFrom(fixture.values("parameters"));
+    daugmented->getDataBuffer(0).memcopyFrom(fixture.values("daugmented"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(augmented), fixture.values("augmented")), 1e-5f);
+    EXPECT_LT(relativeError(read(dpair), fixture.values("dpair")), 1e-5f);
 }

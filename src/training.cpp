@@ -102,8 +102,17 @@ struct AffinePushConstants {
     float scale[4], shift[4];
 };
 
+struct AugmentPushConstants {
+    uint32_t batch, channels, height, width;
+};
+
 struct AveragePoolPushConstants {
     uint32_t planes, inputHeight, inputWidth, accumulate;
+};
+
+struct SoftplusPushConstants {
+    uint32_t offset, count;
+    float sign, weight;
 };
 
 struct ScalarAffinePushConstants {
@@ -362,6 +371,27 @@ ComputeGraphElementPtr channelAffine(VulkanContext& vulkanContext, const layers:
     return operation;
 }
 
+ComputeGraphElementPtr augmentPair(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    if (shape.size() != 4 || shape[1] < 3)
+        throw std::invalid_argument("augmentPair: needs N x C x H x W pairs with an image in the last three channels");
+    auto operation =
+        vulkanContext.create<GeneralComputation<AugmentPushConstants>>("shaders/training/augment_pair.comp.spv");
+    operation->setPushConstants({{shape[0], shape[1], shape[2], shape[3]}});
+    operation->setGroupCountX((layers::elementCount(shape) + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr augmentPairBackward(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    if (shape.size() != 4 || shape[1] < 3)
+        throw std::invalid_argument("augmentPairBackward: needs N x C x H x W pairs with an image in the last three "
+                                    "channels");
+    auto operation = vulkanContext.create<GeneralComputation<AugmentPushConstants>>(
+        "shaders/training/augment_pair_backward.comp.spv");
+    operation->setPushConstants({{shape[0], shape[1], shape[2], shape[3]}});
+    operation->setGroupCountX((layers::elementCount(shape) + 255) / 256);
+    return operation;
+}
+
 ComputeGraphElementPtr averagePool(VulkanContext& vulkanContext, const layers::Shape& input) {
     const auto [n, c, pixels] = planesOf(input);
     auto operation =
@@ -377,6 +407,15 @@ ComputeGraphElementPtr averagePoolBackward(VulkanContext& vulkanContext, const l
         "shaders/training/average_pool_backward.comp.spv");
     operation->setPushConstants({{n * c, input[2], input[3], accumulate ? 1u : 0u}});
     operation->setGroupCountX((n * c * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr softplusLoss(VulkanContext& vulkanContext, uint32_t offset, uint32_t count, float sign,
+                                    float weight) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<SoftplusPushConstants>>("shaders/training/softplus_loss.comp.spv");
+    operation->setPushConstants({{offset, count, sign, weight}});
+    operation->setGroupCountX((count + 255) / 256);
     return operation;
 }
 

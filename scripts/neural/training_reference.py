@@ -51,3 +51,22 @@ class Vgg(nn.Module):
             x, y = s(x), s(y)
             total = total + weight * F.l1_loss(x, y)
         return total
+
+
+def augment_with(pair: torch.Tensor, parameters: torch.Tensor) -> torch.Tensor:
+    """DiffAugment of discriminator pairs (G-buffer channels, then an image) with its random numbers given, per
+    sample: brightness, contrast (both on the image only), the roll (y, x) and the cutout centre (y, x)."""
+    b, c, h, w = pair.shape
+    out = []
+    for k in range(b):
+        brightness, contrast, sy, sx, cy, cx = parameters[k].tolist()
+        image = pair[k:k + 1, -3:] + brightness
+        mean = image.mean(dim=1, keepdim=True)
+        image = (image - mean) * contrast + mean
+        sample = torch.cat([pair[k:k + 1, :-3], image], dim=1)
+        sample = torch.roll(sample, shifts=(int(sy), int(sx)), dims=(2, 3))
+        mask = torch.ones(1, 1, h, w)
+        cy, cx = int(cy), int(cx)
+        mask[:, :, max(0, cy - h // 4):cy + h // 4, max(0, cx - w // 4):cx + w // 4] = 0
+        out.append(sample * mask)
+    return torch.cat(out)
