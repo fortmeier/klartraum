@@ -276,6 +276,7 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_tree_gaussians.cpp
   tests/test_tree_wind.cpp
   tests/test_tree_rendering.cpp
   tests/test_tree_leaves.cpp
@@ -374,6 +375,9 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/tree_light_volume.cpp
+  src/tree_gaussians.cpp
+  src/gaussian_lod.cpp
   src/tree_stem_renderer.cpp
   src/tree_leaf_renderer.cpp
   src/tree_model.cpp
