@@ -171,6 +171,22 @@ ComputeGraphElementPtr linearBackwardInput(VulkanContext& vulkanContext, const L
 ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const LinearShape& shape);
 
 /**
+ * @brief The rows of a [rows][size] table picked by a batch of row indices (floats), e.g. appearance codes.
+ *
+ * Slots: 0 table, 1 row indices (batch), 2 picked rows (batch x size).
+ */
+ComputeGraphElementPtr embedding(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size);
+
+/**
+ * @brief The table gradient of embedding(), including an L2 penalty of @p decay x the batch's mean squared norm of
+ * the picked rows; rows nobody picked get zero.
+ *
+ * Slots: 0 table, 1 row indices, 2 picked rows' gradient, 3 table gradient.
+ */
+ComputeGraphElementPtr embeddingBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size,
+                                         float decay);
+
+/**
  * @brief A 2 x 2 max-pool with stride 2 of an N x C x H x W tensor (F.max_pool2d(x, 2)), keeping which of its window's
  * four elements each output took.
  *

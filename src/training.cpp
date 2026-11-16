@@ -66,6 +66,11 @@ struct LinearPushConstants {
     uint32_t accumulate;
 };
 
+struct EmbeddingPushConstants {
+    uint32_t batch, rows, size;
+    float decay;
+};
+
 struct PoolPushConstants {
     uint32_t planes, inputHeight, inputWidth;
 };
@@ -215,6 +220,23 @@ ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const
         "shaders/training/linear_backward_weights.comp.spv");
     operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, 0.0f, 0u}});
     operation->setGroupCountX((shape.outputs * (shape.inputs + 1) + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr embedding(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<EmbeddingPushConstants>>("shaders/training/embedding.comp.spv");
+    operation->setPushConstants({{batch, rows, size, 0.0f}});
+    operation->setGroupCountX((batch * size + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr embeddingBackward(VulkanContext& vulkanContext, uint32_t batch, uint32_t rows, uint32_t size,
+                                         float decay) {
+    auto operation = vulkanContext.create<GeneralComputation<EmbeddingPushConstants>>(
+        "shaders/training/embedding_backward.comp.spv");
+    operation->setPushConstants({{batch, rows, size, decay}});
+    operation->setGroupCountX((rows * size + 63) / 64);
     return operation;
 }
 

@@ -19,6 +19,8 @@
  * - maxPoolMatchesPyTorch: a 2 x 2 max-pool and its input gradient equal F.max_pool2d's
  * - averagePoolMatchesMeans: a 2 x 2 average pool gives the mean of every 2 x 2 block, and its backward pass spreads a
  *   quarter of each output gradient onto the block's pixels, written or added to what is there
+ * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
+ *   the picked rows' gradients plus the L2 penalty's, and is zero for rows nobody picked
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -344,4 +346,40 @@ TEST(TrainingElements, averagePoolMatchesMeans) {
                     EXPECT_NEAR(dxsAdded[i], 1.0f + 0.25f * dys[o], 1e-6f);
                 }
             }
+}
+
+TEST(TrainingElements, embeddingPicksAndScattersRows) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const uint32_t batch = 3, rows = 4, size = 2;
+    const float decay = 0.1f;
+    auto table = tensor(vc, {rows, size}), indices = tensor(vc, {batch}), picked = tensor(vc, {batch, size});
+    auto pickedGradient = tensor(vc, {batch, size}), tableGradient = tensor(vc, {rows, size});
+    auto pick = training::embedding(vc, batch, rows, size);
+    pick->setInput(table, 0);
+    pick->setInput(indices, 1);
+    pick->setInput(picked, 2);
+    auto scatter = training::embeddingBackward(vc, batch, rows, size, decay);
+    scatter->setInput(table, 0);
+    scatter->setInput(indices, 1);
+    scatter->setInput(pickedGradient, 2);
+    scatter->setInput(tableGradient, 3);
+    scatter->addDependency(pick);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(scatter);
+    const std::vector<float> values{1, 2, 3, 4, 5, 6, 7, 8}, rowsPicked{2, 0, 2}, gradients{0.5f, 1, 2, 3, 4, 5};
+    table->getDataBuffer(0).memcopyFrom(values);
+    indices->getDataBuffer(0).memcopyFrom(rowsPicked);
+    pickedGradient->getDataBuffer(0).memcopyFrom(gradients);
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_EQ(read(picked), (std::vector<float>{5, 6, 1, 2, 5, 6}));
+    const auto g = read(tableGradient);
+    const float p = 2.0f * decay / float(batch);
+    EXPECT_NEAR(g[0], 2.0f + p * 1.0f, 1e-6f);
+    EXPECT_NEAR(g[1], 3.0f + p * 2.0f, 1e-6f);
+    EXPECT_EQ(g[2], 0.0f);
+    EXPECT_EQ(g[3], 0.0f);
+    EXPECT_NEAR(g[4], 0.5f + 4.0f + 2.0f * p * 5.0f, 1e-6f);
+    EXPECT_NEAR(g[5], 1.0f + 5.0f + 2.0f * p * 6.0f, 1e-6f);
+    EXPECT_EQ(g[6], 0.0f);
 }
