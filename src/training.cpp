@@ -100,6 +100,33 @@ struct EncodingPushConstants {
     uint32_t classes[4];
 };
 
+struct TextureBasisPushConstants {
+    uint32_t batch, pixels, faces, layers, channels, resolution, classCount, outputChannels;
+    uint32_t classes[4];
+    uint32_t outputOffset, accumulate;
+};
+
+TextureBasisPushConstants textureBasisConstants(const TextureBasisShape& shape) {
+    if (shape.classes.empty() || shape.classes.size() > 4)
+        throw std::invalid_argument("textureBasis: 1 to 4 classes");
+    if (shape.layers == 0 || shape.faces == 0 || shape.resolution == 0)
+        throw std::invalid_argument("textureBasis: needs faces, layers and texels");
+    TextureBasisPushConstants constants{shape.batch,
+                                        shape.pixels,
+                                        shape.faces,
+                                        shape.layers,
+                                        shape.channels,
+                                        shape.resolution,
+                                        uint32_t(shape.classes.size()),
+                                        shape.outputChannels,
+                                        {0, 0, 0, 0},
+                                        shape.outputOffset,
+                                        shape.accumulate ? 1u : 0u};
+    for (size_t k = 0; k < shape.classes.size(); ++k)
+        constants.classes[k] = shape.classes[k];
+    return constants;
+}
+
 struct FlowWarpPushConstants {
     uint32_t batch, channels, height, width;
     float weight;
@@ -410,6 +437,22 @@ ComputeGraphElementPtr positionalEncoding(VulkanContext& vulkanContext, uint32_t
         "shaders/training/positional_encoding.comp.spv");
     operation->setPushConstants({constants});
     operation->setGroupCountX((batch * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr textureBasis(VulkanContext& vulkanContext, const TextureBasisShape& shape) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<TextureBasisPushConstants>>("shaders/training/texture_basis.comp.spv");
+    operation->setPushConstants({textureBasisConstants(shape)});
+    operation->setGroupCountX((shape.batch * shape.pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr textureBasisBackward(VulkanContext& vulkanContext, const TextureBasisShape& shape) {
+    auto operation = vulkanContext.create<GeneralComputation<TextureBasisPushConstants>>(
+        "shaders/training/texture_basis_backward.comp.spv");
+    operation->setPushConstants({textureBasisConstants(shape)});
+    operation->setGroupCountX((shape.batch * shape.pixels + 255) / 256);
     return operation;
 }
 

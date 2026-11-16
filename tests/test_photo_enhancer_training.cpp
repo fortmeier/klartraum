@@ -22,6 +22,10 @@
  *   latent_renderer.flow_warp_loss()'s (grid_sample)
  * - positionalEncodingMatchesPyTorch: the positional encoding of surface coordinates (sine and cosine of 4 octaves per
  *   coordinate, then the coordinates; zero off the texture's classes) equals latent_renderer.positional_encoding()'s
+ * - textureBasisMatchesPyTorch: the code-mixed feature texture (6 faces, a base and 2 latent layers of 4 channels at
+ *   5 x 5 texels; coordinates partly beyond the edges, classes 3 and 1 textured) writes latent_renderer.
+ *   sample_texture_basis()'s features at its channels of a wider output and leaves the others alone; its backward
+ *   pass gives autograd's table and latent gradients
  * - composeMatchesPyTorch: the albedo renderer's image (mask x sigmoid(albedo) x 2 sigmoid(shading) + (1 - mask) x
  *   sigmoid(background)) and its gradients for the albedo's logit and the decoder's 4 outputs equal
  *   latent_renderer.compose()'s
@@ -63,12 +67,20 @@
  *   3 and 1 of 5) and the latents only in the MLP texture (the generator's latent channels zero): image, loss, every
  *   clipped gradient (the table's too, with its L2 penalty) and every parameter after the step (the table by its own
  *   unclipped Adam) equal latent_renderer.py's with latent_to_decoder False
+ * - residualMlpTextureStepMatchesPyTorch: the same step with a multi-resolution MLP texture (the first block of 3
+ *   octaves and residual blocks of 5 and 7 octaves, their features summed): image, loss, every clipped gradient (of
+ *   every block and the table) and every parameter after the step equal latent_renderer.ResidualMlpTexture's
+ * - basisTextureStepMatchesPyTorch: the same step with the code-mixed feature texture instead of the MLP texture (6
+ *   faces, a base and 4 latent layers of 5 channels at 4 x 4 and 8 x 8 texels): image, loss, every clipped gradient
+ *   (the tables' and the latent table's too) and every parameter after the step (the tables by the texture's Adam)
+ *   equal latent_renderer.TextureBasis's
  * - latentsOnlyThroughTheTexture: forward only, two latents give different images with the texture whether or not
  *   the generator takes them; with the texture switched off they still differ when the generator takes them, and
  *   give the same image when only the texture does
  * - latentTableSeparatesTwoAppearances: two samples of the same geometry whose photos are red and blue on the
  *   object, rows 0 and 1 of a 2-row table, latents only in the texture: over 200 steps the loss falls below 30 %,
  *   the rows move apart and the rendered object is red in sample 0 and blue in sample 1
+ * - basisTextureSeparatesTwoAppearances: the same with the code-mixed feature texture instead of the MLP texture
  * - albedoStepMatchesPyTorch: the same step without VGG with the albedo renderer: the multi-resolution albedo texture
  *   (residual blocks of 1, 2 and 3 octaves, weighted 1, 0.5, 0.25), the decoder on geometry and latents giving shading
  *   and background, compose(): image, losses, every clipped gradient and every parameter after the step equal
@@ -498,6 +510,73 @@ TEST(PhotoEnhancerTraining, positionalEncodingMatchesPyTorch) {
     for (size_t i = 0; i < actual.size(); ++i)
         worst = std::max(worst, std::abs(actual[i] - expected[i]));
     EXPECT_LT(worst, 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, textureBasisMatchesPyTorch) {
+    const Fixture fixture("texture_basis");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    // 2 samples of 5 x 7 pixels; the features at channels 2..5 of a 6-channel output.
+    const uint32_t n = 2, pixels = 35, channels = 4, outputChannels = 6;
+    training::TextureBasisShape shape;
+    shape.batch = n;
+    shape.pixels = pixels;
+    shape.faces = 6;
+    shape.layers = 3;
+    shape.channels = channels;
+    shape.resolution = 5;
+    shape.classes = {3, 1};
+    shape.outputChannels = outputChannels;
+    shape.outputOffset = 2;
+    auto coordinates = tensor(vc, {n, 3, 5, 7}), classes = tensor(vc, {n, 5, 7});
+    auto table = tensor(vc, {uint32_t(shape.tableSize())}), latents = tensor(vc, {n, 2, 5, 7});
+    auto output = tensor(vc, {n, outputChannels, 5, 7}), outputGradient = tensor(vc, {n, outputChannels, 5, 7});
+    auto tableGradient = tensor(vc, {uint32_t(shape.tableSize())}), latentGradient = tensor(vc, {n, 2, 5, 7});
+    auto forward = training::textureBasis(vc, shape);
+    forward->setInput(coordinates, 0);
+    forward->setInput(classes, 1);
+    forward->setInput(table, 2);
+    forward->setInput(latents, 3);
+    forward->setInput(output, 4);
+    auto backward = training::textureBasisBackward(vc, shape);
+    backward->setInput(coordinates, 0);
+    backward->setInput(classes, 1);
+    backward->setInput(table, 2);
+    backward->setInput(latents, 3);
+    backward->setInput(outputGradient, 4);
+    backward->setInput(tableGradient, 5);
+    backward->setInput(latentGradient, 6);
+    backward->addDependency(forward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    coordinates->getDataBuffer(0).memcopyFrom(fixture.values("coordinates"));
+    classes->getDataBuffer(0).memcopyFrom(fixture.values("classes"));
+    table->getDataBuffer(0).memcopyFrom(fixture.values("table"));
+    latents->getDataBuffer(0).memcopyFrom(fixture.values("latents"));
+    // The other channels of the output keep their values, and their gradient plays no part.
+    std::vector<float> before(n * outputChannels * pixels, 7.0f), gradient(n * outputChannels * pixels, 100.0f);
+    const auto upstream = fixture.values("upstream");
+    for (uint32_t k = 0; k < n; ++k)
+        for (uint32_t c = 0; c < channels; ++c)
+            for (uint32_t p = 0; p < pixels; ++p)
+                gradient[(k * outputChannels + 2 + c) * pixels + p] = upstream[(k * channels + c) * pixels + p];
+    output->getDataBuffer(0).memcopyFrom(before);
+    outputGradient->getDataBuffer(0).memcopyFrom(gradient);
+    tableGradient->getDataBuffer(0).memcopyFrom(std::vector<float>(shape.tableSize(), 0.0f));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto actual = read(output), features = fixture.values("features");
+    float worst = 0.0f;
+    for (uint32_t k = 0; k < n; ++k)
+        for (uint32_t c = 0; c < outputChannels; ++c)
+            for (uint32_t p = 0; p < pixels; ++p) {
+                const float expected = c < 2 ? 7.0f : features[(k * channels + c - 2) * pixels + p];
+                worst = std::max(worst, std::abs(actual[(k * outputChannels + c) * pixels + p] - expected));
+            }
+    EXPECT_LT(worst, 1e-5f);
+    EXPECT_LT(relativeError(read(tableGradient), fixture.values("dtable")), 1e-5f);
+    EXPECT_LT(relativeError(read(latentGradient), fixture.values("dlatents")), 1e-5f);
 }
 
 TEST(PhotoEnhancerTraining, composeMatchesPyTorch) {
@@ -1054,6 +1133,7 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
     config.texture = neural::HashTextureShape::fromFile(kFixtures + name + "_texture.txt");
     config.textureMlp = neural::TextureMlp::fromFile(kFixtures + name + "_texture.txt");
     config.albedoTexture = neural::AlbedoTexture::fromFile(kFixtures + name + "_texture.txt");
+    config.textureBasis = neural::TextureBasis::fromFile(kFixtures + name + "_texture.txt");
     config.latentSize = 4;
     config.latentObjects = 1;
     config.klWeight = 1e-2f;
@@ -1098,7 +1178,7 @@ void expectLatentStepMatches(const Fixture& fixture, const std::string& name, fl
         const auto before = fixture.values("before." + parameter), after = fixture.values("after." + parameter);
         std::vector<float> actual(after.size());
         trainer.parameter(parameter)->getDataBuffer(0).memcopyTo(actual);
-        const float rate = parameter == "texture.table" ? 1e-2f : parameter == "latents.weight" ? 5e-3f : 1e-4f;
+        const float rate = parameter.rfind("texture.", 0) == 0 ? 1e-2f : parameter == "latents.weight" ? 5e-3f : 1e-4f;
         float worst = 0.0f;
         for (size_t i = 0; i < actual.size(); ++i) {
             // Adam's first step moves a parameter by about the rate unless its gradient is as small as Adam's
@@ -1274,8 +1354,7 @@ TEST(PhotoEnhancerTraining, untexturedLatentStepTrains) {
     EXPECT_LT(trainer.loss(), first);
 }
 
-// A latent renderer with the MLP texture of the latent table fixture and small random parameters (ChannelNorm scales
-// one, the output layer larger so that the image follows its input).
+// A latent renderer with the texture of a latent table fixture (the MLP texture or the feature texture).
 neural::PhotoEnhancerTrainingConfig latentTextureConfig(const std::string& name) {
     neural::PhotoEnhancerTrainingConfig config;
     config.batch = 2;
@@ -1284,10 +1363,13 @@ neural::PhotoEnhancerTrainingConfig latentTextureConfig(const std::string& name)
     config.gbufferChannels = 4;
     config.texture = neural::HashTextureShape::fromFile(kFixtures + name + "_texture.txt");
     config.textureMlp = neural::TextureMlp::fromFile(kFixtures + name + "_texture.txt");
+    config.textureBasis = neural::TextureBasis::fromFile(kFixtures + name + "_texture.txt");
     config.latentSize = 4;
     config.latentObjects = 1;
     return config;
 }
+
+// Small random parameters (ChannelNorm scales one, the output layer larger so that the image follows its input).
 
 void randomiseParameters(neural::PhotoEnhancerTraining& trainer, uint32_t seed) {
     std::mt19937 rng(seed);
@@ -1303,6 +1385,20 @@ void randomiseParameters(neural::PhotoEnhancerTraining& trainer, uint32_t seed) 
             std::fill(values.begin(), values.end(), 1.0f);
         trainer.setParameter(name, values);
     }
+}
+
+TEST(PhotoEnhancerTraining, residualMlpTextureStepMatchesPyTorch) {
+    const Fixture fixture("residual_mlp_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "residual_mlp_step", 0.0f, 0.0f, 0.0f, 5, false);
+}
+
+TEST(PhotoEnhancerTraining, basisTextureStepMatchesPyTorch) {
+    const Fixture fixture("basis_texture_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "basis_texture_step", 0.0f, 0.0f, 0.0f, 5, false);
 }
 
 TEST(PhotoEnhancerTraining, latentsOnlyThroughTheTexture) {
@@ -1336,13 +1432,15 @@ TEST(PhotoEnhancerTraining, latentsOnlyThroughTheTexture) {
     EXPECT_LT(relativeError(render(false, true, first), render(false, true, second)), 1e-6f);
 }
 
-TEST(PhotoEnhancerTraining, latentTableSeparatesTwoAppearances) {
-    const Fixture fixture("latent_table_step");
+// Trains rows 0 and 1 of a 2-row latent table, latents only in the texture of the fixture `name`, on two samples of the
+// same geometry whose photos are red and blue on the object.
+void expectTwoAppearancesSeparate(const std::string& name) {
+    const Fixture fixture(name);
     if (!fixture.exists())
         GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
     HeadlessFrontend frontend;
     auto& vc = frontend.getKlartraumEngine().getVulkanContext();
-    auto config = latentTextureConfig("latent_table_step");
+    auto config = latentTextureConfig(name);
     config.latentCodes = 2;
     config.latentToDecoder = false;
     config.networkAdam.learningRate = 2e-3f;
@@ -1389,6 +1487,10 @@ TEST(PhotoEnhancerTraining, latentTableSeparatesTwoAppearances) {
     EXPECT_GT(red[0], blue[0]);
     EXPECT_GT(blue[1], red[1]);
 }
+
+TEST(PhotoEnhancerTraining, latentTableSeparatesTwoAppearances) { expectTwoAppearancesSeparate("latent_table_step"); }
+
+TEST(PhotoEnhancerTraining, basisTextureSeparatesTwoAppearances) { expectTwoAppearancesSeparate("basis_texture_step"); }
 
 TEST(PhotoEnhancerTraining, latentGanStepTrains) {
     const Fixture fixture("latent_step");

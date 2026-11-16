@@ -30,9 +30,28 @@ struct TextureMlp {
     uint32_t width = 32;      ///< channels of the hidden layers
     uint32_t outputs = 8;     ///< texture features
     uint32_t hidden = 2;      ///< hidden layers
+    /// Residual blocks after the first (latent_renderer.ResidualMlpTexture): each a texture MLP of its own octaves and
+    /// hidden width (pairs of frequencies and width, parameters "generator.texture_residual.<j>."), its features added
+    /// to the previous blocks', so that the finer blocks correct what the coarser ones leave (none: one MLP).
+    std::vector<std::pair<uint32_t, uint32_t>> residual;
 
-    /// The MLP texture of a saved model (the "mlp F W K H" line of its texture.txt), frequencies 0 without one.
+    /// The MLP texture of a saved model (the "mlp F W K H" and "mlp-residual F1 W1 F2 W2 ..." lines of its
+    /// texture.txt), frequencies 0 without one.
     static TextureMlp fromFile(const std::string& path);
+};
+
+/// The code-mixed feature texture (latent_renderer.TextureBasis, a neural texture as in Deferred Neural Rendering mixed
+/// by the latent): per face of the object and per resolution a base layer and one layer per latent number of
+/// `channels` features, sampled bilinearly at (u, v); the pixel's features are the base plus each layer times its
+/// latent, summed over the resolutions (parameters "texture.basis.<level>", trained with textureAdam).
+struct TextureBasis {
+    uint32_t channels = 0;             ///< features (0: no feature texture)
+    std::vector<uint32_t> resolutions; ///< texels per side of each level
+    uint32_t faces = 6;                ///< faces of the object (the third coordinate's id x faces)
+
+    bool enabled() const { return channels > 0 && !resolutions.empty(); }
+    /// The feature texture of a saved model (the "basis C F R1 R2 ..." line of its texture.txt), none without one.
+    static TextureBasis fromFile(const std::string& path);
 };
 
 /// The latent size of a saved latent model: the "latent D" line of its texture.txt, else half its encoder head's
@@ -68,6 +87,9 @@ struct PhotoEnhancerTrainingConfig {
     /// The MLP texture instead of the grids (needs latents and a texture of no levels; its classes are the textured
     /// ones).
     TextureMlp textureMlp;
+    /// The code-mixed feature texture instead (needs latents, a texture of no levels whose classes are the textured
+    /// ones, no MLP texture, no albedo renderer and no latent check).
+    TextureBasis textureBasis;
     /// The albedo renderer instead (needs latents, one object, a texture of no levels and no MLP texture).
     AlbedoTexture albedoTexture;
     /// Forward only: render with the texture's features zeroed (its parameters still load), to measure how much the
@@ -278,6 +300,7 @@ private:
     struct MlpPass {
         std::shared_ptr<TensorElement<float>> encoding, in;
         std::vector<std::shared_ptr<TensorElement<float>>> pre, activated; ///< each layer's output, before / after ELU
+        std::vector<MlpPass> residual; ///< the MLP texture's residual blocks (TextureMlp::residual)
     };
     /// A texture MLP (parameters prefix + "0.", "2.", ...): the positional encoding of these coordinates and classes
     /// and the latent G-buffer (generatorInput's channels from latentOffset) through hidden ELU layers of `width` to
@@ -337,6 +360,20 @@ private:
     void buildLatentBackward();
     /// Zeroes the latent channels of a generator input once the texture has read them (latentToDecoder false).
     void hideLatents(std::shared_ptr<TensorElement<float>> generatorInput);
+    /// The feature texture's size for one level (training::TextureBasisShape) on the generator input.
+    training::TextureBasisShape basisShape(size_t level, bool accumulate) const;
+    /// The feature texture's features of these coordinates, classes and latent images into the generator input.
+    void forwardTextureBasis(std::shared_ptr<TensorElement<float>> passCoordinates,
+                             std::shared_ptr<TensorElement<float>> passClasses,
+                             std::shared_ptr<TensorElement<float>> passLatents,
+                             std::shared_ptr<TensorElement<float>> generatorInput);
+    /// Its backward pass from the generator input's gradient: the tables' gradients added (zeroed before the main
+    /// pass), the latents' gradient into `latentGradient` ([batch][latentSize][size][size]).
+    void backwardTextureBasis(std::shared_ptr<TensorElement<float>> passCoordinates,
+                              std::shared_ptr<TensorElement<float>> passClasses,
+                              std::shared_ptr<TensorElement<float>> passLatents,
+                              std::shared_ptr<TensorElement<float>> generatorInputGradient,
+                              std::shared_ptr<TensorElement<float>> latentGradient);
     void forwardCritic(Critic& critic, std::shared_ptr<TensorElement<float>> pairs);
     /// The critic's backward pass from its logits' gradients: its parameters' gradients (withWeights), its input's
     /// gradient into `inputGradient` (if given), `featureGradient(scale, layer)` called once each layer's output
@@ -372,6 +409,9 @@ private:
         klShares, klTotal, latentGBufferGradient, latentGradient, pooledGradient, statisticsGradient, latentSums;
     /// Zeros of the latent G-buffer's shape that hideLatents() copies over the generator input's latent channels.
     std::shared_ptr<TensorElement<float>> latentZeros;
+    /// The feature texture's inputs and outputs: the latent G-buffer on its own ([batch][latentSize][size][size], of
+    /// the main and the temporal pass) and the main pass's latent gradient from the texture.
+    std::shared_ptr<TensorElement<float>> latentImage, latentImage2, basisLatentGradient;
     struct EncoderLayer {
         uint32_t inputChannels, outputChannels, inputSize;
         std::shared_ptr<TensorElement<float>> in, a, n, stats, e, da, dn, de;

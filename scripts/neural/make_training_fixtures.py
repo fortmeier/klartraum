@@ -545,19 +545,29 @@ def mlp_texture_cases(out: Path, seed: int, perceptual: bool = True, case: str =
         f"mlp {texture.frequencies} 16 {texture.channels} 2\n")
 
 
-def latent_table_cases(out: Path, seed: int) -> None:
+def latent_table_cases(out: Path, seed: int, residual: tuple[tuple[int, int], ...] = (),
+                       case: str = "latent_table_step", basis: tuple[int, ...] = ()) -> None:
     """One step of the latent renderer with a learned latent table instead of the encoder (an auto-decoder) and the
     latents only in the MLP texture (latent_to_decoder False): rows 3 and 1 of a 5-row table, L1 and block-mean L1
     plus the table's L2 penalty (1e-2 x the batch's mean squared row norm); the network clipped and stepped by Adam
-    (1e-4), the table by its own Adam (5e-3, betas 0.9 and 0.99) unclipped."""
+    (1e-4), the table by its own Adam (5e-3, betas 0.9 and 0.99) unclipped. With `residual`, the MLP texture has
+    those residual blocks (latent_renderer.ResidualMlpTexture), as `case`; with `basis` the code-mixed feature texture
+    of these resolutions instead (latent_renderer.TextureBasis, tables from N(0, 0.1), stepped by the texture's Adam:
+    1e-2, betas 0.9 and 0.99, unclipped)."""
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from latent_renderer import LatentRenderer, MlpTexture
+    from latent_renderer import LatentRenderer, ResidualMlpTexture, TextureBasis
 
     generator = torch.Generator().manual_seed(seed)
     torch.manual_seed(seed)
-    texture = MlpTexture(latent=4, frequencies=3, width=16, hidden=2, outputs=5)
+    if basis:
+        texture = TextureBasis(latent=4, outputs=5, resolutions=basis)
+        with torch.no_grad():
+            for t in texture.tables:
+                t.copy_(torch.randn(t.shape, generator=generator) * 0.1)
+    else:
+        texture = ResidualMlpTexture(latent=4, frequencies=3, width=16, hidden=2, outputs=5, residual=residual)
     model = LatentRenderer(texture, geometry=4, latent=4, objects=1, latent_to_decoder=False)
     table = torch.nn.Embedding(5, 4)
     with torch.no_grad():
@@ -571,9 +581,15 @@ def latent_table_cases(out: Path, seed: int) -> None:
     objects = (classes == 3).long()
     photos = torch.rand(b, 3, size, size, generator=generator)
     rows = torch.tensor([3, 1])
-    network_parameters = {**{f"generator.texture.{k[4:]}": v for k, v in texture.named_parameters()},
-                          **{f"generator.{k}": v for k, v in model.generator.named_parameters()}}
-    parameters = {**network_parameters, "latents.weight": table.weight}
+    texture_parameters = {f"texture.basis.{level}": t for level, t in enumerate(texture.tables)} if basis else {}
+    network_parameters = {}
+    if not basis:
+        network_parameters.update({f"generator.texture.{k[4:]}": v for k, v in texture.first.named_parameters()})
+        for j, block in enumerate(texture.residual):
+            network_parameters.update(
+                {f"generator.texture_residual.{j}.{k[4:]}": v for k, v in block.named_parameters()})
+    network_parameters.update({f"generator.{k}": v for k, v in model.generator.named_parameters()})
+    parameters = {**texture_parameters, **network_parameters, "latents.weight": table.weight}
     tensors = {"geometry": geometry, "coordinates": coordinates, "classes": classes.float(),
                "objects": objects.float(), "photos": photos, "rows": rows.float()}
     for name, value in parameters.items():
@@ -583,9 +599,10 @@ def latent_table_cases(out: Path, seed: int) -> None:
     photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
     loss = photometric + 1e-2 * table(rows).pow(2).sum(1).mean()
     network = list(network_parameters.values())
-    optimiser = torch.optim.Adam([{"params": network, "lr": 1e-4},
-                                  {"params": [table.weight], "lr": 5e-3, "betas": (0.9, 0.99)}],
-                                 lr=1e-4, betas=(0.5, 0.999))
+    groups = [{"params": network, "lr": 1e-4}, {"params": [table.weight], "lr": 5e-3, "betas": (0.9, 0.99)}]
+    if basis:
+        groups.append({"params": list(texture_parameters.values()), "lr": 1e-2, "betas": (0.9, 0.99)})
+    optimiser = torch.optim.Adam(groups, lr=1e-4, betas=(0.5, 0.999))
     optimiser.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_norm_(network, 1.0)
@@ -596,11 +613,39 @@ def latent_table_cases(out: Path, seed: int) -> None:
         tensors["after." + name] = value.detach().clone()
     tensors.update({"image": image, "photometric": photometric.reshape(1), "perceptual": torch.zeros(1),
                     "kl": torch.zeros(1)})
-    save(out, "latent_table_step", tensors)
-    (out / "latent_table_step_parameters.txt").write_text("\n".join(parameters) + "\n")
-    (out / "latent_table_step_texture.txt").write_text(
-        f"width {size}\nheight {size}\nlevels 0\nfeatures 2\ntable 1\nresolutions\nclasses 3\n"
-        f"mlp {texture.frequencies} 16 {texture.channels} 2\n")
+    save(out, case, tensors)
+    (out / f"{case}_parameters.txt").write_text("\n".join(parameters) + "\n")
+    description = f"width {size}\nheight {size}\nlevels 0\nfeatures 2\ntable 1\nresolutions\nclasses 3\n"
+    if basis:
+        description += f"basis {texture.channels} 6 " + " ".join(str(r) for r in basis) + "\n"
+    else:
+        description += f"mlp {texture.first.frequencies} 16 {texture.channels} 2\n"
+        if residual:
+            description += "mlp-residual" + "".join(f" {f} {w}" for f, w in residual) + "\n"
+    (out / f"{case}_texture.txt").write_text(description)
+
+
+def texture_basis_cases(out: Path, seed: int) -> None:
+    """The code-mixed feature texture of one resolution (latent_renderer.sample_texture_basis()): 2 samples of 5 x 7
+    pixels, random coordinates (some beyond the edges) and classes (textured: 3 and 1), 6 faces, 3 layers (2 latents),
+    4 channels, 5 x 5 texels; the features and, for a random upstream gradient, the table's and latents' gradients."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from latent_renderer import sample_texture_basis
+
+    generator = torch.Generator().manual_seed(seed)
+    table = torch.randn(6, 3, 4, 5, 5, generator=generator, requires_grad=True)
+    coordinates = torch.rand(2, 3, 5, 7, generator=generator) * 1.2 - 0.1
+    coordinates[:, 2] = torch.rand(2, 5, 7, generator=generator)
+    classes = torch.randint(0, 5, (2, 5, 7), generator=generator)
+    latents = torch.randn(2, 2, 5, 7, generator=generator, requires_grad=True)
+    features = sample_texture_basis(table, coordinates, classes, latents, (3, 1))
+    upstream = torch.randn(features.shape, generator=generator)
+    (features * upstream).sum().backward()
+    save(out, "texture_basis", {"table": table, "coordinates": coordinates, "classes": classes.float(),
+                                "latents": latents, "features": features, "upstream": upstream,
+                                "dtable": table.grad, "dlatents": latents.grad})
 
 
 def albedo_cases(out: Path, seed: int) -> None:
@@ -836,6 +881,9 @@ def main() -> None:
     mlp_texture_cases(args.out, 21)
     mlp_texture_cases(args.out, 21, perceptual=False, case="mlp_texture_step_l1")
     latent_table_cases(args.out, 23)
+    latent_table_cases(args.out, 25, residual=((5, 12), (7, 8)), case="residual_mlp_step")
+    texture_basis_cases(args.out, 27)
+    latent_table_cases(args.out, 29, case="basis_texture_step", basis=(4, 8))
     albedo_cases(args.out, 22)
     augment_backward_case(args.out, 23)
     print(f"fixtures in {args.out}")

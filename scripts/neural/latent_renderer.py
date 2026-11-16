@@ -131,6 +131,79 @@ class MlpTexture(nn.Module):
         return self.mlp(torch.cat([encoding, latent_gbuffer], dim=1))
 
 
+class ResidualMlpTexture(nn.Module):
+    """A multi-resolution MLP texture: a first MlpTexture and residual blocks (each an MlpTexture of its own octaves
+    and hidden width, `residual` pairs of frequencies and width), all giving `outputs` features that are summed, so
+    the finer blocks correct what the coarser ones leave."""
+
+    conditioned = True
+
+    def __init__(self, latent: int, frequencies: int = 6, width: int = 32, hidden: int = 2, outputs: int = 8,
+                 classes: tuple[int, ...] = (3,), residual: tuple[tuple[int, int], ...] = ()):
+        super().__init__()
+        self.channels = outputs
+        self.first = MlpTexture(latent, frequencies, width, hidden, outputs, classes)
+        self.residual = nn.ModuleList(MlpTexture(latent, f, w, hidden, outputs, classes) for f, w in residual)
+
+    def forward(self, coordinates, classes, latent_gbuffer):
+        features = self.first(coordinates, classes, latent_gbuffer)
+        for block in self.residual:
+            features = features + block(coordinates, classes, latent_gbuffer)
+        return features
+
+
+def sample_texture_basis(tables: torch.Tensor, coordinates: torch.Tensor, classes: torch.Tensor,
+                         latent_gbuffer: torch.Tensor, textured: tuple[int, ...] = (3,)) -> torch.Tensor:
+    """The code-mixed feature texture of one resolution: `tables` [faces, layers, channels, R, R]; every pixel of a
+    textured class gets its face's (floor(id x faces) of the third coordinate) layer 0 plus layer k + 1 times its
+    latent k, sampled bilinearly at (u, v) with texel centres at (i + 0.5) / R, clamped; zero elsewhere."""
+    faces, layers, channels, resolution, _ = tables.shape
+    n, _, h, w = coordinates.shape
+    u, v, ids = coordinates[:, 0], coordinates[:, 1], coordinates[:, 2]
+    face = (ids * faces).floor().clamp(0, faces - 1).long()
+    x = (u * resolution - 0.5).clamp(0, resolution - 1)
+    y = (v * resolution - 0.5).clamp(0, resolution - 1)
+    x0, y0 = x.floor().long(), y.floor().long()
+    x1, y1 = (x0 + 1).clamp(max=resolution - 1), (y0 + 1).clamp(max=resolution - 1)
+    ax, ay = (x - x0.float())[:, None], (y - y0.float())[:, None]
+    flat = tables.reshape(faces, layers * channels, resolution * resolution)
+
+    def at(yy, xx):  # [n, layers * channels, h, w]
+        index = (yy * resolution + xx).reshape(n, 1, h * w).expand(n, layers * channels, h * w)
+        rows = flat[face.reshape(n, h * w)]  # [n, h w, layers * channels, R R]
+        picked = rows.gather(3, index.permute(0, 2, 1).unsqueeze(3)).squeeze(3)  # [n, h w, layers * channels]
+        return picked.permute(0, 2, 1).reshape(n, layers * channels, h, w)
+
+    sample = ((1 - ax) * (1 - ay) * at(y0, x0) + ax * (1 - ay) * at(y0, x1) + (1 - ax) * ay * at(y1, x0)
+              + ax * ay * at(y1, x1)).reshape(n, layers, channels, h, w)
+    scales = torch.cat([torch.ones(n, 1, h, w, dtype=sample.dtype), latent_gbuffer], dim=1)
+    features = (sample * scales[:, :, None]).sum(1)
+    mask = torch.zeros_like(classes, dtype=sample.dtype)
+    for c in textured:
+        mask = mask + (classes == c).to(sample.dtype)
+    return features * mask[:, None]
+
+
+class TextureBasis(nn.Module):
+    """The code-mixed feature texture (as Deferred Neural Rendering's neural texture, mixed by the latent): per face
+    and resolution a base layer and one layer per latent number of `outputs` features, the resolutions summed."""
+
+    conditioned = True
+
+    def __init__(self, latent: int, outputs: int = 8, resolutions: tuple[int, ...] = (16, 32, 64), faces: int = 6,
+                 classes: tuple[int, ...] = (3,)):
+        super().__init__()
+        self.channels, self.classes = outputs, classes
+        self.tables = nn.ParameterList(
+            nn.Parameter((torch.rand(faces, latent + 1, outputs, r, r) * 2 - 1) * 1e-4) for r in resolutions)
+
+    def forward(self, coordinates, classes, latent_gbuffer):
+        features = 0
+        for table in self.tables:
+            features = features + sample_texture_basis(table, coordinates, classes, latent_gbuffer, self.classes)
+        return features
+
+
 def kl_divergence(mu: torch.Tensor, log_variance: torch.Tensor, counts: torch.Tensor,
                   free_bits: float = 0.0) -> torch.Tensor:
     """KL(N(mu, sigma) || N(0, 1)) summed over the latent and the objects that have pixels, averaged over the batch.
