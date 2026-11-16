@@ -1,0 +1,258 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+/**
+ * TESTS:
+ * - projectionMatchesCpu: the projected means, depths, conics, opacities and radii of Gaussians seen by a ring camera
+ *   equal a CPU evaluation, and Gaussians behind the camera are culled
+ * - renderMatchesCpu: the blended colours and coverages of a few dozen Gaussians over an image of several tiles
+ *   (partial ones at the edges) equal CPU front-to-back blending in depth order with the same tile, alpha and
+ *   transmittance rules, and the emitted instance count is the sum of the tiles the Gaussians touch
+ **/
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <numeric>
+#include <vector>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include "klartraum/computegraph/bufferelement.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
+#include "klartraum/computegraph/tensorelement.hpp"
+#include "klartraum/headless_frontend.hpp"
+#include "klartraum/raster/mesh.hpp"
+#include "klartraum/splatting/splat_training.hpp"
+
+using namespace klartraum;
+
+namespace {
+
+using UintBuffer = BufferElement<VulkanBuffer<uint32_t>>;
+
+class SplatTrainingTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        frontend = std::make_unique<HeadlessFrontend>();
+        vc = &frontend->getKlartraumEngine().getVulkanContext();
+    }
+
+    std::unique_ptr<HeadlessFrontend> frontend;
+    VulkanContext* vc = nullptr;
+};
+
+// Gaussians on the CPU, in the layout of the parameter tensors.
+struct Gaussians {
+    std::vector<float> means, logScales, rotations, colors, opacities;
+    size_t size() const { return opacities.size(); }
+};
+
+// `count` Gaussians in a ball of radius `spread` around the origin with varied shapes, orientations and colours.
+Gaussians randomGaussians(uint32_t count, float spread, float scale) {
+    Gaussians g;
+    uint32_t state = 12345u;
+    const auto next = [&]() {
+        state = state * 1664525u + 1013904223u;
+        return float(state >> 8) / float(1u << 24);
+    };
+    for (uint32_t i = 0; i < count; ++i) {
+        glm::vec3 p;
+        do
+            p = glm::vec3(next(), next(), next()) * 2.0f - 1.0f;
+        while (glm::dot(p, p) > 1.0f);
+        p *= spread;
+        g.means.insert(g.means.end(), {p.x, p.y, p.z, 0.0f});
+        g.logScales.insert(g.logScales.end(), {std::log(scale * (0.4f + next())), std::log(scale * (0.4f + next())),
+                                               std::log(scale * (0.4f + next())), 0.0f});
+        g.rotations.insert(g.rotations.end(), {next() - 0.5f, next() - 0.5f, next() - 0.5f, 0.6f + next()});
+        g.colors.insert(g.colors.end(), {next(), next(), next(), 0.0f});
+        g.opacities.push_back(4.0f * next() - 1.0f);
+    }
+    return g;
+}
+
+// A projected Gaussian, in double precision as splat_common.slang computes it.
+struct Projected {
+    glm::dvec2 mean;
+    double depth = 0.0, radius = 0.0, opacity = 0.0;
+    glm::dvec3 conic, covariance, color;
+};
+
+Projected cpuProject(const Gaussians& g, size_t i, const glm::mat4& camera, glm::dvec2 size) {
+    const glm::dmat4 m(camera);
+    const glm::dvec3 p(g.means[4 * i], g.means[4 * i + 1], g.means[4 * i + 2]);
+    const glm::dvec4 clip = m * glm::dvec4(p, 1.0);
+    Projected r;
+    r.mean = (glm::dvec2(clip) / clip.w * 0.5 + 0.5) * size;
+    r.depth = clip.w;
+    // Rows of m: glm is column-major, m[column][row].
+    const auto row = [&](int k) { return glm::dvec3(m[0][k], m[1][k], m[2][k]); };
+    const glm::dvec3 j0 = 0.5 * size.x * (row(0) * clip.w - clip.x * row(3)) / (clip.w * clip.w);
+    const glm::dvec3 j1 = 0.5 * size.y * (row(1) * clip.w - clip.y * row(3)) / (clip.w * clip.w);
+    glm::dvec4 q(g.rotations[4 * i], g.rotations[4 * i + 1], g.rotations[4 * i + 2], g.rotations[4 * i + 3]);
+    q /= glm::length(q);
+    const double x = q.x, y = q.y, z = q.z, w = q.w;
+    const glm::dvec3 s(std::exp(double(g.logScales[4 * i])), std::exp(double(g.logScales[4 * i + 1])),
+                       std::exp(double(g.logScales[4 * i + 2])));
+    const glm::dvec3 m0 = s.x * glm::dvec3(1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y));
+    const glm::dvec3 m1 = s.y * glm::dvec3(2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x));
+    const glm::dvec3 m2 = s.z * glm::dvec3(2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y));
+    const glm::dvec3 a(glm::dot(j0, m0), glm::dot(j0, m1), glm::dot(j0, m2));
+    const glm::dvec3 b(glm::dot(j1, m0), glm::dot(j1, m1), glm::dot(j1, m2));
+    r.covariance = glm::dvec3(glm::dot(a, a) + 0.3, glm::dot(a, b), glm::dot(b, b) + 0.3);
+    const double determinant = r.covariance.x * r.covariance.z - r.covariance.y * r.covariance.y;
+    r.conic = glm::dvec3(r.covariance.z, -r.covariance.y, r.covariance.x) / determinant;
+    const double middle = 0.5 * (r.covariance.x + r.covariance.z);
+    r.radius = std::ceil(3.0 * std::sqrt(middle + std::sqrt(std::max(0.1, middle * middle - determinant))));
+    r.opacity = 1.0 / (1.0 + std::exp(-double(g.opacities[i])));
+    r.color = glm::dvec3(g.colors[4 * i], g.colors[4 * i + 1], g.colors[4 * i + 2]);
+    if (clip.w <= 0.05)
+        r.radius = 0.0;
+    return r;
+}
+
+// The tiles [low, high] (inclusive) a projected Gaussian touches, as splat_project.comp.slang: none if culled.
+bool cpuTiles(const Projected& r, glm::dvec2 size, glm::ivec2 tiles, glm::ivec2& low, glm::ivec2& high) {
+    if (r.radius <= 0.0 || r.mean.x + r.radius < 0 || r.mean.y + r.radius < 0 || r.mean.x - r.radius >= size.x ||
+        r.mean.y - r.radius >= size.y)
+        return false;
+    low = glm::clamp(glm::ivec2(glm::floor((r.mean - r.radius) / 16.0)), glm::ivec2(0), tiles - 1);
+    high = glm::clamp(glm::ivec2(glm::floor((r.mean + r.radius) / 16.0)), glm::ivec2(0), tiles - 1);
+    return true;
+}
+
+// Uploads `g` into freshly created parameter tensors (after the graph using them is compiled).
+void upload(const splatting::SplatParameters& p, const Gaussians& g) {
+    p.means->getDataBuffer(0).memcopyFrom(g.means);
+    p.logScales->getDataBuffer(0).memcopyFrom(g.logScales);
+    p.rotations->getDataBuffer(0).memcopyFrom(g.rotations);
+    p.colors->getDataBuffer(0).memcopyFrom(g.colors);
+    p.opacities->getDataBuffer(0).memcopyFrom(g.opacities);
+}
+
+} // namespace
+
+TEST_F(SplatTrainingTest, projectionMatchesCpu) {
+    Gaussians g = randomGaussians(50, 0.8f, 0.05f);
+    // One Gaussian behind the camera.
+    g.means[0] = 0.0f, g.means[1] = 0.0f, g.means[2] = 5.0f;
+    const glm::mat4 camera = raster::cameraRing(1, 3.0f, 0.3f, 0.8f, 4.0f / 3.0f, 1.57f)[0];
+    splatting::SplatRasterOptions options;
+    options.width = 120;
+    options.height = 90;
+    options.capacity = 4096;
+    const auto parameters = splatting::createSplatParameters(*vc, uint32_t(g.size()));
+    auto cameras = vc->create<TensorElement<float>>(std::vector<uint32_t>{1, 16});
+    auto viewIndex = std::make_shared<UintBuffer>(*vc, 1);
+    splatting::SplatForward forward(*vc, parameters, cameras, viewIndex, -1, options);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(forward.project);
+    upload(parameters, g);
+    cameras->getDataBuffer(0).memcopyFrom(std::vector<float>(glm::value_ptr(camera), glm::value_ptr(camera) + 16));
+    viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{0});
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    std::vector<float> projected(12 * g.size());
+    forward.projected->getDataBuffer(0).memcopyTo(projected);
+
+    const glm::dvec2 size(options.width, options.height);
+    int visible = 0;
+    for (size_t i = 0; i < g.size(); ++i) {
+        const Projected r = cpuProject(g, i, camera, size);
+        glm::ivec2 low, high;
+        const bool touches = cpuTiles(r, size, glm::ivec2(forward.tilesX, forward.tilesY), low, high);
+        const float* gpu = &projected[12 * i];
+        if (!touches) {
+            EXPECT_EQ(gpu[3], 0.0f) << "Gaussian " << i << " should be culled";
+            continue;
+        }
+        ++visible;
+        EXPECT_NEAR(gpu[0], r.mean.x, 1e-3) << i;
+        EXPECT_NEAR(gpu[1], r.mean.y, 1e-3) << i;
+        EXPECT_NEAR(gpu[2], r.depth, 1e-5) << i;
+        EXPECT_EQ(gpu[3], float(r.radius)) << i;
+        for (int c = 0; c < 3; ++c)
+            EXPECT_NEAR(gpu[4 + c], r.conic[c], 1e-4 * std::max(1.0, std::abs(r.conic[c]))) << i;
+        EXPECT_NEAR(gpu[7], r.opacity, 1e-6) << i;
+        for (int c = 0; c < 3; ++c)
+            EXPECT_EQ(gpu[8 + c], float(r.color[c])) << i;
+    }
+    EXPECT_EQ(projected[3], 0.0f); // behind the camera
+    EXPECT_GT(visible, 40);
+}
+
+TEST_F(SplatTrainingTest, renderMatchesCpu) {
+    const Gaussians g = randomGaussians(60, 0.7f, 0.15f);
+    const glm::mat4 camera = raster::cameraRing(1, 3.0f, 0.3f, 0.8f, 72.0f / 56.0f, 0.4f)[0];
+    splatting::SplatRasterOptions options;
+    options.width = 72;
+    options.height = 56;
+    options.capacity = 8192;
+    const auto parameters = splatting::createSplatParameters(*vc, uint32_t(g.size()));
+    auto cameras = vc->create<TensorElement<float>>(std::vector<uint32_t>{1, 16});
+    auto viewIndex = std::make_shared<UintBuffer>(*vc, 1);
+    splatting::SplatForward forward(*vc, parameters, cameras, viewIndex, -1, options);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(forward.render);
+    upload(parameters, g);
+    cameras->getDataBuffer(0).memcopyFrom(std::vector<float>(glm::value_ptr(camera), glm::value_ptr(camera) + 16));
+    viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{0});
+    graph.submitAndWait(vc->getGraphicsQueue(), 0);
+    const uint32_t pixels = options.width * options.height;
+    std::vector<float> colors(4 * pixels);
+    forward.colors->getDataBuffer(0).memcopyTo(colors);
+    std::vector<uint32_t> counters(1);
+    forward.counters->getBuffer(0).memcopyTo(counters);
+
+    const glm::dvec2 size(options.width, options.height);
+    const glm::ivec2 tiles(forward.tilesX, forward.tilesY);
+    std::vector<Projected> projected;
+    std::vector<glm::ivec4> rects;
+    uint32_t instances = 0;
+    for (size_t i = 0; i < g.size(); ++i) {
+        projected.push_back(cpuProject(g, i, camera, size));
+        glm::ivec2 low(0), high(-1);
+        if (cpuTiles(projected.back(), size, tiles, low, high))
+            instances += uint32_t((high.x - low.x + 1) * (high.y - low.y + 1));
+        rects.emplace_back(low, high);
+    }
+    EXPECT_EQ(counters[0], instances);
+    std::vector<size_t> order(g.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return projected[a].depth < projected[b].depth; });
+
+    double covered = 0.0;
+    for (uint32_t y = 0; y < options.height; ++y) {
+        for (uint32_t x = 0; x < options.width; ++x) {
+            const glm::ivec2 tile(x / 16, y / 16);
+            const glm::dvec2 centre(x + 0.5, y + 0.5);
+            glm::dvec3 color(0.0);
+            double transmittance = 1.0;
+            for (const size_t i : order) {
+                const glm::ivec4 rect = rects[i];
+                if (tile.x < rect.x || tile.y < rect.y || tile.x > rect.z || tile.y > rect.w)
+                    continue;
+                const Projected& r = projected[i];
+                const glm::dvec2 d = centre - r.mean;
+                const double power = -0.5 * (r.conic.x * d.x * d.x + r.conic.z * d.y * d.y) - r.conic.y * d.x * d.y;
+                const double alpha = std::min(r.opacity * std::exp(std::min(power, 0.0)), 0.99);
+                if (alpha < 1.0 / 255.0)
+                    continue;
+                if (transmittance * (1.0 - alpha) < 1e-4)
+                    break;
+                color += r.color * alpha * transmittance;
+                transmittance *= 1.0 - alpha;
+            }
+            const float* gpu = &colors[4 * (size_t(y) * options.width + x)];
+            for (int c = 0; c < 3; ++c)
+                ASSERT_NEAR(gpu[c], color[c], 2e-4) << "pixel " << x << ", " << y;
+            ASSERT_NEAR(gpu[3], 1.0 - transmittance, 2e-4) << "pixel " << x << ", " << y;
+            covered += 1.0 - transmittance;
+        }
+    }
+    EXPECT_GT(covered, 0.2 * pixels); // the Gaussians fill a good part of the image
+}

@@ -270,6 +270,7 @@ add_executable(
   tests/test_hash_texture.cpp
   tests/test_training_elements.cpp
   tests/test_differentiable_raster.cpp
+  tests/test_splat_training.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
   tests/test_buffertransformation.cpp
@@ -348,6 +349,7 @@ set(KLARTRAUM_LIB_SRC
   src/raster/fitting_scene.cpp
   src/raster/mesh_training.cpp
   src/raster/visibility_pass.cpp
+  src/splatting/splat_training.cpp
   src/glyph_atlas.cpp
   src/simple_text_renderer.cpp
   src/text_draw_component.cpp
