@@ -24,6 +24,11 @@ import numpy as np
 
 
 def read_ppm(path: Path) -> np.ndarray:
+    """An RGB image as [height][width][3] uint8: a binary PPM, or any format Pillow reads (e.g. PNG)."""
+    if path.suffix != ".ppm":
+        from PIL import Image
+
+        return np.asarray(Image.open(path).convert("RGB"))
     data = path.read_bytes()
     # Four header tokens (P6, width, height, maximum), then exactly one whitespace byte before the pixels.
     tokens, position = [], 0
@@ -59,8 +64,10 @@ class Flight:
         self.height, self.width = first.shape[:2]
 
     def frame_path(self, frame: int, kind: str = "") -> Path:
+        """The frame's image (or G-buffer `kind`), as .png when the flight was written with --image-format png."""
         middle = f"{kind}_" if kind else ""
-        return self.directory / "frames" / f"{self.renderer}_{middle}{frame:04d}.ppm"
+        path = self.directory / "frames" / f"{self.renderer}_{middle}{frame:04d}.ppm"
+        return path if path.exists() else path.with_suffix(".png")
 
     def distance(self, frame: int) -> np.ndarray:
         """Distance from the camera per G-buffer pixel; NaN on the background."""

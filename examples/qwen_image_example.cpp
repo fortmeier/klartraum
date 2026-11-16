@@ -10,6 +10,7 @@
 //   qwen_image_example --prompt "a bonsai tree, watercolor" --size 512 512 --out bonsai.ppm
 //   qwen_image_example --prompt "..." --image rendering.ppm --strength 0.6 --out styled.ppm
 //   qwen_image_example --prompt "..." --batch frames.txt --strength 0.6   # lines "input.ppm output.ppm"
+//   qwen_image_example --prompt "..." --control depth.ppm --out out.ppm  # with the depth ControlNet
 //
 // Images are binary PPM (P6); the input is used at --size (it must have that size).
 
@@ -20,6 +21,7 @@
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -39,11 +41,12 @@ const std::string kModels = "build/models/qwen-image/";
 struct Arguments {
     std::string prompt = "a bonsai tree in a clay pot, watercolor painting";
     uint32_t height = 512, width = 512, steps = 8, seed = 0;
-    std::string image, batch, out = "build/TestingOutput/qwen_image/image.ppm";
-    float strength = 0.6f;
+    std::string image, batch, control, out = "build/TestingOutput/qwen_image/image.ppm";
+    float strength = 0.6f, controlScale = 1.0f;
     std::string transformer = kModels + "transformer/qwen-image-Q4_K_S.gguf";
     std::string text = kModels + "text/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
     std::string lora = kModels + "lightning/Qwen-Image-Lightning-8steps-V2.0.gguf";
+    std::string controlnet = kModels + "controlnet/qwen-image-controlnet-union-Q8_0.gguf";
 };
 
 Arguments parse(int argc, char** argv) {
@@ -70,6 +73,12 @@ Arguments parse(int argc, char** argv) {
             a.batch = next();
         else if (arg == "--strength")
             a.strength = std::stof(next());
+        else if (arg == "--control")
+            a.control = next();
+        else if (arg == "--control-scale")
+            a.controlScale = std::stof(next());
+        else if (arg == "--controlnet")
+            a.controlnet = next();
         else if (arg == "--out")
             a.out = next();
         else if (arg == "--transformer")
@@ -195,18 +204,31 @@ int main(int argc, char** argv) {
         }
         std::cout << "prompt: " << textTokens << " tokens in " << seconds(start) << " s" << std::endl;
 
-        // The jobs: one image, or with --batch every line's input and output (the same noise for all of them).
-        std::vector<std::pair<std::string, std::string>> jobs;
+        // The jobs: one image, or with --batch every line's input ("-" for none), output and optional control image
+        // (the same noise for all of them).
+        struct Job {
+            std::string input, output, control;
+        };
+        std::vector<Job> jobs;
         if (args.batch.empty()) {
-            jobs.emplace_back(args.image, args.out);
+            jobs.push_back({args.image, args.out, args.control});
         } else {
             std::ifstream list(args.batch);
-            std::string input, output;
-            while (list >> input >> output)
-                jobs.emplace_back(input, output);
+            std::string line;
+            while (std::getline(list, line)) {
+                std::istringstream fields(line);
+                Job job;
+                if (!(fields >> job.input >> job.output))
+                    continue;
+                fields >> job.control;
+                if (job.input == "-")
+                    job.input.clear();
+                jobs.push_back(job);
+            }
             if (jobs.empty())
                 throw std::runtime_error(args.batch + " lists no images");
         }
+        const bool controlled = std::any_of(jobs.begin(), jobs.end(), [](const Job& j) { return !j.control.empty(); });
 
         const auto sigmas = lightningSigmas(args.steps);
         std::mt19937 rng(args.seed);
@@ -219,15 +241,20 @@ int main(int argc, char** argv) {
         // every latent, then decode them all.
         const uint32_t first =
             uint32_t(std::max(0.0, double(args.steps) - double(args.steps) * args.strength)); // with an input image
-        std::vector<std::vector<float>> latents;
-        for (const auto& [input, output] : jobs) {
+        std::vector<std::vector<float>> latents, controls;
+        const std::string encoder = kModels + "onnx/vae_encoder_" + size + ".onnx";
+        for (const auto& [input, output, control] : jobs) {
             std::vector<float> latent = noise;
+            // The control image (e.g. a depth map) as the ControlNet takes it: its packed latent.
+            controls.push_back(control.empty() ? std::vector<float>{}
+                                               : pack(runVae(vc, encoder, "image", {1, 3, args.height, args.width},
+                                                             readPpm(control, args.height, args.width), "latent"),
+                                                      h, w));
             if (!input.empty()) {
                 // Image to image: start from the input's latent noised to the schedule's sigma after skipping the
                 // first steps (diffusers' Img2Img pipeline: int(steps - steps * strength) steps skipped).
-                const auto clean =
-                    runVae(vc, kModels + "onnx/vae_encoder_" + size + ".onnx", "image", {1, 3, args.height, args.width},
-                           readPpm(input, args.height, args.width), "latent");
+                const auto clean = runVae(vc, encoder, "image", {1, 3, args.height, args.width},
+                                          readPpm(input, args.height, args.width), "latent");
                 const float sigma = sigmas[first];
                 for (size_t i = 0; i < latent.size(); ++i)
                     latent[i] = sigma * noise[i] + (1.0f - sigma) * clean[i];
@@ -236,14 +263,21 @@ int main(int argc, char** argv) {
         }
         {
             auto transformer = vc.create<QwenImageTransformer>(
-                args.transformer, QwenImageTransformerOptions{h, w, textTokens, args.lora, 0});
+                args.transformer,
+                QwenImageTransformerOptions{h, w, textTokens, args.lora, 0, controlled ? args.controlnet : ""});
             ComputeGraph graph(vc, 1);
             graph.compileFrom(transformer);
             transformer->setPromptEmbedding(embedding);
             for (size_t job = 0; job < jobs.size(); ++job) {
                 const auto jobStart = std::chrono::steady_clock::now();
                 auto& packed = latents[job];
-                for (uint32_t step = jobs[job].first.empty() ? 0 : first; step < args.steps; ++step) {
+                if (controlled) {
+                    // A job without a control image runs with the conditioning scale 0.
+                    transformer->setControl(controls[job].empty() ? std::vector<float>(packed.size(), 0.0f)
+                                                                  : controls[job]);
+                    transformer->setControlScale(controls[job].empty() ? 0.0f : args.controlScale);
+                }
+                for (uint32_t step = jobs[job].input.empty() ? 0 : first; step < args.steps; ++step) {
                     transformer->setLatent(packed);
                     transformer->setSigma(sigmas[step]);
                     graph.submitAndWait(vc.getGraphicsQueue(), 0);
@@ -258,8 +292,8 @@ int main(int argc, char** argv) {
         for (size_t job = 0; job < jobs.size(); ++job) {
             const auto image = runVae(vc, kModels + "onnx/vae_decoder_" + size + ".onnx", "latent", {1, 16, h, w},
                                       unpack(latents[job], h, w), "image");
-            writePpm(jobs[job].second, image, args.height, args.width);
-            std::cout << "wrote " << jobs[job].second << std::endl;
+            writePpm(jobs[job].output, image, args.height, args.width);
+            std::cout << "wrote " << jobs[job].output << std::endl;
         }
         std::cout << "done after " << seconds(start) << " s" << std::endl;
     } catch (const std::exception& e) {

@@ -13,6 +13,7 @@ dependencies = [
     "safetensors",
     "tokenizers",
     "torch==2.15.0",
+    "torchvision",
     "transformers",
 ]
 
