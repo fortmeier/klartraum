@@ -224,6 +224,37 @@ private:
     VkClearColorValue color;
 };
 
+/**
+ * @brief Moves the images of the ImageViewSrc at input 0 from the layout their
+ *        source leaves them in (its final layout override, e.g. the
+ *        TRANSFER_SRC_OPTIMAL of an OffscreenTarget) to VK_IMAGE_LAYOUT_GENERAL,
+ *        keeping their contents, and stands for them.
+ *
+ * Connect a RenderPass with setLoadExisting(true) to it to draw over what an
+ * element that leaves the image in another layout drew, e.g. a Gaussian
+ * splatting backend; make that element a dependency (addDependency()).
+ */
+class ImageToGeneral : public ImageViewForward {
+public:
+    const char* getType() const override { return "ImageToGeneral"; }
+
+    void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
+        ComputeGraphElement::_record(commandBuffer, pathId);
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = getFinalLayoutOverride().value_or(VK_IMAGE_LAYOUT_GENERAL);
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = getImage(pathId);
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+    }
+};
+
 class ImageSrc : public ComputeGraphElement {
 public:
     ImageSrc(VkImage image) { images.push_back(image); };
