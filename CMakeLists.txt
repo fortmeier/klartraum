@@ -304,6 +304,7 @@ add_executable(
   tests/test_onnx_nd_operations.cpp
   tests/test_layers.cpp
   tests/test_gguf_file.cpp
+  tests/test_gguf_layers.cpp
   tests/test_gguf_quants.cpp
   tests/test_render_over_targets.cpp
 
@@ -343,6 +344,7 @@ set(KLARTRAUM_LIB_SRC
   src/rendering/gaussian_splat_mesh_rasterizer.cpp
   src/onnx_network.cpp
   src/gguf_file.cpp
+  src/gguf_layers.cpp
   src/gguf_quants.cpp
   src/layers.cpp
   src/training.cpp
