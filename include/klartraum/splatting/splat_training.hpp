@@ -78,6 +78,34 @@ public:
     ComputeGraphElementPtr clear, project, clampCount, sort, ranges, render;
 };
 
+/**
+ * @brief The backward chain of SplatForward: the gradients of a loss with respect to the Gaussian parameters, from
+ * the loss's gradients with respect to the rendered image (dL/d(rgb, coverage) per pixel, e.g. raster::imageLoss()
+ * slot 3, taken from slot @p imageGradientSlot of @p imageGradientSource).
+ *
+ * The render backward walks every pixel's splats back to front and adds the gradients of each splat's screen mean,
+ * conic, opacity and colour; the projection backward turns them into parameter gradients (bwd_diff of
+ * shaders/splatting/splat_common.slang) and accumulates the densification statistics.
+ */
+class SplatBackward {
+public:
+    SplatBackward(VulkanContext& vulkanContext, const SplatParameters& parameters,
+                  const std::shared_ptr<TensorElement<float>>& cameras, const ComputeGraphElementPtr& viewSource,
+                  int viewSlot, const SplatForward& forward, const ComputeGraphElementPtr& imageGradientSource,
+                  int imageGradientSlot);
+
+    /// Twelve floats per Gaussian: gradients of mean xy, conic xx xy yy, opacity, rgb, 3 unused. Cleared every run.
+    std::shared_ptr<TensorElement<float>> splatGradients;
+    /// The parameter gradients, in the layout of the parameters (written every run, zero for culled Gaussians).
+    SplatParameters gradients;
+    /// Per Gaussian: the sum over runs of the length of its screen-mean gradient and the number of runs it was
+    /// visible in (for densification). Never cleared by the graph.
+    std::shared_ptr<TensorElement<float>> statistics;
+
+    /// The elements in graph order; projectBackward is the last.
+    ComputeGraphElementPtr clear, renderBackward, projectBackward;
+};
+
 } // namespace klartraum::splatting
 
 #endif // KLARTRAUM_SPLATTING_SPLAT_TRAINING_HPP
