@@ -132,6 +132,16 @@ def clip_case(out: Path, seed: int) -> None:
     save(out, "clip", {**before, "clipped_a": a.grad, "clipped_b": b.grad})
 
 
+def photometric_case(out: Path, seed: int) -> None:
+    """0.5 L1 + 5 L1 of 8 x 8 block means of an image against a target, and the image's gradient."""
+    generator = torch.Generator().manual_seed(seed)
+    image = torch.rand(2, 3, 16, 20, generator=generator, requires_grad=True)
+    target = torch.rand(2, 3, 16, 20, generator=generator)
+    loss = 0.5 * F.l1_loss(image, target) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(target, 8))
+    loss.backward()
+    save(out, "photometric", {"image": image, "target": target, "dimage": image.grad, "loss": loss.reshape(1)})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -149,6 +159,7 @@ def main() -> None:
     max_pool_case(args.out, 15)
     film_case(args.out, 9)
     clip_case(args.out, 13)
+    photometric_case(args.out, 11)
     print(f"fixtures in {args.out}")
 
 

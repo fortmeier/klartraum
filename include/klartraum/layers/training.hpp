@@ -150,6 +150,16 @@ ComputeGraphElementPtr filmBackward(VulkanContext& vulkanContext, const layers::
 ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float value = 0.0f);
 
 /**
+ * @brief The photo enhancer's photometric loss of an N x C x H x W image against its target: @p l1Weight x the mean
+ * absolute difference plus @p colourWeight x that of their 8 x 8 block means. Writes the image's gradient and each
+ * element's share of the loss (sum() of the shares is the loss).
+ *
+ * Slots: 0 image, 1 target, 2 gradient, 3 loss shares; all of @p shape.
+ */
+ComputeGraphElementPtr photometricLoss(VulkanContext& vulkanContext, const layers::Shape& shape, float l1Weight,
+                                       float colourWeight);
+
+/**
  * @brief The sum of @p count floats, in a fixed order.
  *
  * Slots: 0 data, 1 result (one float).

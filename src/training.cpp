@@ -60,6 +60,11 @@ struct FillPushConstants {
     float value;
 };
 
+struct LossPushConstants {
+    uint32_t planes, height, width;
+    float l1Weight, colourWeight;
+};
+
 struct LinearPushConstants {
     uint32_t batch, inputs, outputs;
     float offset;
@@ -222,6 +227,16 @@ ComputeGraphElementPtr fill(VulkanContext& vulkanContext, uint32_t count, float 
     auto operation = vulkanContext.create<GeneralComputation<FillPushConstants>>("shaders/training/fill.comp.spv");
     operation->setPushConstants({{count, value}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr photometricLoss(VulkanContext& vulkanContext, const layers::Shape& shape, float l1Weight,
+                                       float colourWeight) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation =
+        vulkanContext.create<GeneralComputation<LossPushConstants>>("shaders/training/photometric_loss.comp.spv");
+    operation->setPushConstants({{n * c, shape[2], shape[3], l1Weight, colourWeight}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
     return operation;
 }
 

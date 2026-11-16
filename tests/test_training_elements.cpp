@@ -24,6 +24,8 @@
  * - filmMatchesPyTorch: FiLM's output and its input, scale and shift gradients equal PyTorch's
  * - clipGradientMatchesPyTorch: clipping two tensors to a global norm of 1 equals clip_grad_norm_
  * - emaCopiesThenAverages: during the warm-up the average copies the parameters, after it moves by the rate
+ * - photometricLossMatchesPyTorch: the gradient of 0.5 L1 + 5 L1 of 8 x 8 block means equals PyTorch's, and the sum
+ *   of the loss shares is the loss
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -459,4 +461,31 @@ TEST(TrainingElements, emaCopiesThenAverages) {
     parameters->getDataBuffer(0).memcopyFrom(std::vector<float>{8.0f, 0.0f});
     graph.submitAndWait(vc.getGraphicsQueue(), 0); // step 2: a quarter of the way
     EXPECT_EQ(read(average), (std::vector<float>{5.0f, 6.0f}));
+}
+
+TEST(TrainingElements, photometricLossMatchesPyTorch) {
+    const Fixture fixture("photometric");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("image");
+    auto image = tensor(vc, shape), target = tensor(vc, shape), gradient = tensor(vc, shape);
+    auto shares = tensor(vc, shape), total = tensor(vc, {1});
+    auto loss = training::photometricLoss(vc, shape, 0.5f, 5.0f);
+    loss->setInput(image, 0);
+    loss->setInput(target, 1);
+    loss->setInput(gradient, 2);
+    loss->setInput(shares, 3);
+    auto add = training::sum(vc, uint32_t(shares->getDataElementCount()));
+    add->setInput(shares, 0);
+    add->setInput(total, 1);
+    add->addDependency(loss);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(add);
+    image->getDataBuffer(0).memcopyFrom(fixture.values("image"));
+    target->getDataBuffer(0).memcopyFrom(fixture.values("target"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(gradient), fixture.values("dimage")), 1e-5f);
+    EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-5f);
 }
