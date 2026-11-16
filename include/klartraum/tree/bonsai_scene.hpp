@@ -1,0 +1,270 @@
+// SPDX-FileCopyrightText: Dirk Fortmeier
+//
+// SPDX-License-Identifier: MIT
+
+#ifndef KLARTRAUM_TREE_BONSAI_SCENE_HPP
+#define KLARTRAUM_TREE_BONSAI_SCENE_HPP
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include "klartraum/raster/mesh.hpp"
+#include "klartraum/tree/tree_model.hpp"
+#include "klartraum/rendering/vulkan_gaussian_splatting_types.hpp"
+
+namespace klartraum {
+
+/// A shallow oval pot: a superellipse in plan, standing on y = 0. Units as the lantern capture (about 0.28 tall).
+struct BonsaiPot {
+    float halfLength = 1.5f; ///< along x
+    float halfWidth = 0.9f;  ///< along z
+    float exponent = 4.0f;   ///< of the superellipse |x/a|^e + |z/b|^e = 1: 2 an ellipse, larger more rectangular
+    float height = 0.3f;     ///< of the rim
+    float wall = 0.05f;      ///< thickness at the rim
+    float soilHeight = 0.26f;
+    float soilMound = 0.07f; ///< the soil rises this much towards the middle
+    glm::vec3 glaze{0.17f, 0.21f, 0.26f};
+};
+
+/**
+ * @brief How much of the world the pot holds, from one bonsai (s = 0) to a region of 8 x 8 km (s = 1).
+ *
+ * The pot's soil stands for regionMeters() metres, 3.6 m at s = 0 (the
+ * lantern, 0.28 units tall, is a 35 cm ornament there) growing
+ * logarithmically to 8 km. The lantern grows from 35 cm to its real 1.8 m by
+ * s = kForest, so in the pot it keeps its size up to there and shrinks beyond.
+ * The tree at s = 0 is a bonsai sized to fill its pot (2 units tall) rather
+ * than to the lantern; up to kForest the trees keep about that size in the
+ * pot (10.7 m young trees at kForest) while their number grows at a forest
+ * density of 650 per hectare (at least one tree) and their style blends from
+ * bonsai to natural; beyond, they grow to 25 m mature trees by s = 0.4.
+ * The ground is flat soil up to kReliefStart; beyond, a landscape rises in
+ * the pot whose relief grows to kReliefMeters (valleys to peaks) at s = 1.
+ */
+struct BonsaiScale {
+    float s = 0.21f;
+    /// Factor on the relief's height in the pot: 1 for true proportions, more for a more dramatic landscape.
+    /// 1.5 lets the mountains stand out in the pot while keeping their slopes plausible.
+    float reliefExaggeration = 1.5f;
+
+    static constexpr float kSmallestRegion = 3.6f; ///< metres the soil spans at s = 0
+    static constexpr float kLargestRegion = 8000.0f;
+    static constexpr float kForest = 0.21f;    ///< from here on trees and lantern have their real sizes
+    static constexpr float kSoilUnits = 2.88f; ///< length of the soil in scene units
+    static constexpr float kTreesPerHectare = 650.0f;
+    static constexpr float kReliefStart = 0.25f;      ///< below, the soil has no relief
+    static constexpr float kReliefMeters = 1500.0f;   ///< from the valleys to the peaks at s = 1
+    static constexpr float kTreeLineMeters = 1150.0f; ///< above the valley floors
+
+    float regionMeters() const;
+    float metersPerUnit() const { return regionMeters() / kSoilUnits; }
+    float lanternMeters() const;
+    float lanternUnits() const { return lanternMeters() / metersPerUnit(); }
+    float treeHeightUnits() const;
+    float treeHeightMeters() const { return treeHeightUnits() * metersPerUnit(); }
+    /// 1 for bonsai-styled trees, 0 for natural ones.
+    float bonsaiStyle() const;
+    /// Trees on `soilArea` square units of soil.
+    uint32_t treeCount(float soilArea) const;
+    /// Height of the landscape from its valleys to its peaks in units, times reliefExaggeration: 0 up to
+    /// kReliefStart, growing smoothly to kReliefMeters at s = 1 (rolling hills at middle scales, mountains at 1).
+    float reliefUnits() const;
+    /// How ridged the landscape is, from 0 (rounded hills) to 1 (mountain ridges).
+    float reliefRidges() const;
+    /// The share of the soil covered by forest: all of it up to s = 0.3, half of it from s = 0.6 on.
+    float forestShare() const;
+};
+
+/**
+ * @brief An object to place in the bonsai scene, in its own frame: up +y, e.g. the unit sphere frame the fitting
+ * examples export (object.spz of splat_training_example, object.obj of mesh_texture_fitting_example).
+ */
+struct BonsaiObject {
+    std::vector<Gaussian3D> gaussians; ///< as captured Gaussians, if any
+    std::vector<TreeSceneVertex> mesh; ///< triangles of TREE_MATERIAL_CAPTURED, if any
+    glm::vec3 low{0.0f}, high{0.0f};   ///< bounds of what it shows (Gaussians: of the opaque ones, robustly)
+    /// Its rim: the highest level whose horizontal cross-section is at least 0.9 times the widest of its upper half
+    /// (a pot's rim, below a fitted mesh's lid over its opening).
+    float rimHeight = 0.0f;
+    /// Its foot: the lowest level whose cross-section is at least half the widest (below it, a fitted mesh's guess
+    /// at an unseen underside).
+    float footHeight = 0.0f;
+    /// The smallest rectangle around the rim: x its half length, y its half width, z the angle (radians about +y) of
+    /// its long axis from +x.
+    glm::vec3 rim{0.0f};
+    glm::vec2 rimCenter{0.0f}; ///< x, z of the middle of that rectangle
+};
+
+/**
+ * @brief Loads an object from an SPZ file (Gaussians, read without coordinate conversion) or a Wavefront OBJ file with
+ * its diffuse map (writeObj(), writeTexturePpm(): a mesh coloured from the texture at its corners).
+ */
+BonsaiObject loadBonsaiObject(const std::string& path);
+
+/** @brief A specular reflection of an object made from a mesh, as MeshTraining learns it (MeshTrainingOptions). */
+struct BonsaiSpecular {
+    std::vector<float> material; ///< per texel: normal offset xyz, amplitude a
+    uint32_t width = 0, height = 0;
+    float exponent = 16.0f;    ///< of the highlight
+    float brightness = 1.0f;   ///< factor on a^2, e.g. the brightest of the learned lights' b^2
+    uint32_t subdivisions = 2; ///< the mesh's triangles are split this many times into four
+};
+
+/**
+ * @brief An object from a mesh in memory with its texture (four floats per texel, rgb used; u wraps, v clamps),
+ * coloured from the texture at its corners, e.g. a mesh just trained by MeshTraining. With @p specular, the mesh is
+ * subdivided first (finer corners keep more of the texture), its smooth normals are tilted by the normal map, and
+ * each vertex's normal.w holds the highlight: the exponent (whole part) and the strength a^2 x brightness (fraction).
+ */
+BonsaiObject bonsaiObjectFromMesh(const raster::TriangleMesh& mesh, const std::vector<float>& texels, uint32_t width,
+                                  uint32_t height, const BonsaiSpecular* specular = nullptr);
+
+/** @brief Where an object stands on the soil. */
+struct BonsaiObjectPlacement {
+    std::shared_ptr<const BonsaiObject> object;
+    glm::vec2 position{0.0f}; ///< x, z on the soil
+    float height = 0.3f;      ///< of the object, in units (the lantern is about 0.28 tall at s = 0)
+    float yaw = 0.0f;         ///< radians about +y
+};
+
+/// Which tree types a planting holds.
+enum class BonsaiSpecies { Mixed, Broadleaf, Pine };
+
+struct BonsaiSceneConfig {
+    BonsaiScale scale;
+    uint32_t treeCount = 0;  ///< 0: from the scale; otherwise this many
+    uint32_t nearTrees = 24; ///< trees generated in full when the trees follow the placement (BonsaiScene::placed)
+    uint32_t seed = 7;
+    BonsaiPot pot;
+    glm::vec3 lanternPosition{0.72f, 0.0f, 0.36f}; ///< y is taken from the soil
+    float lanternYaw = 0.6f;                       ///< radians about +y
+    /// A captured pot in place of the procedural one: scaled to the procedural pot's length at its rim, which then
+    /// takes the captured pot's outline (a rounded rectangle), rim height and width; the soil fills it.
+    std::shared_ptr<const BonsaiObject> potObject;
+    std::vector<BonsaiObjectPlacement> objects; ///< further objects on the soil, e.g. pumpkins
+    /// How bonsai-like the trees are, from 0 (natural) to 1 (thick, flared and curved trunk, surface roots, a wide
+    /// flat crown of foliage pads); negative: BonsaiScale::bonsaiStyle() of the scale.
+    float style = -1.0f;
+    BonsaiSpecies species = BonsaiSpecies::Mixed; ///< Mixed: every fourth tree a pine, the others broadleaf
+    float treeSize = 1.0f;                        ///< factor on the trees' sizes in a planting
+    float treeSpread = 1.0f;                      ///< share of the pot around its middle a planting's trees stand in
+};
+
+/**
+ * @brief A bonsai forest planting (yose-ue): 8 to 20 trees in an oval pot, and the lantern on the moss.
+ *
+ * The trees are 4 to 9 times as tall as the lantern, so it stands among them
+ * like a real stone lantern in the woods. Everything is described on the CPU
+ * once; the trees are generated and drawn on the GPU every frame.
+ */
+struct BonsaiScene {
+    BonsaiSceneConfig config;
+    std::vector<TreeTypeParams> types;
+    std::vector<TreeInstance> trees;
+    std::vector<TreeSceneVertex> mesh;       ///< pot, soil and the objects' meshes, a triangle list
+    std::vector<Gaussian3D> objectGaussians; ///< the captured pot's and the objects' Gaussians, placed
+    uint32_t potGaussians = 0;               ///< how many of objectGaussians, the first, are the captured pot's
+    /// Puts the lantern capture (Y up, its ground at y = 0) on the soil.
+    glm::quat lanternRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 lanternTranslation{0.0f};
+    glm::vec3 focus{0.0f};        ///< where a camera looks
+    glm::vec3 lanternFlame{0.0f}; ///< where the lantern's flame burns, in its fire box
+    float lanternScale = 1.0f;    ///< of the lantern capture (0.28 units tall at 1)
+    float soilArea = 0.0f;        ///< square units
+    TreeTerrainParams terrain{};  ///< the ground in the pot, for treeTerrainHeight()
+    /// Whether the trees follow the placement (beyond a planting of 60 trees): `trees` are then the nearTrees
+    /// generated in full, nearest to the camera (BonsaiRenderer::setView()), and the others come from `placement`.
+    bool placed = false;
+    TreePlacementParams placement{};
+
+    /// Height of the ground at (x, z) inside the pot: treeTerrainHeight() of `terrain`.
+    float soilHeight(float x, float z) const;
+    /// The superellipse measure of (x, z): below 1 inside the pot's outline scaled by `scale`.
+    float potMeasure(float x, float z, float scale = 1.0f) const;
+};
+
+BonsaiScene makeBonsaiScene(const BonsaiSceneConfig& config = BonsaiSceneConfig{});
+
+/**
+ * @brief Where makeBonsaiScene() puts an object (world from its frame): its bottom centre on the soil at the
+ * placement's position, sunk by 5 % of its height, turned by its yaw and scaled to its height.
+ */
+glm::mat4 bonsaiObjectTransform(const BonsaiScene& scene, const BonsaiObjectPlacement& placement);
+
+/**
+ * @brief The forest threshold (TreeTerrainParams::cover.x) for which forest covers `share` of the soil.
+ *
+ * Found by bisection on the mean forest weight of treeLandCover() over a
+ * grid on the soil; all of `terrain` but cover.x is used as given. A share
+ * of 1 or more gives a threshold below every score: forest wherever no rock
+ * or tree line forbids it.
+ */
+float calibrateForestThreshold(const TreeTerrainParams& terrain, float share);
+
+/**
+ * @brief Samples a triangle list at random points about `spacing` apart, for TreeGaussians' surfels.
+ *
+ * Deterministic for a `seed`. Each sample has the interpolated normal, the
+ * triangle's colour and material, and `spacing` in pos.w.
+ */
+std::vector<TreeSceneVertex> sampleMeshSurfels(const std::vector<TreeSceneVertex>& mesh, float spacing,
+                                               uint32_t seed = 1);
+
+/// A piece of captured ground: Gaussians around the origin, their ground at y = 0.
+using MossPatch = std::vector<Gaussian3D>;
+
+/**
+ * @brief Cuts the mossy ground around the lantern of a capture into `sectors` patches.
+ *
+ * The capture stands on y = 0 with the lantern at the origin (loadGaussiansSpz
+ * with flipY). The ground in the ring from `inner` to `outer` around it, below
+ * `maxHeight`, is cut into sectors, and the sectors where at least
+ * `minGreen` of the Gaussians are green (moss rather than the dry grass on
+ * the capture's east side) become patches. Each patch is moved so that its
+ * centre is at the origin and its ground at y = 0, and its Gaussians fade out
+ * (opacity) towards the cuts, so patches blend into the soil.
+ */
+std::vector<MossPatch> extractMossPatches(const std::vector<Gaussian3D>& capture, uint32_t sectors = 12,
+                                          float inner = 0.14f, float outer = 0.23f, float maxHeight = 0.05f,
+                                          float minGreen = 0.6f);
+
+/**
+ * @brief Places `count` copies of the `patchCount` patches on the forest floor of `scene` (forest weight of the
+ *        land cover above 0.5), turned at random, away from the lantern.
+ *
+ * Each copy is enlarged by `scale` and lies on the plane that touches the
+ * soil at its centre (TreeLodInstance). Deterministic for a `seed`.
+ */
+std::vector<TreeLodInstance> placeMossPatches(const BonsaiScene& scene, uint32_t patchCount, uint32_t count,
+                                              uint32_t seed = 1, float scale = 1.0f);
+
+/**
+ * @brief The placed copies of the patches at full detail: what `tree_lod_write.comp` writes at level 0, without the
+ *        changes of colour.
+ */
+std::vector<Gaussian3D> scatterMossPatches(const std::vector<MossPatch>& patches,
+                                           const std::vector<TreeLodInstance>& instances);
+
+/// Broadleaf and pine types for a bonsai forest: fine twigs, small leaves.
+namespace tree_presets {
+TreeTypeParams bonsaiBroadleaf();
+TreeTypeParams bonsaiPine();
+/// A tree type styled as a bonsai: a short, thick, curved trunk with spreading roots and a compact crown of
+/// more horizontal branches.
+TreeTypeParams bonsaiStyled(const TreeTypeParams& natural);
+/// A bonsai-styled pine with its needles in pads: few main branches, many short twigs spreading flat from them,
+/// densely needled in the dark green of old needles.
+TreeTypeParams bonsaiPinePads(const TreeTypeParams& styled);
+} // namespace tree_presets
+
+/// Every parameter of a and b mixed by t (0: a, 1: b).
+TreeTypeParams mixTreeTypes(const TreeTypeParams& a, const TreeTypeParams& b, float t);
+
+} // namespace klartraum
+
+#endif // KLARTRAUM_TREE_BONSAI_SCENE_HPP
