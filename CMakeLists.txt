@@ -267,6 +267,7 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_hash_texture.cpp
   tests/test_training_elements.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
@@ -338,6 +339,7 @@ set(KLARTRAUM_LIB_SRC
   src/onnx_network.cpp
   src/layers.cpp
   src/training.cpp
+  src/hash_texture.cpp
   src/vgg_loss.cpp
   src/mlp_training.cpp
   src/glyph_atlas.cpp

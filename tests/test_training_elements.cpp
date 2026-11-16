@@ -43,6 +43,8 @@
  * - flowWarpLossMatchesPyTorch: the temporal consistency loss (the first render warped by a flow partly beyond the
  *   image, bilinear and clamped, against the second on a mask) and its gradient for the second render equal
  *   latent_renderer.flow_warp_loss()'s (grid_sample)
+ * - hashTextureBackwardMatchesPyTorch: for a batch of two images, the texture's features and its table gradient (the
+ *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -61,6 +63,7 @@
 #include "klartraum/headless_frontend.hpp"
 #include "klartraum/layers/training.hpp"
 #include "klartraum/neural/vgg_loss.hpp"
+#include "klartraum/neural/hash_texture.hpp"
 #include "training_fixtures.hpp"
 
 using namespace klartraum;
@@ -750,4 +753,42 @@ TEST(TrainingElements, flowWarpLossMatchesPyTorch) {
     graph.submitAndWait(vc.getGraphicsQueue(), 0);
     EXPECT_LT(relativeError(read(gradient), fixture.values("dsecond")), 1e-5f);
     EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-6f);
+}
+
+TEST(TrainingElements, hashTextureBackwardMatchesPyTorch) {
+    const Fixture fixture("hash_texture");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto shape = neural::HashTextureShape::fromFile(kFixtures + "hash_texture_shape.txt");
+    shape.batch = 2;
+    auto coordinates = tensor(vc, fixture.shapes.at("coordinates")), classes = tensor(vc, fixture.shapes.at("classes"));
+    auto table = tensor(vc, fixture.shapes.at("table")), features = tensor(vc, fixture.shapes.at("features"));
+    auto dfeatures = tensor(vc, fixture.shapes.at("dfeatures")), dtable = tensor(vc, fixture.shapes.at("table"));
+    auto forward = neural::hashTexture(vc, shape);
+    forward->setInput(coordinates, 0);
+    forward->setInput(classes, 1);
+    forward->setInput(table, 2);
+    forward->setInput(features, 3);
+    auto zero = training::fill(vc, uint32_t(dtable->getDataElementCount()));
+    zero->setInput(dtable, 0);
+    zero->addDependency(forward);
+    auto backward = neural::hashTextureBackward(vc, shape);
+    backward->setInput(coordinates, 0);
+    backward->setInput(classes, 1);
+    backward->setInput(dfeatures, 2);
+    backward->setInput(dtable, 3);
+    backward->addDependency(zero);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    coordinates->getDataBuffer(0).memcopyFrom(fixture.values("coordinates"));
+    classes->getDataBuffer(0).memcopyFrom(fixture.values("classes"));
+    table->getDataBuffer(0).memcopyFrom(fixture.values("table"));
+    dfeatures->getDataBuffer(0).memcopyFrom(fixture.values("dfeatures"));
+    // Twice: the gradient is zeroed every submission, so it must not accumulate.
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(features), fixture.values("features")), 1e-5f);
+    EXPECT_LT(relativeError(read(dtable), fixture.values("dtable")), 1e-5f);
 }
