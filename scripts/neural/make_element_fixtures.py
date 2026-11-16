@@ -70,6 +70,23 @@ def conv_case(out: Path, case: str, n: int, cin: int, cout: int, size: tuple[int
     save(out, case, {"x": x, "w": w, "b": b, "y": y, "dy": dy, "dx": x.grad, "dw": w.grad, "db": b.grad})
 
 
+def channel_norm_case(out: Path, seed: int) -> None:
+    """ChannelNorm of 6 channels and its input, scale and shift gradients."""
+    from training_reference import ChannelNorm
+
+    generator = torch.Generator().manual_seed(seed)
+    norm = ChannelNorm(6)
+    with torch.no_grad():
+        norm.weight.copy_(torch.randn(6, generator=generator))
+        norm.bias.copy_(torch.randn(6, generator=generator))
+    x = (torch.randn(2, 6, 5, 7, generator=generator) * 3.0 + 1.0).requires_grad_(True)
+    y = norm(x)
+    dy = torch.randn(y.shape, generator=generator)
+    y.backward(dy)
+    save(out, "channel_norm", {"x": x, "weight": norm.weight, "bias": norm.bias, "y": y, "dy": dy, "dx": x.grad,
+                               "dweight": norm.weight.grad, "dbias": norm.bias.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -82,6 +99,7 @@ def main() -> None:
     conv_case(args.out, "conv3x3_stride2", 2, 5, 7, (10, 12), 3, 2, 1, 2)
     conv_case(args.out, "conv1x1", 2, 6, 3, (8, 8), 1, 1, 0, 3)
     conv_case(args.out, "conv4x4_stride2", 2, 4, 6, (12, 10), 4, 2, 1, 4)
+    channel_norm_case(args.out, 7)
     print(f"fixtures in {args.out}")
 
 

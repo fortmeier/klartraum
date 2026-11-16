@@ -82,6 +82,28 @@ ComputeGraphElementPtr convBackwardWeights(VulkanContext& vulkanContext, const l
                                            const layers::Shape& input, const layers::Shape& weights,
                                            const layers::Shape& output);
 
+/**
+ * @brief ChannelNorm: every pixel of an N x C x H x W tensor normalized over its channels (eps 1e-5), then scaled and
+ * shifted per channel; keeps each pixel's mean and 1 / standard deviation for the backward pass.
+ *
+ * Slots: 0 input, 1 scale (C), 2 shift (C), 3 output, 4 statistics (N x 2 x H x W).
+ */
+ComputeGraphElementPtr channelNorm(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The input gradient of channelNorm().
+ *
+ * Slots: 0 input, 1 scale, 2 statistics, 3 output gradient, 4 input gradient.
+ */
+ComputeGraphElementPtr channelNormBackwardInput(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The scale and shift gradients of channelNorm(), reduced per channel in a fixed order.
+ *
+ * Slots: 0 input, 1 statistics, 2 output gradient, 3 scale gradient (C), 4 shift gradient (C).
+ */
+ComputeGraphElementPtr channelNormBackwardParameters(VulkanContext& vulkanContext, const layers::Shape& shape);
+
 /** @brief Where channelCopy() reads and writes: channel ranges of two N x C x H x W tensors. */
 struct ChannelRange {
     uint32_t channels = 0; ///< of the whole tensor

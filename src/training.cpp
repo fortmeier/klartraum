@@ -72,9 +72,21 @@ struct ScalarAffinePushConstants {
     uint32_t backward, accumulate;
 };
 
+struct NormPushConstants {
+    uint32_t batch, channels, pixels;
+    float epsilon;
+};
+
 struct ChannelCopyPushConstants {
     uint32_t batch, pixels, sourceChannels, sourceOffset, targetChannels, targetOffset, count, accumulate;
 };
+
+// N, C and H x W of a rank-four shape.
+std::array<uint32_t, 3> planesOf(const layers::Shape& shape) {
+    if (shape.size() != 4)
+        throw std::invalid_argument("training: needs an N x C x H x W shape");
+    return {shape[0], shape[1], shape[2] * shape[3]};
+}
 
 struct AdamPushConstants {
     uint32_t elementCount;
@@ -105,6 +117,33 @@ ComputeGraphElementPtr leakyRelu(VulkanContext& vulkanContext, const layers::Sha
     const uint32_t count = layers::elementCount(shape);
     operation->setPushConstants({{count}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelNorm(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation =
+        vulkanContext.create<GeneralComputation<NormPushConstants>>("shaders/training/channel_norm.comp.spv");
+    operation->setPushConstants({{n, c, pixels, 1e-5f}});
+    operation->setGroupCountX((n * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelNormBackwardInput(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation = vulkanContext.create<GeneralComputation<NormPushConstants>>(
+        "shaders/training/channel_norm_backward_input.comp.spv");
+    operation->setPushConstants({{n, c, pixels, 1e-5f}});
+    operation->setGroupCountX((n * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr channelNormBackwardParameters(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    const auto [n, c, pixels] = planesOf(shape);
+    auto operation = vulkanContext.create<GeneralComputation<NormPushConstants>>(
+        "shaders/training/channel_norm_backward_parameters.comp.spv");
+    operation->setPushConstants({{n, c, pixels, 1e-5f}});
+    operation->setGroupCountX(c);
     return operation;
 }
 

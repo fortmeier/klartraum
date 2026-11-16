@@ -12,6 +12,8 @@
  *   bias gradients equal nn.Linear's
  * - convBackwardMatchesPyTorch: the input, weight and bias gradients of 2D convolutions (3x3 with stride 1 and 2,
  *   1x1, 4x4 with stride 2) equal PyTorch autograd's for the same inputs and upstream gradient
+ * - channelNormMatchesPyTorch: ChannelNorm's output and its input, scale and shift gradients equal PyTorch's
+ *   (train_photo_enhancer.ChannelNorm)
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -207,4 +209,49 @@ TEST(TrainingElements, convBackwardMatchesPyTorch) {
         EXPECT_LT(relativeError(read(dw), fixture.values("dw")), 1e-5f) << c.name;
         EXPECT_LT(relativeError(read(db), fixture.values("db")), 1e-5f) << c.name;
     }
+}
+
+TEST(TrainingElements, channelNormMatchesPyTorch) {
+    const Fixture fixture("channel_norm");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("x");
+    const uint32_t c = shape[1];
+    const std::vector<uint32_t> statsShape{shape[0], 2, shape[2], shape[3]};
+    auto x = tensor(vc, shape), weight = tensor(vc, {c}), bias = tensor(vc, {c}), y = tensor(vc, shape);
+    auto stats = tensor(vc, statsShape), dy = tensor(vc, shape), dx = tensor(vc, shape);
+    auto dweight = tensor(vc, {c}), dbias = tensor(vc, {c});
+    auto forward = training::channelNorm(vc, shape);
+    forward->setInput(x, 0);
+    forward->setInput(weight, 1);
+    forward->setInput(bias, 2);
+    forward->setInput(y, 3);
+    forward->setInput(stats, 4);
+    auto input = training::channelNormBackwardInput(vc, shape);
+    input->setInput(x, 0);
+    input->setInput(weight, 1);
+    input->setInput(stats, 2);
+    input->setInput(dy, 3);
+    input->setInput(dx, 4);
+    input->addDependency(forward);
+    auto parameters = training::channelNormBackwardParameters(vc, shape);
+    parameters->setInput(x, 0);
+    parameters->setInput(stats, 1);
+    parameters->setInput(dy, 2);
+    parameters->setInput(dweight, 3);
+    parameters->setInput(dbias, 4);
+    parameters->addDependency(input);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(parameters);
+    x->getDataBuffer(0).memcopyFrom(fixture.values("x"));
+    weight->getDataBuffer(0).memcopyFrom(fixture.values("weight"));
+    bias->getDataBuffer(0).memcopyFrom(fixture.values("bias"));
+    dy->getDataBuffer(0).memcopyFrom(fixture.values("dy"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(y), fixture.values("y")), 1e-5f);
+    EXPECT_LT(relativeError(read(dx), fixture.values("dx")), 1e-5f);
+    EXPECT_LT(relativeError(read(dweight), fixture.values("dweight")), 1e-5f);
+    EXPECT_LT(relativeError(read(dbias), fixture.values("dbias")), 1e-5f);
 }
