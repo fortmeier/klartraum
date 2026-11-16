@@ -149,6 +149,7 @@ struct ResizePushConstants {
     uint32_t inputWidth;
     uint32_t outputHeight;
     uint32_t outputWidth;
+    uint32_t alignCorners; // linear only: the corner pixels' centres coincide (PyTorch's align_corners=True)
 };
 
 struct SlicePushConstants {
