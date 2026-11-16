@@ -115,3 +115,35 @@ public float3 shade(PixelSurface s) {
     return bilinear(taps.fraction, texels[taps.index[0]].rgb, texels[taps.index[1]].rgb, texels[taps.index[2]].rgb,
                     texels[taps.index[3]].rgb);
 }
+
+// Carries the gradient of a covered pixel's colour back to the four texels it reads (their bilinear weights) and,
+// through bwd_diff of the bilinear lookup and of textureCoordinate(), to its triangle's vertex positions; adds them
+// atomically into four floats per texel and per vertex.
+public void backpropagateColor(PixelSurface s, float3 colorGradient, RWStructuredBuffer<float> vertexGradients,
+                               RWStructuredBuffer<float> textureGradients) {
+    const float2 size = float2(pc.width, pc.height);
+    const float2 uv = textureCoordinate(s.corner[0], s.corner[1], s.corner[2], s.cornerUv[0], s.cornerUv[1],
+                                        s.cornerUv[2], s.camera, s.pixel, size);
+    const BilinearTaps taps = bilinearTaps(uv);
+    float3 t[4];
+    for (uint k = 0; k < 4; ++k) t[k] = texels[taps.index[k]].rgb;
+    const float4 weights = bilinearWeights(taps.fraction);
+    for (uint k = 0; k < 4; ++k) {
+        for (uint c = 0; c < 3; ++c) InterlockedAdd(textureGradients[4 * taps.index[k] + c], weights[k] * colorGradient[c]);
+    }
+    var fraction = diffPair(taps.fraction);
+    bwd_diff(bilinear)(fraction, t[0], t[1], t[2], t[3], colorGradient);
+    // fraction = uv x texture size - 0.5 - floor(...): the floor is constant almost everywhere.
+    const float2 uvGradient = fraction.d * float2(pc.textureWidth, pc.textureHeight);
+    var p0 = diffPair(s.corner[0]);
+    var p1 = diffPair(s.corner[1]);
+    var p2 = diffPair(s.corner[2]);
+    var uv0 = diffPair(s.cornerUv[0]);
+    var uv1 = diffPair(s.cornerUv[1]);
+    var uv2 = diffPair(s.cornerUv[2]);
+    bwd_diff(textureCoordinate)(p0, p1, p2, uv0, uv1, uv2, s.camera, s.pixel, size, uvGradient);
+    const float3 cornerGradients[3] = { p0.d, p1.d, p2.d };
+    for (uint corner = 0; corner < 3; ++corner) {
+        for (uint c = 0; c < 3; ++c) InterlockedAdd(vertexGradients[4 * s.vertex[corner] + c], cornerGradients[corner][c]);
+    }
+}
