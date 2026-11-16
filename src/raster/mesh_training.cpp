@@ -275,6 +275,12 @@ std::vector<float> MeshTraining::viewColors() const {
     return values;
 }
 
+uint32_t MeshTraining::lastView() const {
+    std::vector<uint32_t> view(1);
+    viewIndex->getBuffer(0).memcopyTo(view);
+    return view[0];
+}
+
 std::vector<float> MeshTraining::texture() const {
     std::vector<float> values(texels->getDataElementCount());
     texels->getDataBuffer(0).memcopyTo(values);
