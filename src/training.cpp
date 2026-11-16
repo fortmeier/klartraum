@@ -71,6 +71,17 @@ struct EmbeddingPushConstants {
     float decay;
 };
 
+struct ClipPushConstants {
+    uint32_t count;
+    float maxNorm;
+};
+
+struct EmaPushConstants {
+    uint32_t count;
+    float rate;
+    uint32_t warmupSteps;
+};
+
 struct PoolPushConstants {
     uint32_t planes, inputHeight, inputWidth;
 };
@@ -258,6 +269,29 @@ ComputeGraphElementPtr embeddingBackward(VulkanContext& vulkanContext, uint32_t 
         "shaders/training/embedding_backward.comp.spv");
     operation->setPushConstants({{batch, rows, size, decay}});
     operation->setGroupCountX((rows * size + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr squaredNorm(VulkanContext& vulkanContext, uint32_t count) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/squared_norm.comp.spv");
+    operation->setPushConstants({{count}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr clipGradient(VulkanContext& vulkanContext, uint32_t count, float maxNorm) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<ClipPushConstants>>("shaders/training/clip_gradient.comp.spv");
+    operation->setPushConstants({{count, maxNorm}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr ema(VulkanContext& vulkanContext, uint32_t count, float rate, uint32_t warmupSteps) {
+    auto operation = vulkanContext.create<GeneralComputation<EmaPushConstants>>("shaders/training/ema.comp.spv");
+    operation->setPushConstants({{count, rate, warmupSteps}});
+    operation->setGroupCountX((count + 255) / 256);
     return operation;
 }
 

@@ -120,6 +120,18 @@ def film_case(out: Path, seed: int) -> None:
                        "dscale": scale.grad, "dshift": shift.grad})
 
 
+def clip_case(out: Path, seed: int) -> None:
+    """Two gradients clipped to a global norm of 1 (clip_grad_norm_)."""
+    generator = torch.Generator().manual_seed(seed)
+    a = torch.nn.Parameter(torch.zeros(300))
+    b = torch.nn.Parameter(torch.zeros(70))
+    a.grad = torch.randn(300, generator=generator) * 0.2
+    b.grad = torch.randn(70, generator=generator) * 0.2
+    before = {"ga": a.grad.clone(), "gb": b.grad.clone()}
+    torch.nn.utils.clip_grad_norm_([a, b], 1.0)
+    save(out, "clip", {**before, "clipped_a": a.grad, "clipped_b": b.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -136,6 +148,7 @@ def main() -> None:
     upsample_case(args.out, 8)
     max_pool_case(args.out, 15)
     film_case(args.out, 9)
+    clip_case(args.out, 13)
     print(f"fixtures in {args.out}")
 
 

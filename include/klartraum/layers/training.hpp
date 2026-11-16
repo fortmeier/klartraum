@@ -202,6 +202,29 @@ ComputeGraphElementPtr embeddingBackward(VulkanContext& vulkanContext, uint32_t 
                                          float decay);
 
 /**
+ * @brief Adds the squared sum of @p count floats to a running total (zero it with fill() first), for clipGradient().
+ *
+ * Slots: 0 data, 1 total (one float).
+ */
+ComputeGraphElementPtr squaredNorm(VulkanContext& vulkanContext, uint32_t count);
+
+/**
+ * @brief Scales @p count gradients by min(1, @p maxNorm / (norm + 1e-6)), the norm the square root of the total of
+ * squaredNorm() over every clipped tensor (torch.nn.utils.clip_grad_norm_).
+ *
+ * Slots: 0 gradients, 1 total.
+ */
+ComputeGraphElementPtr clipGradient(VulkanContext& vulkanContext, uint32_t count, float maxNorm);
+
+/**
+ * @brief The exponential moving average of @p count parameters: ema += @p rate (parameters - ema), a copy for the
+ * first @p warmupSteps steps of the step counter.
+ *
+ * Slots: 0 average, 1 parameters, 2 step counter.
+ */
+ComputeGraphElementPtr ema(VulkanContext& vulkanContext, uint32_t count, float rate, uint32_t warmupSteps);
+
+/**
  * @brief A 2 x 2 max-pool with stride 2 of an N x C x H x W tensor (F.max_pool2d(x, 2)), keeping which of its window's
  * four elements each output took.
  *

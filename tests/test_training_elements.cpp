@@ -22,6 +22,8 @@
  * - embeddingPicksAndScattersRows: rows picked by index (one twice) come out in batch order; the table gradient adds
  *   the picked rows' gradients plus the L2 penalty's, and is zero for rows nobody picked
  * - filmMatchesPyTorch: FiLM's output and its input, scale and shift gradients equal PyTorch's
+ * - clipGradientMatchesPyTorch: clipping two tensors to a global norm of 1 equals clip_grad_norm_
+ * - emaCopiesThenAverages: during the warm-up the average copies the parameters, after it moves by the rate
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -398,4 +400,63 @@ TEST(TrainingElements, filmMatchesPyTorch) {
     checkElement(
         vc, fixture, training::filmBackward(vc, shape),
         {{"x", shape}, {"scale", planes}, {"dy", shape}, {"dx", shape}, {"dscale", planes}, {"dshift", planes}}, 3);
+}
+
+TEST(TrainingElements, clipGradientMatchesPyTorch) {
+    const Fixture fixture("clip");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto a = tensor(vc, {300}), b = tensor(vc, {70}), total = tensor(vc, {1});
+    auto zero = training::fill(vc, 1);
+    zero->setInput(total, 0);
+    auto normA = training::squaredNorm(vc, 300);
+    normA->setInput(a, 0);
+    normA->setInput(total, 1);
+    normA->addDependency(zero);
+    auto normB = training::squaredNorm(vc, 70);
+    normB->setInput(b, 0);
+    normB->setInput(total, 1);
+    normB->addDependency(normA);
+    auto clipA = training::clipGradient(vc, 300, 1.0f);
+    clipA->setInput(a, 0);
+    clipA->setInput(total, 1);
+    clipA->addDependency(normB);
+    auto clipB = training::clipGradient(vc, 70, 1.0f);
+    clipB->setInput(b, 0);
+    clipB->setInput(total, 1);
+    clipB->addDependency(clipA);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(clipB);
+    a->getDataBuffer(0).memcopyFrom(fixture.values("ga"));
+    b->getDataBuffer(0).memcopyFrom(fixture.values("gb"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(a), fixture.values("clipped_a")), 1e-5f);
+    EXPECT_LT(relativeError(read(b), fixture.values("clipped_b")), 1e-5f);
+}
+
+TEST(TrainingElements, emaCopiesThenAverages) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    auto average = vc.create<TensorElement<float>>(std::vector<uint32_t>{2});
+    auto parameters = vc.create<TensorElement<float>>(std::vector<uint32_t>{2});
+    auto counter = vc.create<TensorElement<uint32_t>>(std::vector<uint32_t>{1});
+    auto step = training::stepCounter(vc);
+    step->setInput(counter, 0);
+    auto update = training::ema(vc, 2, 0.25f, 1);
+    update->setInput(average, 0);
+    update->setInput(parameters, 1);
+    update->setInput(counter, 2);
+    update->addDependency(step);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(update);
+    average->getDataBuffer(0).memcopyFrom(std::vector<float>{0.0f, 0.0f});
+    counter->getDataBuffer(0).memcopyFrom(std::vector<uint32_t>{0u});
+    parameters->getDataBuffer(0).memcopyFrom(std::vector<float>{4.0f, 8.0f});
+    graph.submitAndWait(vc.getGraphicsQueue(), 0); // step 1: copy
+    EXPECT_EQ(read(average), (std::vector<float>{4.0f, 8.0f}));
+    parameters->getDataBuffer(0).memcopyFrom(std::vector<float>{8.0f, 0.0f});
+    graph.submitAndWait(vc.getGraphicsQueue(), 0); // step 2: a quarter of the way
+    EXPECT_EQ(read(average), (std::vector<float>{5.0f, 6.0f}));
 }
