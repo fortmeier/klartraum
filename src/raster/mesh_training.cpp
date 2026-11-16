@@ -511,7 +511,7 @@ MeshImages::MeshImages(VulkanContext& vulkanContext, const TriangleMesh& mesh, u
     positions = vulkanContext.create<Tensor>(std::vector<uint32_t>{vertexCount, 4});
     auto cornerUvs = vulkanContext.create<Tensor>(std::vector<uint32_t>{3 * triangleCount, 2});
     texels = vulkanContext.create<Tensor>(std::vector<uint32_t>{texelCount, 4});
-    auto cameraBuffer = vulkanContext.create<Tensor>(std::vector<uint32_t>{cameraCount, 16});
+    cameraBuffer = vulkanContext.create<Tensor>(std::vector<uint32_t>{cameraCount, 16});
     auto colors = vulkanContext.create<Tensor>(std::vector<uint32_t>{pixels, 4});
     antialiased = vulkanContext.create<Tensor>(std::vector<uint32_t>{pixels, 4});
     auto triangles = std::make_shared<UintBuffer>(vulkanContext, 3 * triangleCount);
@@ -565,6 +565,12 @@ std::vector<float> MeshImages::render(const TriangleMesh& mesh, const std::vecto
         images.insert(images.end(), image.begin(), image.end());
     }
     return images;
+}
+
+void MeshImages::setCameras(const std::vector<glm::mat4>& cameras) {
+    if (cameras.size() != cameraCount)
+        throw std::invalid_argument("MeshImages: another number of cameras");
+    cameraBuffer->getDataBuffer(0).memcopyFrom(packCameras(cameras));
 }
 
 std::vector<float> renderImages(VulkanContext& vulkanContext, const TriangleMesh& mesh,
