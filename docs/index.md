@@ -56,6 +56,7 @@ guides/gaussian-splatting
 guides/render-targets
 guides/profiling
 guides/onnx
+guides/latent-textures
 ```
 
 ```{toctree}
