@@ -123,6 +123,13 @@ public:
      */
     void setInputTensor(const std::string& name, ComputeGraphElementPtr producer, int outputSlot = -1);
 
+    /**
+     * @brief Returns the dimensions of a declared ONNX graph input.
+     * @param name Declared ONNX graph input name.
+     * @throws std::runtime_error If @p name is not a tensor input of the graph.
+     */
+    std::vector<uint32_t> getInputDimensions(const std::string& name) const;
+
 private:
     // Load ONNX model from file
     bool loadModel(const std::string& modelPath);
