@@ -93,8 +93,9 @@ inline klartraum::neural::HashTextureShape denseTextureShape(uint32_t components
 }
 
 // The initial value of a photo enhancer parameter as train_photo_enhancer.py starts it: nn.Linear and nn.Conv2d's
-// default initialisation (uniform within 1 / sqrt(fan in)), ChannelNorm's ones and zeros, the texture's +-1e-4 (times
-// textureScale), the codes' and the latent table's N(0, 0.1); FiLM's heads and the output layer start at zero.
+// default initialisation (uniform within 1 / sqrt(fan in)), ChannelNorm's ones and zeros, the texture's and the feature
+// texture's +-1e-4 (times textureScale), the codes' and the latent table's N(0, 0.1); FiLM's heads and the output layer
+// start at zero.
 inline std::vector<float> initialValue(const klartraum::neural::PhotoEnhancerTraining& trainer, const std::string& name,
                                        std::mt19937& rng, float textureScale = 1.0f) {
     const auto dims = trainer.parameter(name)->getDimensions();
@@ -112,7 +113,7 @@ inline std::vector<float> initialValue(const klartraum::neural::PhotoEnhancerTra
     const bool norm = (inBlock && (layer == "1" || layer == "4")) || encoderNorm;
     const bool zeroStart = name.find("film.gammas") != std::string::npos ||
                            name.find("film.betas") != std::string::npos || name.find(".out.") != std::string::npos;
-    if (name == "texture.table") {
+    if (name == "texture.table" || name.rfind("texture.basis.", 0) == 0) {
         std::uniform_real_distribution<float> tiny(-1e-4f * textureScale, 1e-4f * textureScale);
         for (auto& v : values)
             v = tiny(rng);

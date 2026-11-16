@@ -265,6 +265,7 @@ int main(int argc, char** argv) {
             if (!parameters.empty() && std::filesystem::exists(parameters / "texture.txt")) {
                 config.textureMlp = neural::TextureMlp::fromFile((parameters / "texture.txt").string());
                 config.albedoTexture = neural::AlbedoTexture::fromFile((parameters / "texture.txt").string());
+                config.textureBasis = neural::TextureBasis::fromFile((parameters / "texture.txt").string());
             }
             const auto codes = parameters / "codes.weight.bin";
             config.appearances =

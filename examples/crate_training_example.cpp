@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <string>
@@ -326,6 +327,7 @@ int main(int argc, char** argv) {
     bool dense = false;                        // a plain dense texture (--texture-dense) instead of the hash texture
     neural::TextureMlp textureMlp;             // the latent-conditioned MLP texture instead (--texture-mlp)
     neural::AlbedoTexture albedoTexture;       // the albedo renderer instead (--albedo, --albedo-fade)
+    neural::TextureBasis textureBasis;         // the code-mixed feature texture instead (--texture-basis)
     std::filesystem::path evaluate;            // a saved model to evaluate with and without its texture (--evaluate)
     // A flight of tree_bonsai_example --fly-in --gbuffers instead of the crate (--flight DIR PHOTOS FIRST): its
     // frames from FIRST on with their photos PHOTOS/<frame>.ppm.
@@ -413,6 +415,20 @@ int main(int argc, char** argv) {
             textureMlp.frequencies = uint32_t(std::stoul(argv[++i]));
             textureMlp.width = uint32_t(std::stoul(argv[++i]));
             textureMlp.outputs = uint32_t(std::stoul(argv[++i]));
+        } else if (arg == "--texture-mlp-residual" && hasValue) {
+            std::stringstream numbers(argv[++i]);
+            std::vector<uint32_t> values;
+            for (std::string number; std::getline(numbers, number, ',');)
+                values.push_back(uint32_t(std::stoul(number)));
+            if (values.empty() || values.size() % 2 != 0)
+                throw std::invalid_argument("--texture-mlp-residual needs pairs of octaves and width");
+            for (size_t k = 0; k < values.size(); k += 2)
+                textureMlp.residual.emplace_back(values[k], values[k + 1]);
+        } else if (arg == "--texture-basis" && i + 2 < argc) {
+            textureBasis.channels = uint32_t(std::stoul(argv[++i]));
+            std::stringstream numbers(argv[++i]);
+            for (std::string number; std::getline(numbers, number, ',');)
+                textureBasis.resolutions.push_back(uint32_t(std::stoul(number)));
         } else if (arg == "--texture-dense" && i + 2 < argc) {
             denseComponents = uint32_t(std::stoul(argv[++i]));
             denseResolution = uint32_t(std::stoul(argv[++i]));
@@ -526,7 +542,7 @@ int main(int argc, char** argv) {
             flips = false;
         } else if (!cratesDir.empty()) {
             // Every crate's views (crates/<id>/cameras_classical.csv, photos in crates/<id>/photo), each with its
-            // crate's row; view 5 of every fifth crate held out for validation, the last heldOutCrates crates kept for
+            // crate's row; view 3 of every fifth crate held out for validation, the last heldOutCrates crates kept for
             // fitting.
             if (latent == 0)
                 throw std::runtime_error("--crates needs --latent");
@@ -548,9 +564,9 @@ int main(int argc, char** argv) {
                 for (auto& view : loadViews(vc, renderer, graph, *target, alignment, crates[k], crates[k], minAlignment,
                                             floor ? 0.6f : 1.0f)) {
                     view.code = int(k);
-                    const bool last = view.id.size() > 5 && view.id.substr(view.id.size() - 5) == "_0005";
+                    const bool held = view.id.size() > 5 && view.id.substr(view.id.size() - 5) == "_0003";
                     (k >= crateCount - heldOutCrates ? fitting
-                     : k % 5 == 0 && last            ? validation
+                     : k % 5 == 0 && held            ? validation
                                                      : training)
                         .push_back(std::move(view));
                 }
@@ -707,11 +723,13 @@ int main(int argc, char** argv) {
         config.batch = batchSize;
         config.size = crop;
         config.widths = widths;
-        config.texture = textureMlp.frequencies > 0 || albedoTexture.enabled() ? crate::denseTextureShape(0, 0)
+        config.texture = textureMlp.frequencies > 0 || albedoTexture.enabled() || textureBasis.enabled()
+                             ? crate::denseTextureShape(0, 0)
                          : dense ? crate::denseTextureShape(denseComponents, denseResolution)
                                  : crate::textureShape(textureLevels, textureBase, textureFinest);
         config.textureMlp = textureMlp;
         config.albedoTexture = albedoTexture;
+        config.textureBasis = textureBasis;
         // A flight's texture covers the terrain, the trunks and the leaves.
         if (fromFlight)
             config.texture.classes = {tree::TREE_CLASS_SOIL, tree::TREE_CLASS_STEM, tree::TREE_CLASS_LEAF};
@@ -751,7 +769,9 @@ int main(int argc, char** argv) {
         config.networkAdam.learningRate = networkRate;
         config.criticGBufferChannels = criticChannels;
         config.augmentGeneratorStep = augmentGenerator;
-        neural::PhotoEnhancerTraining trainer(vc, config);
+        // Released before the held-out crates' codes are fitted, so that the GPU holds one training at a time.
+        auto trainerOwner = std::make_unique<neural::PhotoEnhancerTraining>(vc, config);
+        auto& trainer = *trainerOwner;
         std::mt19937 rng(1);
         std::vector<std::string> fresh; // generator, texture and encoder parameters not taken from --init-from
         for (const auto& name : trainer.parameterNames()) {
@@ -1362,6 +1382,7 @@ int main(int argc, char** argv) {
         if (!cratesDir.empty()) {
             auto table = readTable(outDir / "parameters");
             if (!fitting.empty() && fitSteps > 0) {
+                trainerOwner.reset();
                 auto fitConfig = config;
                 fitConfig.networkAdam.learningRate = 0.0f;
                 fitConfig.textureAdam.learningRate = 0.0f;
