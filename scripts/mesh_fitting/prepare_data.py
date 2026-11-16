@@ -11,7 +11,8 @@
 Input: a scene directory with images/, masks/ and splat_poses.json (OpenGL camera-to-world poses, +X right,
 +Y up, -Z forward, with per-image pinhole intrinsics and OpenCV distortion, as exported from COLMAP/Nerfstudio).
 
-Per frame, the image and the mask are undistorted, downsampled by area averaging (which turns the mask's hard edge
+Per frame, the image and the mask are undistorted, the mask shrunk by --erode target pixels (its edge often holds
+background), both downsampled by area averaging (which turns the mask's hard edge
 into fractional coverage) and the colour is premultiplied by the mask. A start sphere around the object comes from
 carving the masks on a voxel grid. Output, in the output directory:
 
@@ -117,6 +118,13 @@ def main() -> int:
     parser.add_argument("scene", type=Path, help="scene directory with images/, masks/ and splat_poses.json")
     parser.add_argument("output", type=Path, help="output directory")
     parser.add_argument("--width", type=int, default=256, help="target image width in pixels (default 256)")
+    parser.add_argument(
+        "--erode",
+        type=float,
+        default=1.0,
+        help="shrink the masks by this many target pixels before downsampling, to drop background at their edge "
+        "(default 1)",
+    )
     arguments = parser.parse_args()
 
     poses = json.loads((arguments.scene / "splat_poses.json").read_text(encoding="utf-8"))
@@ -137,6 +145,10 @@ def main() -> int:
         mask = cv2.undistort(mask, k, distortion)
         width = arguments.width
         height = round(width * full_height / full_width)
+        erosion = round(arguments.erode * full_width / width)
+        if erosion > 0:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * erosion + 1, 2 * erosion + 1))
+            mask = cv2.erode(mask, kernel)
         scale_x, scale_y = width / full_width, height / full_height
         rgb = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)[:, :, ::-1].astype(np.float32) / 255
         alpha = cv2.resize(mask, (width, height), interpolation=cv2.INTER_AREA).astype(np.float32) / 255
