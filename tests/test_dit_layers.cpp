@@ -11,6 +11,8 @@
  * - activationsMatchCpu: GELU with the tanh approximation and SiLU, in place, as a CPU evaluation
  * - rotaryTurnsPairs: every pair of consecutive values of every head is turned by its token's angle (complex
  *   multiplication), and the pairs' lengths stay
+ * - copyMovesRangeBetweenOffsets: copy() writes the source range to the destination range and leaves the rest of
+ *   the destination unchanged
  **/
 
 #include <gtest/gtest.h>
@@ -146,4 +148,15 @@ TEST_F(DitLayersTest, rotaryTurnsPairs) {
                 ASSERT_NEAR(y[i], x[i] * std::cos(a) - x[i + 1] * std::sin(a), 1e-5);
                 ASSERT_NEAR(y[i + 1], x[i] * std::sin(a) + x[i + 1] * std::cos(a), 1e-5);
             }
+}
+
+TEST_F(DitLayersTest, copyMovesRangeBetweenOffsets) {
+    constexpr uint32_t count = 300, sourceOffset = 17, destinationOffset = 70;
+    const auto sourceValues = random(400), destinationValues = random(500);
+    auto source = tensor(sourceValues), destination = tensor(destinationValues);
+    run(dl::copy(*vc, count, sourceOffset, destinationOffset), {source, destination});
+    auto expected = destinationValues;
+    for (uint32_t i = 0; i < count; ++i)
+        expected[destinationOffset + i] = sourceValues[sourceOffset + i];
+    EXPECT_EQ(read(destination), expected);
 }

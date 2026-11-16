@@ -51,6 +51,14 @@ ComputeGraphElementPtr activation(VulkanContext& vulkanContext, Activation kind,
  */
 ComputeGraphElementPtr rotary(VulkanContext& vulkanContext, uint32_t tokens, uint32_t heads);
 
+/**
+ * @brief Copies @p count values from the source at @p sourceOffset to the destination at @p destinationOffset.
+ *
+ * Slots: 0 source, 1 destination.
+ */
+ComputeGraphElementPtr copy(VulkanContext& vulkanContext, uint32_t count, uint32_t sourceOffset,
+                            uint32_t destinationOffset);
+
 } // namespace klartraum::dit_layers
 
 #endif // KLARTRAUM_DIFFUSION_DIT_LAYERS_HPP
