@@ -184,6 +184,14 @@ def sample_texture_basis(tables: torch.Tensor, coordinates: torch.Tensor, classe
     return features * mask[:, None]
 
 
+def texture_basis_penalty(table: torch.Tensor, decay: float, smoothness: float) -> torch.Tensor:
+    """decay x the sum of squared texels + smoothness x the sum of squared differences between neighbouring texels of
+    the same plane (the last two dimensions), horizontally and vertically."""
+    dx = table[..., :, 1:] - table[..., :, :-1]
+    dy = table[..., 1:, :] - table[..., :-1, :]
+    return decay * table.pow(2).sum() + smoothness * (dx.pow(2).sum() + dy.pow(2).sum())
+
+
 class TextureBasis(nn.Module):
     """The code-mixed feature texture (as Deferred Neural Rendering's neural texture, mixed by the latent): per face
     and resolution a base layer and one layer per latent number of `outputs` features, the resolutions summed."""

@@ -424,6 +424,17 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         }
         basisLatentGradient = tensor({b, config.latentSize, s, s});
         backwardTextureBasis(coordinates, classes, latentImage, blocks[0].dIn, basisLatentGradient);
+        const auto& t = config.textureBasis;
+        if (t.decay > 0.0f || t.smoothness > 0.0f)
+            for (size_t level = 0; level < t.resolutions.size(); ++level) {
+                const float scale = float(t.resolutions[level]) / float(t.resolutions[0]);
+                const auto& table = find("texture.basis." + std::to_string(level));
+                auto regularize = training::textureBasisRegularize(vulkanContext, basisShape(level, false),
+                                                                   scale * t.decay, scale * t.smoothness);
+                regularize->setInput(table.value, 0);
+                regularize->setInput(table.gradient, 1);
+                add(regularize);
+            }
     }
     if (albedo)
         albedoInputGradients = backwardAlbedoTexture(*mainAlbedo);
@@ -1732,7 +1743,8 @@ TextureBasis TextureBasis::fromFile(const std::string& path) {
             words >> basis.channels >> basis.faces;
             for (uint32_t resolution; words >> resolution;)
                 basis.resolutions.push_back(resolution);
-        }
+        } else if (key == "basis-regularize")
+            words >> basis.decay >> basis.smoothness;
     }
     return basis;
 }
@@ -2244,6 +2256,9 @@ void PhotoEnhancerTraining::save(const std::string& directory, bool averages) co
             for (uint32_t r : config.textureBasis.resolutions)
                 texture << " " << r;
             texture << "\n";
+            if (config.textureBasis.decay > 0.0f || config.textureBasis.smoothness > 0.0f)
+                texture << "basis-regularize " << config.textureBasis.decay << " " << config.textureBasis.smoothness
+                        << "\n";
         }
         const auto& t = config.textureMlp;
         if (t.frequencies > 0)

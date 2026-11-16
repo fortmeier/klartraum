@@ -429,6 +429,10 @@ int main(int argc, char** argv) {
             std::stringstream numbers(argv[++i]);
             for (std::string number; std::getline(numbers, number, ',');)
                 textureBasis.resolutions.push_back(uint32_t(std::stoul(number)));
+        } else if (arg == "--basis-decay" && hasValue) {
+            textureBasis.decay = std::stof(argv[++i]);
+        } else if (arg == "--basis-smoothness" && hasValue) {
+            textureBasis.smoothness = std::stof(argv[++i]);
         } else if (arg == "--texture-dense" && i + 2 < argc) {
             denseComponents = uint32_t(std::stoul(argv[++i]));
             denseResolution = uint32_t(std::stoul(argv[++i]));

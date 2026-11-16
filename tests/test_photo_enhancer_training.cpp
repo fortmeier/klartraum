@@ -26,6 +26,9 @@
  *   5 x 5 texels; coordinates partly beyond the edges, classes 3 and 1 textured) writes latent_renderer.
  *   sample_texture_basis()'s features at its channels of a wider output and leaves the others alone; its backward
  *   pass gives autograd's table and latent gradients
+ * - textureBasisRegularizeMatchesPyTorch: the feature texture's regularisation (decay 0.3 x squared texels + smoothness
+ *   0.7 x squared differences of neighbouring texels within each plane) adds latent_renderer.texture_basis_penalty()'s
+ *   gradient to the table's gradient
  * - composeMatchesPyTorch: the albedo renderer's image (mask x sigmoid(albedo) x 2 sigmoid(shading) + (1 - mask) x
  *   sigmoid(background)) and its gradients for the albedo's logit and the decoder's 4 outputs equal
  *   latent_renderer.compose()'s
@@ -74,6 +77,9 @@
  *   faces, a base and 4 latent layers of 5 channels at 4 x 4 and 8 x 8 texels): image, loss, every clipped gradient
  *   (the tables' and the latent table's too) and every parameter after the step (the tables by the texture's Adam)
  *   equal latent_renderer.TextureBasis's
+ * - basisRegularizedStepMatchesPyTorch: the same step with the feature texture regularised (decay 0.02, smoothness
+ *   0.05, each times the level's resolution over the coarsest's): the tables' gradients include
+ *   texture_basis_penalty()'s, and every parameter after the step equals PyTorch's
  * - latentsOnlyThroughTheTexture: forward only, two latents give different images with the texture whether or not
  *   the generator takes them; with the texture switched off they still differ when the generator takes them, and
  *   give the same image when only the texture does
@@ -577,6 +583,33 @@ TEST(PhotoEnhancerTraining, textureBasisMatchesPyTorch) {
     EXPECT_LT(worst, 1e-5f);
     EXPECT_LT(relativeError(read(tableGradient), fixture.values("dtable")), 1e-5f);
     EXPECT_LT(relativeError(read(latentGradient), fixture.values("dlatents")), 1e-5f);
+}
+
+TEST(PhotoEnhancerTraining, textureBasisRegularizeMatchesPyTorch) {
+    const Fixture fixture("texture_basis_penalty");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    training::TextureBasisShape shape;
+    shape.faces = 6;
+    shape.layers = 3;
+    shape.channels = 4;
+    shape.resolution = 5;
+    auto table = tensor(vc, {uint32_t(shape.tableSize())}), gradient = tensor(vc, {uint32_t(shape.tableSize())});
+    auto regularize = training::textureBasisRegularize(vc, shape, 0.3f, 0.7f);
+    regularize->setInput(table, 0);
+    regularize->setInput(gradient, 1);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(regularize);
+    table->getDataBuffer(0).memcopyFrom(fixture.values("table"));
+    // The penalty's gradient adds to what is there.
+    gradient->getDataBuffer(0).memcopyFrom(std::vector<float>(shape.tableSize(), 1.0f));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    auto expected = fixture.values("dtable");
+    for (auto& v : expected)
+        v += 1.0f;
+    EXPECT_LT(relativeError(read(gradient), expected), 1e-5f);
 }
 
 TEST(PhotoEnhancerTraining, composeMatchesPyTorch) {
@@ -1399,6 +1432,13 @@ TEST(PhotoEnhancerTraining, basisTextureStepMatchesPyTorch) {
     if (!fixture.exists())
         GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
     expectLatentStepMatches(fixture, "basis_texture_step", 0.0f, 0.0f, 0.0f, 5, false);
+}
+
+TEST(PhotoEnhancerTraining, basisRegularizedStepMatchesPyTorch) {
+    const Fixture fixture("basis_regularized_step");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_training_fixtures.py first";
+    expectLatentStepMatches(fixture, "basis_regularized_step", 0.0f, 0.0f, 0.0f, 5, false);
 }
 
 TEST(PhotoEnhancerTraining, latentsOnlyThroughTheTexture) {

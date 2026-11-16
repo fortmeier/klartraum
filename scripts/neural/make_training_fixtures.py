@@ -546,18 +546,20 @@ def mlp_texture_cases(out: Path, seed: int, perceptual: bool = True, case: str =
 
 
 def latent_table_cases(out: Path, seed: int, residual: tuple[tuple[int, int], ...] = (),
-                       case: str = "latent_table_step", basis: tuple[int, ...] = ()) -> None:
+                       case: str = "latent_table_step", basis: tuple[int, ...] = (), basis_decay: float = 0.0,
+                       basis_smoothness: float = 0.0) -> None:
     """One step of the latent renderer with a learned latent table instead of the encoder (an auto-decoder) and the
     latents only in the MLP texture (latent_to_decoder False): rows 3 and 1 of a 5-row table, L1 and block-mean L1
     plus the table's L2 penalty (1e-2 x the batch's mean squared row norm); the network clipped and stepped by Adam
     (1e-4), the table by its own Adam (5e-3, betas 0.9 and 0.99) unclipped. With `residual`, the MLP texture has
     those residual blocks (latent_renderer.ResidualMlpTexture), as `case`; with `basis` the code-mixed feature texture
     of these resolutions instead (latent_renderer.TextureBasis, tables from N(0, 0.1), stepped by the texture's Adam:
-    1e-2, betas 0.9 and 0.99, unclipped)."""
+    1e-2, betas 0.9 and 0.99, unclipped), regularised by texture_basis_penalty() with `basis_decay` and
+    `basis_smoothness` times each level's resolution over the coarsest's."""
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from latent_renderer import LatentRenderer, ResidualMlpTexture, TextureBasis
+    from latent_renderer import LatentRenderer, ResidualMlpTexture, TextureBasis, texture_basis_penalty
 
     generator = torch.Generator().manual_seed(seed)
     torch.manual_seed(seed)
@@ -598,6 +600,9 @@ def latent_table_cases(out: Path, seed: int, residual: tuple[tuple[int, int], ..
     image = model(geometry, coordinates, classes, objects, latents)
     photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
     loss = photometric + 1e-2 * table(rows).pow(2).sum(1).mean()
+    for level, resolution in enumerate(basis):
+        scale = resolution / basis[0]
+        loss = loss + texture_basis_penalty(texture.tables[level], scale * basis_decay, scale * basis_smoothness)
     network = list(network_parameters.values())
     groups = [{"params": network, "lr": 1e-4}, {"params": [table.weight], "lr": 5e-3, "betas": (0.9, 0.99)}]
     if basis:
@@ -618,6 +623,8 @@ def latent_table_cases(out: Path, seed: int, residual: tuple[tuple[int, int], ..
     description = f"width {size}\nheight {size}\nlevels 0\nfeatures 2\ntable 1\nresolutions\nclasses 3\n"
     if basis:
         description += f"basis {texture.channels} 6 " + " ".join(str(r) for r in basis) + "\n"
+        if basis_decay > 0 or basis_smoothness > 0:
+            description += f"basis-regularize {basis_decay} {basis_smoothness}\n"
     else:
         description += f"mlp {texture.first.frequencies} 16 {texture.channels} 2\n"
         if residual:
@@ -646,6 +653,12 @@ def texture_basis_cases(out: Path, seed: int) -> None:
     save(out, "texture_basis", {"table": table, "coordinates": coordinates, "classes": classes.float(),
                                 "latents": latents, "features": features, "upstream": upstream,
                                 "dtable": table.grad, "dlatents": latents.grad})
+    # Its regularisation: decay 0.3, smoothness 0.7.
+    from latent_renderer import texture_basis_penalty
+
+    table.grad = None
+    texture_basis_penalty(table, 0.3, 0.7).backward()
+    save(out, "texture_basis_penalty", {"table": table, "dtable": table.grad})
 
 
 def albedo_cases(out: Path, seed: int) -> None:
@@ -884,6 +897,8 @@ def main() -> None:
     latent_table_cases(args.out, 25, residual=((5, 12), (7, 8)), case="residual_mlp_step")
     texture_basis_cases(args.out, 27)
     latent_table_cases(args.out, 29, case="basis_texture_step", basis=(4, 8))
+    latent_table_cases(args.out, 31, case="basis_regularized_step", basis=(4, 8), basis_decay=0.02,
+                       basis_smoothness=0.05)
     albedo_cases(args.out, 22)
     augment_backward_case(args.out, 23)
     print(f"fixtures in {args.out}")

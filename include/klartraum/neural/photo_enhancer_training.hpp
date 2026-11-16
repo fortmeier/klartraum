@@ -48,9 +48,15 @@ struct TextureBasis {
     uint32_t channels = 0;             ///< features (0: no feature texture)
     std::vector<uint32_t> resolutions; ///< texels per side of each level
     uint32_t faces = 6;                ///< faces of the object (the third coordinate's id x faces)
+    /// Weights of the regularisation (training::textureBasisRegularize()) of the coarsest level: the squared texels'
+    /// and the squared differences of neighbouring texels'; level k's are these times resolutions[k] / resolutions[0],
+    /// so that finer levels, whose texels fewer pixels see, are held back more.
+    float decay = 0.0f;
+    float smoothness = 0.0f;
 
     bool enabled() const { return channels > 0 && !resolutions.empty(); }
-    /// The feature texture of a saved model (the "basis C F R1 R2 ..." line of its texture.txt), none without one.
+    /// The feature texture of a saved model (the "basis C F R1 R2 ..." and "basis-regularize D S" lines of its
+    /// texture.txt), none without one.
     static TextureBasis fromFile(const std::string& path);
 };
 

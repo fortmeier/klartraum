@@ -800,6 +800,7 @@ the held-out views are rendered with the codes' mean
 | `--texture-mlp F W K` | The latent-conditioned MLP texture instead: positional encoding of F octaves per surface coordinate and the crate's latent through two hidden layers of W channels to K features (needs `--latent`) |
 | `--texture-mlp-residual F1,W1,F2,W2,...` | Residual blocks after `--texture-mlp`'s MLP: block k an MLP of Fk octaves and hidden width Wk whose features add to the previous blocks', so that finer blocks correct what the coarser ones leave |
 | `--texture-basis C R1,R2,...` | The code-mixed feature texture instead (as Deferred Neural Rendering's neural texture): per crate face and resolution Rk x Rk texels, a base layer and one layer per latent number of C features; a pixel's features are the base plus each layer times its latent, summed over the resolutions (needs `--latent`) |
+| `--basis-decay D`, `--basis-smoothness S` | Regularise `--texture-basis`: D x the squared texels + S x the squared differences of neighbouring texels, for each level times its resolution over the coarsest's (default 0) |
 | `--texture-dense N R` | A plain dense texture instead: N components (1-4, or a multiple of 4 up to 64) per point at R cells per axis, indexed directly; `--texture-dense 0 0` trains without a texture |
 | `--texture L B F` | The surface texture's levels and their coarsest and finest cells per axis (default 12 16 2048) |
 | `--appearance D` | Size of the appearance codes (default 8, 0 for none) |

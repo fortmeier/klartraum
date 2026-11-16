@@ -310,6 +310,16 @@ ComputeGraphElementPtr textureBasis(VulkanContext& vulkanContext, const TextureB
 ComputeGraphElementPtr textureBasisBackward(VulkanContext& vulkanContext, const TextureBasisShape& shape);
 
 /**
+ * @brief Adds to a feature texture table's gradient (textureBasis()) the gradient of @p decay x the sum of its squared
+ * texels + @p smoothness x the sum of squared differences between neighbouring texels of the same plane (horizontal
+ * and vertical, none across a plane's edges), e.g. to keep texels that few pixels see from learning noise.
+ *
+ * Slots: 0 table, 1 table gradient.
+ */
+ComputeGraphElementPtr textureBasisRegularize(VulkanContext& vulkanContext, const TextureBasisShape& shape, float decay,
+                                              float smoothness);
+
+/**
  * @brief The positional encoding of surface coordinates for a texture MLP: per coordinate c of (u, v, id) and
  * frequency f < @p frequencies the pair sin(2^f pi x_c), cos(2^f pi x_c), then the three coordinates, so
  * 3 (2 frequencies + 1) channels; zero where the pixel's class is none of @p classes (at most 4).
