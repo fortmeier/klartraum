@@ -104,6 +104,14 @@ ComputeGraphElementPtr channelNormBackwardInput(VulkanContext& vulkanContext, co
  */
 ComputeGraphElementPtr channelNormBackwardParameters(VulkanContext& vulkanContext, const layers::Shape& shape);
 
+/**
+ * @brief The input gradient of a bilinear upsampling by two with half-pixel centres (layers::resizeLinear() of an
+ * N x C x H x W input to 2H x 2W, without alignCorners).
+ *
+ * Slots: 0 output gradient (N x C x 2H x 2W), 1 input gradient (@p input).
+ */
+ComputeGraphElementPtr upsample2xBackward(VulkanContext& vulkanContext, const layers::Shape& input);
+
 /** @brief Where channelCopy() reads and writes: channel ranges of two N x C x H x W tensors. */
 struct ChannelRange {
     uint32_t channels = 0; ///< of the whole tensor
@@ -161,6 +169,36 @@ ComputeGraphElementPtr linearBackwardInput(VulkanContext& vulkanContext, const L
  * Slots: 0 input, 1 output gradient, 2 weight gradients, 3 bias gradients.
  */
 ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const LinearShape& shape);
+
+/**
+ * @brief A 2 x 2 max-pool with stride 2 of an N x C x H x W tensor (F.max_pool2d(x, 2)), keeping which of its window's
+ * four elements each output took.
+ *
+ * Slots: 0 input, 1 output (N x C x H/2 x W/2), 2 the taken elements (as the output, 0..3 as floats).
+ */
+ComputeGraphElementPtr maxPool(VulkanContext& vulkanContext, const layers::Shape& input);
+
+/**
+ * @brief The input gradient of maxPool(): each window's output gradient to the element it took.
+ *
+ * Slots: 0 output gradient, 1 taken elements, 2 input gradient (@p input).
+ */
+ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layers::Shape& input);
+
+/**
+ * @brief A 2 x 2 average pool with stride 2 of an N x C x H x W tensor.
+ *
+ * Slots: 0 input, 1 output (N x C x H/2 x W/2).
+ */
+ComputeGraphElementPtr averagePool(VulkanContext& vulkanContext, const layers::Shape& input);
+
+/**
+ * @brief The input gradient of averagePool(), written or, with @p accumulate, added.
+ *
+ * Slots: 0 output gradient, 1 input gradient (@p input).
+ */
+ComputeGraphElementPtr averagePoolBackward(VulkanContext& vulkanContext, const layers::Shape& input,
+                                           bool accumulate = false);
 
 /**
  * @brief y = x * @p scale + @p shift for @p count elements; with @p backward the input gradient dy * @p scale.

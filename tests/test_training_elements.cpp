@@ -14,6 +14,11 @@
  *   1x1, 4x4 with stride 2) equal PyTorch autograd's for the same inputs and upstream gradient
  * - channelNormMatchesPyTorch: ChannelNorm's output and its input, scale and shift gradients equal PyTorch's
  *   (train_photo_enhancer.ChannelNorm)
+ * - upsampleBackwardMatchesPyTorch: the input gradient of a bilinear upsampling by two equals PyTorch's
+ *   (F.interpolate, align_corners=False)
+ * - maxPoolMatchesPyTorch: a 2 x 2 max-pool and its input gradient equal F.max_pool2d's
+ * - averagePoolMatchesMeans: a 2 x 2 average pool gives the mean of every 2 x 2 block, and its backward pass spreads a
+ *   quarter of each output gradient onto the block's pixels, written or added to what is there
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -254,4 +259,89 @@ TEST(TrainingElements, channelNormMatchesPyTorch) {
     EXPECT_LT(relativeError(read(dx), fixture.values("dx")), 1e-5f);
     EXPECT_LT(relativeError(read(dweight), fixture.values("dweight")), 1e-5f);
     EXPECT_LT(relativeError(read(dbias), fixture.values("dbias")), 1e-5f);
+}
+
+TEST(TrainingElements, upsampleBackwardMatchesPyTorch) {
+    const Fixture fixture("upsample2x");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("x");
+    checkElement(vc, fixture, training::upsample2xBackward(vc, shape), {{"dy", fixture.shapes.at("y")}, {"dx", shape}},
+                 1);
+}
+
+TEST(TrainingElements, maxPoolMatchesPyTorch) {
+    const Fixture fixture("max_pool");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("x"), pooled = fixture.shapes.at("y");
+    auto x = tensor(vc, shape), y = tensor(vc, pooled), taken = tensor(vc, pooled), dy = tensor(vc, pooled);
+    auto dx = tensor(vc, shape);
+    auto forward = training::maxPool(vc, shape);
+    forward->setInput(x, 0);
+    forward->setInput(y, 1);
+    forward->setInput(taken, 2);
+    auto backward = training::maxPoolBackward(vc, shape);
+    backward->setInput(dy, 0);
+    backward->setInput(taken, 1);
+    backward->setInput(dx, 2);
+    backward->addDependency(forward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    x->getDataBuffer(0).memcopyFrom(fixture.values("x"));
+    dy->getDataBuffer(0).memcopyFrom(fixture.values("dy"));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_EQ(read(y), fixture.values("y"));
+    EXPECT_EQ(read(dx), fixture.values("dx"));
+}
+
+TEST(TrainingElements, averagePoolMatchesMeans) {
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const std::vector<uint32_t> shape{2, 3, 4, 6}, pooled{2, 3, 2, 3};
+    auto x = tensor(vc, shape), y = tensor(vc, pooled), dy = tensor(vc, pooled), dx = tensor(vc, shape);
+    auto dxAdded = tensor(vc, shape);
+    auto forward = training::averagePool(vc, shape);
+    forward->setInput(x, 0);
+    forward->setInput(y, 1);
+    auto backward = training::averagePoolBackward(vc, shape);
+    backward->setInput(dy, 0);
+    backward->setInput(dx, 1);
+    backward->addDependency(forward);
+    auto added = training::averagePoolBackward(vc, shape, true);
+    added->setInput(dy, 0);
+    added->setInput(dxAdded, 1);
+    added->addDependency(backward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(added);
+    std::mt19937 rng(3);
+    std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
+    std::vector<float> xs(2 * 3 * 4 * 6), dys(2 * 3 * 2 * 3);
+    for (auto& v : xs)
+        v = uniform(rng);
+    for (auto& v : dys)
+        v = uniform(rng);
+    x->getDataBuffer(0).memcopyFrom(xs);
+    dy->getDataBuffer(0).memcopyFrom(dys);
+    dxAdded->getDataBuffer(0).memcopyFrom(std::vector<float>(xs.size(), 1.0f));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto ys = read(y), dxs = read(dx), dxsAdded = read(dxAdded);
+    for (uint32_t plane = 0; plane < 6; ++plane)
+        for (uint32_t oy = 0; oy < 2; ++oy)
+            for (uint32_t ox = 0; ox < 3; ++ox) {
+                float mean = 0.0f;
+                for (uint32_t k = 0; k < 4; ++k)
+                    mean += 0.25f * xs[(plane * 4 + 2 * oy + k / 2) * 6 + 2 * ox + k % 2];
+                const size_t o = (plane * 2 + oy) * 3 + ox;
+                EXPECT_NEAR(ys[o], mean, 1e-6f);
+                for (uint32_t k = 0; k < 4; ++k) {
+                    const size_t i = (plane * 4 + 2 * oy + k / 2) * 6 + 2 * ox + k % 2;
+                    EXPECT_NEAR(dxs[i], 0.25f * dys[o], 1e-6f);
+                    EXPECT_NEAR(dxsAdded[i], 1.0f + 0.25f * dys[o], 1e-6f);
+                }
+            }
 }

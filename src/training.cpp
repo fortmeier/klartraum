@@ -66,6 +66,14 @@ struct LinearPushConstants {
     uint32_t accumulate;
 };
 
+struct PoolPushConstants {
+    uint32_t planes, inputHeight, inputWidth;
+};
+
+struct AveragePoolPushConstants {
+    uint32_t planes, inputHeight, inputWidth, accumulate;
+};
+
 struct ScalarAffinePushConstants {
     uint32_t count;
     float scale, shift;
@@ -75,6 +83,10 @@ struct ScalarAffinePushConstants {
 struct NormPushConstants {
     uint32_t batch, channels, pixels;
     float epsilon;
+};
+
+struct UpsamplePushConstants {
+    uint32_t planes, inputHeight, inputWidth;
 };
 
 struct ChannelCopyPushConstants {
@@ -147,6 +159,16 @@ ComputeGraphElementPtr channelNormBackwardParameters(VulkanContext& vulkanContex
     return operation;
 }
 
+ComputeGraphElementPtr upsample2xBackward(VulkanContext& vulkanContext, const layers::Shape& input) {
+    if (input.size() != 4)
+        throw std::invalid_argument("upsample2xBackward: needs an N x C x H x W shape");
+    auto operation = vulkanContext.create<GeneralComputation<UpsamplePushConstants>>(
+        "shaders/training/upsample2x_backward.comp.spv");
+    operation->setPushConstants({{input[0] * input[1], input[2], input[3]}});
+    operation->setGroupCountX((layers::elementCount(input) + 255) / 256);
+    return operation;
+}
+
 ComputeGraphElementPtr channelCopy(VulkanContext& vulkanContext, uint32_t batch, uint32_t pixels, ChannelRange source,
                                    ChannelRange target, uint32_t count, bool accumulate) {
     if (source.offset + count > source.channels || target.offset + count > target.channels)
@@ -193,6 +215,41 @@ ComputeGraphElementPtr linearBackwardWeights(VulkanContext& vulkanContext, const
         "shaders/training/linear_backward_weights.comp.spv");
     operation->setPushConstants({{shape.batch, shape.inputs, shape.outputs, 0.0f, 0u}});
     operation->setGroupCountX((shape.outputs * (shape.inputs + 1) + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr maxPool(VulkanContext& vulkanContext, const layers::Shape& input) {
+    const auto [n, c, pixels] = planesOf(input);
+    auto operation = vulkanContext.create<GeneralComputation<PoolPushConstants>>("shaders/training/max_pool.comp.spv");
+    operation->setPushConstants({{n * c, input[2], input[3]}});
+    operation->setGroupCountX((n * c * (input[2] / 2) * (input[3] / 2) + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layers::Shape& input) {
+    const auto [n, c, pixels] = planesOf(input);
+    auto operation =
+        vulkanContext.create<GeneralComputation<PoolPushConstants>>("shaders/training/max_pool_backward.comp.spv");
+    operation->setPushConstants({{n * c, input[2], input[3]}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr averagePool(VulkanContext& vulkanContext, const layers::Shape& input) {
+    const auto [n, c, pixels] = planesOf(input);
+    auto operation =
+        vulkanContext.create<GeneralComputation<AveragePoolPushConstants>>("shaders/training/average_pool.comp.spv");
+    operation->setPushConstants({{n * c, input[2], input[3], 0u}});
+    operation->setGroupCountX((n * c * (input[2] / 2) * (input[3] / 2) + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr averagePoolBackward(VulkanContext& vulkanContext, const layers::Shape& input, bool accumulate) {
+    const auto [n, c, pixels] = planesOf(input);
+    auto operation = vulkanContext.create<GeneralComputation<AveragePoolPushConstants>>(
+        "shaders/training/average_pool_backward.comp.spv");
+    operation->setPushConstants({{n * c, input[2], input[3], accumulate ? 1u : 0u}});
+    operation->setGroupCountX((n * c * pixels + 255) / 256);
     return operation;
 }
 
