@@ -54,12 +54,18 @@ struct SplatRasterOptions {
  * The camera of the drawn view comes from @p cameras (column-major 4x4 per view, clip from world) at the index in
  * slot @p viewSlot of @p viewSource: the element writing the one-element uint32 view index, or the buffer itself
  * with slot -1.
+ *
+ * With @p stopDepthSource (one float per pixel, in clip w like the splat depths, from slot @p stopDepthSlot; the
+ * buffer itself with slot -1) each pixel's blending ends at its first splat at or behind that depth, e.g. at the
+ * nearest surface of meshes drawn behind the Gaussians: the coverage then leaves the remaining transmittance to
+ * what lies there. The backward chain needs no change, since it walks back from where the blending ended.
  */
 class SplatForward {
 public:
     SplatForward(VulkanContext& vulkanContext, const SplatParameters& parameters,
                  const std::shared_ptr<TensorElement<float>>& cameras, const ComputeGraphElementPtr& viewSource,
-                 int viewSlot, const SplatRasterOptions& options);
+                 int viewSlot, const SplatRasterOptions& options,
+                 const ComputeGraphElementPtr& stopDepthSource = nullptr, int stopDepthSlot = -1);
 
     using UintBuffer = BufferElement<VulkanBuffer<uint32_t>>;
 

@@ -5,14 +5,16 @@
 // Blends the depth-sorted splats of each tile front to back (one workgroup per tile, one invocation per pixel):
 //   colour = sum_i c_i a_i T_i, T_(i+1) = T_i (1 - a_i), coverage = 1 - T_final,
 // with a_i = min(splatAlpha, MAX_ALPHA), splats below MIN_ALPHA skipped and blending stopped before T would fall below
-// MIN_TRANSMITTANCE. Writes premultiplied rgb and coverage, and per pixel how many of the tile's instances it went
-// through (the backward kernel walks back from there).
+// MIN_TRANSMITTANCE. With stopAtDepth the blending also ends at the first splat at or behind the pixel's stop depth
+// (the splats are sorted by depth). Writes premultiplied rgb and coverage, and per pixel how many of the tile's
+// instances it went through (the backward kernel walks back from there).
 import splat_common;
 
 struct PushConstants {
     uint width;
     uint height;
     uint tilesX;
+    uint stopAtDepth; // 1: read stopDepth
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -21,6 +23,7 @@ struct PushConstants {
 [[vk::binding(2, 0)]] StructuredBuffer<uint2> ranges;     // per tile
 [[vk::binding(3, 0)]] RWStructuredBuffer<float4> colors;  // per pixel
 [[vk::binding(4, 0)]] RWStructuredBuffer<uint> lastContributor; // per pixel
+[[vk::binding(5, 0)]] StructuredBuffer<float> stopDepth;        // per pixel, in clip w (one unused float without)
 
 static const uint BATCH = TILE * TILE;
 // The batch of splats the workgroup currently blends.
@@ -38,6 +41,7 @@ void main(uint3 groupId: SV_GroupID, uint3 localId: SV_GroupThreadID, uint local
     float3 color = 0.0;
     float transmittance = 1.0;
     bool blending = inside;
+    const float stop = inside && pc.stopAtDepth != 0u ? stopDepth[pixel.y * pc.width + pixel.x] : 1.0 / 0.0;
     uint last = 0u;
     for (uint start = range.x; start < range.y; start += BATCH) {
         if (start + localIndex < range.y) {
@@ -49,6 +53,10 @@ void main(uint3 groupId: SV_GroupID, uint3 localId: SV_GroupThreadID, uint local
         GroupMemoryBarrierWithGroupSync();
         const uint n = min(BATCH, range.y - start);
         for (uint j = 0u; blending && j < n; ++j) {
+            if (batchMean[j].z >= stop) {
+                blending = false;
+                break;
+            }
             const float alpha = min(splatAlpha(batchMean[j].xy, batchConic[j].xyz, batchConic[j].w, centre), MAX_ALPHA);
             if (alpha < MIN_ALPHA) continue;
             const float next = transmittance * (1.0 - alpha);

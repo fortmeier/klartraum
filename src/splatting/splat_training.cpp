@@ -40,6 +40,10 @@ struct RenderPushConstants {
     uint32_t width, height, tilesX;
 };
 
+struct BlendPushConstants {
+    uint32_t width, height, tilesX, stopAtDepth;
+};
+
 struct ProjectBackwardPushConstants {
     uint32_t count, width, height;
 };
@@ -76,7 +80,8 @@ SplatParameters createSplatParameters(VulkanContext& vulkanContext, uint32_t cou
 
 SplatForward::SplatForward(VulkanContext& vulkanContext, const SplatParameters& parameters,
                            const std::shared_ptr<TensorElement<float>>& cameras,
-                           const ComputeGraphElementPtr& viewSource, int viewSlot, const SplatRasterOptions& options)
+                           const ComputeGraphElementPtr& viewSource, int viewSlot, const SplatRasterOptions& options,
+                           const ComputeGraphElementPtr& stopDepthSource, int stopDepthSlot)
     : options(options) {
     tilesX = (options.width + kTile - 1) / kTile;
     tilesY = (options.height + kTile - 1) / kTile;
@@ -155,14 +160,18 @@ SplatForward::SplatForward(VulkanContext& vulkanContext, const SplatParameters& 
     ranges = tileRange;
 
     auto blend =
-        vulkanContext.create<GeneralComputation<RenderPushConstants>>("shaders/splatting/splat_render.comp.spv");
-    blend->setPushConstants({{options.width, options.height, tilesX}});
+        vulkanContext.create<GeneralComputation<BlendPushConstants>>("shaders/splatting/splat_render.comp.spv");
+    blend->setPushConstants({{options.width, options.height, tilesX, stopDepthSource ? 1u : 0u}});
     blend->setGroupCount(tilesX, tilesY, 1);
     blend->setInput(project, 0, 7);
     blend->setInput(sort, 1, 1);
     blend->setInput(ranges, 2, 2);
     blend->setInput(colors, 3);
     blend->setInput(lastContributor, 4);
+    if (stopDepthSource)
+        blend->setInput(stopDepthSource, 5, stopDepthSlot);
+    else
+        blend->setInput(vulkanContext.create<TensorElement<float>>(std::vector<uint32_t>{1}), 5);
     render = blend;
 }
 
