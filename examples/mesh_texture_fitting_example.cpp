@@ -11,7 +11,8 @@
 // instead: training on the scene's training views, evaluating on its validation views.
 //
 // Usage: mesh_texture_fitting_example [--epochs N] [--size S] [--views V] [--scene DIR] [--texture-width W]
-//                                     [--laplacian L]
+//                                     [--laplacian L] [--final-lr F]
+//                                     [--display-view N]
 // Writes target views, progress frames of a held-out view and the fitted mesh with its texture to
 // build/TestingOutput/mesh_texture_fitting/ (a subdirectory per scene with --scene).
 
@@ -78,11 +79,72 @@ std::pair<double, double> compare(const std::vector<float>& images, const std::v
     return {double(both) / double(std::max(either, 1)), 10.0 * std::log10(count / std::max(squaredError, 1e-12))};
 }
 
+// The position of the camera of a clip-from-world matrix: the point with clip x, y and w zero.
+glm::vec3 cameraCentre(const glm::mat4& clipFromWorld) {
+    glm::mat3 rows;
+    glm::vec3 offsets;
+    for (int r = 0, i = 0; r < 4; ++r) {
+        if (r == 2)
+            continue;
+        rows[0][i] = clipFromWorld[0][r]; // glm: [column][row]
+        rows[1][i] = clipFromWorld[1][r];
+        rows[2][i] = clipFromWorld[2][r];
+        offsets[i++] = -clipFromWorld[3][r];
+    }
+    return glm::inverse(rows) * offsets;
+}
+
+// An image of four floats per pixel with its size.
+struct Image {
+    std::vector<float> pixels;
+    uint32_t width = 0, height = 0;
+};
+
+// Turns an image by 90 degrees clockwise.
+Image turnClockwise(const Image& image) {
+    Image result{std::vector<float>(image.pixels.size()), image.height, image.width};
+    for (uint32_t y = 0; y < result.height; ++y)
+        for (uint32_t x = 0; x < result.width; ++x)
+            for (int c = 0; c < 4; ++c)
+                result.pixels[4 * (size_t(y) * result.width + x) + c] =
+                    image.pixels[4 * (size_t(image.height - 1 - x) * image.width + y) + c];
+    return result;
+}
+
+// Centres an image on a transparent square of side `side`.
+Image padToSquare(const Image& image, uint32_t side) {
+    Image result{std::vector<float>(4 * size_t(side) * side, 0.0f), side, side};
+    const uint32_t left = (side - image.width) / 2, top = (side - image.height) / 2;
+    for (uint32_t y = 0; y < image.height; ++y)
+        std::copy_n(&image.pixels[4 * size_t(y) * image.width], 4 * image.width,
+                    &result.pixels[4 * (size_t(y + top) * side + left)]);
+    return result;
+}
+
+// How many clockwise quarter turns make `up`, seen by `camera` from the point `at`, point up on the screen.
+int uprightTurns(const glm::mat4& camera, glm::vec3 at, glm::vec3 up) {
+    const glm::vec4 a = camera * glm::vec4(at, 1.0f), b = camera * glm::vec4(at + 0.1f * up, 1.0f);
+    glm::vec2 direction = glm::vec2(b) / b.w - glm::vec2(a) / a.w; // y down, like the screen
+    int best = 0;
+    float bestUp = -2.0f;
+    for (int turns = 0; turns < 4; ++turns) {
+        const float upness = -glm::normalize(direction).y;
+        if (upness > bestUp) {
+            bestUp = upness;
+            best = turns;
+        }
+        direction = glm::vec2(-direction.y, direction.x); // a clockwise quarter turn on the screen
+    }
+    return best;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     uint32_t epochs = 60, size = 128, views = 24, textureWidth = 0;
     float laplacianWeight = -1.0f; // negative: the default of MeshTrainingOptions
+    float finalLearningRate = 0.1f;
+    int displayView = -1; // with --scene: the photo whose side of the object the progress frames show
     std::filesystem::path sceneDirectory;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
@@ -96,6 +158,10 @@ int main(int argc, char** argv) {
             sceneDirectory = argv[++i];
         else if (argument == "--texture-width" && i + 1 < argc)
             textureWidth = uint32_t(std::stoul(argv[++i]));
+        else if (argument == "--display-view" && i + 1 < argc)
+            displayView = std::stoi(argv[++i]);
+        else if (argument == "--final-lr" && i + 1 < argc)
+            finalLearningRate = std::stof(argv[++i]);
         else if (argument == "--laplacian" && i + 1 < argc)
             laplacianWeight = std::stof(argv[++i]);
     }
@@ -109,6 +175,9 @@ int main(int argc, char** argv) {
     glm::mat4 sceneFromUnit(1.0f);
     std::filesystem::path output = "build/TestingOutput/mesh_texture_fitting";
     raster::TriangleMesh truth;
+    // With --scene, the progress frames show a photo (turned upright) beside the fit seen upright from that side.
+    Image displayPhoto;
+    glm::mat4 displayCamera(1.0f);
 
     if (sceneDirectory.empty()) {
         // The synthetic pumpkin, rendered from training views on three rings (below, at and above the equator) and
@@ -140,6 +209,28 @@ int main(int argc, char** argv) {
         targets = scene.targetsOf(scene.train);
         heldOutTargets = scene.targetsOf(scene.validation);
         output /= sceneDirectory.filename();
+        // Up: the cameras stand above the ground, so their mean direction from the object. The display camera looks
+        // horizontally at the side the display photo shows, from a little above.
+        glm::vec3 up(0.0f);
+        std::vector<glm::mat4> unitCameras;
+        for (const auto& camera : scene.cameras) {
+            unitCameras.push_back(camera * sceneFromUnit);
+            up += glm::normalize(cameraCentre(unitCameras.back()));
+        }
+        up = glm::normalize(up);
+        const uint32_t shown = displayView >= 0 ? uint32_t(displayView) : scene.validation.at(0);
+        const glm::vec3 seen = cameraCentre(unitCameras.at(shown));
+        const glm::vec3 side = glm::normalize(seen - glm::dot(seen, up) * up);
+        const float elevation = 0.3f;
+        const glm::vec3 eye = 3.5f * (std::cos(elevation) * side + std::sin(elevation) * up);
+        glm::mat4 projection = glm::perspectiveRH_ZO(0.8f, 1.0f, 0.1f, 20.0f);
+        projection[1][1] *= -1.0f; // Vulkan: y down
+        displayCamera = projection * glm::lookAtRH(eye, glm::vec3(0.0f), up);
+        displayPhoto = {scene.targetsOf({shown}), scene.width, scene.height};
+        for (int turn = uprightTurns(unitCameras[shown], glm::vec3(0.0f), up); turn > 0; --turn)
+            displayPhoto = turnClockwise(displayPhoto);
+        std::cout << "progress frames: view " << shown << " (turned upright) beside the fit seen from its side"
+                  << std::endl;
         options.textureWidth = 128;
         options.textureHeight = 64;
     }
@@ -148,6 +239,11 @@ int main(int argc, char** argv) {
     if (textureWidth > 0) {
         options.textureWidth = textureWidth;
         options.textureHeight = std::max(1u, textureWidth / 2);
+    }
+    // The learning rates decay over the whole run, so the fit settles instead of jittering between views.
+    for (auto* adam : {&options.geometry, &options.texture}) {
+        adam->decaySteps = epochs * uint32_t(cameras.size());
+        adam->finalFactor = finalLearningRate;
     }
     std::filesystem::create_directories(output / "frames");
     const uint32_t width = options.width, height = options.height;
@@ -170,11 +266,21 @@ int main(int argc, char** argv) {
               << " pixels; " << heldOut.size() << " held-out views, start silhouette IoU " << startIou << std::endl;
     double trainingSeconds = 0.0;
     for (uint32_t epoch = 0; epoch <= epochs; ++epoch) {
-        // A progress frame: the first held-out view's target beside the current fit.
-        const std::vector<float> image = render({heldOut[0]});
+        // A progress frame: the first held-out view's target beside the current fit, or with --scene the display
+        // photo beside the fit seen upright from its side.
         std::ostringstream name;
         name << "epoch_" << std::setw(4) << std::setfill('0') << epoch << ".ppm";
-        writePpm(output / "frames" / name.str(), {heldOutTargets.data(), image.data()}, width, height);
+        if (displayPhoto.pixels.empty()) {
+            const std::vector<float> image = render({heldOut[0]});
+            writePpm(output / "frames" / name.str(), {heldOutTargets.data(), image.data()}, width, height);
+        } else {
+            const uint32_t side = std::max(width, height);
+            const std::vector<float> fit =
+                raster::renderImages(vulkanContext, training.mesh(), training.texture(), options.textureWidth,
+                                     options.textureHeight, {displayCamera}, side, side);
+            const Image photo = padToSquare(displayPhoto, side);
+            writePpm(output / "frames" / name.str(), {photo.pixels.data(), fit.data()}, side, side);
+        }
         if (epoch == epochs)
             break;
         double loss = 0.0;

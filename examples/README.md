@@ -273,6 +273,8 @@ next to the true mesh.
 | `--scene DIR` | Fit photographs prepared by `scripts/mesh_fitting/prepare_data.py` instead of the synthetic pumpkin |
 | `--texture-width W` | Texture width in texels, height W/2 (default 64, or 128 with `--scene`) |
 | `--laplacian L` | Weight of the Laplacian smoothness term (default 100) |
+| `--final-lr F` | Learning rates decay exponentially over the run to F times their start (default 0.1) |
+| `--display-view N` | With `--scene`: progress frames show photo N, turned upright, beside the fit seen upright from that side (default: the first validation view) |
 
 ```bash
 ./build/examples/mesh_texture_fitting_example
