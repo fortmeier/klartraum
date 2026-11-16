@@ -26,6 +26,32 @@ float polar(const glm::vec3& p) { return std::acos(std::clamp(p.y / glm::length(
 
 } // namespace
 
+TriangleMesh subdivide(const TriangleMesh& mesh) {
+    TriangleMesh result;
+    result.positions = mesh.positions;
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> midpoints;
+    const auto midpoint = [&](uint32_t a, uint32_t b) {
+        const auto key = std::minmax(a, b);
+        const auto found = midpoints.find(key);
+        if (found != midpoints.end())
+            return found->second;
+        const uint32_t index = uint32_t(result.positions.size());
+        result.positions.push_back(0.5f * (mesh.positions[a] + mesh.positions[b]));
+        midpoints.emplace(key, index);
+        return index;
+    };
+    for (size_t t = 0; t < mesh.triangles.size(); ++t) {
+        const glm::uvec3 v = mesh.triangles[t];
+        const glm::vec2* uv = &mesh.cornerUvs[3 * t];
+        const uint32_t ab = midpoint(v.x, v.y), bc = midpoint(v.y, v.z), ca = midpoint(v.z, v.x);
+        const glm::vec2 uvAb = 0.5f * (uv[0] + uv[1]), uvBc = 0.5f * (uv[1] + uv[2]), uvCa = 0.5f * (uv[2] + uv[0]);
+        result.triangles.insert(result.triangles.end(), {{v.x, ab, ca}, {ab, v.y, bc}, {ca, bc, v.z}, {ab, bc, ca}});
+        result.cornerUvs.insert(result.cornerUvs.end(),
+                                {uv[0], uvAb, uvCa, uvAb, uv[1], uvBc, uvCa, uvBc, uv[2], uvAb, uvBc, uvCa});
+    }
+    return result;
+}
+
 TriangleMesh icosphere(uint32_t subdivisions) {
     const float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
     std::vector<glm::vec3> positions = {{-1, t, 0},  {1, t, 0},  {-1, -t, 0}, {1, -t, 0}, {0, -1, t},  {0, 1, t},

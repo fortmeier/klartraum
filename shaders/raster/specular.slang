@@ -7,7 +7,8 @@
 // texture. Per texel the material holds an offset of the surface normal (a normal map, in object space) and the
 // specular amplitude a; the environment is LIGHTS directions d_k with amplitudes b_k and one exponent e, shared by all
 // views. A covered pixel adds the grey
-//   a^2 sum_k b_k^2 max(dot(r, normalize(d_k)), 0)^e,   r = reflect(-v, normalize(n + offset)),
+//   a^2 sum_k b_k^2 max(dot(r, normalize(d_k)), 0)^e,   r = reflect(-v, normalize(n + offset)),   e = 6 + exp(x),
+// with x the learned exponent parameter (the floor keeps the term a highlight, not a broad brightening),
 // with n the smooth normal (the vertex normals interpolated perspective-correctly) and v the direction to the view's
 // eye. Slang's bwd_diff gives the gradients of the material (through the bilinear lookup's weights) and of the lights.
 module specular;
@@ -17,7 +18,7 @@ import differentiable_shading;
 public static const uint LIGHTS = 4;
 
 [[vk::binding(8, 0)]] public StructuredBuffer<float4> material;      // per texel: normal offset xyz, amplitude
-[[vk::binding(9, 0)]] public StructuredBuffer<float4> lights;        // LIGHTS (direction xyz, amplitude), (log e)
+[[vk::binding(9, 0)]] public StructuredBuffer<float4> lights;        // LIGHTS (direction xyz, amplitude), (x)
 [[vk::binding(10, 0)]] public StructuredBuffer<float4> vertexNormals; // per vertex: sum of area normals, xyz
 [[vk::binding(11, 0)]] public StructuredBuffer<float4> eyes;         // per view: the camera's position, xyz
 
@@ -27,7 +28,7 @@ public float specularOf(float3 offset, float amplitude, float4 l0, float4 l1, fl
                         float logExponent, no_diff float3 normal, no_diff float3 toEye) {
     const float3 n = normalize(normal + offset);
     const float3 r = 2.0 * dot(n, toEye) * n - toEye;
-    const float e = exp(logExponent);
+    const float e = 6.0 + exp(logExponent);
     float sum = 0.0;
     [ForceUnroll]
     for (int k = 0; k < 4; ++k) {

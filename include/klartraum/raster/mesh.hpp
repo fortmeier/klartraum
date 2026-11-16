@@ -33,6 +33,12 @@ struct TriangleMesh {
 TriangleMesh icosphere(uint32_t subdivisions);
 
 /**
+ * @brief @p mesh with every triangle split into four at its edges' midpoints (shared by the triangles meeting there),
+ * the same surface with four times the triangles; corner texture coordinates are interpolated.
+ */
+TriangleMesh subdivide(const TriangleMesh& mesh);
+
+/**
  * @brief The synthetic pumpkin of the tests and the demo: the unit icosphere scaled per vertex by
  * 1 + ribDepth * cos(ribs * longitude) * sin(polar angle), flattened to @p height along y, with a stem bump at the
  * top.
