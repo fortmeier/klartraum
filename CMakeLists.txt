@@ -276,6 +276,9 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_tree_wind.cpp
+  tests/test_tree_rendering.cpp
+  tests/test_tree_leaves.cpp
   tests/test_tree_model.cpp
   tests/test_tree_generation.cpp
   tests/test_hash_texture.cpp
@@ -371,6 +374,8 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/tree_stem_renderer.cpp
+  src/tree_leaf_renderer.cpp
   src/tree_model.cpp
   src/tree_generator.cpp
   src/hash_texture.cpp
