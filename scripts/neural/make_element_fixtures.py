@@ -263,6 +263,30 @@ def positional_encoding_case(out: Path, seed: int) -> None:
                                       "encoding": positional_encoding(coordinates, classes, 4, (3, 1))})
 
 
+def texture_basis_cases(out: Path, seed: int) -> None:
+    """The code-mixed feature texture of one resolution: 2 samples of 5 x 7 pixels, random coordinates (some beyond
+    the edges) and classes (textured: 3 and 1), 6 faces, 3 layers (2 latents), 4 channels, 5 x 5 texels; the features
+    and, for a random upstream gradient, the table's and latents' gradients; then its regularisation (decay 0.3,
+    smoothness 0.7) and the table's gradient of it."""
+    from training_reference import sample_texture_basis, texture_basis_penalty
+
+    generator = torch.Generator().manual_seed(seed)
+    table = torch.randn(6, 3, 4, 5, 5, generator=generator, requires_grad=True)
+    coordinates = torch.rand(2, 3, 5, 7, generator=generator) * 1.2 - 0.1
+    coordinates[:, 2] = torch.rand(2, 5, 7, generator=generator)
+    classes = torch.randint(0, 5, (2, 5, 7), generator=generator)
+    latents = torch.randn(2, 2, 5, 7, generator=generator, requires_grad=True)
+    features = sample_texture_basis(table, coordinates, classes, latents, (3, 1))
+    upstream = torch.randn(features.shape, generator=generator)
+    (features * upstream).sum().backward()
+    save(out, "texture_basis", {"table": table, "coordinates": coordinates, "classes": classes.float(),
+                                "latents": latents, "features": features, "upstream": upstream,
+                                "dtable": table.grad, "dlatents": latents.grad})
+    table.grad = None
+    texture_basis_penalty(table, 0.3, 0.7).backward()
+    save(out, "texture_basis_penalty", {"table": table, "dtable": table.grad})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -287,6 +311,7 @@ def main() -> None:
     flow_warp_case(args.out, 19)
     hash_texture_case(args.out, 10)
     positional_encoding_case(args.out, 21)
+    texture_basis_cases(args.out, 27)
     print(f"fixtures in {args.out}")
 
 

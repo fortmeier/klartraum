@@ -132,3 +132,43 @@ def positional_encoding(coordinates: torch.Tensor, classes: torch.Tensor, freque
     for texture_class in texture_classes:
         mask = mask + (classes == texture_class).to(coordinates.dtype)
     return torch.stack(channels, dim=1) * mask[:, None]
+
+
+def sample_texture_basis(tables: torch.Tensor, coordinates: torch.Tensor, classes: torch.Tensor,
+                         latent_gbuffer: torch.Tensor, textured: tuple[int, ...] = (3,)) -> torch.Tensor:
+    """The code-mixed feature texture of one resolution: `tables` [faces, layers, channels, R, R]; every pixel of a
+    textured class gets its face's (floor(id x faces) of the third coordinate) layer 0 plus layer k + 1 times its
+    latent k, sampled bilinearly at (u, v) with texel centres at (i + 0.5) / R, clamped; zero elsewhere."""
+    faces, layers, channels, resolution, _ = tables.shape
+    n, _, h, w = coordinates.shape
+    u, v, ids = coordinates[:, 0], coordinates[:, 1], coordinates[:, 2]
+    face = (ids * faces).floor().clamp(0, faces - 1).long()
+    x = (u * resolution - 0.5).clamp(0, resolution - 1)
+    y = (v * resolution - 0.5).clamp(0, resolution - 1)
+    x0, y0 = x.floor().long(), y.floor().long()
+    x1, y1 = (x0 + 1).clamp(max=resolution - 1), (y0 + 1).clamp(max=resolution - 1)
+    ax, ay = (x - x0.float())[:, None], (y - y0.float())[:, None]
+    flat = tables.reshape(faces, layers * channels, resolution * resolution)
+
+    def at(yy, xx):  # [n, layers * channels, h, w]
+        index = (yy * resolution + xx).reshape(n, 1, h * w).expand(n, layers * channels, h * w)
+        rows = flat[face.reshape(n, h * w)]  # [n, h w, layers * channels, R R]
+        picked = rows.gather(3, index.permute(0, 2, 1).unsqueeze(3)).squeeze(3)  # [n, h w, layers * channels]
+        return picked.permute(0, 2, 1).reshape(n, layers * channels, h, w)
+
+    sample = ((1 - ax) * (1 - ay) * at(y0, x0) + ax * (1 - ay) * at(y0, x1) + (1 - ax) * ay * at(y1, x0)
+              + ax * ay * at(y1, x1)).reshape(n, layers, channels, h, w)
+    scales = torch.cat([torch.ones(n, 1, h, w, dtype=sample.dtype), latent_gbuffer], dim=1)
+    features = (sample * scales[:, :, None]).sum(1)
+    mask = torch.zeros_like(classes, dtype=sample.dtype)
+    for c in textured:
+        mask = mask + (classes == c).to(sample.dtype)
+    return features * mask[:, None]
+
+
+def texture_basis_penalty(table: torch.Tensor, decay: float, smoothness: float) -> torch.Tensor:
+    """decay x the sum of squared texels + smoothness x the sum of squared differences between neighbouring texels of
+    the same plane (the last two dimensions), horizontally and vertically."""
+    dx = table[..., :, 1:] - table[..., :, :-1]
+    dy = table[..., 1:, :] - table[..., :-1, :]
+    return decay * table.pow(2).sum() + smoothness * (dx.pow(2).sum() + dy.pow(2).sum())

@@ -47,6 +47,10 @@
  *   atomic additions into a zeroed gradient) equal PyTorch's (hash_texture.SurfaceTexture)
  * - positionalEncodingMatchesPyTorch: the positional encoding of surface coordinates (sine and cosine of 4 octaves per
  *   coordinate, then the coordinates; zero off the texture's classes) equals latent_renderer.positional_encoding()'s
+ * - textureBasisMatchesPyTorch: the code-mixed feature texture (6 faces, a base and 2 latent layers of 4 channels at
+ *   5 x 5 texels; coordinates partly beyond the edges, classes 3 and 1 textured) writes latent_renderer.
+ *   sample_texture_basis()'s features at its channels of a wider output and leaves the others alone; its backward
+ *   pass gives autograd's table and latent gradients
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -818,4 +822,71 @@ TEST(TrainingElements, positionalEncodingMatchesPyTorch) {
     for (size_t i = 0; i < actual.size(); ++i)
         worst = std::max(worst, std::abs(actual[i] - expected[i]));
     EXPECT_LT(worst, 1e-5f);
+}
+
+TEST(TrainingElements, textureBasisMatchesPyTorch) {
+    const Fixture fixture("texture_basis");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    // 2 samples of 5 x 7 pixels; the features at channels 2..5 of a 6-channel output.
+    const uint32_t n = 2, pixels = 35, channels = 4, outputChannels = 6;
+    training::TextureBasisShape shape;
+    shape.batch = n;
+    shape.pixels = pixels;
+    shape.faces = 6;
+    shape.layers = 3;
+    shape.channels = channels;
+    shape.resolution = 5;
+    shape.classes = {3, 1};
+    shape.outputChannels = outputChannels;
+    shape.outputOffset = 2;
+    auto coordinates = tensor(vc, {n, 3, 5, 7}), classes = tensor(vc, {n, 5, 7});
+    auto table = tensor(vc, {uint32_t(shape.tableSize())}), latents = tensor(vc, {n, 2, 5, 7});
+    auto output = tensor(vc, {n, outputChannels, 5, 7}), outputGradient = tensor(vc, {n, outputChannels, 5, 7});
+    auto tableGradient = tensor(vc, {uint32_t(shape.tableSize())}), latentGradient = tensor(vc, {n, 2, 5, 7});
+    auto forward = training::textureBasis(vc, shape);
+    forward->setInput(coordinates, 0);
+    forward->setInput(classes, 1);
+    forward->setInput(table, 2);
+    forward->setInput(latents, 3);
+    forward->setInput(output, 4);
+    auto backward = training::textureBasisBackward(vc, shape);
+    backward->setInput(coordinates, 0);
+    backward->setInput(classes, 1);
+    backward->setInput(table, 2);
+    backward->setInput(latents, 3);
+    backward->setInput(outputGradient, 4);
+    backward->setInput(tableGradient, 5);
+    backward->setInput(latentGradient, 6);
+    backward->addDependency(forward);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(backward);
+    coordinates->getDataBuffer(0).memcopyFrom(fixture.values("coordinates"));
+    classes->getDataBuffer(0).memcopyFrom(fixture.values("classes"));
+    table->getDataBuffer(0).memcopyFrom(fixture.values("table"));
+    latents->getDataBuffer(0).memcopyFrom(fixture.values("latents"));
+    // The other channels of the output keep their values, and their gradient plays no part.
+    std::vector<float> before(n * outputChannels * pixels, 7.0f), gradient(n * outputChannels * pixels, 100.0f);
+    const auto upstream = fixture.values("upstream");
+    for (uint32_t k = 0; k < n; ++k)
+        for (uint32_t c = 0; c < channels; ++c)
+            for (uint32_t p = 0; p < pixels; ++p)
+                gradient[(k * outputChannels + 2 + c) * pixels + p] = upstream[(k * channels + c) * pixels + p];
+    output->getDataBuffer(0).memcopyFrom(before);
+    outputGradient->getDataBuffer(0).memcopyFrom(gradient);
+    tableGradient->getDataBuffer(0).memcopyFrom(std::vector<float>(shape.tableSize(), 0.0f));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    const auto actual = read(output), features = fixture.values("features");
+    float worst = 0.0f;
+    for (uint32_t k = 0; k < n; ++k)
+        for (uint32_t c = 0; c < outputChannels; ++c)
+            for (uint32_t p = 0; p < pixels; ++p) {
+                const float expected = c < 2 ? 7.0f : features[(k * channels + c - 2) * pixels + p];
+                worst = std::max(worst, std::abs(actual[(k * outputChannels + c) * pixels + p] - expected));
+            }
+    EXPECT_LT(worst, 1e-5f);
+    EXPECT_LT(relativeError(read(tableGradient), fixture.values("dtable")), 1e-5f);
+    EXPECT_LT(relativeError(read(latentGradient), fixture.values("dlatents")), 1e-5f);
 }

@@ -257,6 +257,42 @@ ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layer
  */
 ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, float weight, bool accumulate = false);
 
+/// The size of a code-mixed feature texture (textureBasis()): per face `layers` layers of `channels` features at
+/// `resolution` x `resolution` texels; layer 0 is the base, layer k + 1 is scaled by the pixel's latent k.
+struct TextureBasisShape {
+    uint32_t batch = 1, pixels = 1;
+    uint32_t faces = 6;    ///< faces of the object; the face is floor(id x faces) of the third coordinate
+    uint32_t layers = 1;   ///< 1 + the latents that mix in
+    uint32_t channels = 8; ///< features per layer
+    uint32_t resolution = 64;
+    std::vector<uint32_t> classes; ///< the textured classes (1 to 4)
+    uint32_t outputChannels = 0;   ///< channels of the output (e.g. the generator input)
+    uint32_t outputOffset = 0;     ///< where the features go in the output
+    bool accumulate = false;       ///< add to the output (backward: the latents' gradient) instead of writing it
+
+    /// Floats of the table: faces x layers x channels x resolution x resolution.
+    size_t tableSize() const { return size_t(faces) * layers * channels * resolution * resolution; }
+};
+
+/**
+ * @brief The code-mixed feature texture (latent_renderer.TextureBasis): every pixel of a textured class gets, at
+ * channels outputOffset.., its face's base layer plus each further layer times the pixel's latent, each sampled
+ * bilinearly at (u, v) (texel centres at (i + 0.5) / resolution, clamped); zero elsewhere (unless accumulating).
+ *
+ * Slots: 0 coordinates (N x 3 x pixels), 1 classes (N x pixels), 2 table, 3 latents (N x (layers - 1) x pixels),
+ * 4 output (N x outputChannels x pixels).
+ */
+ComputeGraphElementPtr textureBasis(VulkanContext& vulkanContext, const TextureBasisShape& shape);
+
+/**
+ * @brief The backward pass of textureBasis(): adds the table's gradient atomically (zero it first) and writes (or,
+ * accumulating, adds) the latents' gradient.
+ *
+ * Slots: 0 coordinates, 1 classes, 2 table, 3 latents, 4 output gradient (the output's layout), 5 table gradient,
+ * 6 latents' gradient (N x (layers - 1) x pixels).
+ */
+ComputeGraphElementPtr textureBasisBackward(VulkanContext& vulkanContext, const TextureBasisShape& shape);
+
 /**
  * @brief The positional encoding of surface coordinates for a texture MLP: per coordinate c of (u, v, id) and
  * frequency f < @p frequencies the pair sin(2^f pi x_c), cos(2^f pi x_c), then the three coordinates, so
