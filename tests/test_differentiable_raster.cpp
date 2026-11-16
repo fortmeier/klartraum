@@ -32,6 +32,9 @@
  * - highlightsBarelyPullTheTexture: MeshTraining fits a texture to twelve views of which four carry a painted
  *   highlight; with the highlight tolerance of imageLoss() a clean held-out view reaches a PSNR above 28 dB inside
  *   the mesh, at least 3 dB more than without
+ * - specularGradientsMatchFiniteDifferences: the image loss of the shaded pumpkin with a specular reflection (a
+ *   random normal map and amplitude per texel, four lights and an exponent) and its gradients with respect to the
+ *   lights and to sampled material texels equal central differences of the loss on the GPU, where it is smooth
  * - antialiasMatchesCpu: the antialiased colours equal a CPU evaluation of the silhouette crossings and blends on the
  *   GPU visibility, change pixels along the outline only, and leave the image interior untouched
  * - antialiasGradientsMatchFiniteDifferences: the image loss of the antialiased image (colour inside the mask,
@@ -76,6 +79,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <glm/gtc/type_ptr.hpp>
@@ -1030,6 +1034,139 @@ TEST_F(DifferentiableRasterTest, highlightsBarelyPullTheTexture) {
               << " dB with the highlight tolerance" << std::endl;
     EXPECT_GT(robust, plain + 3.0);
     EXPECT_GT(robust, 28.0);
+}
+
+TEST_F(DifferentiableRasterTest, specularGradientsMatchFiniteDifferences) {
+    Scene scene(*vc, 64, 48, 16, 8);
+    const uint32_t w = scene.width, h = scene.height, tw = scene.textureWidth, th = scene.textureHeight, pixels = w * h,
+                   texelCount = tw * th, view = 1, vertexCount = uint32_t(scene.mesh.positions.size());
+    uint32_t state = 77u;
+    const auto next = [&]() {
+        state = state * 1664525u + 1013904223u;
+        return float(state >> 8) / float(1u << 24);
+    };
+    std::vector<float> material(4 * texelCount), lights(4 * (raster::kSpecularLights + 1), 0.0f);
+    for (uint32_t t = 0; t < texelCount; ++t) {
+        for (int c = 0; c < 3; ++c)
+            material[4 * t + c] = 0.3f * (next() - 0.5f);
+        material[4 * t + 3] = 0.4f + 0.4f * next();
+    }
+    const glm::vec3 directions[] = {{0.2f, 1.0f, 0.3f}, {1.0f, 0.3f, 0.8f}, {-0.8f, 0.4f, 1.0f}, {0.1f, -0.2f, 1.0f}};
+    for (uint32_t k = 0; k < raster::kSpecularLights; ++k) {
+        lights[4 * k] = directions[k].x, lights[4 * k + 1] = directions[k].y, lights[4 * k + 2] = directions[k].z;
+        lights[4 * k + 3] = 0.6f + 0.4f * next();
+    }
+    lights[4 * raster::kSpecularLights] = std::log(6.0f);
+
+    const auto tensor = [&](uint32_t rows) { return vc->create<TensorElement<float>>(std::vector<uint32_t>{rows, 4}); };
+    auto materialTensor = tensor(texelCount), lightTensor = tensor(raster::kSpecularLights + 1),
+         normals = tensor(vertexCount), eyes = tensor(uint32_t(scene.cameras.size())), colors = tensor(pixels),
+         targets = tensor(uint32_t(scene.cameras.size()) * pixels), imageGradients = tensor(pixels),
+         materialGradients = tensor(texelCount), lightGradients = tensor(raster::kSpecularLights + 1);
+    auto loss = vc->create<TensorElement<float>>(std::vector<uint32_t>{1});
+    auto clear = raster::clearBuffers(*vc);
+    clear->setInput(normals, 0);
+    clear->setInput(materialGradients, 1);
+    clear->setInput(lightGradients, 2);
+    clear->setInput(loss, 3);
+    auto smooth = raster::vertexNormals(*vc, uint32_t(scene.mesh.triangles.size()));
+    smooth->setInput(scene.positions, 0);
+    smooth->setInput(scene.triangles, 1);
+    smooth->setInput(clear, 2, 0);
+    auto shading = raster::shade(*vc, w, h, tw, th);
+    scene.connectShading(shading);
+    shading->setInput(colors, 7);
+    const auto connectSpecular = [&](const ComputeGraphElementPtr& element) {
+        scene.connectShading(element);
+        element->setInput(materialTensor, 8);
+        element->setInput(lightTensor, 9);
+        element->setInput(smooth, 10, 2);
+        element->setInput(eyes, 11);
+    };
+    auto shine = raster::specular(*vc, w, h, tw, th);
+    connectSpecular(shine);
+    shine->setInput(shading, 7, 7);
+    auto imageLoss = raster::imageLoss(*vc, w, h, 1.0f);
+    imageLoss->setInput(shine, 0, 7);
+    imageLoss->setInput(targets, 1);
+    imageLoss->setInput(scene.viewIndex, 2);
+    imageLoss->setInput(imageGradients, 3);
+    imageLoss->setInput(clear, 4, 3);
+    auto backward = raster::specularBackward(*vc, w, h, tw, th);
+    connectSpecular(backward);
+    backward->setInput(imageLoss, 7, 3);
+    backward->setInput(clear, 12, 1);
+    backward->setInput(clear, 13, 2);
+    ComputeGraph graph(*vc, 1);
+    graph.compileFrom(backward);
+    scene.upload(view);
+    eyes->getDataBuffer(0).memcopyFrom(raster::cameraEyes(scene.cameras));
+    std::vector<float> target(4 * size_t(scene.cameras.size()) * pixels);
+    for (size_t i = 0; i < target.size() / 4; ++i) {
+        target[4 * i] = 0.9f, target[4 * i + 1] = 0.5f + 0.4f * float(i % 5) / 5.0f, target[4 * i + 2] = 0.7f;
+        target[4 * i + 3] = 1.0f;
+    }
+    targets->getDataBuffer(0).memcopyFrom(target);
+    const auto run = [&]() {
+        materialTensor->getDataBuffer(0).memcopyFrom(material);
+        lightTensor->getDataBuffer(0).memcopyFrom(lights);
+        graph.submitAndWait(vc->getGraphicsQueue(), 0);
+        std::vector<float> value(1);
+        loss->getDataBuffer(0).memcopyTo(value);
+        return double(value[0]);
+    };
+    // Targets near the rendering itself (darkened a little), so that the loss is small and its float rounding too.
+    run();
+    std::vector<float> rendered(4 * pixels);
+    colors->getDataBuffer(0).memcopyTo(rendered);
+    for (uint32_t p = 0; p < pixels; ++p)
+        for (int c = 0; c < 4; ++c)
+            target[4 * (size_t(view) * pixels + p) + c] = c < 3 ? 0.9f * rendered[4 * p + c] : rendered[4 * p + 3];
+    targets->getDataBuffer(0).memcopyFrom(target);
+    run();
+    std::vector<float> gpuMaterial(4 * texelCount), gpuLights(lights.size());
+    materialGradients->getDataBuffer(0).memcopyTo(gpuMaterial);
+    lightGradients->getDataBuffer(0).memcopyTo(gpuLights);
+
+    // Central differences on the GPU at two step sizes; where they disagree the loss is not smooth there (a light
+    // reaching the clamp of max(dot, 0)).
+    const auto difference = [&](float& value, float step) {
+        const float original = value;
+        value = original + step;
+        const double up = run();
+        value = original - step;
+        const double down = run();
+        value = original;
+        return (up - down) / (2.0 * step);
+    };
+    int checked = 0, skipped = 0, nonzero = 0;
+    const auto check = [&](float& value, float gpu, float step, const std::string& name) {
+        const double coarse = difference(value, step), fine = difference(value, 0.5f * step);
+        if (std::abs(coarse - fine) > 2e-7 + 0.01 * std::abs(fine)) {
+            ++skipped;
+            return;
+        }
+        ++checked;
+        nonzero += std::abs(fine) > 1e-6;
+        EXPECT_NEAR(gpu, fine, 2e-7 + 0.03 * std::abs(fine)) << name;
+    };
+    for (size_t i = 0; i < lights.size(); ++i)
+        if (i < 4 * raster::kSpecularLights || i == 4 * raster::kSpecularLights)
+            check(lights[i], gpuLights[i], 0.02f, "light parameter " + std::to_string(i));
+    int texelsChecked = 0;
+    for (uint32_t t = 0; t < texelCount && texelsChecked < 40; ++t) {
+        if (std::abs(gpuMaterial[4 * t + 3]) < 1e-5f)
+            continue;
+        ++texelsChecked;
+        for (int c = 0; c < 4; ++c)
+            check(material[4 * t + c], gpuMaterial[4 * t + c], 0.02f,
+                  "material " + std::to_string(c) + " of texel " + std::to_string(t));
+    }
+    std::cout << "specular gradients: " << checked << " checked (" << nonzero << " non-zero), " << skipped
+              << " skipped as not smooth" << std::endl;
+    EXPECT_GE(texelsChecked, 20);
+    EXPECT_GT(nonzero, 60);
+    EXPECT_LT(skipped, (checked + skipped) / 5);
 }
 
 TEST_F(DifferentiableRasterTest, antialiasMatchesCpu) {

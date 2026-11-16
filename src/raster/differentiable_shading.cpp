@@ -38,6 +38,10 @@ struct RegularizerPushConstants {
     float weight;
 };
 
+struct TriangleCountPushConstants {
+    uint32_t triangleCount;
+};
+
 struct ViewCountPushConstants {
     uint32_t viewCount;
 };
@@ -89,6 +93,39 @@ ComputeGraphElementPtr shadeColorBackward(VulkanContext& vulkanContext, uint32_t
                                           uint32_t textureWidth, uint32_t textureHeight) {
     return shading(vulkanContext, "shaders/raster/shade_color_backward.comp.spv", width, height, textureWidth,
                    textureHeight);
+}
+
+ComputeGraphElementPtr vertexNormals(VulkanContext& vulkanContext, uint32_t triangleCount) {
+    if (triangleCount == 0)
+        throw std::invalid_argument("vertexNormals: the triangle count must be positive");
+    auto operation =
+        vulkanContext.create<GeneralComputation<TriangleCountPushConstants>>("shaders/raster/vertex_normals.comp.spv");
+    operation->setPushConstants({{triangleCount}});
+    operation->setGroupCountX((triangleCount + 127) / 128);
+    return operation;
+}
+
+ComputeGraphElementPtr specular(VulkanContext& vulkanContext, uint32_t width, uint32_t height, uint32_t textureWidth,
+                                uint32_t textureHeight) {
+    return shading(vulkanContext, "shaders/raster/specular.comp.spv", width, height, textureWidth, textureHeight);
+}
+
+ComputeGraphElementPtr specularBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                        uint32_t textureWidth, uint32_t textureHeight) {
+    return shading(vulkanContext, "shaders/raster/specular_backward.comp.spv", width, height, textureWidth,
+                   textureHeight);
+}
+
+std::vector<float> cameraEyes(const std::vector<glm::mat4>& cameras) {
+    std::vector<float> eyes;
+    for (const glm::mat4& m : cameras) {
+        // The eye is the point the camera maps to clip x = y = w = 0.
+        const auto row = [&](int k) { return glm::vec3(m[0][k], m[1][k], m[2][k]); };
+        const glm::mat3 rows = glm::transpose(glm::mat3(row(0), row(1), row(3)));
+        const glm::vec3 eye = glm::inverse(rows) * -glm::vec3(m[3][0], m[3][1], m[3][3]);
+        eyes.insert(eyes.end(), {eye.x, eye.y, eye.z, 1.0f});
+    }
+    return eyes;
 }
 
 ComputeGraphElementPtr antialias(VulkanContext& vulkanContext, uint32_t width, uint32_t height, uint32_t textureWidth,
