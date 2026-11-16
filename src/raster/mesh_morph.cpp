@@ -21,6 +21,33 @@ struct CompositePushConstants {
     uint32_t width, height;
 };
 
+// Moves its image (input 0) from GENERAL back to `layout`, where the frame's renderer left it.
+class ToLayout : public ComputeGraphElement {
+public:
+    explicit ToLayout(VkImageLayout layout)
+        : layout(layout) {}
+    const char* getType() const override { return "ToLayout"; }
+    void checkInput(ComputeGraphElementPtr input, int index) override {}
+    void _record(VkCommandBuffer commandBuffer, uint32_t pathId) override {
+        auto image = std::dynamic_pointer_cast<ImageViewSrc>(getInputElement(0));
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = layout;
+        barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image->getImage(pathId);
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+private:
+    // The layout the frame is returned to.
+    VkImageLayout layout;
+};
+
 } // namespace
 
 MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, const GaussianSoABuffers& targets,
@@ -93,6 +120,12 @@ MeshMorph::MeshMorph(VulkanContext& vulkanContext, const TriangleMesh& start, co
     if (frameReady)
         composite->addDependency(frameReady);
     output = composite;
+    if (frameLayout != VK_IMAGE_LAYOUT_GENERAL) {
+        auto back = std::make_shared<ToLayout>(frameLayout);
+        back->setInput(frame, 0);
+        back->addDependency(composite);
+        output = back;
+    }
 }
 
 void MeshMorph::initialize() {
