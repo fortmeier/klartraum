@@ -27,12 +27,15 @@ struct MeshTrainingOptions {
     float maskWeight = 1.0f;                        ///< weight of the coverage term of imageLoss()
     float laplacianWeight = 100.0f;                 ///< weight of laplacianRegularizer(), 0 for none
     training::AdamParameters geometry{0.002f};      ///< optimizer of the vertex positions
-    training::AdamParameters texture{0.01f};
-    bool viewColors = false;       ///< learn a colour gain and offset per view (imageLossWithViewColors())
-    float viewColorWeight = 0.01f; ///< pull of the per-view corrections towards identity
-    training::AdamParameters viewColor{
-        0.002f};       ///< optimizer of the per-view corrections        ///< optimizer of the texels
-    uint32_t seed = 1; ///< seed of the noise the texture starts from
+    training::AdamParameters texture{0.01f};        ///< optimizer of the texels
+    bool viewColors = false;                    ///< learn a colour gain and offset per view (imageLossWithViewColors())
+    float viewColorWeight = 0.01f;              ///< pull of the per-view corrections towards identity
+    training::AdamParameters viewColor{0.002f}; ///< optimizer of the per-view corrections
+    uint32_t seed = 1;                          ///< seed of the noise the texture starts from
+    uint32_t stepsPerSubmit = 1;                ///< training steps recorded one after another into one submission
+    /// Whether the training compiles a graph of its own (step() submits it); otherwise its elements join the
+    /// caller's graph (compile from getOutput(), then call initialize()).
+    bool ownGraph = true;
 };
 
 /**
@@ -55,8 +58,27 @@ public:
      */
     void setTargets(const std::vector<float>& targets);
 
-    /** @brief Runs one training step on the next view. */
+    /** @brief Runs one submission of stepsPerSubmit training steps, each on the next view (with ownGraph). */
     void step();
+
+    /** @brief The last element of a submission's steps: compile the caller's graph from it (without ownGraph). */
+    ComputeGraphElementPtr getOutput() const { return lastElement; }
+
+    /** @brief Makes the steps wait for @p element, e.g. the one writing the targets (getTargets()). */
+    void addDependency(const ComputeGraphElementPtr& element);
+
+    /** @brief Uploads the start mesh, cameras and state; after compiling the caller's graph (without ownGraph). */
+    void initialize();
+
+    /** @brief The target images (four floats per pixel and view, see setTargets()), e.g. for an element writing
+     * them. */
+    std::shared_ptr<TensorElement<float>> getTargets() const { return targets; }
+    /// The trained vertex positions (four floats per vertex) and texels (four floats each), e.g. for drawing them.
+    std::shared_ptr<TensorElement<float>> getPositions() const { return positions; }
+    std::shared_ptr<TensorElement<float>> getTexels() const { return texels; }
+    /// The fixed triangles (three uint32 each) and corner texture coordinates (two floats per corner).
+    std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> getTriangles() const { return triangles; }
+    std::shared_ptr<TensorElement<float>> getCornerUvs() const { return cornerUvs; }
 
     /** @brief The loss of the last step: image loss plus regularizer. */
     float loss() const;
@@ -82,6 +104,11 @@ private:
     MeshTrainingOptions options;
     // The start mesh: topology and corner texture coordinates of the trained one.
     TriangleMesh startMesh;
+    // The cameras of the target images.
+    std::vector<glm::mat4> cameras;
+    // The first elements of a submission (view advance, clearing) and the last (an Adam step).
+    std::vector<ComputeGraphElementPtr> firstElements;
+    ComputeGraphElementPtr lastElement;
     // The trained parameters and their Adam moments.
     std::shared_ptr<Tensor> positions, texels, positionMoments[2], texelMoments[2];
     // The per-view colour corrections (with MeshTrainingOptions::viewColors), their gradients and Adam moments.
