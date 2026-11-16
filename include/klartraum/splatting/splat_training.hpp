@@ -7,10 +7,15 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
+
+#include <glm/glm.hpp>
 
 #include "klartraum/computegraph/bufferelement.hpp"
+#include "klartraum/computegraph/computegraph.hpp"
 #include "klartraum/computegraph/computegraphelement.hpp"
 #include "klartraum/computegraph/tensorelement.hpp"
+#include "klartraum/layers/training.hpp"
 #include "klartraum/vulkan_context.hpp"
 
 /**
@@ -104,6 +109,111 @@ public:
 
     /// The elements in graph order; projectBackward is the last.
     ComputeGraphElementPtr clear, renderBackward, projectBackward;
+};
+
+/** @brief Gaussians on the host, in the layout of SplatParameters. */
+struct SplatSet {
+    std::vector<float> means, logScales, rotations, colors, opacities;
+    uint32_t size() const { return uint32_t(opacities.size()); }
+};
+
+/**
+ * @brief Isotropic Gaussians at @p points: scale @p scale, identity rotation, colour @p color, opacity @p opacity.
+ */
+SplatSet splatsAt(const std::vector<glm::vec3>& points, float scale, glm::vec3 color = glm::vec3(0.5f),
+                  float opacity = 0.1f);
+
+/**
+ * @brief Renders @p splats from every camera: four floats per pixel and view (premultiplied rgb, coverage), views
+ * one after another.
+ */
+std::vector<float> renderSplats(VulkanContext& vulkanContext, const SplatSet& splats,
+                                const std::vector<glm::mat4>& cameras, const SplatRasterOptions& options);
+
+/** @brief Loss weight, optimizers and the densification schedule of a SplatTraining. */
+struct SplatTrainingOptions {
+    SplatRasterOptions raster;                 ///< image size and limits
+    float maskWeight = 1.0f;                   ///< weight of the coverage term of raster::imageLoss()
+    uint32_t steps = 6000;                     ///< planned steps: the learning rates decay over them
+    training::AdamParameters means{1e-3f};     ///< optimizer of the positions (decays to a hundredth)
+    training::AdamParameters logScales{5e-3f}; ///< optimizer of the log scales
+    training::AdamParameters rotations{1e-3f}; ///< optimizer of the rotations
+    training::AdamParameters colors{1e-2f};    ///< optimizer of the colours
+    training::AdamParameters opacities{5e-2f}; ///< optimizer of the logit opacities
+    uint32_t densifyFrom = 300;                ///< first step that densifies
+    uint32_t densifyUntil = 3000;              ///< no densification from this step on
+    uint32_t densifyInterval = 100;            ///< steps between densifications
+    /// Gaussians whose mean screen-mean gradient (times the pixel count, so independent of the image size) exceeds
+    /// this are cloned or split.
+    float densifyGradient = 0.05f;
+    float cloneScale = 0.02f;    ///< Gaussians up to this largest scale are cloned, larger ones split in two
+    float pruneOpacity = 0.005f; ///< Gaussians fainter than this are removed when densifying
+    float pruneScale = 0.5f;     ///< Gaussians with a larger scale are removed when densifying
+    uint32_t maxCount = 400000;  ///< densification stops adding Gaussians at this count
+    uint32_t seed = 1;           ///< seed of the split samples
+};
+
+/**
+ * @brief Trains Gaussians on masked images seen by known cameras.
+ *
+ * One training step is one pre-recorded command buffer and one submit: advance the view index (on the GPU, cycling
+ * through all cameras), SplatForward, raster::imageLoss() against the view's target, SplatBackward and an Adam step
+ * per parameter group. Densification (adaptive density control of Kerbl et al.) runs on the host between steps:
+ * it reads the Gaussians, their Adam moments and gradient statistics back, clones or splits Gaussians with large
+ * screen-space gradients, removes faint and oversized ones and rebuilds the graph for the new count.
+ */
+class SplatTraining {
+public:
+    /**
+     * @brief Builds the training of @p start on @p targets (four floats per pixel and view, views in camera order:
+     * rgb premultiplied by the mask, and the mask).
+     */
+    SplatTraining(VulkanContext& vulkanContext, const SplatSet& start, const std::vector<glm::mat4>& cameras,
+                  const std::vector<float>& targets, const SplatTrainingOptions& options);
+
+    /** @brief Runs one training step on the next view, densifying first when the schedule says so. */
+    void step();
+
+    /** @brief The loss of the last step. */
+    float loss() const;
+
+    /** @brief The steps run so far. */
+    uint32_t stepCount() const { return steps; }
+
+    /** @brief The current Gaussians. */
+    SplatSet splats() const;
+
+    /** @brief The tile instances the last step emitted (more than the capacity means some were dropped). */
+    uint32_t instanceCount() const;
+
+    /** @brief Clones, splits and prunes Gaussians and rebuilds the graph (see the class description). */
+    void densify();
+
+private:
+    using Tensor = TensorElement<float>;
+    using UintBuffer = BufferElement<VulkanBuffer<uint32_t>>;
+
+    // Builds the graph for `splats` with Adam moments `moments` (two per parameter group, in group order) and
+    // the densification statistics `statistics` (two floats per Gaussian).
+    void build(const SplatSet& splats, const std::vector<std::vector<float>>& moments,
+               const std::vector<float>& statistics);
+
+    // The context the graph runs on; it outlives this object.
+    VulkanContext& vulkanContext;
+    SplatTrainingOptions options;
+    std::vector<glm::mat4> cameras;
+    std::vector<float> targetValues;
+    uint32_t steps = 0;
+    uint32_t seed = 1;
+    // The graph of the current Gaussian count and the tensors it reads and writes.
+    SplatParameters parameters;
+    std::vector<std::shared_ptr<Tensor>>
+        moments; // two per parameter group: means, scales, rotations, colours, opacities
+    std::shared_ptr<Tensor> cameraBuffer, targets, imageGradients, lossValue;
+    std::shared_ptr<UintBuffer> viewIndex, stepBuffer;
+    std::unique_ptr<SplatForward> forward;
+    std::unique_ptr<SplatBackward> backward;
+    std::unique_ptr<ComputeGraph> graph;
 };
 
 } // namespace klartraum::splatting
