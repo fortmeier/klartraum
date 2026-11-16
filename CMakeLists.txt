@@ -125,10 +125,19 @@ foreach(SLANG ${SLANG_SOURCE_FILES})
   string(REGEX REPLACE "\\.slang$" "" FILE_NAME ${FILE_NAME})
   set(SPIRV "${SHADER_OUTPUT_DIR}/${FILE_NAME}.spv")
   get_filename_component(SPIRV_DIRECTORY ${SPIRV} DIRECTORY)
+  set(SHADER_OPTIONS ${SLANGC_OPTIONS})
+  if(FILE_NAME MATCHES "^(tree|gbuffer)/")
+    # The tree shaders (and the G-buffer mesh shaders, which use their encodings) include the model they share with
+    # the C++ code (include/klartraum/tree/*.hpp) and are
+    # written with GLSL names (import glsl) and GLSL matrix semantics: m[i] is column i and m * v the matrix product.
+    # Slang gives those semantics on GLM's column-major memory with its default (row-major) matrix layout.
+    list(REMOVE_ITEM SHADER_OPTIONS -matrix-layout-column-major)
+    list(APPEND SHADER_OPTIONS -matrix-layout-row-major -I ${PROJECT_SOURCE_DIR}/include)
+  endif()
   add_custom_command(
     OUTPUT ${SPIRV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIRECTORY}
-    COMMAND ${SLANGC} ${SLANG} ${SLANGC_OPTIONS} -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
+    COMMAND ${SLANGC} ${SLANG} ${SHADER_OPTIONS} -I ${SHADER_BASE_DIR} -depfile ${SPIRV}.d -o ${SPIRV}
     DEPFILE ${SPIRV}.d
     DEPENDS ${SLANG} ${SLANG_MODULE_FILES}
     COMMENT "Compiling ${SLANG} to ${SPIRV}"
@@ -267,6 +276,8 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_tree_model.cpp
+  tests/test_tree_generation.cpp
   tests/test_hash_texture.cpp
   tests/test_training_elements.cpp
   tests/test_differentiable_raster.cpp
@@ -360,6 +371,8 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/tree_model.cpp
+  src/tree_generator.cpp
   src/hash_texture.cpp
   src/vgg_loss.cpp
   src/mlp_training.cpp
