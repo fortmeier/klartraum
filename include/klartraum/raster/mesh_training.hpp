@@ -41,8 +41,12 @@ struct MeshTrainingOptions {
     uint32_t materialWidth = 0, materialHeight = 0;
     training::AdamParameters material{0.005f}; ///< optimizer of the specular material
     training::AdamParameters lights{0.01f};    ///< optimizer of the specular environment
-    uint32_t seed = 1;                         ///< seed of the noise the texture starts from
-    uint32_t stepsPerSubmit = 1;               ///< training steps recorded one after another into one submission
+    /// Learn the cameras' poses too (cameraBuild()): each camera's orientation (a quaternion) and eye position, from
+    /// the given ones; the projection stays.
+    bool poses = false;
+    training::AdamParameters pose{0.0005f}; ///< optimizer of the poses
+    uint32_t seed = 1;                      ///< seed of the noise the texture starts from
+    uint32_t stepsPerSubmit = 1;            ///< training steps recorded one after another into one submission
     /// Whether the training compiles a graph of its own (step() submits it); otherwise its elements join the
     /// caller's graph (compile from getOutput(), then call initialize()).
     bool ownGraph = true;
@@ -121,6 +125,22 @@ public:
     /// The vertex normals of the last step (four floats per vertex, the sums of area normals); null without specular.
     std::shared_ptr<TensorElement<float>> getVertexNormals() const { return vertexNormalSums; }
 
+    /**
+     * @brief The cameras of the last step (clip-from-world, as given at construction; with MeshTrainingOptions::poses
+     * as trained).
+     */
+    std::vector<glm::mat4> currentCameras() const;
+
+    /** @brief The poses (eight floats per view: quaternion, eye and a zero); empty without MeshTrainingOptions::poses.
+     */
+    std::vector<float> cameraPoses() const;
+    /** @brief Replaces the poses (as cameraPoses() gives them). */
+    void setCameraPoses(const std::vector<float>& values);
+    /// The last step's vertex gradients (four floats per vertex: dL/dx with the camera fixed, and the regularizer's).
+    std::shared_ptr<TensorElement<float>> getVertexGradients() const { return vertexGradients; }
+    /// The last step's pose gradients (eight floats per view, the drawn view's set); null without poses.
+    std::shared_ptr<TensorElement<float>> getPoseGradients() const { return poseGradients; }
+
     /** @brief Replaces the specular material and environment (as getMaterial() and getLights() hold them). */
     void setSpecular(const std::vector<float>& material, const std::vector<float>& lights);
 
@@ -156,6 +176,8 @@ private:
     // the vertex normals and the cameras' positions.
     std::shared_ptr<Tensor> material, lightValues, materialGradients, lightGradients, materialMoments[2],
         lightMoments[2], vertexNormalSums, eyes;
+    // The cameras' poses and their rests (with MeshTrainingOptions::poses), their gradients and Adam moments.
+    std::shared_ptr<Tensor> poses, rests, poseGradients, poseMoments[2];
     std::unique_ptr<ComputeGraph> trainingGraph;
 };
 

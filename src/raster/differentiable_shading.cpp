@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 
@@ -126,6 +129,39 @@ std::vector<float> cameraEyes(const std::vector<glm::mat4>& cameras) {
         eyes.insert(eyes.end(), {eye.x, eye.y, eye.z, 1.0f});
     }
     return eyes;
+}
+
+void cameraPoses(const std::vector<glm::mat4>& cameras, std::vector<float>& rests, std::vector<float>& poses) {
+    const std::vector<float> eyes = cameraEyes(cameras);
+    rests.clear();
+    poses.clear();
+    for (size_t v = 0; v < cameras.size(); ++v) {
+        const glm::vec3 eye(eyes[4 * v], eyes[4 * v + 1], eyes[4 * v + 2]);
+        // M = P T(-e) at rest, so P = M T(e).
+        const glm::mat4 rest = cameras[v] * glm::translate(glm::mat4(1.0f), eye);
+        rests.insert(rests.end(), glm::value_ptr(rest), glm::value_ptr(rest) + 16);
+        poses.insert(poses.end(), {0.0f, 0.0f, 0.0f, 1.0f, eye.x, eye.y, eye.z, 0.0f});
+    }
+}
+
+ComputeGraphElementPtr cameraBuild(VulkanContext& vulkanContext, uint32_t viewCount) {
+    if (viewCount == 0)
+        throw std::invalid_argument("cameraBuild: the view count must be positive");
+    auto operation =
+        vulkanContext.create<GeneralComputation<ViewCountPushConstants>>("shaders/raster/camera_build.comp.spv");
+    operation->setPushConstants({{viewCount}});
+    operation->setGroupCountX((viewCount + 63) / 64);
+    return operation;
+}
+
+ComputeGraphElementPtr cameraPoseBackward(VulkanContext& vulkanContext, uint32_t vertexCount) {
+    if (vertexCount == 0)
+        throw std::invalid_argument("cameraPoseBackward: the vertex count must be positive");
+    auto operation = vulkanContext.create<GeneralComputation<TriangleCountPushConstants>>(
+        "shaders/raster/camera_pose_backward.comp.spv");
+    operation->setPushConstants({{vertexCount}});
+    operation->setGroupCountX((vertexCount + 127) / 128);
+    return operation;
 }
 
 ComputeGraphElementPtr antialias(VulkanContext& vulkanContext, uint32_t width, uint32_t height, uint32_t textureWidth,
