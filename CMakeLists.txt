@@ -388,6 +388,7 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/tree_grass.cpp
   src/tree_tiles.cpp
   src/tree_proxies.cpp
   src/tree_library.cpp
