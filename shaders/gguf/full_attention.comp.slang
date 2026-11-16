@@ -5,7 +5,8 @@
 // Multi-head attention of all `tokens` queries over all tokens' keys (or, with `causal`, over the keys up to their
 // own), e.g. the joint text and image attention of a diffusion transformer, with an online softmax (flash attention):
 //   out[t][h] = sum_s softmax_s(q[t][h] . k[s][h] / sqrt(128)) v[s][h].
-// Queries, keys, values and outputs are [tokens][heads][128].
+// Queries and outputs are [tokens][heads][128], keys and values [tokens][kvHeads][128]: consecutive groups of
+// heads / kvHeads query heads share one key/value head (grouped-query attention).
 //
 // A workgroup of 128 invocations computes 16 queries of one head: 8 invocations per query, each holding 16 of its 128
 // values. Keys and values pass through shared memory in blocks of 16; a query's 8 invocations sum their partial dot
@@ -15,6 +16,7 @@ struct PushConstants {
     uint tokens;
     uint heads;
     uint causal;
+    uint kvHeads;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -42,7 +44,7 @@ float querySum(float value) {
 [shader("compute")]
 [numthreads(QUERIES * LANES, 1, 1)]
 void main(uint3 groupId: SV_GroupID, uint local: SV_GroupIndex) {
-    const uint head = groupId.y;
+    const uint head = groupId.y, kvHead = head / (pc.heads / pc.kvHeads);
     const uint query = groupId.x * QUERIES + local / LANES, part = local % LANES; // part: values 16 part on
     const bool active = query < pc.tokens;
     const uint row = (min(query, pc.tokens - 1u) * pc.heads + head) * (DIM / 4u) + 4u * part;
@@ -62,7 +64,7 @@ void main(uint3 groupId: SV_GroupID, uint local: SV_GroupIndex) {
         [ForceUnroll]
         for (uint k = 0u; k < 4u; ++k) {
             const uint index = local + 128u * k, key = index / (DIM / 4u), column = index % (DIM / 4u);
-            const uint source = (min(start + key, pc.tokens - 1u) * pc.heads + head) * (DIM / 4u) + column;
+            const uint source = (min(start + key, pc.tokens - 1u) * pc.kvHeads + kvHead) * (DIM / 4u) + column;
             keys[key][column] = K[source];
             values[key][column] = V[source];
         }

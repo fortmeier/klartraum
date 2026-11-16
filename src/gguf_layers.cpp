@@ -31,7 +31,7 @@ struct MatMulPushConstants {
 };
 
 struct FullAttentionPushConstants {
-    uint32_t tokens, heads, causal;
+    uint32_t tokens, heads, causal, kvHeads;
 };
 
 struct RmsNormPushConstants {
@@ -188,11 +188,14 @@ ComputeGraphElementPtr matMul(VulkanContext& vulkanContext, GgmlType type, uint3
     return operation;
 }
 
-ComputeGraphElementPtr fullAttention(VulkanContext& vulkanContext, uint32_t tokens, uint32_t heads, bool causal) {
-    if (tokens == 0 || heads == 0)
-        throw std::runtime_error("GGUF fullAttention needs tokens and heads");
+ComputeGraphElementPtr fullAttention(VulkanContext& vulkanContext, uint32_t tokens, uint32_t heads, bool causal,
+                                     uint32_t kvHeads) {
+    if (kvHeads == 0)
+        kvHeads = heads;
+    if (tokens == 0 || heads == 0 || heads % kvHeads != 0)
+        throw std::runtime_error("GGUF fullAttention needs tokens and heads, a multiple of the key/value heads");
     auto operation = computation(vulkanContext, "shaders/gguf/full_attention.comp.spv",
-                                 FullAttentionPushConstants{tokens, heads, causal ? 1u : 0u});
+                                 FullAttentionPushConstants{tokens, heads, causal ? 1u : 0u, kvHeads});
     // 16 queries of one head per workgroup.
     operation->setGroupCount((tokens + 15) / 16, heads, 1);
     return operation;
