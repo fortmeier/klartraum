@@ -267,6 +267,7 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_training_elements.cpp
   tests/test_computegraph.cpp
   tests/test_graph_chain.cpp
   tests/test_buffertransformation.cpp

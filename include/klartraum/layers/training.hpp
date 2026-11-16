@@ -25,9 +25,18 @@ namespace klartraum::training {
 
 /** @brief Element-wise activations with a backward element, matching the forward layers. */
 enum class Activation {
-    Relu,   ///< layers::relu()
-    Sigmoid ///< layers::unary(..., UnaryOp::Sigmoid, ...)
+    Relu,     ///< layers::relu()
+    Sigmoid,  ///< layers::unary(..., UnaryOp::Sigmoid, ...)
+    Elu,      ///< layers::elu() with alpha 1
+    LeakyRelu ///< leakyRelu(): slope 0.2 below zero
 };
+
+/**
+ * @brief The leaky ReLU with slope 0.2 below zero, element-wise over @p shape.
+ *
+ * Slots: 0 input, 1 output.
+ */
+ComputeGraphElementPtr leakyRelu(VulkanContext& vulkanContext, const layers::Shape& shape);
 
 /**
  * @brief The input gradient of @p activation: f'(x) * output gradient, element-wise over @p shape.

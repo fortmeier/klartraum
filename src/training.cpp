@@ -4,6 +4,11 @@
 
 #include "klartraum/layers/training.hpp"
 
+#include <algorithm>
+#include <array>
+#include <stdexcept>
+
+#include "klartraum/computegraph/bufferelement.hpp"
 #include "klartraum/computegraph/generalcomputation.hpp"
 
 namespace klartraum::training {
@@ -30,9 +35,20 @@ struct AdamPushConstants {
 
 ComputeGraphElementPtr activationBackward(VulkanContext& vulkanContext, Activation activation,
                                           const layers::Shape& shape) {
-    const char* shader = activation == Activation::Relu ? "shaders/training/relu_backward.comp.spv"
-                                                        : "shaders/training/sigmoid_backward.comp.spv";
+    const char* shader = activation == Activation::Relu      ? "shaders/training/relu_backward.comp.spv"
+                         : activation == Activation::Sigmoid ? "shaders/training/sigmoid_backward.comp.spv"
+                         : activation == Activation::Elu     ? "shaders/training/elu_backward.comp.spv"
+                                                             : "shaders/training/leaky_relu_backward.comp.spv";
     auto operation = vulkanContext.create<GeneralComputation<CountPushConstants>>(shader);
+    const uint32_t count = layers::elementCount(shape);
+    operation->setPushConstants({{count}});
+    operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr leakyRelu(VulkanContext& vulkanContext, const layers::Shape& shape) {
+    auto operation =
+        vulkanContext.create<GeneralComputation<CountPushConstants>>("shaders/training/leaky_relu.comp.spv");
     const uint32_t count = layers::elementCount(shape);
     operation->setPushConstants({{count}});
     operation->setGroupCountX((count + 255) / 256);
