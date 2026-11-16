@@ -29,6 +29,11 @@ struct QwenImageTransformerOptions {
     std::string lora;
     /** Runs only the first @p blocks blocks without the output layers, for tests (0: all, with them). */
     uint32_t blocks = 0;
+    /**
+     * A ControlNet converted by scripts/qwen_image/convert_controlnet.py (the ControlNet Union), or empty; its
+     * condition is set with setControl().
+     */
+    std::string controlnet;
 };
 
 /**
@@ -40,7 +45,10 @@ struct QwenImageTransformerOptions {
  * stream is the prompt embedding. Each block modulates both streams from the timestep embedding, attends jointly over
  * [text; image] with per-head RMS-normed queries and keys and 3-axis rotary positions (the image centred, the text
  * after it), and adds gated attention and GELU MLP outputs. The quantized weights stay encoded on the GPU; a LoRA
- * adds its low-rank products to its layers' outputs at run time.
+ * adds its low-rank products to its layers' outputs at run time. With a ControlNet, its blocks run first on the
+ * same inputs with the packed control latent (e.g. of a depth image) embedded into the image stream, and their
+ * projected image streams are added, scaled, to the image stream after the transformer's blocks (block i gets
+ * residual i / ceil(blocks / ControlNet blocks), as diffusers).
  *
  * ```
  * auto transformer = context.create<QwenImageTransformer>("qwen-image-Q4_K_S.gguf", options);
@@ -71,6 +79,12 @@ public:
     void setLatent(const std::vector<float>& latent);
     /** @brief The noise level of the next submission, sigma in [0, 1] (the timestep / 1000). */
     void setSigma(float sigma);
+    /** @brief The ControlNet's condition: a packed latent [imageTokens][64] (the VAE encoder's, packed). */
+    void setControl(const std::vector<float>& latent);
+    /** @brief The ControlNet's conditioning scale (default 1). */
+    void setControlScale(float scale);
+    /** @brief The ControlNet's residuals of the last submission, [blocks][imageTokens][3072] (scale 1). */
+    std::vector<float> readControlResiduals();
 
     /** @brief The velocity prediction of the last submission, [imageTokens][64]. */
     std::vector<float> readVelocity();
@@ -91,12 +105,23 @@ private:
     using WordTensor = TensorElementSinglePath<uint32_t>;
     using Tensor = std::shared_ptr<FloatTensor>;
 
+    // The weights of one network: the transformer (with its LoRA) or the ControlNet.
+    struct WeightSource {
+        const GgufFile* file;
+        GgufWeightStore* weights;
+        const GgufFile* lora;
+        GgufWeightStore* loraWeights;
+    };
+
     VulkanContext* vulkanContext;
     QwenImageTransformerOptions options;
     std::unique_ptr<GgufFile> file;
     std::unique_ptr<GgufWeightStore> weights;
     std::unique_ptr<GgufFile> loraFile;
     std::unique_ptr<GgufWeightStore> loraWeights;
+    std::unique_ptr<GgufFile> controlFile;
+    std::unique_ptr<GgufWeightStore> controlWeights;
+    uint32_t controlLayers = 0;
     uint32_t imageTokens = 0, textTokens = 0, layers = 0;
 
     std::shared_ptr<WordTensor> imageParams, textParams;     // {tokens, 0, 0, 0} for rmsNorm
@@ -105,14 +130,17 @@ private:
     Tensor velocity;                                         // output [imageTokens][64]
     Tensor imageCosines, imageSines, textCosines, textSines; // rotary tables [tokens][64]
     Tensor loraScratch;                                      // [max tokens][rank] of a LoRA's down projection
+    Tensor control;                                          // the ControlNet's packed control latent [imageTokens][64]
+    Tensor controlScale;                  // the conditioning scale, repeated [3072] (a gatedResidual gate)
+    std::vector<Tensor> controlResiduals; // per ControlNet block [imageTokens][3072]
     std::vector<ComputeGraphElementPtr> operations;
 
     Tensor deviceTensor(size_t elements, bool hostVisible = false);
     void append(const std::string& name, const ComputeGraphElementPtr& operation,
                 const std::vector<ComputeGraphElementPtr>& slots);
     // out (+)= W x + b (+ LoRA) for the weights `<name>.weight` and `<name>.bias` and `tokens` rows of x.
-    void linear(const std::string& name, const Tensor& input, const Tensor& out, uint32_t tokens,
-                bool accumulate = false);
+    void linear(const WeightSource& source, const std::string& name, const Tensor& input, const Tensor& out,
+                uint32_t tokens, bool accumulate = false);
     void build();
 };
 

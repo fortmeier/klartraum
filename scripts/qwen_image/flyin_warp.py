@@ -83,6 +83,19 @@ class Flight:
         return eye, np.stack([right, up, forward]), math.tan(math.radians(float(row["fov_y_degrees"])) / 2)
 
 
+def depth_image(flight: Flight, frame: int, low: float = 2.0, high: float = 98.0) -> np.ndarray:
+    """A depth map as depth estimators give it (and the Qwen-Image ControlNet was trained on): inverse distance, near
+    white and far black, stretched per frame between the inverse distances' `low` and `high` percentiles; the
+    background is black. Values in [0, 1], [height][width]."""
+    distance = flight.distance(frame)
+    inverse = 1.0 / np.maximum(distance, 1e-9)
+    covered = np.isfinite(inverse)
+    if not covered.any():
+        return np.zeros(distance.shape)
+    a, b = np.percentile(inverse[covered], [low, high])
+    return np.where(covered, np.clip((inverse - a) / max(b - a, 1e-12), 0.0, 1.0), 0.0)
+
+
 class ImageGrid:
     """Maps pixels of an image (scaled to `scaled_height` and cropped from `top`) to normalized device coordinates."""
 
