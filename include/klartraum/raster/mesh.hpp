@@ -38,6 +38,18 @@ TriangleMesh icosphere(uint32_t subdivisions);
  */
 TriangleMesh syntheticPumpkin(uint32_t subdivisions, uint32_t ribs = 10, float ribDepth = 0.08f, float height = 0.75f);
 
+/**
+ * @brief The vertex neighbourhoods of a mesh in compressed sparse rows: the neighbours of vertex v are
+ * neighbours[offsets[v]] to neighbours[offsets[v + 1] - 1], each vertex sharing an edge with v once, ascending.
+ */
+struct VertexAdjacency {
+    std::vector<uint32_t> offsets;    ///< vertex count + 1 row starts
+    std::vector<uint32_t> neighbours; ///< neighbour vertex indices, row by row
+};
+
+/** @brief The vertex adjacency of @p mesh. */
+VertexAdjacency vertexAdjacency(const TriangleMesh& mesh);
+
 /** @brief Writes the mesh as a Wavefront OBJ file with corner texture coordinates. */
 void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path);
 

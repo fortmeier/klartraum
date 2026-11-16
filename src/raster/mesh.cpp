@@ -99,6 +99,24 @@ TriangleMesh syntheticPumpkin(uint32_t subdivisions, uint32_t ribs, float ribDep
     return mesh;
 }
 
+VertexAdjacency vertexAdjacency(const TriangleMesh& mesh) {
+    std::vector<std::vector<uint32_t>> rows(mesh.positions.size());
+    for (const auto& t : mesh.triangles)
+        for (int c = 0; c < 3; ++c) {
+            rows[t[c]].push_back(t[(c + 1) % 3]);
+            rows[t[(c + 1) % 3]].push_back(t[c]);
+        }
+    VertexAdjacency adjacency;
+    adjacency.offsets.push_back(0);
+    for (auto& row : rows) {
+        std::sort(row.begin(), row.end());
+        row.erase(std::unique(row.begin(), row.end()), row.end());
+        adjacency.neighbours.insert(adjacency.neighbours.end(), row.begin(), row.end());
+        adjacency.offsets.push_back(uint32_t(adjacency.neighbours.size()));
+    }
+    return adjacency;
+}
+
 void writeObj(const TriangleMesh& mesh, const std::filesystem::path& path) {
     std::ofstream out(path);
     if (!out)
