@@ -112,3 +112,14 @@ target_link_libraries(mesh_texture_fitting_example
 )
 
 add_dependencies(mesh_texture_fitting_example Shaders)
+
+# Training 3D Gaussian splats on masked photographs, one submit per step
+add_executable(splat_training_example
+    splat_training_example.cpp
+)
+
+target_link_libraries(splat_training_example
+    klartraum_lib
+)
+
+add_dependencies(splat_training_example Shaders)

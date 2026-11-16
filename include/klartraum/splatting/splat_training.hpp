@@ -6,6 +6,7 @@
 #define KLARTRAUM_SPLATTING_SPLAT_TRAINING_HPP
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -129,6 +130,19 @@ SplatSet splatsAt(const std::vector<glm::vec3>& points, float scale, glm::vec3 c
  */
 std::vector<float> renderSplats(VulkanContext& vulkanContext, const SplatSet& splats,
                                 const std::vector<glm::mat4>& cameras, const SplatRasterOptions& options);
+
+/**
+ * @brief The Gaussians mapped by a similarity transform (rotation, uniform scale, translation): positions,
+ * orientations and scales follow it.
+ */
+SplatSet transformSplats(const SplatSet& splats, const glm::mat4& similarity);
+
+/**
+ * @brief Writes Gaussians as a binary PLY file in the layout of the reference implementation of Kerbl et al.
+ * (positions, zero normals, degree-0 spherical harmonics, logit opacity, log scales, rotation w x y z), which common
+ * splat viewers read.
+ */
+void writeSplatPly(const SplatSet& splats, const std::filesystem::path& path);
 
 /** @brief Loss weight, optimizers and the densification schedule of a SplatTraining. */
 struct SplatTrainingOptions {
