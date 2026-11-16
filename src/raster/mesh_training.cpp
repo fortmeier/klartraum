@@ -406,22 +406,24 @@ void MeshTraining::setTexture(const std::vector<float>& values) {
     texels->getDataBuffer(0).memcopyFrom(values);
 }
 
-std::vector<float> renderImages(VulkanContext& vulkanContext, const TriangleMesh& mesh,
-                                const std::vector<float>& texture, uint32_t textureWidth, uint32_t textureHeight,
-                                const std::vector<glm::mat4>& cameras, uint32_t width, uint32_t height) {
-    if (texture.size() != 4 * size_t(textureWidth) * textureHeight)
-        throw std::invalid_argument("renderImages: the texture needs four floats per texel");
+MeshImages::MeshImages(VulkanContext& vulkanContext, const TriangleMesh& mesh, uint32_t textureWidth,
+                       uint32_t textureHeight, const std::vector<glm::mat4>& cameras, uint32_t width, uint32_t height)
+    : vulkanContext(vulkanContext),
+      cameraCount(uint32_t(cameras.size())),
+      vertexCount(uint32_t(mesh.positions.size())),
+      texelCount(textureWidth * textureHeight),
+      pixels(width * height) {
     using Tensor = TensorElement<float>;
     using UintBuffer = BufferElement<VulkanBuffer<uint32_t>>;
-    const uint32_t pixels = width * height, triangleCount = uint32_t(mesh.triangles.size());
-    auto positions = vulkanContext.create<Tensor>(std::vector<uint32_t>{uint32_t(mesh.positions.size()), 4});
+    const uint32_t triangleCount = uint32_t(mesh.triangles.size());
+    positions = vulkanContext.create<Tensor>(std::vector<uint32_t>{vertexCount, 4});
     auto cornerUvs = vulkanContext.create<Tensor>(std::vector<uint32_t>{3 * triangleCount, 2});
-    auto texels = vulkanContext.create<Tensor>(std::vector<uint32_t>{textureWidth * textureHeight, 4});
-    auto cameraBuffer = vulkanContext.create<Tensor>(std::vector<uint32_t>{uint32_t(cameras.size()), 16});
+    texels = vulkanContext.create<Tensor>(std::vector<uint32_t>{texelCount, 4});
+    auto cameraBuffer = vulkanContext.create<Tensor>(std::vector<uint32_t>{cameraCount, 16});
     auto colors = vulkanContext.create<Tensor>(std::vector<uint32_t>{pixels, 4});
-    auto antialiased = vulkanContext.create<Tensor>(std::vector<uint32_t>{pixels, 4});
+    antialiased = vulkanContext.create<Tensor>(std::vector<uint32_t>{pixels, 4});
     auto triangles = std::make_shared<UintBuffer>(vulkanContext, 3 * triangleCount);
-    auto viewIndex = std::make_shared<UintBuffer>(vulkanContext, 1);
+    viewIndex = std::make_shared<UintBuffer>(vulkanContext, 1);
     auto visibility = std::make_shared<UintBuffer>(vulkanContext, pixels);
     auto pass = std::make_shared<VisibilityPass>(vulkanContext, width, height, triangleCount);
     pass->setInput(positions, 0);
@@ -445,23 +447,40 @@ std::vector<float> renderImages(VulkanContext& vulkanContext, const TriangleMesh
     connect(smoothing);
     smoothing->setInput(shading, 7, 7);
     smoothing->setInput(antialiased, 8);
-    ComputeGraph graph(vulkanContext, 1);
-    graph.compileFrom(smoothing);
-    positions->getDataBuffer(0).memcopyFrom(packPositions(mesh));
+    graph = std::make_unique<ComputeGraph>(vulkanContext, 1);
+    graph->compileFrom(smoothing);
     triangles->getBuffer(0).memcopyFrom(packTriangles(mesh));
     cornerUvs->getDataBuffer(0).memcopyFrom(packCornerUvs(mesh));
-    texels->getDataBuffer(0).memcopyFrom(texture);
     cameraBuffer->getDataBuffer(0).memcopyFrom(packCameras(cameras));
+}
+
+MeshImages::~MeshImages() = default;
+
+std::vector<float> MeshImages::render(const TriangleMesh& mesh, const std::vector<float>& texture) {
+    if (texture.size() != 4 * size_t(texelCount))
+        throw std::invalid_argument("MeshImages: the texture needs four floats per texel");
+    if (mesh.positions.size() != vertexCount)
+        throw std::invalid_argument("MeshImages: the mesh has another vertex count");
+    positions->getDataBuffer(0).memcopyFrom(packPositions(mesh));
+    texels->getDataBuffer(0).memcopyFrom(texture);
     std::vector<float> images;
-    images.reserve(4 * size_t(pixels) * cameras.size());
+    images.reserve(4 * size_t(pixels) * cameraCount);
     std::vector<float> image(4 * size_t(pixels));
-    for (uint32_t view = 0; view < uint32_t(cameras.size()); ++view) {
+    for (uint32_t view = 0; view < cameraCount; ++view) {
         viewIndex->getBuffer(0).memcopyFrom(std::vector<uint32_t>{view});
-        graph.submitAndWait(vulkanContext.getGraphicsQueue(), 0);
+        graph->submitAndWait(vulkanContext.getGraphicsQueue(), 0);
         antialiased->getDataBuffer(0).memcopyTo(image);
         images.insert(images.end(), image.begin(), image.end());
     }
     return images;
+}
+
+std::vector<float> renderImages(VulkanContext& vulkanContext, const TriangleMesh& mesh,
+                                const std::vector<float>& texture, uint32_t textureWidth, uint32_t textureHeight,
+                                const std::vector<glm::mat4>& cameras, uint32_t width, uint32_t height) {
+    if (texture.size() != 4 * size_t(textureWidth) * textureHeight)
+        throw std::invalid_argument("renderImages: the texture needs four floats per texel");
+    return MeshImages(vulkanContext, mesh, textureWidth, textureHeight, cameras, width, height).render(mesh, texture);
 }
 
 } // namespace klartraum::raster
