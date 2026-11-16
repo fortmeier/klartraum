@@ -341,6 +341,14 @@ void MeshTraining::initialize() {
     }
 }
 
+void MeshTraining::setSpecular(const std::vector<float>& values, const std::vector<float>& lights) {
+    if (!material || values.size() != material->getDataElementCount() ||
+        lights.size() != lightValues->getDataElementCount())
+        throw std::invalid_argument("MeshTraining: no specular reflection of that size");
+    material->getDataBuffer(0).memcopyFrom(values);
+    lightValues->getDataBuffer(0).memcopyFrom(lights);
+}
+
 std::vector<float> MeshTraining::specularMaterial() const {
     if (!material)
         return {};
