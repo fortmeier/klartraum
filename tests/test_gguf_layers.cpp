@@ -7,6 +7,9 @@
  * - MatVecAllWeightTypes: matVec of every supported weight type matches a CPU product of
  *   the dequantized rows, for 3 active tokens and a row count that is not a multiple of
  *   the workgroup's rows
+ * - MatMulAllWeightTypes: matMul of every supported weight type, with a bias, matches a CPU product of the
+ *   dequantized rows for token and row counts that are not multiples of the tiles
+ * - MatMulAccumulates: matMul with accumulate adds the products to the output in place
  * - MatVecAccumulateAndLastToken: matVec with accumulate adds to the output in place;
  *   with lastTokenOnly it computes the last token only
  * - RmsNormRowsPerToken: rmsNorm normalizes several rows per token and leaves inactive
@@ -19,6 +22,8 @@
  *   + 3 tokens equal 5 tokens at once
  * - GatedDeltaNetAcrossSubmissions: gatedDeltaNet over two submissions matches a CPU
  *   gated delta rule with the gated RMS norm
+ * - MatMulThroughput: (only with KLARTRAUM_BENCHMARK set) prints the time and rate of matMul at a Qwen-Image
+ *   feed-forward shape for Q4_K, Q6_K and BF16
  * - MatVecThroughput: matVecThroughput (only with KLARTRAUM_BENCHMARK set): prints the
  *   weight bandwidth of each type at the Qwen3.6-27B FFN shape, for 1 and 16 tokens
  **/
@@ -218,6 +223,50 @@ TEST_F(GgufLayersTest, MatVecAllWeightTypes) {
         expectClose(y, cpuMatVec(type, bytes, rows, columns, x, tokens), 1e-4f, tokens * rows);
         EXPECT_EQ(y[tokens * rows], 123.0f) << "inactive tokens stay untouched";
     }
+}
+
+TEST_F(GgufLayersTest, MatMulAllWeightTypes) {
+    // Token and row counts that are not multiples of the tiles (32 tokens, 64 rows).
+    constexpr uint32_t rows = 70, columns = 512, tokens = 70;
+    for (GgmlType type : {GgmlType::F32, GgmlType::F16, GgmlType::BF16, GgmlType::Q8_0, GgmlType::Q3_K, GgmlType::Q4_K,
+                          GgmlType::Q5_K, GgmlType::Q6_K}) {
+        SCOPED_TRACE(ggmlTypeName(type));
+        const auto bytes = randomWeights(type, rows, columns);
+        auto weights = weightTensor(type, bytes, rows, columns);
+        auto input = tensor(tokens * columns);
+        auto bias = tensor(rows);
+        auto output = tensor(tokens * rows);
+        auto graph = compile(gl::matMul(*vc, type, rows, columns, tokens, true), {weights, input, bias, output});
+        uploadWeights();
+        const auto x = random(tokens * columns), b = random(rows);
+        input->setData(0, x);
+        bias->setData(0, b);
+        graph->submitAndWait(vc->getGraphicsQueue(), 0);
+        auto expected = cpuMatVec(type, bytes, rows, columns, x, tokens);
+        for (uint32_t t = 0; t < tokens; ++t)
+            for (uint32_t r = 0; r < rows; ++r)
+                expected[size_t(t) * rows + r] += b[r];
+        expectClose(read(output), expected, 1e-4f);
+    }
+}
+
+TEST_F(GgufLayersTest, MatMulAccumulates) {
+    constexpr uint32_t rows = 64, columns = 256, tokens = 40;
+    const auto bytes = randomWeights(GgmlType::Q4_K, rows, columns);
+    auto weights = weightTensor(GgmlType::Q4_K, bytes, rows, columns);
+    auto input = tensor(tokens * columns);
+    auto output = tensor(tokens * rows);
+    auto graph = compile(gl::matMul(*vc, GgmlType::Q4_K, rows, columns, tokens, false, true),
+                         {weights, input, tensor(1), output});
+    uploadWeights();
+    const auto x = random(tokens * columns), start = random(tokens * rows);
+    input->setData(0, x);
+    output->setData(0, start);
+    graph->submitAndWait(vc->getGraphicsQueue(), 0);
+    auto expected = cpuMatVec(GgmlType::Q4_K, bytes, rows, columns, x, tokens);
+    for (size_t i = 0; i < expected.size(); ++i)
+        expected[i] += start[i];
+    expectClose(read(output), expected, 1e-4f);
 }
 
 TEST_F(GgufLayersTest, MatVecAccumulateAndLastToken) {
@@ -558,5 +607,29 @@ TEST_F(GgufLayersTest, MatVecThroughput) {
             std::cout << ggmlTypeName(type) << " " << tokens << " token(s): " << seconds * 1e3 << " ms, "
                       << bytes.size() / seconds / 1e9 << " GB/s of weights" << std::endl;
         }
+    }
+}
+
+TEST_F(GgufLayersTest, MatMulThroughput) {
+    if (!std::getenv("KLARTRAUM_BENCHMARK"))
+        GTEST_SKIP() << "Set KLARTRAUM_BENCHMARK=1 to run";
+    // A Qwen-Image feed-forward projection at 512 x 512: 1100 tokens, 3072 -> 12288.
+    constexpr uint32_t rows = 12288, columns = 3072, tokens = 1100, repetitions = 5;
+    for (GgmlType type : {GgmlType::Q4_K, GgmlType::Q6_K, GgmlType::BF16}) {
+        const auto bytes = randomWeights(type, rows, columns);
+        auto weights = weightTensor(type, bytes, rows, columns);
+        auto input = tensor(tokens * columns);
+        auto output = tensor(tokens * rows);
+        auto graph = compile(gl::matMul(*vc, type, rows, columns, tokens), {weights, input, tensor(1), output});
+        uploadWeights();
+        input->setData(0, random(tokens * columns));
+        graph->submitAndWait(vc->getGraphicsQueue(), 0);
+        const auto start = std::chrono::steady_clock::now();
+        for (uint32_t i = 0; i < repetitions; ++i)
+            graph->submitAndWait(vc->getGraphicsQueue(), 0);
+        const double seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() / repetitions;
+        std::cout << ggmlTypeName(type) << ": " << seconds * 1e3 << " ms, "
+                  << 2.0 * rows * columns * tokens / seconds * 1e-12 << " TFLOP/s" << std::endl;
     }
 }
