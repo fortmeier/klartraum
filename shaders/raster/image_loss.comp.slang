@@ -7,12 +7,18 @@
 // with m the target mask. The colour term counts inside the mask only, where premultiplied colours dim when the
 // mesh leaves part of the pixel uncovered; outside it, the coverage term alone pulls the silhouette in. Writes each
 // pixel's gradient and adds the loss.
+//
+// With a highlight tolerance t > 0, a target pixel brighter than the colour by more (in luminance) is taken for a
+// highlight that only this view sees, e.g. a specular reflection: its colour term is weighted by (t / excess)^2, a
+// weight that the gradient takes as constant (iteratively reweighted least squares). A colour then follows what most
+// views agree on rather than the brightest.
 import subgroup;
 
 struct PushConstants {
     uint width;
     uint height;
     float maskWeight;
+    float highlightTolerance; // 0: off
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -34,9 +40,16 @@ void main(uint3 globalId: SV_DispatchThreadID) {
         const float mask = target.a;
         const float3 difference = color.rgb - target.rgb;
         const float coverageDifference = color.a - mask;
-        pixelLoss = (mask * dot(difference, difference) + pc.maskWeight * coverageDifference * coverageDifference) /
+        float weight = mask;
+        const float excess = dot(target.rgb - color.rgb, float3(0.2126, 0.7152, 0.0722));
+        if (pc.highlightTolerance > 0.0 && excess > pc.highlightTolerance) {
+            const float ratio = pc.highlightTolerance / excess;
+            weight *= ratio * ratio;
+        }
+        pixelLoss = (weight * dot(difference, difference) + pc.maskWeight * coverageDifference * coverageDifference) /
                     float(pixelCount);
-        gradients[pixel] = float4(2.0 * mask * difference, 2.0 * pc.maskWeight * coverageDifference) / float(pixelCount);
+        gradients[pixel] =
+            float4(2.0 * weight * difference, 2.0 * pc.maskWeight * coverageDifference) / float(pixelCount);
     }
     const float groupLoss = WaveActiveSum(pixelLoss);
     if (WaveIsFirstLane()) InterlockedAdd(loss[0], groupLoss);
