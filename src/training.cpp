@@ -91,6 +91,11 @@ struct PoolPushConstants {
     uint32_t planes, inputHeight, inputWidth;
 };
 
+struct FlowWarpPushConstants {
+    uint32_t batch, channels, height, width;
+    float weight;
+};
+
 struct DistancePushConstants {
     uint32_t count;
     float weight;
@@ -362,6 +367,16 @@ ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, 
         vulkanContext.create<GeneralComputation<DistancePushConstants>>("shaders/training/l1_distance.comp.spv");
     operation->setPushConstants({{count, weight, accumulate ? 1u : 0u}});
     operation->setGroupCountX((count + 255) / 256);
+    return operation;
+}
+
+ComputeGraphElementPtr flowWarpLoss(VulkanContext& vulkanContext, const layers::Shape& shape, float weight) {
+    if (shape.size() != 4)
+        throw std::invalid_argument("flowWarpLoss: needs an N x C x H x W shape");
+    auto operation =
+        vulkanContext.create<GeneralComputation<FlowWarpPushConstants>>("shaders/training/flow_warp_loss.comp.spv");
+    operation->setPushConstants({{shape[0], shape[1], shape[2], shape[3], weight}});
+    operation->setGroupCountX((layers::elementCount(shape) + 255) / 256);
     return operation;
 }
 

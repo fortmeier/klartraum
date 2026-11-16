@@ -212,6 +212,22 @@ def object_vae_cases(out: Path, seed: int) -> None:
     save(out, "vae_free_bits", {"kl": kl.reshape(1), "dmu": mu.grad, "dlog_variance": log_variance.grad})
 
 
+def flow_warp_case(out: Path, seed: int) -> None:
+    """The temporal consistency loss (weight 0.7) on random renders, a flow partly beyond the image and a mask."""
+    from training_reference import flow_warp_loss
+
+    generator = torch.Generator().manual_seed(seed)
+    first = torch.rand(2, 3, 12, 16, generator=generator)
+    second = torch.rand(2, 3, 12, 16, generator=generator, requires_grad=True)
+    flow = torch.stack([torch.rand(2, 12, 16, generator=generator) * 20.0 - 2.0,
+                        torch.rand(2, 12, 16, generator=generator) * 16.0 - 2.0], dim=1)
+    valid = (torch.rand(2, 12, 16, generator=generator) > 0.3).float()
+    loss = 0.7 * flow_warp_loss(first, second, flow, valid)
+    loss.backward()
+    save(out, "flow_warp", {"first": first, "second": second, "flow": flow, "valid": valid,
+                            "dsecond": second.grad, "loss": loss.reshape(1)})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=OUT)
@@ -233,6 +249,7 @@ def main() -> None:
     vgg_case(args.out, 15)
     augment_backward_case(args.out, 23)
     object_vae_cases(args.out, 17)
+    flow_warp_case(args.out, 19)
     print(f"fixtures in {args.out}")
 
 

@@ -104,3 +104,14 @@ def kl_divergence(mu: torch.Tensor, log_variance: torch.Tensor, counts: torch.Te
     number cost nothing (Kingma et al. 2016)."""
     terms = (-0.5 * (1.0 + log_variance - mu * mu - log_variance.exp())).clamp(min=free_bits).sum(dim=2)
     return (terms * (counts > 0).to(terms.dtype)).sum() / mu.shape[0]
+
+
+def flow_warp_loss(first: torch.Tensor, second: torch.Tensor, flow: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+    """The temporal consistency loss: the first render [N, 3, H, W] warped onto the second view by the flow [N, 2, H, W]
+    (each of the second view's pixels' position in the first, in pixels with centres at i + 0.5; bilinear, clamped to
+    the border), and the mean over all of the second render's values of valid [N, H, W] x the squared difference.
+    The warped first render is the target: no gradient into it."""
+    height, width = second.shape[2:]
+    grid = torch.stack([flow[:, 0] / width * 2.0 - 1.0, flow[:, 1] / height * 2.0 - 1.0], dim=-1)
+    warped = F.grid_sample(first.detach(), grid, mode="bilinear", padding_mode="border", align_corners=False)
+    return ((warped - second) ** 2 * valid[:, None]).mean()

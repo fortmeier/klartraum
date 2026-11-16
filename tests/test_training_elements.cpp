@@ -40,6 +40,9 @@
  * - vaeMatchesPyTorch: the VAE's latents and KL divergence and the statistics' gradient equal PyTorch's
  * - vaeFreeBitsMatchesPyTorch: with 0.3 free bits, the KL term (each number counted as at least 0.3 nats) and the
  *   statistics' gradient (no KL gradient for numbers below) equal PyTorch's
+ * - flowWarpLossMatchesPyTorch: the temporal consistency loss (the first render warped by a flow partly beyond the
+ *   image, bilinear and clamped, against the second on a mask) and its gradient for the second render equal
+ *   latent_renderer.flow_warp_loss()'s (grid_sample)
  *
  * The references come from scripts/neural/make_element_fixtures.py (build/TestingOutput/training_fixtures/); the
  * tests skip without them.
@@ -716,4 +719,35 @@ TEST(TrainingElements, vaeFreeBitsMatchesPyTorch) {
     if (!fixture.exists() || !expected.exists())
         GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
     expectVaeMatches(fixture, expected, 0.3f);
+}
+
+TEST(TrainingElements, flowWarpLossMatchesPyTorch) {
+    const Fixture fixture("flow_warp");
+    if (!fixture.exists())
+        GTEST_SKIP() << "run scripts/neural/make_element_fixtures.py first";
+    HeadlessFrontend frontend;
+    auto& vc = frontend.getKlartraumEngine().getVulkanContext();
+    const auto shape = fixture.shapes.at("second");
+    auto first = tensor(vc, shape), second = tensor(vc, shape), gradient = tensor(vc, shape);
+    auto flow = tensor(vc, fixture.shapes.at("flow")), valid = tensor(vc, fixture.shapes.at("valid"));
+    auto shares = tensor(vc, shape), total = tensor(vc, {1});
+    auto loss = training::flowWarpLoss(vc, shape, 0.7f);
+    loss->setInput(first, 0);
+    loss->setInput(second, 1);
+    loss->setInput(flow, 2);
+    loss->setInput(valid, 3);
+    loss->setInput(gradient, 4);
+    loss->setInput(shares, 5);
+    auto add = training::sum(vc, uint32_t(shares->getDataElementCount()));
+    add->setInput(shares, 0);
+    add->setInput(total, 1);
+    add->addDependency(loss);
+    ComputeGraph graph(vc, 1);
+    graph.compileFrom(add);
+    for (const auto& [element, name] :
+         {std::pair{first, "first"}, std::pair{second, "second"}, std::pair{flow, "flow"}, std::pair{valid, "valid"}})
+        element->getDataBuffer(0).memcopyFrom(fixture.values(name));
+    graph.submitAndWait(vc.getGraphicsQueue(), 0);
+    EXPECT_LT(relativeError(read(gradient), fixture.values("dsecond")), 1e-5f);
+    EXPECT_NEAR(read(total)[0], fixture.values("loss")[0], 1e-6f);
 }
