@@ -12,6 +12,8 @@
  * - adamStepMatchesReference: three Adam steps with the step number from the GPU counter match a CPU Adam
  * - adamLearningRateDecays: with an exponential decay over three steps to a tenth, five Adam steps (two after the
  *   decay ends) match a CPU Adam with the same schedule
+ * - adamLearningRateFollowsACosine: with a cosine schedule up to ten times and down to a tenth over four steps, six
+ *   Adam steps (two after the change ends) match a CPU Adam with the same schedule
  * - mlpGradientsMatchFiniteDifferences: the weight and bias gradients of a three-layer ReLU network, from one
  *   training step with learning rate zero, match central differences of a CPU forward pass, and the loss is
  *   the CPU loss
@@ -85,8 +87,12 @@ protected:
             gradients->getDataBuffer(0).memcopyFrom(g);
             graph.submitAndWait(vc->getGraphicsQueue(), 0);
             double learningRate = adam.learningRate;
-            if (adam.decaySteps > 0)
-                learningRate *= std::pow(double(adam.finalFactor), std::min(double(t) / adam.decaySteps, 1.0));
+            if (adam.decaySteps > 0) {
+                const double progress = std::min(double(t) / adam.decaySteps, 1.0);
+                learningRate *=
+                    adam.cosine ? 1.0 + (adam.finalFactor - 1.0) * 0.5 * (1.0 - std::cos(3.14159265358979 * progress))
+                                : std::pow(double(adam.finalFactor), progress);
+            }
             for (uint32_t i = 0; i < count; ++i) {
                 mr[i] = adam.beta1 * mr[i] + (1 - adam.beta1) * g[i];
                 vr[i] = adam.beta2 * vr[i] + (1 - adam.beta2) * double(g[i]) * g[i];
@@ -189,6 +195,18 @@ TEST_F(TrainingTest, adamLearningRateDecays) {
     adam.decaySteps = 3;
     adam.finalFactor = 0.1f;
     expectAdamMatchesReference(adam, 5);
+}
+
+TEST_F(TrainingTest, adamLearningRateFollowsACosine) {
+    // Up to ten times over four steps (a slow start, as for a texture that should stay dark for a while), and down to
+    // a tenth; six steps each, two after the change ends.
+    for (const float factor : {10.0f, 0.1f}) {
+        training::AdamParameters adam{0.01f, 0.9f, 0.999f, 1e-8f};
+        adam.decaySteps = 4;
+        adam.finalFactor = factor;
+        adam.cosine = true;
+        expectAdamMatchesReference(adam, 6);
+    }
 }
 
 TEST_F(TrainingTest, mlpGradientsMatchFiniteDifferences) {

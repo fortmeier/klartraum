@@ -58,10 +58,12 @@ struct AdamParameters {
     float beta1 = 0.9f;
     float beta2 = 0.999f;
     float epsilon = 1e-8f;
-    /// Steps over which the learning rate decays exponentially to learningRate x finalFactor (it stays there after);
-    /// 0 for a constant learning rate.
+    /// Steps over which the learning rate changes to learningRate x finalFactor (it stays there after); 0 for a
+    /// constant learning rate.
     uint32_t decaySteps = 0;
     float finalFactor = 1.0f; ///< learning rate after decaySteps, relative to learningRate
+    /// How it changes: exponentially (false), or along half a cosine (true): slowly at first and at the end.
+    bool cosine = false;
 };
 
 /**
