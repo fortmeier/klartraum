@@ -90,3 +90,14 @@ if(KLARTRAUM_WITH_FREETYPE)
 
   add_dependencies(title_morph_example Shaders)
 endif()
+
+# Training a network with gradients from Slang's automatic differentiation
+add_executable(autodiff_training_example
+    autodiff_training_example.cpp
+)
+
+target_link_libraries(autodiff_training_example
+    klartraum_lib
+)
+
+add_dependencies(autodiff_training_example Shaders)

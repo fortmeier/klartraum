@@ -31,6 +31,7 @@ relative to the working directory.
 | `turntable_example` | Headless rendering: one image per frame from a camera circling the scene | no |
 | `title_font_example` | The promo title set in several fonts and turned into Gaussians, rendered front-on for comparison (needs `KLARTRAUM_WITH_FREETYPE`) | no |
 | `title_morph_example` | The promo opening shot: the title, made of the scene's Gaussians, morphs into the turning lantern (needs `KLARTRAUM_WITH_FREETYPE`) | no |
+| `autodiff_training_example` | Training a small network on the GPU, with gradients from Slang's automatic differentiation | no |
 
 ### Camera controls
 
@@ -223,4 +224,26 @@ done
 ffmpeg -i straight/straight.mp4 -i swirl/swirl.mp4 -i scatter/scatter.mp4 -i wave/wave.mp4 -filter_complex \
     "[0]scale=960:540[a];[1]scale=960:540[b];[2]scale=960:540[c];[3]scale=960:540[d];[a][b]hstack[t];[c][d]hstack[u];[t][u]vstack" \
     -c:v libx264 -crf 18 -pix_fmt yuv420p variants_2x2.mp4
+```
+
+### `autodiff_training_example`
+
+Trains a fully connected network (Fourier features of the pixel coordinates,
+two hidden layers of 64 ReLU units, a sigmoid output) to reproduce a
+procedural grayscale image, and writes the target and snapshots of the
+prediction to `build/TestingOutput/autodiff_training/`. The network is built
+from the existing layers (`layers::matMul`, a bias `layers::binary` Add,
+`layers::relu`) by `training::MlpTraining`. The gradients of the activations and
+of the loss come from Slang's automatic differentiation (`bwd_diff` of the
+`[Differentiable]` functions in `shaders/training/differentiable.slang`), the
+linear layers' gradients are products of transposes, and Adam updates the
+parameters. Each training step is one pre-recorded compute graph.
+
+| Option | Meaning |
+|---|---|
+| `--steps N` | Training steps over the whole image (default 2000) |
+| `--size S` | Image width and height in pixels (default 64) |
+
+```bash
+./build/examples/autodiff_training_example
 ```
