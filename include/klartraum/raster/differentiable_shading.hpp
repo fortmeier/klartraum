@@ -31,6 +31,14 @@ ComputeGraphElementPtr shade(VulkanContext& vulkanContext, uint32_t width, uint3
                              uint32_t textureHeight);
 
 /**
+ * @brief Per pixel the clip w of the nearest triangle's surface at the pixel centre, infinity for background: the
+ * stop depth of Gaussians blended in front of the mesh (splatting::SplatForward). Slot 7: depths (one float per
+ * pixel).
+ */
+ComputeGraphElementPtr surfaceDepth(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
+                                    uint32_t textureWidth, uint32_t textureHeight);
+
+/**
  * @brief The masked colour loss and its gradients: the sum over pixels covered by the mesh and inside the target
  * mask of |colour - target|^2 / (width x height).
  *
@@ -69,6 +77,22 @@ ComputeGraphElementPtr antialias(VulkanContext& vulkanContext, uint32_t width, u
  */
 ComputeGraphElementPtr antialiasBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height,
                                          uint32_t textureWidth, uint32_t textureHeight);
+
+/**
+ * @brief Premultiplied front colours with coverage over premultiplied back colours: front + (1 - front coverage) x
+ * back, e.g. Gaussians blended until a mesh's surface over the antialiased mesh.
+ *
+ * Slots: 0 front, 1 back, 2 output (four floats per pixel each: rgb, coverage).
+ */
+ComputeGraphElementPtr compositeOver(VulkanContext& vulkanContext, uint32_t width, uint32_t height);
+
+/**
+ * @brief Gradients of compositeOver() with respect to its front and back colours from the gradients of its output.
+ *
+ * Slots: 0 front, 1 back, 2 output gradients, 3 front gradients (written), 4 back gradients (written); four floats
+ * per pixel each.
+ */
+ComputeGraphElementPtr compositeOverBackward(VulkanContext& vulkanContext, uint32_t width, uint32_t height);
 
 /**
  * @brief The image loss of premultiplied colours against a masked target and its gradients: the sum over pixels of

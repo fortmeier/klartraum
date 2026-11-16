@@ -107,6 +107,24 @@ public bool pixelSurface(uint x, uint y, out PixelSurface surface) {
     return true;
 }
 
+// The clip w of a covered pixel's surface at its centre: the screen-space barycentrics weighted by 1 / w of the
+// corners (perspective-correct, as textureCoordinate()).
+public float surfaceDepth(PixelSurface s) {
+    const float2 size = float2(pc.width, pc.height);
+    float4 clip[3];
+    float2 screen[3];
+    for (uint c = 0; c < 3; ++c) {
+        clip[c] = mul(s.camera, float4(s.corner[c], 1.0));
+        screen[c] = (clip[c].xy / clip[c].w * 0.5 + 0.5) * size;
+    }
+    const float2 p = s.pixel;
+    const float area = (screen[1].x - screen[0].x) * (screen[2].y - screen[0].y) -
+                       (screen[1].y - screen[0].y) * (screen[2].x - screen[0].x);
+    const float l0 = ((screen[1].x - p.x) * (screen[2].y - p.y) - (screen[1].y - p.y) * (screen[2].x - p.x)) / area;
+    const float l1 = ((screen[2].x - p.x) * (screen[0].y - p.y) - (screen[2].y - p.y) * (screen[0].x - p.x)) / area;
+    return 1.0 / (l0 / clip[0].w + l1 / clip[1].w + (1.0 - l0 - l1) / clip[2].w);
+}
+
 // The colour of a covered pixel.
 public float3 shade(PixelSurface s) {
     const float2 uv = textureCoordinate(s.corner[0], s.corner[1], s.corner[2], s.cornerUv[0], s.cornerUv[1],
