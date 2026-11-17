@@ -36,6 +36,8 @@ relative to the working directory.
 | `qwen_image_example` | Text-to-image and image-to-image with the Qwen-Image diffusion model (GGUF transformer and text encoder, ONNX VAE) | no |
 | `landscape_gbuffer_example` | Metric depth and semantic classes of images, estimated by two networks (ONNX) | no |
 | `photo_enhancer_example` | The bonsai landscape's forest fly-in made photo-realistic: G-buffers, a learnable hash-grid surface texture and a GAN generator (ONNX) per frame | no |
+| `crate_gbuffer_example` | A toy scene for the photo enhancer: a crate on a floor from random cameras, with all G-buffers (`GBufferMeshRenderer`) | no |
+| `crate_training_example` | Trains the crate's photo enhancer (texture, generator, appearance codes) entirely in Klartraum | no |
 
 ### Camera controls
 
@@ -653,4 +655,178 @@ downsampled rendering), as PNG. A model trained with the season conditioning
 ```bash
 ./build/examples/photo_enhancer_example --out-dir build/TestingOutput/photo_enhancer
 ffmpeg -framerate 30 -i build/TestingOutput/photo_enhancer/frames/frame_%04d.png -pix_fmt yuv420p enhanced.mp4
+```
+
+### `crate_gbuffer_example`
+
+A toy scene for the photo enhancer pipeline: a crate (a box whose six faces each
+have their own surface coordinates and object id) standing on a floor, drawn by
+`GBufferMeshRenderer` from random cameras around it (any direction, 8 to 40
+degrees above, 2.2 to 3.8 away). Every view is written with all G-buffers like a
+frame of the `tree_bonsai_example` fly-ins (`frames/classical_*.png`, the class,
+depth, 16-bit depth and u and v images, and `cameras_classical.csv`), so that
+`scripts/neural/prepare_photo_pairs.py` and `add_surface_coordinates.py` (with
+their sample size option) turn the views into training pairs. With `--model`, a
+trained photo enhancer renders every view, entirely in Klartraum.
+
+| Option | Meaning |
+|---|---|
+| `--views N` | Number of views (default 180) |
+| `--size S` | Width and height of the images (default 512) |
+| `--seed N` | Seed of the cameras (default 1) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/crate/flights/crate_a`) |
+| `--orbit` | Circle the crate once instead (22 degrees above, 3 away) |
+| `--fixed-view` | Every view from the same camera (azimuth 0.6, 22 degrees above, 3 away) |
+| `--no-floor` | The crate alone, on the background |
+| `--model STEM` | Also enhance every view with the photo enhancer `STEM` (`neural::PhotoEnhancer`) into `frames/enhanced_NNNN.png` |
+| `--appearance K` | The appearance code of training image K (default: the codes' mean) |
+| `--sample-size S` | The enhancer's sample size (default 256) |
+| `--parameters DIR` | Enhance every view with a photo enhancer trained in Klartraum (`crate_training_example`'s `parameters/`) instead |
+| `--qwen-image-to-image` | With `--qwen-batch`, also write the rendering on white (`DIR/input/`) as each photo's starting image |
+| `--untrained S` | Enhance every view with an untrained photo enhancer (initialised as for training, its texture to +-1e-4 x S) |
+| `--time` | With `--parameters` of a latent-conditioned model: print the wall-clock time of its step per view (without GPU profiling) |
+| `--profile` | With `--parameters`: print the trained model's GPU time per view, element by element and per kind |
+| `--lights a1,e1,r1,i1,a2,e2,r2,i2` | The two lights of the shadows G-buffers (`classical_shadows_*`: red light 1, green light 2; `classical_lit_*`: lit with both): azimuth and elevation in degrees, angular radius in radians (0: hard shadows), intensity |
+| `--random-lights SEED` | Draw both lights at random for every view (azimuth, elevation 15-70 degrees, radius 0-0.15, intensity 0.5-1.2), written to `lights.csv` |
+| `--latent-codes FILE` | For a latent-conditioned model: one latent per line (comma-separated), view after view, e.g. with `--fixed-view` a walk through the latent space |
+| `--latent-code a,b,...` | For a latent-conditioned model (detected by its encoder in `--parameters`): the crate's latent (default zeros) |
+| `--features` | With `--parameters` or `--untrained`, also write the texture's features of every view (`frames/features_NNNN.png`) |
+| `--qwen-batch DIR` | Write Qwen-Image's control depths (`DIR/depth_smooth/`) and batch lists (`DIR/batches/NN.txt`, photos to `DIR/photo/`) for the batch mode of `qwen_image_example` |
+
+```bash
+./build/examples/crate_gbuffer_example --views 180 --seed 1 --out-dir build/TestingOutput/crate/flights/crate_a
+./build/examples/crate_gbuffer_example --orbit --views 240 --out-dir build/TestingOutput/crate/orbit \
+    --model build/TestingOutput/crate/runs/c1/photo_enhancer_best --appearance 3
+```
+
+### `crate_training_example`
+
+Trains the photo enhancer of the crate toy scene entirely in Klartraum with
+`neural::PhotoEnhancerTraining`: the views of the crate flights of
+`crate_gbuffer_example` are rendered again from their cameras and prepared as
+samples (`neural::photoEnhancerInputs()`), their Qwen-Image photos
+(`<crate>/data/<split>/photo/<view>.ppm`) are the targets, and the learnable
+surface texture, the local U-Net generator (3 levels, ChannelNorm, ELU) and one
+appearance code per view are trained with the photometric losses (L1 and L1 of
+8 x 8 block means), optionally the VGG perceptual loss and a PatchGAN, on random
+crops, with Adam and an exponential moving average.
+Views with more than 60 % background or whose photo follows the rendering too
+loosely (`neural::PhotoAlignment`: the rank correlation of Depth Anything's
+estimate of the photo with the rendered depth, kept in
+`<split>/alignment_klartraum.txt`) are left out. Every `--every` steps the averaged parameters go to `<out>/parameters/` and
+the held-out views are rendered with the codes' mean
+(`<out>/validation_NNNNNN.png`: rendering, photo, enhanced; the L1 in
+`<out>/log.txt`).
+
+| Option | Meaning |
+|---|---|
+| `--crate DIR` | The crate data (default `build/TestingOutput/crate`: `flights/crate_a`, `flights/crate_v`, `data/train`, `data/validation`) |
+| `--out DIR` | Output directory (default `build/TestingOutput/crate/runs/k1`) |
+| `--steps N` | Training steps (default 30000) |
+| `--batch N`, `--crop S` | Crops per step and their size (default 16 and 128) |
+| `--sample-size S` | Size of the samples (default 256; the photos are averaged down to it) |
+| `--flight DIR PHOTOS FIRST` | Train on a fly-in flight of `tree_bonsai_example` (with its G-buffers) instead of the crate: its frames from FIRST on, photos `PHOTOS/<frame>.ppm`, every tenth frame held out, the temporal loss between consecutive frames (needs `--latent`; the latent is the whole image's) |
+| `--render-flight DIR OUT` | After training, render the model along a flight (its frames from `--flight`'s FIRST on, latents 0) to `OUT/frame_<frame>.png` |
+| `--crates DIR` | Many crates instead: every `DIR/crates/<id>/` (six views painted by `crate_paint_example`, `cameras_classical.csv` and `photo/`) with its own row of a learned latent table instead of the encoder (needs `--latent`); view 3 of every fifth crate held out. Validation renders the held-out views with their crate's code and with the mean code, and 16 crates on one view (`crates_NNNNNN.png`); the table goes to `<out>/crate_codes.txt`, one crate per line |
+| `--held-out-crates N` | With `--crates`: the last N crates are left out of training; afterwards their codes are fitted on views 0-2 and views 3-5 measure the result (`<out>/new_crates.png`: photo, fitted, mean code; default 10) |
+| `--fit-steps N` | Steps of fitting the held-out crates' codes, with everything else fixed (default 1000) |
+| `--texture-only-latent` | The latents feed only the texture, not the generator: every difference between latents has to go through the texture |
+| `--evaluate DIR` | Instead of training, evaluate a saved latent model (its `parameters/`, with the options it was trained with): validation and training L1 with and without its texture's features, `<out>/evaluation.png` (photo, with, without) and `<out>/texture_features.png` |
+| `--texture-mlp F W K` | The latent-conditioned MLP texture instead: positional encoding of F octaves per surface coordinate and the crate's latent through two hidden layers of W channels to K features (needs `--latent`) |
+| `--texture-mlp-residual F1,W1,F2,W2,...` | Residual blocks after `--texture-mlp`'s MLP: block k an MLP of Fk octaves and hidden width Wk whose features add to the previous blocks', so that finer blocks correct what the coarser ones leave |
+| `--texture-basis C R1,R2,...` | The code-mixed feature texture instead (as Deferred Neural Rendering's neural texture): per crate face and resolution Rk x Rk texels, a base layer and one layer per latent number of C features; a pixel's features are the base plus each layer times its latent, summed over the resolutions (needs `--latent`) |
+| `--basis-decay D`, `--basis-smoothness S` | Regularise `--texture-basis`: D x the squared texels + S x the squared differences of neighbouring texels, for each level times its resolution over the coarsest's (default 0) |
+| `--texture L B F` | The surface texture's levels and their coarsest and finest cells per axis (default 12 16 2048) |
+| `--appearance D` | Size of the appearance codes (default 8, 0 for none) |
+| `--every N` | Steps between checkpoints and validations (default 1000) |
+| `--min-alignment A` | Leave out views aligned worse (default 0.7) |
+| `--profile` | Print the GPU time of a step per element kind every 100 steps |
+| `--perceptual W` | Weight of the VGG-16 perceptual loss (default 0; needs `scripts/neural/export_vgg16.py`) |
+| `--adversarial W` | Weight of the adversarial loss of a 2-scale PatchGAN with DiffAugment (default 0: no GAN) |
+| `--feature-matching W` | Weight of the discriminator's feature matching (default 2) |
+| `--unconditional` | The discriminator sees the image only, not the G-buffer with it |
+| `--critic-scales N` | Scales of the PatchGAN, each at half the previous resolution (default 2; the coarsest needs 24 pixels) |
+| `--discriminator-lr R` | The discriminator's Adam learning rate (default 0.0002) |
+| `--critic-channels N` | The conditional discriminator sees only the first N G-buffer channels (default 0: all; 1: the inverse depth) |
+| `--augment-generator` | DiffAugment in the generator's step too (as in the discriminator's) |
+| `--lr R` | The generator's (and encoder's) Adam learning rate (default 0.0001) |
+| `--init-from DIR` | Start generator, texture and codes from an earlier run's `parameters/`: every parameter of the same shape; a shallower U-Net's up blocks become the last ones (the deeper levels start fresh) |
+| `--widths a,b,...` | Channels of the generator's U-Net levels, each at half the previous resolution (default 32,64,128) |
+| `--no-floor` | The crate without a floor (as `crate_gbuffer_example --no-floor`) |
+| `--latent D` | The latent-conditioned renderer instead: inverse depth, normals, texture and a latent G-buffer of D numbers per object from a VAE encoder of the photo; validation renders encoded, zero and drawn latents |
+| `--kl W` | Weight of the latents' KL divergence (default 0.001) |
+| `--temporal W` | Weight of the temporal consistency loss: every crop's view turned by `--temporal-delta` degrees (alternately to either side) and rendered with the same latents; the first render warped onto it by the flow from the G-buffers (with the floor) is its target, the squared difference on the pixels both views see |
+| `--temporal-delta D` | The second views' offset in degrees (default 3) |
+| `--free-bits B` | Nats of KL per latent number that cost nothing (default 0); the logged `kl` counts each number as at least B |
+
+```bash
+./build/examples/crate_training_example --crate build/TestingOutput/crate --out build/TestingOutput/crate/runs/k1
+```
+
+### `crate_flow_example`
+
+The geometric flow between two nearby views of the crate scene and how
+consistently a trained latent crate model (one trained with latents)
+renders them. View a and view b (`--delta` degrees further along the orbit) are
+rendered by the model with the same latent; the flow of b onto a comes from the
+G-buffers of the crate and the floor (each pixel's point from b's distance,
+projected by a's camera, valid where a's own distance agrees). It writes
+`<out>/flow_pair.png` (a, b, the flow, a warped onto b, 4 x the difference, the
+mask) and prints the masked mean squared differences with and without the warp,
+and as a check of the flow how many of b's valid pixels find the same surface
+point in a.
+
+| Option | Meaning |
+|--------|---------|
+| `--parameters DIR` | A latent crate model's `parameters/` |
+| `--out DIR` | Output directory (default `build/TestingOutput/crate_views_i2i/flow`) |
+| `--sample-size S` | Size of the renders and the flow (default 128) |
+| `--azimuth A`, `--delta D` | View a's orbit angle and b's offset in degrees (default 34 and 3) |
+| `--latent-code a,b,...` | The crate's latent (default zeros) |
+
+```bash
+./build/examples/crate_flow_example --parameters build/TestingOutput/crate_views_i2i/runs/v4/parameters_2000
+```
+
+### `crate_paint_example`
+
+Projective painting of the crate, as TEXTure paints meshes, so that Qwen-Image photos of
+different views show the same crate: a UV atlas of the crate's six faces (128 x 128 texels
+each) filled photo by photo. A texel takes a photo's colour where the view sees it at a cosine
+of at least 0.3 and more frontally than the view that painted it so far (its surface point
+projected into the photo, the depth checked, sampled bilinearly). Start images for
+image-to-image show the atlas where it is painted (holes filled from neighbours) and the
+atlas's mean colour, lightly shaded, elsewhere. A driver script alternates it with
+`qwen_image_example`.
+
+| Option | Meaning |
+|--------|---------|
+| `--atlas DIR` | The atlas (`atlas.bin`, `atlas.png`; default `build/TestingOutput/crate_painted/atlas`) |
+| `--start FLIGHT OUT` | Start images of the flight's views (`OUT/start/`), Qwen's depth controls (`OUT/control/`) and `OUT/batch.txt` (photos to `OUT/photo/`) |
+| `--bake FLIGHT PHOTOS` | Bake the flight's photos (`<flight>_<frame>.ppm`) into the atlas |
+| `--views a,b,...` | Only these frames of the flight |
+| `--margin M` | How much more frontally (cosine of the viewing angle) a view must see an already painted texel to paint it again (default 0.02); larger keeps two views that see a face about equally from splitting it |
+| `--consistency FLIGHT PHOTOS` | How well a flight's photos agree: each against its nearest other view, warped onto it by the geometric flow, mean squared difference on the crate |
+| `--self-test` | Bake synthetic photos (each face its own colour) and check a new view's start image |
+
+```bash
+./build/examples/crate_paint_example --atlas build/TestingOutput/crate_painted/atlas --bake FLIGHT PHOTOS
+```
+
+### `flight_paint_example`
+
+Consistent Qwen-Image photos along a fly-in flight of `tree_bonsai_example` (with its G-buffers), the
+way `crate_paint_example` paints the crate: every frame's start image is the previous frame's
+photo warped onto it by the geometric flow (each pixel's point from its distance and the
+camera, projected into the previous frame, kept where that frame sees it; gaps of a few pixels
+filled from their neighbours), the newly visible parts from the classical rendering.
+
+| Option | Meaning |
+|--------|---------|
+| `--check FLIGHT` | The flow's check: each rendering warped onto the next frame against that frame's own rendering |
+| `--start FLIGHT FRAME PHOTOS OUT` | The start image of FRAME from the previous frame's photo (`PHOTOS/<frame>.ppm`), `OUT/start_<frame>.ppm` and the depth control `OUT/control_<frame>.ppm` |
+| `--consistency FLIGHT PHOTOS` | How well consecutive photos agree (warped mean squared difference) |
+
+```bash
+./build/examples/flight_paint_example --check build/TestingOutput/flyin_painted/flight
 ```

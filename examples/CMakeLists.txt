@@ -207,3 +207,51 @@ target_link_libraries(photo_enhancer_example
 )
 
 add_dependencies(photo_enhancer_example Shaders)
+
+add_executable(crate_gbuffer_example
+    crate_gbuffer_example.cpp
+)
+
+target_link_libraries(crate_gbuffer_example
+    klartraum_lib
+)
+
+add_dependencies(crate_gbuffer_example Shaders)
+
+add_executable(crate_training_example
+    crate_training_example.cpp
+)
+
+target_link_libraries(crate_training_example
+    klartraum_lib
+)
+
+add_dependencies(crate_training_example Shaders)
+
+add_executable(crate_flow_example
+    crate_flow_example.cpp
+)
+
+target_link_libraries(crate_flow_example
+    klartraum_lib
+)
+
+add_dependencies(crate_flow_example Shaders)
+
+add_executable(crate_paint_example
+    crate_paint_example.cpp
+)
+
+target_link_libraries(crate_paint_example
+    klartraum_lib
+)
+
+add_dependencies(crate_paint_example Shaders)
+
+add_executable(flight_paint_example
+    flight_paint_example.cpp
+)
+
+target_link_libraries(flight_paint_example
+    klartraum_lib
+)
