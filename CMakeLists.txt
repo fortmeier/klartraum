@@ -276,6 +276,7 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_gbuffer_mesh_renderer.cpp
   tests/test_tree_gaussian_quality.cpp
   tests/test_tree_enhancer.cpp
   tests/test_lod_metrics.cpp
@@ -399,6 +400,7 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/gbuffer_mesh_renderer.cpp
   src/tree_enhancer.cpp
   src/lod_metrics.cpp
   src/tree_reference.cpp
