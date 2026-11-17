@@ -102,6 +102,9 @@ struct PhotoEnhancerTrainingConfig {
     uint32_t criticScales = 2;
     /// The conditional discriminator's G-buffer channels: the first this many (0: all), e.g. 1 for inverse depth.
     uint32_t criticGBufferChannels = 0;
+    /// The real pairs' own G-buffer (setRealGBuffer()) instead of the batch's: real photos and generated images of
+    /// other views, as in a GAN without reconstruction.
+    bool separateRealGBuffer = false;
     /// DiffAugment in the generator's step too: the generated pairs augmented (with its own random numbers) before the
     /// discriminator judges them, as in its own step.
     bool augmentGeneratorStep = false;
@@ -134,6 +137,8 @@ struct PhotoEnhancerTrainingConfig {
     std::vector<uint32_t> encoderWidths{32, 64, 128}; ///< stride-2 layers down to an eighth
     /// Forward only: the latents from the encoder of the batch's photos (their means), else given (setLatents()).
     bool encodeLatents = false;
+    /// Training without the encoder: the latents are given every step (setLatents(), e.g. drawn from N(0, 1)); no KL.
+    bool randomLatents = false;
     /// Learned latents instead of the encoder (an auto-decoder): a table "latents.weight" of this many rows, each
     /// the latentObjects x latentSize latents of one appearance (e.g. one crate), the batch's rows chosen by
     /// setBatch(); trained with codesAdam, no KL (0: none).
@@ -207,6 +212,8 @@ public:
     /// The next step's augmentation numbers, [2 batch][6] (real pairs, then fake pairs; see training::augmentPair()),
     /// instead of random ones.
     void setAugmentation(const std::vector<float>& numbers);
+    /// The real pairs' G-buffer channels, as setBatch()'s channels (with separateRealGBuffer).
+    void setRealGBuffer(const std::vector<float>& channels);
     /// The generator's images of the last step, [batch][3][size][size].
     std::vector<float> image() const;
     /// The generator's input of the last step, [batch][11 G-buffer channels + texture features][size][size].
@@ -375,8 +382,8 @@ private:
     /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.
     std::vector<std::unique_ptr<Critic>> critics;
     std::shared_ptr<TensorElement<float>> augmentation;
-    /// The generator step's augmentation numbers.
-    std::shared_ptr<TensorElement<float>> generatorAugmentation;
+    /// The real pairs' own G-buffer (separateRealGBuffer) and the generator step's augmentation numbers.
+    std::shared_ptr<TensorElement<float>> realChannels, generatorAugmentation;
     std::shared_ptr<TensorElement<uint32_t>> discriminatorCounter; ///< the discriminator's Adam steps
     std::vector<std::shared_ptr<TensorElement<float>>> discriminatorTotals, adversarialTotals, matchingTotals;
     bool augmentationGiven = false;

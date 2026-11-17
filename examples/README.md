@@ -731,6 +731,8 @@ the held-out views are rendered with the codes' mean
 | `--held-out-crates N` | With `--crates`: the last N crates are left out of training; afterwards their codes are fitted on views 0-2 and views 3-5 measure the result (`<out>/new_crates.png`: photo, fitted, mean code; default 10) |
 | `--fit-steps N` | Steps of fitting the held-out crates' codes, with everything else fixed (default 1000) |
 | `--texture-only-latent` | The latents feed only the texture, not the generator: every difference between latents has to go through the texture |
+| `--gan` | The GAN without reconstruction instead: random views (`--gan-views N`, default 800) with random latents, a discriminator on inverse depth and image against the photos with their own views' depth, DiffAugment in both steps, no encoder, no photo losses (needs `--latent`; `--adversarial` defaults to 1); validation writes `samples_*.png` (4 views x 4 latents) |
+| `--gan-views N` | Random views rendered for `--gan` (default 800) |
 | `--evaluate DIR` | Instead of training, evaluate a saved latent model (its `parameters/`, with the options it was trained with): validation and training L1 with and without its texture's features, `<out>/evaluation.png` (photo, with, without) and `<out>/texture_features.png` |
 | `--texture-mlp F W K` | The latent-conditioned MLP texture instead: positional encoding of F octaves per surface coordinate and the crate's latent through two hidden layers of W channels to K features (needs `--latent`) |
 | `--texture-mlp-residual F1,W1,F2,W2,...` | Residual blocks after `--texture-mlp`'s MLP: block k an MLP of Fk octaves and hidden width Wk whose features add to the previous blocks', so that finer blocks correct what the coarser ones leave |

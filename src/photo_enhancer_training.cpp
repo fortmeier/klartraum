@@ -93,7 +93,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     if (mlp && (config.latentSize == 0 || shape.levels > 0 || shape.classes.empty() || shape.classes.size() > 4))
         throw std::invalid_argument(
             "PhotoEnhancerTraining: the MLP texture needs latents, a texture of no levels and 1 to 4 classes");
-    if (config.latentCodes > 0 && (config.latentSize == 0 || config.appearances > 0 || config.encodeLatents))
+    if (config.latentCodes > 0 &&
+        (config.latentSize == 0 || config.appearances > 0 || config.randomLatents || config.encodeLatents))
         throw std::invalid_argument("PhotoEnhancerTraining: the latent table needs latents, no appearance codes and no "
                                     "given or encoded latents");
     if (!config.latentToDecoder && config.latentSize == 0)
@@ -180,7 +181,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     addParameter("generator.out.weight", {3, w[0], 1, 1}, Network);
     addParameter("generator.out.bias", {3}, Network);
     // The encoder, unless the latents are given.
-    if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents) && config.latentCodes == 0) {
+    if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents) && !config.randomLatents &&
+        config.latentCodes == 0) {
         uint32_t previous = 3;
         for (size_t i = 0; i < config.encoderWidths.size(); ++i) {
             const std::string conv = "encoder.body." + std::to_string(3 * i) + ".";
@@ -258,7 +260,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
             pick->setInput(rows, 1);
             pick->setInput(latentValues, 2);
             add(pick);
-        } else if ((!config.forwardOnly || config.encodeLatents) && config.latentCodes == 0)
+        } else if ((!config.forwardOnly || config.encodeLatents) && !config.randomLatents && config.latentCodes == 0)
             buildEncoder();
         auto splat = training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn,
                                                kGBufferChannels + features);
@@ -407,7 +409,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
                 add(regularize);
             }
     }
-    if (config.latentSize > 0)
+    if (config.latentSize > 0 && !config.randomLatents)
         buildLatentBackward();
     if (config.temporal > 0.0f)
         buildTemporal();
@@ -982,11 +984,13 @@ void PhotoEnhancerTraining::buildDiscriminator() {
     auto realPairs = tensor({b, c, s, s}), fakePairs = tensor({b, c, s, s});
     auto allPairs = tensor({2 * b, c, s, s}), augmented = tensor({2 * b, c, s, s});
     augmentation = tensor({2 * b, 6});
+    if (config.separateRealGBuffer)
+        realChannels = tensor({b, config.gbufferChannels, s, s});
     for (const auto& [pairs, image] : {std::pair{realPairs, targets}, std::pair{fakePairs, output}}) {
         if (conditioning > 0) {
             auto gbuffers =
                 training::channelCopy(vulkanContext, b, pixels, {config.gbufferChannels, 0}, {c, 0}, conditioning);
-            gbuffers->setInput(channels, 0);
+            gbuffers->setInput(pairs == realPairs && realChannels ? realChannels : channels, 0);
             gbuffers->setInput(pairs, 1);
             add(gbuffers);
         }
@@ -1302,6 +1306,13 @@ void PhotoEnhancerTraining::setLatents(const std::vector<float>& values) {
     if (!latentValues || latentNoise)
         throw std::logic_error("PhotoEnhancerTraining: latents are given only forward only without the encoder");
     latentValues->getDataBuffer(0).memcopyFrom(values);
+}
+
+void PhotoEnhancerTraining::setRealGBuffer(const std::vector<float>& values) {
+    if (!realChannels)
+        throw std::logic_error(
+            "PhotoEnhancerTraining: a real G-buffer needs separateRealGBuffer and the discriminator");
+    realChannels->getDataBuffer(0).memcopyFrom(values);
 }
 
 void PhotoEnhancerTraining::setLatentNoise(const std::vector<float>& noise) {
