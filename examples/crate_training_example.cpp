@@ -324,6 +324,7 @@ int main(int argc, char** argv) {
     uint32_t textureLevels = 12, textureBase = 16, textureFinest = 2048;
     std::filesystem::path initFrom;
     std::vector<uint32_t> widths{32, 64, 128}; // the generator's U-Net levels
+    bool dense = false;                        // a plain dense texture (--texture-dense) instead of the hash texture
     neural::TextureMlp textureMlp;             // the latent-conditioned MLP texture instead (--texture-mlp)
     neural::AlbedoTexture albedoTexture;       // the albedo renderer instead (--albedo, --albedo-fade)
     neural::TextureBasis textureBasis;         // the code-mixed feature texture instead (--texture-basis)
@@ -342,7 +343,8 @@ int main(int argc, char** argv) {
     uint32_t heldOutCrates = 10, fitSteps = 1000;
     bool textureOnlyLatent = false; // the latents feed only the texture, not the generator (--texture-only-latent)
     uint32_t ganViews = 800;        // random views rendered for it
-    bool unconditional = false;     // a discriminator of the image only
+    uint32_t denseComponents = 0, denseResolution = 0;
+    bool unconditional = false; // a discriminator of the image only
     uint32_t criticScales = 2;
     float discriminatorRate = 2e-4f;
     float networkRate = 1e-4f;     // the generator's (and encoder's) Adam learning rate
@@ -431,6 +433,10 @@ int main(int argc, char** argv) {
             textureBasis.decay = std::stof(argv[++i]);
         } else if (arg == "--basis-smoothness" && hasValue) {
             textureBasis.smoothness = std::stof(argv[++i]);
+        } else if (arg == "--texture-dense" && i + 2 < argc) {
+            denseComponents = uint32_t(std::stoul(argv[++i]));
+            denseResolution = uint32_t(std::stoul(argv[++i]));
+            dense = true;
         } else if (arg == "--perceptual" && hasValue)
             perceptual = std::stof(argv[++i]);
         else if (arg == "--adversarial" && hasValue)
@@ -723,7 +729,8 @@ int main(int argc, char** argv) {
         config.widths = widths;
         config.texture = textureMlp.frequencies > 0 || albedoTexture.enabled() || textureBasis.enabled()
                              ? crate::denseTextureShape(0, 0)
-                             : crate::textureShape(textureLevels, textureBase, textureFinest);
+                         : dense ? crate::denseTextureShape(denseComponents, denseResolution)
+                                 : crate::textureShape(textureLevels, textureBase, textureFinest);
         config.textureMlp = textureMlp;
         config.albedoTexture = albedoTexture;
         config.textureBasis = textureBasis;
