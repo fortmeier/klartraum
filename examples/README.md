@@ -830,3 +830,55 @@ filled from their neighbours), the newly visible parts from the classical render
 ```bash
 ./build/examples/flight_paint_example --check build/TestingOutput/flyin_painted/flight
 ```
+
+### `techdemo001_example`
+
+Renders *klartraum tech demo 001*, a promo video of the differentiable rendering
+and the procedural trees, without a window. Needs `KLARTRAUM_WITH_FREETYPE`. The
+chapters run in one continuous camera move:
+
+1. **Title and morph:** on white, the black "klartraum" logo (Gaussians in
+   Unbounded) with a black sphere above it. The sphere morphs into the
+   jack-o'-lantern by differentiable mesh optimization on the masked photographs
+   of the pumpkin (`raster::MeshMorph`), starting with the first frame. Each frame
+   runs optimization steps in the frame's compute graph, so the gradients flow
+   from the photographs into the mesh's shape and texture. Beside it, the
+   photograph in use and the training's rendering of the mesh from its camera.
+   The pumpkin is lit by the scene's light from the start.
+2. **Drop:** the pumpkin falls onto the splatted bonsai pot with its soil and
+   the lantern, casting its shadow, and the camera follows.
+3. **Growth:** the bonsai pine grows from a seedling, branching out step by
+   step.
+4. **Style transfer:** a summer afternoon holding while a painted style fades
+   in (with `--style` or `--field`); with `--panels`, a training sample of the
+   style beside it (rendering, classes, depth, watercolor target).
+5. **Days:** the afternoon turning into night, then four days, one season
+   each, stormy in fall and winter. The background is white by day and black
+   by night. With `--panels`, the season's watercolor targets by day and by
+   night beside them.
+
+Each chapter shows a caption naming the work it builds on. Frames go to
+`<out-dir>/frames/frame_XXXX.ppm`. The trained pumpkin goes to
+`<out-dir>/pumpkin.obj`, so later chapters can be re-rendered alone.
+
+| Option | Meaning |
+|---|---|
+| `--pot FILE` | The bonsai pot's `object.spz` (default `build/TestingOutput/splat_training/bonsai/object.spz`) |
+| `--photos DIR` | The pumpkin's photographs as prepared by `scripts/mesh_fitting/prepare_data.py`, the morph's targets (default `build/TestingOutput/real_data/pumpkin_closed_1_512`) |
+| `--width W`, `--height H` | Frame size (default 1280 x 720) |
+| `--fps F` | Frames per second (default 30) |
+| `--from N`, `--to M` | Render chapters N to M (0 to 4) |
+| `--step S` | Write every S-th frame, for previews |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/techdemo001`) |
+| `--video FILE.mp4` | Encode the frames straight into an H.264 video with ffmpeg (through a pipe) instead of writing them as PPM files |
+| `--dataset N` | Instead of the video: N renderings of the final scene from random cameras, seasons and times of day as `<out-dir>/dataset/image_XXXX.png`, each with its G-buffers (`class_XXXX.png`: the surfaces' classes; `depth_XXXX.png`: their distance from the camera; `coverage_XXXX.png` and `field_depth_XXXX.png`: how much of each pixel they cover and their distance as `--field` reads them), and `dataset.yaml` giving each one's camera, light, season and time of day (needs the pumpkin of an earlier run) |
+| `--style MODEL.onnx` | The days in a painted style: an image-to-image network of `scripts/neural/train_watercolor.py` (at half the frame's size, on the rendering and, if it takes 11 input channels, its classes and depth from two more renders of the frame) restyles every frame, fading in over two seconds, one second into the days |
+| `--field STEM` | The days in a painted style anchored in the world: the style of `scripts/neural/train_watercolor_field.py` (`STEM.onnx` and `STEM.bin`) restyles every pixel from its colour, class, the world grids at the surface point it shows (classes, coverage and depth from three more renders of the frame) and the time of day, fading in over two seconds, one second into the days |
+| `--panels DIR` | The style's training data beside the days, as `scripts/neural/prepare_style_panels.py` prepares it: a training sample with its G-buffers and target while the style fades in, then the targets of the season shown by day and by night |
+| `--sequences N` | With `--dataset`: also N short sequences of 8 frames (a slow orbit step and a few minutes of the day per frame) with G-buffers, in `<out-dir>/dataset/sequences/`, e.g. for temporal stability |
+| `--seed S` | Seed of the dataset's random choices (default 1) |
+
+```bash
+./build/examples/techdemo001_example
+ffmpeg -framerate 30 -i build/TestingOutput/techdemo001/frames/frame_%04d.ppm -pix_fmt yuv420p techdemo001.mp4
+```
