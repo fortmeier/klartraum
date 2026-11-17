@@ -471,3 +471,132 @@ A view takes about 2-3 s for the Gaussian image and 12-25 s for the reference.
 
 ```bash
 ./build/examples/tree_neural_dataset_example --views 200
+
+### `tree_bonsai_example`
+
+Renders a bonsai forest planting without a window: by default 12 trees in an oval pot,
+with the captured stone lantern standing on the moss among them.
+The trees follow Kuth et al., *Real-Time GPU Tree Generation* (HPG 2025): a
+compute graph recorded once generates them on the GPU every frame from a few
+hundred bytes of parameters per tree type. They are drawn either classically
+(tessellated spline stems and Bézier leaves, with the lantern splatted and
+composited by depth) or entirely as Gaussians, sorted and splatted together
+with the pot and the lantern. The camera circles the pot; view *i* is seen from
+the start azimuth plus 2π·*i*/*views*. Images go to
+`<out-dir>/frames/<renderer>_<view>.ppm`.
+
+| Option | Meaning |
+|---|---|
+| `--renderer classical\|gaussian\|both` | How the scene is drawn (default `both`) |
+| `--backend raster\|compute` | Gaussian splatting backend (default `raster`) |
+| `--views N` | Number of views around the pot (default 4) |
+| `--scale S` | How much of the world the pot holds, from 0 (one bonsai, the lantern a 35 cm ornament) to 1 (8 x 8 km); up to about 0.3 a planting, beyond the trees follow the land cover: the nearest 24 generated in full, the others as proxies (default 0.21, a planting of 12 trees with a real lantern) |
+| `--relief F` | Factor on the landscape's relief, which rises from scale 0.25 on: 1 for true proportions (1,500 m from valleys to peaks at scale 1), more for a more dramatic landscape (default 1.5) |
+| `--trees N` | A planting of this many trees instead of the scale's (at most 60) |
+| `--seed S` | Seed of the tree placement and the trees (default 7) |
+| `--width W`, `--height H` | Image size in pixels (default 1280×720) |
+| `--distance D` | Distance of the camera from the scene's focus (default 4.2) |
+| `--elevation E` | Elevation of the camera in radians (default 0.32) |
+| `--azimuth A` | Azimuth of the first view in radians (default 0.35) |
+| `--season S` | Season from 0 (winter) over 1 (spring), 2 (summer) to 3 (fall) (default 2) |
+| `--ground X,Z,M,H` | Instead of orbiting the pot, stand in the landscape at (X, Z) (units), M metres above the ground, looking along heading H (degrees from -z towards +x); views turn around that place |
+| `--no-grass` | Draw no blades of grass near the camera (classical renderer, where the trees follow the placement) |
+| `--budget MS` | In a video, keep the frame time near MS milliseconds by generating fewer trees in full (the others as impostors or Gaussian copies); only where the trees follow the placement |
+| `--profile` | Print the GPU time of the view's frame and of its 12 longest graph elements |
+| `--video` | Render the days of a video instead of views: one season per day, changing in the night, with sun, moon and wind |
+| `--days N` | Number of days of the video (default 4: spring, summer, fall, winter) |
+| `--seconds-per-day S` | Length of a day in the video (default 10) |
+| `--fps F` | Frames per second of the video (default 30) |
+| `--wind W` | Strength of the wind (default 0.5) |
+| `--turns T` | Turns of the camera around the pot during the video (default 0.5) |
+| `--enhancer M` | The Gaussian renderer also runs the neural enhancer of distant trees (`TreeEnhancer`, an ONNX model of `scripts/neural/train_tree_enhancer.py` at the image's size) and writes its images as `enhanced_NNNN.ppm` beside the Gaussian ones |
+| `--fly-in S` | Render a flight of S seconds instead of views or days: from the first view outside the pot down to the `--ground` place at noon of the season, ending with a slow pan; takes precedence over `--video`. Without `--ground` (scale 0.6 or more), the flight goes low over a field into a dense forest and ends at 1.7 m among the trunks |
+| `--gbuffers` | With `--fly-in`: also write every frame's G-buffers, `<renderer>_class_NNNN.ppm` (the surfaces' classes) and `<renderer>_depth_NNNN.ppm` (their distance from the camera as grey from 0 to a far plane that grows with the camera's height), the surface coordinates `<renderer>_u_NNNN` and `<renderer>_v_NNNN` (16 bits in red and green, a byte of the object id in blue) and the 16-bit depth `<renderer>_depth16_NNNN` (red and green, over the same window), and `<out-dir>/cameras_<renderer>.csv` with each frame's camera and depth window |
+| `--from N`, `--to M` | Render only the video frames N to M - 1 |
+| `--frame-stride N` | With `--fly-in`: simulate every frame but write only every N-th (e.g. for training data) |
+| `--image-format ppm\|png` | Format of the fly-in's frames and G-buffers (default ppm; png is lossless and several times smaller) |
+| `--moss-patches N` | Patches of the captured moss laid on the soil (default 1500) |
+| `--out-dir DIR` | Output directory (default `build/TestingOutput/tree_bonsai`) |
+| `--pot FILE` | A captured pot in place of the procedural one: `object.spz` of `splat_training_example` or `object.obj` of `mesh_texture_fitting_example`. It is scaled to the procedural pot's length at its rim, and the soil fills it up to just below the rim |
+| `--style S` | How bonsai-like the trees are, 0 (natural) to 1 (thick, flared, S-curved trunk with surface roots, a wide crown; pines with dense pads of dark needles); default: from `--scale`, 1 at 0 fading to 0 at 0.21 |
+| `--species P` | `mixed` (default: every fourth tree a pine), `pine` or `broadleaf` |
+| `--tree-size F` | Factor on the trees' sizes (default 1) |
+| `--tree-spread F` | Share of the pot around its middle the trees stand in (default 1) |
+| `--soil-mound M` | How much the soil rises towards the middle of the pot (default 0.07) |
+| `--object FILE,X,Z,HEIGHT[,YAW]` | Place a captured object (`object.spz` or `object.obj`) on the soil at (X, Z), HEIGHT units tall, turned by YAW radians; repeatable |
+
+```bash
+./build/examples/tree_bonsai_example --views 8 --width 1920 --height 1080
+scripts/tree/make_bonsai_video.sh   # both renderers' videos in build/TestingOutput/tree_bonsai_video/
+scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_flyin --scale 1 --fly-in 16 --azimuth -2.09 \
+    --ground -1.04,0.15,1.7,120   # from outside the pot down onto a meadow
+scripts/tree/make_bonsai_video.sh build/TestingOutput/tree_bonsai_forest --scale 1 --fly-in 24 \
+    --azimuth -2.09               # over a field into the forest, among the trunks
+```
+
+The fitting examples' objects can join the scene. For example, with the bonsai
+pot and the pumpkin trained on photographs (`splat_training_example`,
+`mesh_texture_fitting_example`), this command sets the splatted pot with two
+trees, a splatted pumpkin and a mesh pumpkin. Pass the mesh pot's `object.obj`
+to `--pot` for the mesh version:
+
+```bash
+A=build/TestingOutput
+./build/examples/tree_bonsai_example --trees 2 --species pine --style 1 --soil-mound 0.4 \
+    --tree-size 1.25 --tree-spread 0.65 --distance 6.3 --elevation 0.38 \
+    --pot $A/splat_training/bonsai/object.spz \
+    --object $A/splat_training/pumpkin_closed_1/object.spz,-0.9,0.45,0.28,0.5 \
+    --object $A/mesh_texture_fitting/pumpkin_closed_1/object.obj,0.95,-0.35,0.28,2.0
+```
+
+### `tree_lod_metrics_example`
+
+Measures a single Gaussian tree's levels of detail while the camera moves away from it and back, as the Gaussian
+renderer of `tree_bonsai_example` draws it: generated every frame while it is among the near trees, beyond that as
+its library copy with the copy's levels of detail by size on screen. It runs headless and renders four runs over
+the same flight: a static tree (no wind) and a dynamic one (in the wind), each with the levels of detail and
+without them (generated every frame at every distance without any reduction by size). With a large
+`--near-radius` the tree is generated at every distance, which measures the generated trees' own levels of detail
+(`TreeRenderSettings::gaussianLod`, `leafLod`).
+
+The camera stays level with the tree's middle and moves from `--start` to `--far` metres from the trunk and back.
+The logarithm of the distance follows a cosine, so the motion is smooth everywhere and slow at both ends. Two
+metrics from `klartraum/lod_metrics.hpp` are taken every frame:
+
+- **Popping** (`poppingResidual()`), for all four runs: over the lit 16 px blocks, the mean of how far a block's
+  mean light lies from the mean of the same block in the two neighbouring frames. A smooth motion keeps it small,
+  also where leaves slide by within a block; a sudden change of coverage or brightness puts half of its size into
+  the frames on both sides. The runs without levels of detail show what the motion alone leaves.
+- **Fidelity** (`fidelityError()`), of each run with levels of detail against the same run without: the mean
+  absolute difference of the RGB means of 4 px blocks, over the blocks lit in either image.
+- **Detail** (`detailError()`), of the same pairs: per 8 px block the energy of the luminance's Laplacian, compared
+  as |log2(ratio)|. 0 means as much fine structure as the reference, 1 twice or half as much; blur and noise both
+  count, colour shifts do not.
+
+Each frame also records the GPU time of every run, from the tree's generation to its splatting, and the number of
+Gaussians it draws (those opaque enough for the splatting's cull). The program prints
+the popping of each run (largest, median, and where what draws the tree changes, against the run's median, the
+frames around it and the run without levels of detail), and the fidelity and GPU time per representation.
+
+| Option | Meaning |
+|---|---|
+| `--species broadleaf\|conifer` | Which tree (default `broadleaf`) |
+| `--yaw Y` | The tree's turn about its trunk in radians (default 0.3); also picks its seed |
+| `--width W`, `--height H` | Size of the measured images (default 1280 x 720, the explorer's) |
+| `--fov F` | Vertical field of view in degrees (default 50, the explorer's) |
+| `--start M`, `--far M` | Nearest and farthest distance in metres (default 5 and 300) |
+| `--frames N` | Frames of the flight out and back (default 800) |
+| `--near-radius M` | Generated nearer than this; by default the renderer's near radius at the explorer's start in the forest (0.8 times the distance of the 24th nearest tree) |
+| `--wind S` | Strength of the wind in the dynamic run (default 0.5) |
+| `--leaf-lod X,Y,Z,W` | `TreeRenderSettings::leafLod` of the tree with levels of detail (default the renderer's) |
+| `--enhancer M` | Also run the neural enhancer of distant trees (`TreeEnhancer`, an ONNX model of `scripts/neural/train_tree_enhancer.py` at the image's size) and judge it: the four runs become the tree with levels of detail, enhanced, the classical reference (stems and leaves at twice the resolution, box-filtered) and without levels of detail, all without wind, with the fidelity against the classical reference |
+| `--stem-round P`, `--stem-fade P` | `gaussianLod.x` and `.y` of the tree with levels of detail: the stem radius in pixels below which a tube is drawn round, and below which stems fade out (default the renderer's) |
+| `--out-dir D` | Where `metrics.csv` and `frames/` go (default `build/TestingOutput/tree_lod_metrics`) |
+
+`scripts/tree/make_lod_metrics_video.sh` runs it and encodes `tree_lod_metrics.mp4`: the four runs (with levels of
+detail above, without below; static left, dynamic right), labelled, with the popping and fidelity of every frame
+plotted below:
+
+```bash
+scripts/tree/make_lod_metrics_video.sh                     # build/TestingOutput/tree_lod_metrics/
+```

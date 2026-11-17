@@ -165,3 +165,25 @@ target_link_libraries(tree_neural_dataset_example
 )
 
 add_dependencies(tree_neural_dataset_example Shaders)
+
+# Bonsai forest of GPU-generated trees, rendered classically and as Gaussians
+add_executable(tree_bonsai_example
+    tree_bonsai_example.cpp
+)
+
+target_link_libraries(tree_bonsai_example
+    klartraum_lib
+)
+
+add_dependencies(tree_bonsai_example Shaders)
+
+# Popping of a single Gaussian tree's levels of detail, measured along a flight away from it and back
+add_executable(tree_lod_metrics_example
+    tree_lod_metrics_example.cpp
+)
+
+target_link_libraries(tree_lod_metrics_example
+    klartraum_lib
+)
+
+add_dependencies(tree_lod_metrics_example Shaders)
