@@ -276,6 +276,7 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_style_transfer.cpp
   tests/test_photo_enhancer_training.cpp
   tests/test_landscape_networks.cpp
   tests/test_photo_enhancer.cpp
@@ -403,6 +404,7 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/style_transfer.cpp
   src/photo_enhancer_training.cpp
   src/photo_alignment.cpp
   src/photo_enhancer.cpp
