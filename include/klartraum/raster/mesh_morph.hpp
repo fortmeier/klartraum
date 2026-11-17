@@ -34,6 +34,9 @@ struct MeshMorphOptions {
     std::vector<glm::mat4> photoCameras;
     MeshTrainingOptions training; ///< width/height: of the target pictures; stepsPerSubmit: steps per frame
     VkExtent2D frame{1280, 720};  ///< size of the frame the mesh is drawn into
+    /// The scene's light, optional: with both set, the mesh is shaded and tinted like a captured object of the tree
+    /// renderers (their TreeRenderSettings and TreeLightVolume::getLight()); without, drawn in its own colours.
+    BufferRef lightSettings, light;
 };
 
 /**
@@ -43,7 +46,8 @@ struct MeshMorphOptions {
  * black) and turns the pictures into training targets (imageTarget()), or takes photographs as fixed targets
  * (MeshMorphOptions::photographs), runs MeshTrainingOptions::stepsPerSubmit steps
  * of differentiable mesh optimization towards them (MeshTraining) and draws the current mesh, placed by
- * setModel() and seen by setCamera(), over the frame (visibility pass, shading and antialiasing, composited). The
+ * setModel() and seen by setCamera(), over the frame (visibility pass, shading and antialiasing, composited, lit
+ * with the scene's light if MeshMorphOptions has it). The
  * gradients thus flow from the rendered pictures back into the mesh's shape and texture in one submission.
  */
 class MeshMorph {
@@ -87,6 +91,9 @@ private:
     // The camera the mesh is drawn with (clip from morph frame) and the drawn view's index (always 0).
     std::shared_ptr<HostValues<glm::mat4>> drawCamera;
     std::shared_ptr<BufferElement<VulkanBuffer<uint32_t>>> drawView;
+    // Where the mesh stands (world from the morph's frame) and the drawing camera's inverse (the morph's frame from
+    // clip space), for the lit drawing.
+    std::shared_ptr<HostValues<glm::mat4>> drawModel;
     glm::mat4 camera{1.0f}, model{1.0f};
     ComputeGraphElementPtr output;
 };

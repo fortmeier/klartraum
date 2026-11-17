@@ -400,3 +400,74 @@ it is repainted. Images are binary PPM files.
 ./build/examples/qwen_image_example --prompt "a bonsai tree in a clay pot, watercolor painting"
 ./build/examples/qwen_image_example --prompt "an ink drawing" --image rendering.ppm --strength 0.5 --out ink.ppm
 ```
+
+### `tree_bonsai_explore_example`
+
+Walks or flies through the bonsai landscape of `tree_bonsai_example` in a window, with an ego camera. By
+default it starts where that example's forest fly-in ends, standing 1.7 m above the ground deep in a forest
+(scale 1).
+
+| Input | Does |
+|---|---|
+| left mouse button + drag | look around |
+| Tab | capture the mouse and look without a button (again: release) |
+| W, A, S, D | move forwards, left, back, right |
+| Shift | move ten times faster |
+| scroll wheel | scale the speed |
+| F | switch between walking (1.7 m above the ground) and flying |
+| Space or E, Q | rise, sink (flying) |
+| R | back to the start |
+| Esc | release the mouse; quit when it is free |
+
+The window's title shows the frame rate, the mode, the speed and the height above the ground. Resizing the
+window rebuilds the renderer, which takes a few seconds.
+
+On macOS, run it with the KosmicKrisp driver. With MoltenVK the window flickers black once the swapchain is
+recreated, about a second after the start:
+
+```bash
+VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json ./build/examples/tree_bonsai_explore_example
+```
+
+| Option | Meaning |
+|---|---|
+| `--renderer gaussian\|classical` | Which renderer draws the landscape (default `gaussian`) |
+| `--scale S` | Scale of the scene as in `tree_bonsai_example` (default 1, a landscape) |
+| `--seed N` | Seed of the scene (default 7) |
+| `--season S` | Season in [0, 4) (default 2, summer) |
+| `--width W`, `--height H` | Size of the window (default 1280 x 720) |
+| `--render-scale F` | Render at F times the window's pixels and scale up (default 0.5; a high-density display has twice as many pixels as the window's size) |
+| `--start forest\|pot` | Start in the forest (default at scales from 0.6 on) or outside the pot |
+| `--speed M` | Speed in metres per second (default 4 in the forest, 400 outside the pot) |
+| `--frames N` | Close the window after N frames |
+
+```bash
+./build/examples/tree_bonsai_explore_example                      # walk in the forest
+./build/examples/tree_bonsai_explore_example --start pot          # fly in from outside the pot
+```
+
+### `tree_neural_dataset_example`
+
+Renders a database of view pairs of the bonsai landscape (scale 1) for training a network that enhances the
+Gaussian renderer's distant trees. For every view it writes the Gaussian renderer's image as it runs (low
+fidelity) and the same view by `TreeReferenceRenderer` (high fidelity): the classical renderer with every far tree
+in view generated in full, batch by batch over one depth buffer, at `--supersample` times the resolution and
+box-filtered down, with the mask of the far trees' pixels. The far trees are seeded as the Gaussian renderer's,
+so both images show the same trees. Views are drawn from `--seed`: at eye height on open land looking towards
+forest, and 30, 120 and 400 m above the soil looking down onto forest.
+
+| Option | Meaning |
+|---|---|
+| `--views N`, `--first F` | Render N views, starting at view F (to continue a database) |
+| `--width W`, `--height H` | Size of the images (default 1280 x 720, the explorer's) |
+| `--supersample S` | The reference's resolution factor before the box filter (default 2) |
+| `--batch N` | Far trees generated per batch (default 256) |
+| `--range M` | Far trees beyond M metres are left out (default 1500) |
+| `--season S` | Season (default 2, summer) |
+| `--seed N` | Seed of the views (default 1) |
+| `--out-dir D` | Where `lr_NNNN.ppm`, its features `fa_NNNN.ppm` (coverage, tree, level of detail) and `fb_NNNN.ppm` (Gaussian size, depth), `hf_NNNN.ppm`, `mask_NNNN.pgm` and `views.csv` go (default `build/TestingOutput/neural_dataset`) |
+
+A view takes about 2-3 s for the Gaussian image and 12-25 s for the reference.
+
+```bash
+./build/examples/tree_neural_dataset_example --views 200

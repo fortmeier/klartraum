@@ -276,6 +276,14 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_tree_terrain_rendering.cpp
+  tests/test_tree_reference.cpp
+  tests/test_tree_proxies.cpp
+  tests/test_tree_lod.cpp
+  tests/test_tree_grass.cpp
+  tests/test_tree_floor.cpp
+  tests/test_bonsai_scene.cpp
+  tests/test_bonsai_flight.cpp
   tests/test_tree_tiles.cpp
   tests/test_tree_impostors.cpp
   tests/test_tree_terrain_lod.cpp
@@ -388,6 +396,10 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/tree_reference.cpp
+  src/tree_gaussian_features.cpp
+  src/bonsai_renderer.cpp
+  src/bonsai_flight.cpp
   src/tree_grass.cpp
   src/tree_tiles.cpp
   src/tree_proxies.cpp

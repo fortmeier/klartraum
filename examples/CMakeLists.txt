@@ -143,3 +143,25 @@ target_link_libraries(qwen_image_example
 )
 
 add_dependencies(qwen_image_example Shaders)
+
+# Walking or flying through the bonsai landscape in a window
+add_executable(tree_bonsai_explore_example
+    tree_bonsai_explore_example.cpp
+)
+
+target_link_libraries(tree_bonsai_explore_example
+    klartraum_lib
+)
+
+add_dependencies(tree_bonsai_explore_example Shaders)
+
+# A database of view pairs (Gaussian renderer, classical reference) for training a neural enhancer of distant trees
+add_executable(tree_neural_dataset_example
+    tree_neural_dataset_example.cpp
+)
+
+target_link_libraries(tree_neural_dataset_example
+    klartraum_lib
+)
+
+add_dependencies(tree_neural_dataset_example Shaders)
