@@ -725,6 +725,8 @@ the held-out views are rendered with the codes' mean
 | `--steps N` | Training steps (default 30000) |
 | `--batch N`, `--crop S` | Crops per step and their size (default 16 and 128) |
 | `--sample-size S` | Size of the samples (default 256; the photos are averaged down to it) |
+| `--albedo F1,W1,F2,W2,...` | The albedo renderer instead: a multi-resolution albedo texture of residual blocks (block k: positional encoding of Fk octaves and the latent through two hidden layers of Wk channels), the decoder gives shading and background only (needs `--latent`) |
+| `--albedo-fade N` | Fade the albedo texture's blocks in one after the other over N steps each (default 0: all at once) |
 | `--flight DIR PHOTOS FIRST` | Train on a fly-in flight of `tree_bonsai_example` (with its G-buffers) instead of the crate: its frames from FIRST on, photos `PHOTOS/<frame>.ppm`, every tenth frame held out, the temporal loss between consecutive frames (needs `--latent`; the latent is the whole image's) |
 | `--render-flight DIR OUT` | After training, render the model along a flight (its frames from `--flight`'s FIRST on, latents 0) to `OUT/frame_<frame>.png` |
 | `--crates DIR` | Many crates instead: every `DIR/crates/<id>/` (six views painted by `crate_paint_example`, `cameras_classical.csv` and `photo/`) with its own row of a learned latent table instead of the encoder (needs `--latent`); view 3 of every fifth crate held out. Validation renders the held-out views with their crate's code and with the mean code, and 16 crates on one view (`crates_NNNNNN.png`); the table goes to `<out>/crate_codes.txt`, one crate per line |

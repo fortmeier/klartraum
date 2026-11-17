@@ -94,22 +94,29 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     if (mlp && (config.latentSize == 0 || shape.levels > 0 || shape.classes.empty() || shape.classes.size() > 4))
         throw std::invalid_argument(
             "PhotoEnhancerTraining: the MLP texture needs latents, a texture of no levels and 1 to 4 classes");
+    const bool albedo = config.albedoTexture.enabled();
+    if (albedo &&
+        (config.latentSize == 0 || config.latentObjects != 1 || shape.levels > 0 || mlp || config.appearances > 0 ||
+         config.latentCheck > 0.0f || config.textureOff || shape.classes.empty() || shape.classes.size() > 4 ||
+         config.albedoTexture.widths.size() != config.albedoTexture.frequencies.size()))
+        throw std::invalid_argument("PhotoEnhancerTraining: the albedo texture needs latents of one object, no other "
+                                    "texture, no appearance codes, no latent check and a width per block");
     if (config.latentCodes > 0 && (config.latentSize == 0 || config.appearances > 0 || config.randomLatents ||
                                    config.encodeLatents || config.latentCheck > 0.0f))
         throw std::invalid_argument("PhotoEnhancerTraining: the latent table needs latents, no appearance codes, no "
                                     "given or encoded latents and no latent check");
-    if (!config.latentToDecoder && (config.latentSize == 0 || config.latentCheck > 0.0f))
+    if (!config.latentToDecoder && (config.latentSize == 0 || albedo || config.latentCheck > 0.0f))
         throw std::invalid_argument(
-            "PhotoEnhancerTraining: latents only in the texture need latents and no latent check");
+            "PhotoEnhancerTraining: latents only in the texture need latents, no albedo renderer and no latent check");
     const uint32_t features = textureFeatures();
     const uint32_t channelsIn = kGBufferChannels + features + config.latentSize;
     this->config.texture.outputChannels = channelsIn;
     const bool table = config.latentCodes > 0 && !config.forwardOnly;
     const bool basis = config.textureBasis.enabled();
-    if (basis && (config.latentSize == 0 || shape.levels > 0 || mlp || config.latentCheck > 0.0f ||
+    if (basis && (config.latentSize == 0 || shape.levels > 0 || mlp || albedo || config.latentCheck > 0.0f ||
                   shape.classes.empty() || shape.classes.size() > 4))
         throw std::invalid_argument("PhotoEnhancerTraining: the feature texture needs latents, a texture of no levels "
-                                    "with 1 to 4 classes, no MLP texture and no latent check");
+                                    "with 1 to 4 classes, no MLP texture, no albedo renderer and no latent check");
     const bool film = config.appearances > 0;
     const auto& w = config.widths;
 
@@ -124,6 +131,20 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         for (size_t level = 0; level < config.textureBasis.resolutions.size(); ++level)
             addParameter("texture.basis." + std::to_string(level), {uint32_t(basisShape(level, false).tableSize())},
                          Texture);
+    if (albedo) {
+        const auto& t = config.albedoTexture;
+        for (size_t k = 0; k < t.frequencies.size(); ++k) {
+            uint32_t previous = 3 * (2 * t.frequencies[k] + 1) + config.latentSize;
+            for (uint32_t layer = 0; layer <= t.hidden; ++layer) {
+                const uint32_t next = layer == t.hidden ? 3 : t.widths[k];
+                const std::string name =
+                    "generator.texture." + std::to_string(k) + "." + std::to_string(2 * layer) + ".";
+                addParameter(name + "weight", {next, previous, 1, 1}, Network);
+                addParameter(name + "bias", {next}, Network);
+                previous = next;
+            }
+        }
+    }
     if (mlp && !config.textureOff) {
         const auto& t = config.textureMlp;
         const auto addMlp = [&](const std::string& prefix, uint32_t frequencies, uint32_t width) {
@@ -180,8 +201,9 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
             }
     }
     // PyTorch registers the output convolution after FiLM, the codes after the generator.
-    addParameter("generator.out.weight", {3, w[0], 1, 1}, Network);
-    addParameter("generator.out.bias", {3}, Network);
+    // The albedo renderer's decoder gives shading and background (4 values) instead of the image.
+    addParameter("generator.out.weight", {albedo ? 4u : 3u, w[0], 1, 1}, Network);
+    addParameter("generator.out.bias", {albedo ? 4u : 3u}, Network);
     // The encoder, unless the latents are given.
     if (config.latentSize > 0 && (!config.forwardOnly || config.encodeLatents) && !config.randomLatents &&
         config.latentCodes == 0) {
@@ -273,6 +295,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
         add(splat);
         if (mlp && !config.textureOff)
             mainMlp = forwardTextureMlp(coordinates, classes, input);
+        if (albedo)
+            mainAlbedo = std::make_unique<AlbedoPass>(forwardAlbedoTexture(coordinates, classes, input, objects));
         if (basis && !config.textureOff) {
             latentImage = tensor({b, d, s, s});
             auto image = training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, d, 0);
@@ -333,7 +357,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     }
     // The U-Net.
     std::shared_ptr<TensorElement<float>> x;
-    std::tie(x, logits, output) = forwardGenerator(blocks, input);
+    std::tie(x, logits, output) = forwardGenerator(blocks, input, mainAlbedo.get());
 
     if (config.forwardOnly) {
         graph = std::make_unique<ComputeGraph>(vulkanContext, 1);
@@ -344,12 +368,13 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
             const std::vector<float> zeros(parameter.value->getDataElementCount(), 0.0f);
             parameter.value->getDataBuffer(0).memcopyFrom(zeros);
         }
+        uploadAlbedoWeights({});
         return;
     }
 
     // The loss.
     outputGradient = tensor({b, 3, s, s});
-    logitGradient = tensor({b, 3, s, s});
+    logitGradient = tensor({b, albedo ? 4u : 3u, s, s});
     lossShares = tensor({b, 3, s, s});
     lossTotal = tensor({1});
     {
@@ -375,7 +400,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     }
 
     // Backward: output layer, up blocks, down blocks, texture, FiLM.
-    backwardGenerator(blocks, x, logits, outputGradient, logitGradient);
+    backwardGenerator(blocks, x, logits, outputGradient, logitGradient, mainAlbedo.get());
     if (textured) {
         const auto& table = find("texture.table");
         auto zero = training::fill(vulkanContext, uint32_t(table.gradient->getDataElementCount()));
@@ -411,6 +436,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
                 add(regularize);
             }
     }
+    if (albedo)
+        albedoInputGradients = backwardAlbedoTexture(*mainAlbedo);
     if (config.latentSize > 0 && !config.randomLatents)
         buildLatentBackward();
     if (config.latentCheck > 0.0f)
@@ -534,6 +561,7 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
             parameter.average->getDataBuffer(0).memcopyFrom(zeros);
     }
     stepCounter->getDataBuffer(0).memcopyFrom(std::vector<uint32_t>{0u});
+    uploadAlbedoWeights({});
     if (vgg)
         vgg->upload();
     if (discriminatorCounter)
@@ -759,7 +787,8 @@ void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, s
                                                std::shared_ptr<TensorElement<float>> passLogits,
                                                std::shared_ptr<TensorElement<float>> passOutputGradient,
                                                std::shared_ptr<TensorElement<float>> passCoordinates,
-                                               std::shared_ptr<TensorElement<float>> passClasses, MlpPass* passMlp) {
+                                               std::shared_ptr<TensorElement<float>> passClasses, MlpPass* passMlp,
+                                               AlbedoPass* passAlbedo) {
     const uint32_t b = config.batch, s = config.size;
     std::vector<std::string> redirected;
     for (const auto& parameter : parameters)
@@ -767,7 +796,8 @@ void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, s
             gradientRedirect[parameter.name] = tensor({uint32_t(parameter.gradient->getDataElementCount())});
             redirected.push_back(parameter.name);
         }
-    backwardGenerator(passBlocks, x, passLogits, passOutputGradient, tensor({b, 3, s, s}));
+    backwardGenerator(passBlocks, x, passLogits, passOutputGradient, tensor({b, passAlbedo ? 4u : 3u, s, s}),
+                      passAlbedo);
     // The texture's gradient adds atomically to the first pass's.
     if (config.texture.levels > 0) {
         auto texture = hashTextureBackward(vulkanContext, config.texture);
@@ -784,6 +814,8 @@ void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, s
     if (config.textureBasis.enabled() && passCoordinates == coordinates2)
         backwardTextureBasis(passCoordinates, passClasses, latentImage2, passBlocks[0].dIn,
                              tensor({b, config.latentSize, s, s}));
+    if (passAlbedo)
+        backwardAlbedoTexture(*passAlbedo);
     for (const auto& name : redirected) {
         const uint32_t count = uint32_t(find(name).gradient->getDataElementCount());
         auto accumulate = training::channelCopy(vulkanContext, 1, count, {1, 0}, {1, 0}, 1, true);
@@ -840,8 +872,10 @@ void PhotoEnhancerTraining::buildTemporal() {
     }
     if (!config.latentToDecoder)
         hideLatents(input2);
+    if (config.albedoTexture.enabled())
+        temporalAlbedo = std::make_unique<AlbedoPass>(forwardAlbedoTexture(coordinates2, classes2, input2, objects2));
     temporalBlocks = blocks;
-    auto [x2, logits2, output2] = forwardGenerator(temporalBlocks, input2);
+    auto [x2, logits2, output2] = forwardGenerator(temporalBlocks, input2, temporalAlbedo.get());
     // The first render warped onto the second views against their renders.
     auto outputGradient2 = tensor({b, 3, s, s}), shares = tensor({b, 3, s, s});
     auto loss = training::flowWarpLoss(vulkanContext, {b, 3, s, s}, config.temporal);
@@ -859,7 +893,7 @@ void PhotoEnhancerTraining::buildTemporal() {
     add(total);
     // The latents' gradient from the second pass ends here.
     backwardSecondPass(temporalBlocks, x2, logits2, outputGradient2, coordinates2, classes2,
-                       mlp ? &temporalMlp : nullptr);
+                       mlp ? &temporalMlp : nullptr, temporalAlbedo.get());
 }
 
 void PhotoEnhancerTraining::hideLatents(std::shared_ptr<TensorElement<float>> generatorInput) {
@@ -957,6 +991,13 @@ void PhotoEnhancerTraining::buildLatentBackward() {
         const uint32_t encoding = 3 * (2 * config.textureMlp.frequencies + 1);
         auto add = training::channelCopy(vulkanContext, b, s * s, {encoding + d, encoding}, {d, 0}, d, true);
         add->setInput(mlpInputGradient, 0);
+        add->setInput(latentGBufferGradient, 1);
+        this->add(add);
+    }
+    for (size_t k = 0; k < albedoInputGradients.size(); ++k) {
+        const uint32_t encoding = 3 * (2 * config.albedoTexture.frequencies[k] + 1);
+        auto add = training::channelCopy(vulkanContext, b, s * s, {encoding + d, encoding}, {d, 0}, d, true);
+        add->setInput(albedoInputGradients[k], 0);
         add->setInput(latentGBufferGradient, 1);
         this->add(add);
     }
@@ -1418,7 +1459,8 @@ void PhotoEnhancerTraining::setSecondView(const std::vector<float>& channelValue
     if (!flow)
         throw std::logic_error("PhotoEnhancerTraining: second views need the temporal loss");
     channels2->getDataBuffer(0).memcopyFrom(channelValues);
-    if (config.texture.levels > 0 || config.textureMlp.frequencies > 0 || config.textureBasis.enabled()) {
+    if (config.texture.levels > 0 || config.textureMlp.frequencies > 0 || config.albedoTexture.enabled() ||
+        config.textureBasis.enabled()) {
         coordinates2->getDataBuffer(0).memcopyFrom(coordinateValues);
         classes2->getDataBuffer(0).memcopyFrom(classValues);
     }
@@ -1529,7 +1571,8 @@ void PhotoEnhancerTraining::add(ComputeGraphElementPtr element) {
 
 std::tuple<std::shared_ptr<TensorElement<float>>, std::shared_ptr<TensorElement<float>>,
            std::shared_ptr<TensorElement<float>>>
-PhotoEnhancerTraining::forwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> input) {
+PhotoEnhancerTraining::forwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> input,
+                                        AlbedoPass* albedo) {
     const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
     const auto& w = config.widths;
     for (uint32_t i = 0; i < levels; ++i) {
@@ -1561,7 +1604,7 @@ PhotoEnhancerTraining::forwardGenerator(std::vector<Block>& blocks, std::shared_
         forwardBlock(block);
         x = block.out;
     }
-    const uint32_t outputs = 3;
+    const uint32_t outputs = albedo ? 4 : 3;
     auto logits = tensor({b, outputs, s, s}), output = tensor({b, 3, s, s});
     {
         auto conv = layers::conv(vulkanContext, convAttributes(1, 1), {b, w[0], s, s}, {outputs, w[0], 1, 1}, {outputs},
@@ -1571,10 +1614,21 @@ PhotoEnhancerTraining::forwardGenerator(std::vector<Block>& blocks, std::shared_
         conv->setInput(find("generator.out.bias").value, 2);
         conv->setInput(logits, 3);
         add(conv);
-        auto sigmoid = layers::unary(vulkanContext, layers::UnaryOp::Sigmoid, {b, 3, s, s});
-        sigmoid->setInput(logits, 0);
-        sigmoid->setInput(output, 1);
-        add(sigmoid);
+        if (albedo) {
+            auto compose = training::compose(vulkanContext, {b, 3, s, s});
+            compose->setInput(albedo->logit, 0);
+            compose->setInput(logits, 1);
+            compose->setInput(albedo->mask, 2);
+            compose->setInput(output, 3);
+            compose->setInput(albedo->albedo, 4);
+            compose->setInput(albedo->shading, 5);
+            add(compose);
+        } else {
+            auto sigmoid = layers::unary(vulkanContext, layers::UnaryOp::Sigmoid, {b, 3, s, s});
+            sigmoid->setInput(logits, 0);
+            sigmoid->setInput(output, 1);
+            add(sigmoid);
+        }
     }
     return {x, logits, output};
 }
@@ -1582,17 +1636,29 @@ PhotoEnhancerTraining::forwardGenerator(std::vector<Block>& blocks, std::shared_
 void PhotoEnhancerTraining::backwardGenerator(std::vector<Block>& blocks, std::shared_ptr<TensorElement<float>> x,
                                               std::shared_ptr<TensorElement<float>> logits,
                                               std::shared_ptr<TensorElement<float>> outputGradient,
-                                              std::shared_ptr<TensorElement<float>> logitGradient) {
+                                              std::shared_ptr<TensorElement<float>> logitGradient, AlbedoPass* albedo) {
     const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
     const auto& w = config.widths;
     std::shared_ptr<TensorElement<float>> dx = tensor({b, w[0], s, s});
-    const uint32_t outputs = 3;
+    const uint32_t outputs = albedo ? 4 : 3;
     {
-        auto sigmoid = training::activationBackward(vulkanContext, training::Activation::Sigmoid, {b, 3, s, s});
-        sigmoid->setInput(logits, 0);
-        sigmoid->setInput(outputGradient, 1);
-        sigmoid->setInput(logitGradient, 2);
-        add(sigmoid);
+        if (albedo) {
+            albedo->logitGradient = tensor({b, 3, s, s});
+            auto compose = training::composeBackward(vulkanContext, {b, 3, s, s});
+            compose->setInput(albedo->logit, 0);
+            compose->setInput(logits, 1);
+            compose->setInput(albedo->mask, 2);
+            compose->setInput(outputGradient, 3);
+            compose->setInput(albedo->logitGradient, 4);
+            compose->setInput(logitGradient, 5);
+            add(compose);
+        } else {
+            auto sigmoid = training::activationBackward(vulkanContext, training::Activation::Sigmoid, {b, 3, s, s});
+            sigmoid->setInput(logits, 0);
+            sigmoid->setInput(outputGradient, 1);
+            sigmoid->setInput(logitGradient, 2);
+            add(sigmoid);
+        }
         const auto attributes = convAttributes(1, 1);
         auto weights = training::convBackwardWeights(vulkanContext, attributes, {b, w[0], s, s}, {outputs, w[0], 1, 1},
                                                      {b, outputs, s, s});
@@ -1711,10 +1777,118 @@ TextureMlp TextureMlp::fromFile(const std::string& path) {
 }
 
 uint32_t PhotoEnhancerTraining::textureFeatures() const {
+    if (config.albedoTexture.enabled())
+        return 0;
     if (config.textureBasis.enabled())
         return config.textureBasis.channels;
     return config.textureMlp.frequencies > 0 ? config.textureMlp.outputs
                                              : config.texture.levels * config.texture.features;
+}
+
+PhotoEnhancerTraining::AlbedoPass PhotoEnhancerTraining::forwardAlbedoTexture(
+    std::shared_ptr<TensorElement<float>> passCoordinates, std::shared_ptr<TensorElement<float>> passClasses,
+    std::shared_ptr<TensorElement<float>> generatorInput, std::shared_ptr<TensorElement<float>> mask) {
+    const uint32_t b = config.batch, s = config.size;
+    const auto& t = config.albedoTexture;
+    // The blocks' weights are shared by all passes of a step.
+    if (albedoWeights.empty()) {
+        for (size_t k = 0; k < t.frequencies.size(); ++k)
+            albedoWeights.push_back(tensor({b, 3}));
+        albedoShift = tensor({b, 3});
+    }
+    AlbedoPass pass;
+    pass.mask = mask;
+    pass.logit = tensor({b, 3, s, s});
+    pass.albedo = tensor({b, 3, s, s});
+    pass.shading = tensor({b, 1, s, s});
+    for (size_t k = 0; k < t.frequencies.size(); ++k) {
+        const std::string prefix = "generator.texture." + std::to_string(k) + ".";
+        pass.blocks.push_back(forwardMlp(prefix, t.frequencies[k], t.widths[k], t.hidden, 3, passCoordinates,
+                                         passClasses, generatorInput, config.gbufferChannels));
+        auto weighted = tensor({b, 3, s, s});
+        auto scale = training::film(vulkanContext, {b, 3, s, s});
+        scale->setInput(pass.blocks.back().pre.back(), 0);
+        scale->setInput(albedoWeights[k], 1);
+        scale->setInput(albedoShift, 2);
+        scale->setInput(weighted, 3);
+        add(scale);
+        pass.weighted.push_back(weighted);
+        auto sum = training::channelCopy(vulkanContext, b, s * s, {3, 0}, {3, 0}, 3, k > 0);
+        sum->setInput(weighted, 0);
+        sum->setInput(pass.logit, 1);
+        add(sum);
+    }
+    return pass;
+}
+
+std::vector<std::shared_ptr<TensorElement<float>>> PhotoEnhancerTraining::backwardAlbedoTexture(AlbedoPass& pass) {
+    const uint32_t b = config.batch, s = config.size;
+    const auto& t = config.albedoTexture;
+    std::vector<std::shared_ptr<TensorElement<float>>> inputGradients;
+    for (size_t k = 0; k < t.frequencies.size(); ++k) {
+        // Through the block's weight, then its MLP.
+        auto gradient = tensor({b, 3, s, s});
+        auto scale = training::filmBackward(vulkanContext, {b, 3, s, s});
+        scale->setInput(pass.blocks[k].pre.back(), 0);
+        scale->setInput(albedoWeights[k], 1);
+        scale->setInput(pass.logitGradient, 2);
+        scale->setInput(gradient, 3);
+        scale->setInput(tensor({b, 3}), 4);
+        scale->setInput(tensor({b, 3}), 5);
+        add(scale);
+        const std::string prefix = "generator.texture." + std::to_string(k) + ".";
+        inputGradients.push_back(
+            backwardMlp(pass.blocks[k], prefix, t.frequencies[k], t.widths[k], t.hidden, 3, gradient));
+    }
+    return inputGradients;
+}
+
+void PhotoEnhancerTraining::uploadAlbedoWeights(const std::vector<float>& weights) {
+    std::vector<float> values(config.batch * 3);
+    for (size_t k = 0; k < albedoWeights.size(); ++k) {
+        std::fill(values.begin(), values.end(), k < weights.size() ? weights[k] : 1.0f);
+        albedoWeights[k]->getDataBuffer(0).memcopyFrom(values);
+    }
+    if (albedoShift)
+        albedoShift->getDataBuffer(0).memcopyFrom(std::vector<float>(config.batch * 3, 0.0f));
+}
+
+void PhotoEnhancerTraining::setAlbedoWeights(const std::vector<float>& weights) {
+    if (albedoWeights.empty())
+        throw std::logic_error("PhotoEnhancerTraining: albedo weights need the albedo texture");
+    uploadAlbedoWeights(weights);
+    albedoWeightsGiven = true;
+}
+
+std::vector<float> PhotoEnhancerTraining::albedo() const {
+    std::vector<float> values(mainAlbedo ? mainAlbedo->albedo->getDataElementCount() : 0);
+    if (mainAlbedo)
+        mainAlbedo->albedo->getDataBuffer(0).memcopyTo(values);
+    return values;
+}
+
+std::vector<float> PhotoEnhancerTraining::shading() const {
+    std::vector<float> values(mainAlbedo ? mainAlbedo->shading->getDataElementCount() : 0);
+    if (mainAlbedo)
+        mainAlbedo->shading->getDataBuffer(0).memcopyTo(values);
+    return values;
+}
+
+AlbedoTexture AlbedoTexture::fromFile(const std::string& path) {
+    AlbedoTexture texture;
+    std::ifstream file(path);
+    for (std::string line; std::getline(file, line);) {
+        std::istringstream words(line);
+        std::string key;
+        if (!(words >> key) || key != "albedo")
+            continue;
+        uint32_t frequencies = 0, width = 0;
+        while (words >> frequencies >> width) {
+            texture.frequencies.push_back(frequencies);
+            texture.widths.push_back(width);
+        }
+    }
+    return texture;
 }
 
 PhotoEnhancerTraining::MlpPass PhotoEnhancerTraining::forwardMlp(const std::string& prefix, uint32_t frequencies,
@@ -2002,7 +2176,8 @@ void PhotoEnhancerTraining::setBatch(const std::vector<float>& channelValues,
                                      const std::vector<float>& targetValues, const std::vector<float>& rowValues) {
     channels->getDataBuffer(0).memcopyFrom(channelValues);
     // The coordinates and classes only feed the texture.
-    if ((config.texture.levels > 0 || config.textureMlp.frequencies > 0 || config.textureBasis.enabled()) &&
+    if ((config.texture.levels > 0 || config.textureMlp.frequencies > 0 || config.albedoTexture.enabled() ||
+         config.textureBasis.enabled()) &&
         !config.textureOff) {
         coordinates->getDataBuffer(0).memcopyFrom(coordinateValues);
         classes->getDataBuffer(0).memcopyFrom(classValues);
@@ -2036,6 +2211,17 @@ void PhotoEnhancerTraining::step() {
         latentPermutation->getDataBuffer(0).memcopyFrom(permutation);
     }
     latentPermutationGiven = false;
+    // The albedo texture's coarse-to-fine fade-in: block k > 0 rises from 0 to 1 over the fade steps after block
+    // k - 1 finished.
+    const auto& fade = config.albedoTexture;
+    if (!albedoWeights.empty() && !albedoWeightsGiven && !config.forwardOnly && fade.fadeSteps > 0) {
+        std::vector<float> weights(fade.frequencies.size(), 1.0f);
+        for (size_t k = 1; k < weights.size(); ++k)
+            weights[k] =
+                std::clamp((float(stepsTaken) - float((k - 1) * fade.fadeSteps)) / float(fade.fadeSteps), 0.0f, 1.0f);
+        uploadAlbedoWeights(weights);
+    }
+    ++stepsTaken;
     if (augmentation && !augmentationGiven)
         augmentation->getDataBuffer(0).memcopyFrom(randomAugmentation());
     if (generatorAugmentation) {
@@ -2081,6 +2267,13 @@ void PhotoEnhancerTraining::save(const std::string& directory, bool averages) co
             texture << "mlp-residual";
             for (const auto& [frequencies, width] : t.residual)
                 texture << " " << frequencies << " " << width;
+            texture << "\n";
+        }
+        const auto& a = config.albedoTexture;
+        if (a.enabled()) {
+            texture << "albedo";
+            for (size_t k = 0; k < a.frequencies.size(); ++k)
+                texture << " " << a.frequencies[k] << " " << a.widths[k];
             texture << "\n";
         }
     }

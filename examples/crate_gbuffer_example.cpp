@@ -264,6 +264,7 @@ int main(int argc, char** argv) {
                                  : crate::textureShape();
             if (!parameters.empty() && std::filesystem::exists(parameters / "texture.txt")) {
                 config.textureMlp = neural::TextureMlp::fromFile((parameters / "texture.txt").string());
+                config.albedoTexture = neural::AlbedoTexture::fromFile((parameters / "texture.txt").string());
                 config.textureBasis = neural::TextureBasis::fromFile((parameters / "texture.txt").string());
             }
             const auto codes = parameters / "codes.weight.bin";
@@ -473,6 +474,16 @@ int main(int argc, char** argv) {
                 char name[64];
                 std::snprintf(name, sizeof(name), "enhanced_%04u.png", view);
                 writeImage(outDir / "frames" / name, rgb.data(), sampleSize, sampleSize, 3);
+                // An albedo model's albedo too.
+                const auto albedo = trained ? trained->albedo() : std::vector<float>{};
+                if (!albedo.empty()) {
+                    for (size_t p = 0; p < pixels; ++p)
+                        for (size_t c = 0; c < 3; ++c)
+                            rgb[3 * p + c] =
+                                uint8_t(std::lround(std::clamp(albedo[c * pixels + p], 0.0f, 1.0f) * 255.0f));
+                    std::snprintf(name, sizeof(name), "albedo_%04u.png", view);
+                    writeImage(outDir / "frames" / name, rgb.data(), sampleSize, sampleSize, 3);
+                }
             }
             cameras << view << "," << eye.x << "," << eye.y << "," << eye.z << "," << look.x << "," << look.y << ","
                     << look.z << ",0.05," << crate::kFovDegrees << ",0," << crate::kDepthFar << "\n";

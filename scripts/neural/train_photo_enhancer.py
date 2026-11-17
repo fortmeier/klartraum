@@ -236,7 +236,8 @@ class Generator(nn.Module):
             # Sizes that are multiples of 16 halve exactly at every level, so each level doubles the previous one.
             x = F.interpolate(x, scale_factor=2.0, mode="bilinear", align_corners=False)
             x = modulated(block(torch.cat([x, skip], dim=1)))
-        return torch.sigmoid(self.out(x))
+        # raw: the output layer's values without the sigmoid (latent_renderer.AlbedoRenderer composes them).
+        return self.out(x) if getattr(self, "raw", False) else torch.sigmoid(self.out(x))
 
 
 class TexturedModel(nn.Module):

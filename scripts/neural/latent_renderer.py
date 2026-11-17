@@ -15,7 +15,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 from train_photo_enhancer import ChannelNorm, Generator, INPUT_CHANNELS
 from training_reference import (  # noqa: F401 (re-exported for the fixtures and scripts)
     flow_warp_loss,
@@ -157,3 +156,59 @@ def latent_check(model: LatentRenderer, geometry: torch.Tensor, coordinates: tor
         parameter.requires_grad_(True)
     pooled, _ = object_mean(statistics, objects[:, 4::8, 4::8], model.objects)
     return F.l1_loss(pooled[..., :model.latent], swapped), image
+
+
+class AlbedoTexture(nn.Module):
+    """The multi-resolution albedo texture: residual blocks, each an MLP (1 x 1 convolutions with ELU, `hidden`
+    layers of its width) on the positional encoding of its octaves and the latent G-buffer, giving 3 values; their
+    sum, each block weighted (a coarse-to-fine fade-in), is the albedo's logit."""
+
+    def __init__(self, latent: int, blocks: tuple[tuple[int, int], ...] = ((2, 8), (4, 16), (6, 32)), hidden: int = 2,
+                 classes: tuple[int, ...] = (3,)):
+        super().__init__()
+        self.classes, self.octaves = classes, [frequencies for frequencies, _ in blocks]
+        self.blocks = nn.ModuleList()
+        for frequencies, width in blocks:
+            layers, previous = [], 3 * (2 * frequencies + 1) + latent
+            for _ in range(hidden):
+                layers += [nn.Conv2d(previous, width, 1), nn.ELU()]
+                previous = width
+            layers.append(nn.Conv2d(previous, 3, 1))
+            self.blocks.append(nn.Sequential(*layers))
+
+    def forward(self, coordinates, classes, latent_gbuffer, weights=None):
+        logit = 0.0
+        for k, (block, frequencies) in enumerate(zip(self.blocks, self.octaves)):
+            encoding = positional_encoding(coordinates, classes, frequencies, self.classes)
+            weight = 1.0 if weights is None else weights[k]
+            logit = logit + weight * block(torch.cat([encoding, latent_gbuffer], dim=1))
+        return logit
+
+
+def compose(albedo_logit: torch.Tensor, logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """The image from the albedo's logit [N, 3, H, W], the decoder's 4 raw outputs (shading, background RGB) and the
+    object mask [N, H, W]: mask x sigmoid(albedo) x 2 sigmoid(shading) + (1 - mask) x sigmoid(background)."""
+    m = mask[:, None]
+    shading = 2.0 * torch.sigmoid(logits[:, :1])
+    return m * torch.sigmoid(albedo_logit) * shading + (1.0 - m) * torch.sigmoid(logits[:, 1:])
+
+
+class AlbedoRenderer(LatentRenderer):
+    """The latent renderer with the albedo texture: the decoder sees geometry and the latent G-buffer only and gives
+    shading and background; the texture gives the albedo (compose())."""
+
+    def __init__(self, texture: AlbedoTexture, geometry: int = 4, latent: int = 4, objects: int = 1,
+                 widths: tuple[int, ...] = (32, 64, 128)):
+        texture.channels = 0
+        super().__init__(texture, geometry, latent, objects, widths)
+        self.generator.out = nn.Conv2d(widths[0], 4, 1)
+        nn.init.zeros_(self.generator.out.weight)
+        nn.init.zeros_(self.generator.out.bias)
+        self.generator.raw = True
+        self.weights = None
+
+    def forward(self, geometry, coordinates, classes, objects, latents):
+        latent_gbuffer = splat(latents, objects)
+        logits = self.generator(torch.cat([geometry, latent_gbuffer], dim=1))
+        albedo_logit = self.texture(coordinates, classes, latent_gbuffer, self.weights)
+        return compose(albedo_logit, logits, (objects > 0).to(geometry.dtype))

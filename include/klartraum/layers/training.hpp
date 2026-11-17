@@ -257,6 +257,22 @@ ComputeGraphElementPtr maxPoolBackward(VulkanContext& vulkanContext, const layer
  */
 ComputeGraphElementPtr l1Distance(VulkanContext& vulkanContext, uint32_t count, float weight, bool accumulate = false);
 
+/**
+ * @brief The albedo renderer's image from the albedo's logit (N x 3 x H x W, @p shape), the decoder's 4 raw outputs
+ * (shading, background RGB) and the object mask: mask sigmoid(albedo) 2 sigmoid(shading) + (1 - mask)
+ * sigmoid(background); also the albedo and the shading on their own.
+ *
+ * Slots: 0 albedo logit, 1 logits (N x 4 x H x W), 2 mask (N x H x W), 3 image, 4 albedo, 5 shading (N x H x W).
+ */
+ComputeGraphElementPtr compose(VulkanContext& vulkanContext, const layers::Shape& shape);
+
+/**
+ * @brief The gradients of compose() for the albedo's logit and the decoder's 4 raw outputs, written.
+ *
+ * Slots: 0 albedo logit, 1 logits, 2 mask, 3 image gradient, 4 albedo logit gradient, 5 logit gradient.
+ */
+ComputeGraphElementPtr composeBackward(VulkanContext& vulkanContext, const layers::Shape& shape);
+
 /// The size of a code-mixed feature texture (textureBasis()): per face `layers` layers of `channels` features at
 /// `resolution` x `resolution` texels; layer 0 is the base, layer k + 1 is scaled by the pixel's latent k.
 struct TextureBasisShape {

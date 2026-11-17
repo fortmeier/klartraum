@@ -397,6 +397,72 @@ def latent_table_cases(out: Path, seed: int, residual: tuple[tuple[int, int], ..
     (out / f"{case}_texture.txt").write_text(description)
 
 
+def albedo_cases(out: Path, seed: int) -> None:
+    """The albedo renderer (latent_renderer.AlbedoRenderer): compose() and its gradients on random values, and one step
+    without VGG with the multi-resolution texture's blocks weighted (1, 0.5, 0.25) as in a fade-in."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from latent_renderer import AlbedoRenderer, AlbedoTexture, compose, kl_divergence
+
+    generator = torch.Generator().manual_seed(seed)
+    albedo_logit = (torch.randn(2, 3, 5, 7, generator=generator) * 2).requires_grad_(True)
+    logits = (torch.randn(2, 4, 5, 7, generator=generator) * 2).requires_grad_(True)
+    mask = (torch.rand(2, 5, 7, generator=generator) > 0.4).float()
+    image = compose(albedo_logit, logits, mask)
+    dimage = torch.randn(image.shape, generator=generator)
+    (image * dimage).sum().backward()
+    save(out, "compose", {"albedo_logit": albedo_logit, "logits": logits, "mask": mask, "image": image,
+                          "dimage": dimage, "dalbedo_logit": albedo_logit.grad, "dlogits": logits.grad})
+
+    torch.manual_seed(seed)
+    texture = AlbedoTexture(latent=4, blocks=((1, 4), (2, 8), (3, 16)))
+    model = AlbedoRenderer(texture, geometry=4, latent=4, objects=1)
+    model.weights = (1.0, 0.5, 0.25)
+    with torch.no_grad():
+        model.generator.out.weight.copy_(torch.randn(model.generator.out.weight.shape, generator=generator) * 0.2)
+    b, size = 2, 32
+    geometry = torch.rand(b, 4, size, size, generator=generator)
+    coordinates = torch.rand(b, 3, size, size, generator=generator)
+    classes = torch.zeros(b, size, size, dtype=torch.long)
+    classes[:, 6:26, 8:28] = 3
+    objects = (classes == 3).long()
+    photos = torch.rand(b, 3, size, size, generator=generator)
+    epsilon = torch.randn(b, 1, 4, generator=generator)
+    parameters = {**{f"generator.texture.{k[7:]}": v for k, v in texture.named_parameters()},
+                  **{f"generator.{k}": v for k, v in model.generator.named_parameters()},
+                  **{f"encoder.{k}": v for k, v in model.encoder.named_parameters()}}
+    tensors = {"geometry": geometry, "coordinates": coordinates, "classes": classes.float(),
+               "objects": objects.float(), "photos": photos, "epsilon": epsilon}
+    for name, value in parameters.items():
+        tensors["before." + name] = value.detach().clone()
+    mu, log_variance, latent_counts = model.encode(photos, objects)
+    latents = mu + (0.5 * log_variance).exp() * epsilon
+    image = model(geometry, coordinates, classes, objects, latents)
+    photometric = 0.5 * F.l1_loss(image, photos) + 5.0 * F.l1_loss(F.avg_pool2d(image, 8), F.avg_pool2d(photos, 8))
+    perceptual = torch.zeros(())
+    kl = kl_divergence(mu, log_variance, latent_counts)
+    loss = photometric + perceptual + 1e-2 * kl
+    network = list(texture.parameters()) + list(model.generator.parameters()) + list(model.encoder.parameters())
+    optimiser = torch.optim.Adam(network, lr=1e-4, betas=(0.5, 0.999))
+    optimiser.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network, 1.0)
+    for name, value in parameters.items():
+        tensors["gradient." + name] = value.grad.detach().clone()
+    optimiser.step()
+    for name, value in parameters.items():
+        tensors["after." + name] = value.detach().clone()
+    tensors.update({"image": image, "photometric": photometric.reshape(1), "perceptual": perceptual.reshape(1),
+                    "kl": kl.reshape(1), "mu": mu, "log_variance": log_variance})
+    tensors["weights"] = torch.tensor(model.weights)
+    save(out, "albedo_step", tensors)
+    (out / "albedo_step_parameters.txt").write_text("\n".join(parameters) + "\n")
+    (out / "albedo_step_texture.txt").write_text(
+        f"width {size}\nheight {size}\nlevels 0\nfeatures 2\ntable 1\nresolutions\nclasses 3\n"
+        "albedo 1 4 2 8 3 16\n")
+
+
 def latent_check_case(out: Path, seed: int) -> None:
     """One latent renderer step as latent_cases()' with the latent check (weight 0.5): each view rendered again with
     the other view's latents and encoded by the fixed encoder."""
@@ -553,6 +619,7 @@ def main() -> None:
     latent_table_cases(args.out, 29, case="basis_texture_step", basis=(4, 8))
     latent_table_cases(args.out, 31, case="basis_regularized_step", basis=(4, 8), basis_decay=0.02,
                        basis_smoothness=0.05)
+    albedo_cases(args.out, 22)
     print(f"fixtures in {args.out}")
 
 
