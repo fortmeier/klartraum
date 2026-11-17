@@ -139,3 +139,21 @@ class TextureBasis(nn.Module):
         for table in self.tables:
             features = features + sample_texture_basis(table, coordinates, classes, latent_gbuffer, self.classes)
         return features
+
+
+def latent_check(model: LatentRenderer, geometry: torch.Tensor, coordinates: torch.Tensor, classes: torch.Tensor,
+                 objects: torch.Tensor, latents: torch.Tensor, permutation: torch.Tensor):
+    """The latent check: every view rendered again with the latents of view permutation[k] (the same latents in another
+    pose), encoded by the encoder held fixed, and the mean absolute difference between the encoded means and those
+    latents. The latents are targets (no gradient); the gradient reaches the decoder and the texture only.
+    Returns the loss and the second renders."""
+    swapped = latents[permutation].detach()
+    image = model(geometry, coordinates, classes, objects, swapped)
+    encoder = list(model.encoder.parameters())
+    for parameter in encoder:
+        parameter.requires_grad_(False)
+    statistics = model.encoder(image)
+    for parameter in encoder:
+        parameter.requires_grad_(True)
+    pooled, _ = object_mean(statistics, objects[:, 4::8, 4::8], model.objects)
+    return F.l1_loss(pooled[..., :model.latent], swapped), image

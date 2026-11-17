@@ -79,7 +79,7 @@ struct PhotoEnhancerTrainingConfig {
     /// ones).
     TextureMlp textureMlp;
     /// The code-mixed feature texture instead (needs latents, a texture of no levels whose classes are the textured
-    /// ones and no MLP texture).
+    /// ones, no MLP texture and no latent check).
     TextureBasis textureBasis;
     /// Forward only: render with the texture's features zeroed (its parameters still load), to measure how much the
     /// generator relies on them.
@@ -130,6 +130,9 @@ struct PhotoEnhancerTrainingConfig {
     float klWeight = 1e-3f;     ///< weight of the latents' KL divergence (summed over objects, mean over batch)
     /// Nats of KL per latent number that cost nothing (free bits), so the encoder can use the latents freely.
     float freeBits = 0.0f;
+    /// Weight of the latent check (latent_renderer.latent_check()): every view rendered again with another view's
+    /// latents (setLatentPermutation()), encoded by the encoder held fixed, L1 to those latents (0: none).
+    float latentCheck = 0.0f;
     /// Weight of the temporal consistency loss (latent_renderer.flow_warp_loss()): a second, nearby view of every
     /// sample (setSecondView()) rendered with the same latents, the first render warped onto it by the views' flow
     /// as the target, the mean squared difference on the pixels both views see (0: none).
@@ -201,6 +204,11 @@ public:
     /// The latents of the last step, [batch][latentObjects][latentSize], and their KL divergence (unweighted).
     std::vector<float> latents() const;
     float klLoss() const;
+    /// The next step's latent check permutation, [batch] (indices as floats: view k is rendered again with the
+    /// latents of view permutation[k]), instead of a random cyclic shift.
+    void setLatentPermutation(const std::vector<float>& permutation);
+    /// The latent check's mean absolute difference of the last step (unweighted).
+    float latentCheckLoss() const;
     /// The second views of the batch for the temporal loss: G-buffer channels, coordinates, classes and objects as in
     /// setBatch() and setObjects(), the flow onto the first views ([batch][2][size][size]: each pixel's position in
     /// the first view, in pixels with centres at i + 0.5) and where the first view sees it ([batch][size][size]).
@@ -269,6 +277,7 @@ private:
     /// The input gradient of forwardEncoder() from its statistics' gradient, without the parameters' gradients.
     std::shared_ptr<TensorElement<float>>
     backwardEncoderInput(std::vector<EncoderLayer>& layers, std::shared_ptr<TensorElement<float>> statisticsGradient);
+    void buildLatentCheck();
     /// One pass of the MLP texture: its encoding, input (encoding and latent G-buffer), layers and output.
     struct MlpPass {
         std::shared_ptr<TensorElement<float>> encoding, in;
@@ -373,10 +382,15 @@ private:
     };
     std::vector<EncoderLayer> encoderLayers;
     bool latentNoiseGiven = false;
+    /// The latent check's second generator pass and encoder pass, the views' permutation and its loss.
+    std::vector<Block> checkBlocks;
+    std::vector<EncoderLayer> checkEncoderLayers;
+    std::shared_ptr<TensorElement<float>> latentPermutation, checkTotal;
+    bool latentPermutationGiven = false;
     /// The temporal loss's second generator pass, the second views' inputs, their flow and mask, and its loss.
     std::vector<Block> temporalBlocks;
-    /// The MLP texture's passes (main, temporal) and the main pass's input gradient.
-    MlpPass mainMlp, temporalMlp;
+    /// The MLP texture's passes (main, latent check, temporal) and the main pass's input gradient.
+    MlpPass mainMlp, checkMlp, temporalMlp;
     std::shared_ptr<TensorElement<float>> mlpInputGradient;
     std::shared_ptr<TensorElement<float>> channels2, coordinates2, classes2, objects2, flow, flowValid, temporalTotal;
     /// The discriminator: its passes (the D step's, then the G step's on real and on fake pairs) and their tensors.

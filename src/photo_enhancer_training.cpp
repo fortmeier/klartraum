@@ -78,8 +78,9 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     const uint32_t b = config.batch, s = config.size, levels = uint32_t(config.widths.size());
     if (levels < 2 || s % (1u << (levels - 1)) != 0 || s < 8u)
         throw std::invalid_argument("PhotoEnhancerTraining: the crop size must halve exactly at every level");
-    if (config.temporal > 0.0f && (config.latentSize == 0 || config.appearances > 0))
-        throw std::invalid_argument("PhotoEnhancerTraining: the temporal loss needs latents and no appearance codes");
+    if ((config.latentCheck > 0.0f || config.temporal > 0.0f) && (config.latentSize == 0 || config.appearances > 0))
+        throw std::invalid_argument(
+            "PhotoEnhancerTraining: the latent check and the temporal loss need latents and no appearance codes");
     // The PatchGAN's coarsest scale needs 24 x 24 pixels: three halvings and two 4 x 4 convolutions leave 1 x 1 logits.
     if (config.adversarial > 0.0f && !config.forwardOnly &&
         (config.criticScales == 0 || (s >> (config.criticScales - 1)) < 24u))
@@ -93,21 +94,22 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     if (mlp && (config.latentSize == 0 || shape.levels > 0 || shape.classes.empty() || shape.classes.size() > 4))
         throw std::invalid_argument(
             "PhotoEnhancerTraining: the MLP texture needs latents, a texture of no levels and 1 to 4 classes");
-    if (config.latentCodes > 0 &&
-        (config.latentSize == 0 || config.appearances > 0 || config.randomLatents || config.encodeLatents))
-        throw std::invalid_argument("PhotoEnhancerTraining: the latent table needs latents, no appearance codes and no "
-                                    "given or encoded latents");
-    if (!config.latentToDecoder && config.latentSize == 0)
-        throw std::invalid_argument("PhotoEnhancerTraining: latents only in the texture need latents");
+    if (config.latentCodes > 0 && (config.latentSize == 0 || config.appearances > 0 || config.randomLatents ||
+                                   config.encodeLatents || config.latentCheck > 0.0f))
+        throw std::invalid_argument("PhotoEnhancerTraining: the latent table needs latents, no appearance codes, no "
+                                    "given or encoded latents and no latent check");
+    if (!config.latentToDecoder && (config.latentSize == 0 || config.latentCheck > 0.0f))
+        throw std::invalid_argument(
+            "PhotoEnhancerTraining: latents only in the texture need latents and no latent check");
     const uint32_t features = textureFeatures();
     const uint32_t channelsIn = kGBufferChannels + features + config.latentSize;
     this->config.texture.outputChannels = channelsIn;
     const bool table = config.latentCodes > 0 && !config.forwardOnly;
     const bool basis = config.textureBasis.enabled();
-    if (basis &&
-        (config.latentSize == 0 || shape.levels > 0 || mlp || shape.classes.empty() || shape.classes.size() > 4))
+    if (basis && (config.latentSize == 0 || shape.levels > 0 || mlp || config.latentCheck > 0.0f ||
+                  shape.classes.empty() || shape.classes.size() > 4))
         throw std::invalid_argument("PhotoEnhancerTraining: the feature texture needs latents, a texture of no levels "
-                                    "with 1 to 4 classes and no MLP texture");
+                                    "with 1 to 4 classes, no MLP texture and no latent check");
     const bool film = config.appearances > 0;
     const auto& w = config.widths;
 
@@ -411,6 +413,8 @@ PhotoEnhancerTraining::PhotoEnhancerTraining(VulkanContext& vulkanContext, const
     }
     if (config.latentSize > 0 && !config.randomLatents)
         buildLatentBackward();
+    if (config.latentCheck > 0.0f)
+        buildLatentCheck();
     if (config.temporal > 0.0f)
         buildTemporal();
     if (film) {
@@ -671,6 +675,84 @@ PhotoEnhancerTraining::backwardEncoderInput(std::vector<EncoderLayer>& layers,
                      layer.outputChannels, 3, 2, layer.da, previous);
     }
     return imageGradient;
+}
+
+void PhotoEnhancerTraining::buildLatentCheck() {
+    const uint32_t b = config.batch, s = config.size, k = config.latentObjects, d = config.latentSize;
+    const uint32_t gbuffer = config.gbufferChannels, features = textureFeatures();
+    const uint32_t channelsIn = gbuffer + features + d, size = s >> config.encoderWidths.size(), step = s / size;
+    // The targets: view i's latents are view permutation[i]'s sampled ones.
+    latentPermutation = tensor({b});
+    auto swapped = tensor({b, k, d});
+    auto pick = training::embedding(vulkanContext, b, b, k * d);
+    pick->setInput(latentValues, 0);
+    pick->setInput(latentPermutation, 1);
+    pick->setInput(swapped, 2);
+    add(pick);
+    // The second renders: the first input's G-buffer channels and texture features with the permuted latent G-buffer.
+    auto input2 = tensor({b, channelsIn, s, s});
+    auto copy = training::channelCopy(vulkanContext, b, s * s, {channelsIn, 0}, {channelsIn, 0}, gbuffer + features);
+    copy->setInput(input, 0);
+    copy->setInput(input2, 1);
+    add(copy);
+    auto splat =
+        training::objectBroadcast(vulkanContext, {b, d, s, s}, k, {s, s, 1, 0}, channelsIn, gbuffer + features);
+    splat->setInput(swapped, 0);
+    splat->setInput(objects, 1);
+    splat->setInput(counts, 2);
+    splat->setInput(input2, 3);
+    add(splat);
+    const bool mlp = config.textureMlp.frequencies > 0;
+    if (mlp)
+        checkMlp = forwardTextureMlp(coordinates, classes, input2);
+    checkBlocks = blocks;
+    auto [x2, logits2, output2] = forwardGenerator(checkBlocks, input2);
+    // The fixed encoder on them, its means per object against the targets.
+    auto statistics2 = tensor({b, 2 * d, size, size});
+    checkEncoderLayers = forwardEncoder(output2, statistics2);
+    auto pooled2 = tensor({b, k, 2 * d}), counts2 = tensor({b, k});
+    auto pool = training::objectMean(vulkanContext, {b, 2 * d, size, size}, k, {s, s, step, step / 2});
+    pool->setInput(statistics2, 0);
+    pool->setInput(objects, 1);
+    pool->setInput(pooled2, 2);
+    pool->setInput(counts2, 3);
+    add(pool);
+    auto means2 = tensor({b, k, d}), meansGradient = tensor({b, k, d}), shares = tensor({b * k * d});
+    auto means = training::channelCopy(vulkanContext, b * k, 1, {2 * d, 0}, {d, 0}, d);
+    means->setInput(pooled2, 0);
+    means->setInput(means2, 1);
+    add(means);
+    auto distance = training::l1Distance(vulkanContext, b * k * d, config.latentCheck);
+    distance->setInput(means2, 0);
+    distance->setInput(swapped, 1);
+    distance->setInput(meansGradient, 2);
+    distance->setInput(shares, 3);
+    add(distance);
+    checkTotal = tensor({1});
+    auto total = training::sum(vulkanContext, b * k * d);
+    total->setInput(shares, 0);
+    total->setInput(checkTotal, 1);
+    add(total);
+    // Back through the fixed encoder (the log-variances get no gradient) to the second renders.
+    auto pooledGradient2 = tensor({b, k, 2 * d});
+    auto zero = training::fill(vulkanContext, b * k * 2 * d);
+    zero->setInput(pooledGradient2, 0);
+    add(zero);
+    auto place = training::channelCopy(vulkanContext, b * k, 1, {d, 0}, {2 * d, 0}, d);
+    place->setInput(meansGradient, 0);
+    place->setInput(pooledGradient2, 1);
+    add(place);
+    auto statisticsGradient2 = tensor({b, 2 * d, size, size});
+    auto spread =
+        training::objectBroadcast(vulkanContext, {b, 2 * d, size, size}, k, {s, s, step, step / 2}, 2 * d, 0, true);
+    spread->setInput(pooledGradient2, 0);
+    spread->setInput(objects, 1);
+    spread->setInput(counts2, 2);
+    spread->setInput(statisticsGradient2, 3);
+    add(spread);
+    auto outputGradient2 = backwardEncoderInput(checkEncoderLayers, statisticsGradient2);
+    // The permuted latents are targets, so their gradient ends here.
+    backwardSecondPass(checkBlocks, x2, logits2, outputGradient2, coordinates, classes, mlp ? &checkMlp : nullptr);
 }
 
 void PhotoEnhancerTraining::backwardSecondPass(std::vector<Block>& passBlocks, std::shared_ptr<TensorElement<float>> x,
@@ -1322,6 +1404,13 @@ void PhotoEnhancerTraining::setLatentNoise(const std::vector<float>& noise) {
     latentNoiseGiven = true;
 }
 
+void PhotoEnhancerTraining::setLatentPermutation(const std::vector<float>& permutation) {
+    if (!latentPermutation)
+        throw std::logic_error("PhotoEnhancerTraining: a latent permutation needs the latent check");
+    latentPermutation->getDataBuffer(0).memcopyFrom(permutation);
+    latentPermutationGiven = true;
+}
+
 void PhotoEnhancerTraining::setSecondView(const std::vector<float>& channelValues,
                                           const std::vector<float>& coordinateValues,
                                           const std::vector<float>& classValues, const std::vector<float>& objectValues,
@@ -1344,6 +1433,14 @@ float PhotoEnhancerTraining::temporalLoss() const {
     std::vector<float> value(1);
     temporalTotal->getDataBuffer(0).memcopyTo(value);
     return value[0] / config.temporal;
+}
+
+float PhotoEnhancerTraining::latentCheckLoss() const {
+    if (!checkTotal)
+        return 0.0f;
+    std::vector<float> value(1);
+    checkTotal->getDataBuffer(0).memcopyTo(value);
+    return value[0] / config.latentCheck;
 }
 
 std::vector<float> PhotoEnhancerTraining::latents() const {
@@ -1929,6 +2026,16 @@ void PhotoEnhancerTraining::step() {
         latentNoise->getDataBuffer(0).memcopyFrom(noise);
     }
     latentNoiseGiven = false;
+    // The latent check renders view k with the latents of view k + shift (cyclically), shift 1 .. batch - 1.
+    if (latentPermutation && !latentPermutationGiven) {
+        const uint32_t b = config.batch;
+        const uint32_t shift = b > 1 ? 1u + uint32_t(random() % (b - 1)) : 0u;
+        std::vector<float> permutation(b);
+        for (uint32_t i = 0; i < b; ++i)
+            permutation[i] = float((i + shift) % b);
+        latentPermutation->getDataBuffer(0).memcopyFrom(permutation);
+    }
+    latentPermutationGiven = false;
     if (augmentation && !augmentationGiven)
         augmentation->getDataBuffer(0).memcopyFrom(randomAugmentation());
     if (generatorAugmentation) {
