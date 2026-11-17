@@ -187,3 +187,23 @@ target_link_libraries(tree_lod_metrics_example
 )
 
 add_dependencies(tree_lod_metrics_example Shaders)
+
+add_executable(landscape_gbuffer_example
+    landscape_gbuffer_example.cpp
+)
+
+target_link_libraries(landscape_gbuffer_example
+    klartraum_lib
+)
+
+add_dependencies(landscape_gbuffer_example Shaders)
+
+add_executable(photo_enhancer_example
+    photo_enhancer_example.cpp
+)
+
+target_link_libraries(photo_enhancer_example
+    klartraum_lib
+)
+
+add_dependencies(photo_enhancer_example Shaders)

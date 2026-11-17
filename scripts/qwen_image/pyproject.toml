@@ -9,6 +9,7 @@ dependencies = [
     "numpy",
     "onnx",
     "onnxruntime",
+    "matplotlib",
     "pillow",
     "safetensors",
     "tokenizers",
