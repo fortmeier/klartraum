@@ -276,6 +276,7 @@ add_executable(
   tests/test_shader_assets.cpp
   tests/test_kernel_benchmarks.cpp
   tests/test_training.cpp
+  tests/test_demo_sky_marks.cpp
   tests/test_field_style.cpp
   tests/test_style_transfer.cpp
   tests/test_photo_enhancer_training.cpp
@@ -405,6 +406,8 @@ set(KLARTRAUM_LIB_SRC
   src/gguf_tokenizer.cpp
   src/layers.cpp
   src/training.cpp
+  src/demo_sky_marks.cpp
+  src/demo_timeline.cpp
   src/field_style.cpp
   src/style_transfer.cpp
   src/photo_enhancer_training.cpp
@@ -506,7 +509,8 @@ target_link_libraries(
   klartraum_lib
   )
 if(KLARTRAUM_WITH_FREETYPE)
-  target_sources(klartraum_tests PRIVATE tests/test_text_gaussians.cpp)
+  # The demo timeline's captions are rasterized text (Font, rasterizeTitle()).
+  target_sources(klartraum_tests PRIVATE tests/test_text_gaussians.cpp tests/test_demo_timeline.cpp)
 endif()
 
 include(GoogleTest)
