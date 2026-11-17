@@ -57,6 +57,7 @@ guides/render-targets
 guides/profiling
 guides/onnx
 guides/training
+guides/latent-textures
 ```
 
 ```{toctree}
